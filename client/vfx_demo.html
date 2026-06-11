@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Stellar Drift – VFX Demo</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #02020f; display: flex; flex-direction: column; align-items: center;
+         min-height: 100vh; font-family: 'Courier New', monospace; }
+  h1   { color: #4af; font-size: 17px; letter-spacing: 4px; text-transform: uppercase; padding: 10px 0 4px; }
+  p.hint { color: #344; font-size: 10px; letter-spacing: 2px; margin-bottom: 6px; }
+</style>
+</head>
+<body>
+<h1>Stellar Drift · VFX Demo</h1>
+<p class="hint">click any panel to replay  ·  blend mode: ADD  ·  tweens: scale + alpha</p>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/phaser/3.80.1/phaser.min.js"></script>
+<script>
+// ── Display metadata (labels + tween envelope) – separate from asset manifest ──
+const DISPLAY = {
+  emp_strike:        { label:'EMP Strike',        sub:'Electric AoE skill',
+    tw:{ from:0.30, peak:1.10, end:0.85, aEnd:0.0, intro:280, outro:260, ease:'Quint.easeOut'  } },
+  engine_particle:   { label:'Engine Particle',   sub:'Thruster exhaust loop',   loop:true,
+    tw:{ from:0.75, peak:1.00, end:1.00, aEnd:1.0, intro:220, outro:0,   ease:'Sine.easeOut'   } },
+  hull_hit:          { label:'Hull Hit',           sub:'Impact explosion',
+    tw:{ from:0.40, peak:1.15, end:0.90, aEnd:0.0, intro:180, outro:280, ease:'Back.easeOut'   } },
+  laser_beam1:       { label:'Laser Beam',         sub:'Beam impact flash',
+    tw:{ from:0.05, peak:1.00, end:0.90, aEnd:0.1, intro:55,  outro:200, ease:'Expo.easeOut'   } },
+  laser_beam2:       { label:'Laser Burst',        sub:'Beam contact explosion',
+    tw:{ from:0.20, peak:1.20, end:1.00, aEnd:0.0, intro:90,  outro:180, ease:'Back.easeOut'   } },
+  plasma_bolt:       { label:'Plasma Bolt',        sub:'Projectile in flight',
+    tw:{ from:0.30, peak:1.00, end:0.95, aEnd:0.1, intro:150, outro:280, ease:'Sine.easeOut'   } },
+  plasma_burst:      { label:'Plasma Burst',       sub:'Plasma AoE skill',
+    tw:{ from:0.25, peak:1.10, end:0.90, aEnd:0.0, intro:220, outro:300, ease:'Quint.easeOut'  } },
+  repair_pulse:      { label:'Repair Pulse',       sub:'Healing ring skill',
+    tw:{ from:0.45, peak:1.05, end:1.00, aEnd:0.1, intro:340, outro:420, ease:'Sine.easeInOut' } },
+  targeting_reticle: { label:'Targeting Reticle',  sub:'Lock-on animation',
+    tw:{ from:1.50, peak:1.00, end:1.00, aEnd:0.8, intro:480, outro:320, ease:'Expo.easeOut'   } },
+};
+
+const KEYS  = Object.keys(DISPLAY);
+const COLS  = 3, ROWS = 3;
+const CELL_W = 400, CELL_H = 280;
+const W = COLS * CELL_W, H = ROWS * CELL_H;
+const DISP_W = 290, DISP_H = 200;
+
+// ── Scene ─────────────────────────────────────────────────────────────────────
+class VFXScene extends Phaser.Scene {
+
+  preload() {
+    // Load the asset manifest first, then sprite sheets inside create()
+    this.load.json('vfx_manifest', 'assets/vfx/vfx_manifest.json');
+  }
+
+  create() {
+    this.manifest = this.cache.json.get('vfx_manifest');
+
+    // ── Load sprite sheets now that we have frame sizes from manifest ──
+    // Phaser 3: we can't load in create() normally, but we can use the
+    // loader plugin and restart scene loading. Instead, we use a workaround:
+    // show a "loading" message and reload via a boot scene.
+    // ─────────────────────────────────────────────────────────────────────
+    // Actually simplest: preload JSON, then in create, load spritesheets
+    // using this.load with this.load.once('complete') callback.
+
+    this._makeStars(600);
+    this._makeCellFrames();   // draw static UI (panels, labels)
+
+    this.sprites     = {};
+    this.tweenTimers = {};
+    this.manifest    = this.cache.json.get('vfx_manifest');
+
+    // Dynamic load of sprite sheets after manifest is ready
+    KEYS.forEach(k => {
+      const m = this.manifest[k];
+      this.load.spritesheet(k, m.sheet, { frameWidth: m.frameWidth, frameHeight: m.frameHeight });
+    });
+
+    this.load.once('complete', () => this._onAssetsReady());
+    this.load.start();
+  }
+
+  _onAssetsReady() {
+    const manifest = this.manifest;
+
+    KEYS.forEach((k, idx) => {
+      const m   = manifest[k];
+      const disp = DISPLAY[k];
+
+      // Create animation
+      this.anims.create({
+        key: k,
+        frames: this.anims.generateFrameNumbers(k, { start: 0, end: m.frameCount - 1 }),
+        frameRate: m.fps,
+        repeat: 0
+      });
+
+      const col = idx % COLS;
+      const row = Math.floor(idx / COLS);
+      const cx  = col * CELL_W + CELL_W / 2;
+      const cy  = row * CELL_H + CELL_H / 2;
+      const sy  = cy + 18;
+
+      const dispScale = Math.min(DISP_W / m.frameWidth, DISP_H / m.frameHeight);
+
+      const spr = this.add.sprite(cx, sy, k, 0);
+      spr.setScale(dispScale);
+      spr.setAlpha(0);
+      spr.setBlendMode(Phaser.BlendModes.ADD);
+      this.sprites[k] = { spr, dispScale };
+
+      // Staggered autoplay
+      this.time.delayedCall(400 + idx * 220, () => this._play(k));
+    });
+  }
+
+  // ── Static UI panels + labels ─────────────────────────────────────────────
+  _makeCellFrames() {
+    const manifest = this.manifest;
+    KEYS.forEach((k, idx) => {
+      const col  = idx % COLS;
+      const row  = Math.floor(idx / COLS);
+      const cx   = col * CELL_W + CELL_W / 2;
+      const m    = manifest[k];
+      const disp = DISPLAY[k];
+
+      // Panel
+      const panel = this.add.graphics();
+      panel.lineStyle(1, 0x1a3a5a, 0.7);
+      panel.strokeRect(col * CELL_W + 2, row * CELL_H + 2, CELL_W - 4, CELL_H - 4);
+      panel.lineStyle(1, 0x0a1a2a, 1);
+      panel.strokeRect(col * CELL_W + 1, row * CELL_H + 1, CELL_W - 2, CELL_H - 2);
+
+      // Click zone
+      const zone = this.add.zone(col * CELL_W, row * CELL_H, CELL_W, CELL_H)
+        .setOrigin(0).setInteractive({ cursor: 'pointer' });
+      zone.on('pointerdown', () => this._play(k));
+      zone.on('pointerover', () => panel.setAlpha(1.5));
+      zone.on('pointerout',  () => panel.setAlpha(1.0));
+
+      // Effect name
+      this.add.text(cx, row * CELL_H + 13, disp.label, {
+        fontSize: '13px', fontFamily: 'Courier New', color: '#88ccff',
+        fontStyle: 'bold', resolution: 2
+      }).setOrigin(0.5, 0);
+
+      // Sub-label
+      this.add.text(cx, row * CELL_H + 29, disp.sub, {
+        fontSize: '9px', fontFamily: 'Courier New', color: '#334455',
+        resolution: 2
+      }).setOrigin(0.5, 0);
+
+      // Bottom info: frame count, fps, duration, frame size
+      const dur = (m.frameCount / m.fps * 1000).toFixed(0);
+      this.add.text(cx, (row + 1) * CELL_H - 10,
+        `${m.frameCount}f · ${m.fps}fps · ${dur}ms · ${m.frameWidth}×${m.frameHeight}`, {
+        fontSize: '8px', fontFamily: 'Courier New', color: '#1a2a33',
+        resolution: 2
+      }).setOrigin(0.5, 1);
+    });
+  }
+
+  // ── Play effect with tween envelope ──────────────────────────────────────
+  _play(k) {
+    if (!this.sprites[k]) return;
+    const { spr, dispScale } = this.sprites[k];
+    const disp = DISPLAY[k];
+    const tw   = disp.tw;
+
+    this.tweens.killTweensOf(spr);
+    if (this.tweenTimers[k]) { this.tweenTimers[k].remove(); this.tweenTimers[k] = null; }
+    spr.off('animationcomplete');
+
+    spr.stop();
+    spr.setFrame(0);
+    spr.setScale(tw.from * dispScale);
+    spr.setAlpha(1);
+
+    // ── Looping effect (engine_particle) ──────────────────────────────────
+    if (disp.loop) {
+      this.anims.get(k).repeat = -1;
+      spr.play(k);
+      this.tweens.add({ targets: spr, scale: tw.peak * dispScale,
+        duration: tw.intro, ease: tw.ease });
+      return;
+    }
+    this.anims.get(k).repeat = 0;
+    spr.play(k);
+
+    // Intro: scale up to peak
+    this.tweens.add({
+      targets: spr, scale: tw.peak * dispScale,
+      duration: tw.intro, ease: tw.ease,
+    });
+
+    // Outro: scale + alpha fade (starts before animation ends)
+    if (tw.outro > 0) {
+      const m       = this.manifest[k];
+      const animDur = (m.frameCount / m.fps) * 1000;
+      const outroAt = Math.max(0, animDur - tw.outro - 30);
+      this.tweenTimers[k] = this.time.delayedCall(outroAt, () => {
+        this.tweens.add({
+          targets: spr, scale: tw.end * dispScale, alpha: tw.aEnd,
+          duration: tw.outro, ease: 'Sine.easeOut',
+        });
+      });
+    }
+
+    // Re-queue after completion
+    spr.once('animationcomplete', () => {
+      this.time.delayedCall(1000 + Math.random() * 1000, () => this._play(k));
+    });
+  }
+
+  // ── Procedural star field ─────────────────────────────────────────────────
+  _makeStars(count) {
+    const gfx = this.add.graphics();
+    for (let i = 0; i < count; i++) {
+      const x = Phaser.Math.Between(0, W);
+      const y = Phaser.Math.Between(0, H);
+      const r = Math.random();
+      gfx.fillStyle(0xffffff, r < 0.05 ? 0.9 : r < 0.2 ? 0.5 : 0.18);
+      gfx.fillRect(x, y, r < 0.05 ? 1.5 : r < 0.2 ? 1 : 0.5,
+                         r < 0.05 ? 1.5 : r < 0.2 ? 1 : 0.5);
+    }
+    [[0x0a0a30,140],[0x100020,120],[0x002015,130],[0x0a1525,110]].forEach(([c,r], i) => {
+      gfx.fillStyle(c, 0.35);
+      gfx.fillCircle(
+        Phaser.Math.Between(120, W - 120),
+        Phaser.Math.Between(120, H - 120), r);
+    });
+  }
+}
+
+const game = new Phaser.Game({
+  type: Phaser.AUTO,
+  width: W, height: H,
+  backgroundColor: '#02020f',
+  parent: document.body,
+  scene: VFXScene,
+  scale: { mode: Phaser.Scale.FIT, autoCenter: Phaser.Scale.CENTER_HORIZONTALLY },
+  render: { antialias: true, pixelArt: false },
+});
+</script>
+</body>
+</html>

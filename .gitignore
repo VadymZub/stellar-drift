@@ -1,0 +1,10 @@
+# Claude Code internals
+client/.claude/
+
+# Python cache
+__pycache__/
+*.pyc
+
+# OS
+.DS_Store
+Thumbs.db

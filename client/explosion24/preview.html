@@ -1,0 +1,76 @@
+<!doctype html><html lang="ru"><head><meta charset="utf-8">
+<title>Stellar Drift — взрыв 24 кадра</title>
+<style>
+  body{margin:0;background:#05070f;color:#cfe9ee;font-family:Inter,system-ui,sans-serif;padding:24px}
+  h1{font-family:Orbitron,sans-serif;color:#4dd0e1;font-size:18px;font-weight:600}
+  .bar{margin:14px 0;display:flex;gap:18px;align-items:center}
+  .row{display:flex;gap:28px;align-items:flex-end;flex-wrap:nowrap;overflow-x:auto;padding:18px 0}
+  .cls{display:flex;flex-direction:column;align-items:center;gap:8px}
+  .lbl{font-size:12px;color:#9fb3b8;white-space:nowrap}
+  .cv{background:#0a0e18;border:1px solid #1a2a30;image-rendering:auto}
+  input[type=range]{width:240px}
+  button{background:#12222e;color:#4dd0e1;border:1px solid #4dd0e1;border-radius:6px;padding:6px 14px;cursor:pointer}
+</style></head><body>
+  <h1>Взрыв — 28 кадров · классы размеров в натуральную величину</h1>
+  <div class="bar">
+    <button id="play">⏸ пауза</button>
+    <label>fps <span id="fpsv">18</span></label>
+    <input id="fps" type="range" min="4" max="40" value="18">
+    <label><input id="loopbg" type="checkbox"> тёмный фон-кружок</label>
+  </div>
+  <div class="row">
+      <div class="cls">
+        <div class="lbl">micro · 32px</div>
+        <canvas class="cv" data-class="micro" data-px="32" width="32" height="32"></canvas>
+      </div>
+      <div class="cls">
+        <div class="lbl">small · 64px</div>
+        <canvas class="cv" data-class="small" data-px="64" width="64" height="64"></canvas>
+      </div>
+      <div class="cls">
+        <div class="lbl">medium · 128px</div>
+        <canvas class="cv" data-class="medium" data-px="128" width="128" height="128"></canvas>
+      </div>
+      <div class="cls">
+        <div class="lbl">large · 192px</div>
+        <canvas class="cv" data-class="large" data-px="192" width="192" height="192"></canvas>
+      </div>
+      <div class="cls">
+        <div class="lbl">huge · 288px</div>
+        <canvas class="cv" data-class="huge" data-px="288" width="288" height="288"></canvas>
+      </div>
+      <div class="cls">
+        <div class="lbl">mega · 448px</div>
+        <canvas class="cv" data-class="mega" data-px="448" width="448" height="448"></canvas>
+      </div>
+  </div>
+<script>
+const CLASSES=[["micro",32],["small",64],["medium",128],["large",192],["huge",288],["mega",448]];
+const N=28;
+const sheets={};
+let loaded=0, playing=true, fps=18, frame=0, acc=0, last=0;
+CLASSES.forEach(([name,px])=>{
+  const img=new Image();
+  img.onload=()=>{loaded++;};
+  img.src=name+'_sheet.png?v='+Date.now();   // cache-buster: всегда свежий sheet
+  sheets[name]={img,px};
+});
+const fpsEl=document.getElementById('fps'), fpsv=document.getElementById('fpsv');
+fpsEl.oninput=()=>{fps=+fpsEl.value;fpsv.textContent=fps;};
+document.getElementById('play').onclick=(e)=>{playing=!playing;e.target.textContent=playing?'⏸ пауза':'▶ играть';};
+const bg=document.getElementById('loopbg');
+function draw(){
+  document.querySelectorAll('.cv').forEach(cv=>{
+    const name=cv.dataset.class, px=+cv.dataset.px, s=sheets[name];
+    const ctx=cv.getContext('2d'); ctx.clearRect(0,0,px,px);
+    if(bg.checked){ctx.fillStyle='#0a0e18';ctx.beginPath();ctx.arc(px/2,px/2,px/2,0,7);ctx.fill();}
+    if(s&&s.img.complete) ctx.drawImage(s.img, frame*px,0,px,px, 0,0,px,px);
+  });
+}
+function loop(t){
+  if(!last)last=t; const dt=t-last; last=t;
+  if(playing){acc+=dt; const step=1000/fps; while(acc>=step){acc-=step; frame=(frame+1)%N;} draw();}
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+</script></body></html>

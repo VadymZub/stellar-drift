@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>VFX Grid Tester</title>
+    <style>
+        body { background: #111; color: #eee; font-family: sans-serif; }
+        canvas { border: 1px solid #444; background: #000; }
+        .controls { margin-bottom: 20px; }
+        .preview-container { display: flex; gap: 20px; }
+    </style>
+</head>
+<body>
+    <div class="controls">
+        <select id="fileSelect">
+            <option value="EMP Strike skill.png">EMP Strike skill.png</option>
+            <option value="Engine particle.png">Engine particle.png</option>
+            <option value="Hull hit.png">Hull hit.png</option>
+            <option value="Laser beam1.png">Laser beam1.png</option>
+            <option value="Laser beam2.png">Laser beam2.png</option>
+            <option value="Plasma bolt.png">Plasma bolt.png</option>
+            <option value="plasma burst skill effect.png">plasma burst skill effect.png</option>
+            <option value="Repair Pulse skill.png">Repair Pulse skill.png</option>
+            <option value="Targeting reticle.png">Targeting reticle.png</option>
+        </select>
+        Rows: <input type="number" id="rows" value="4" style="width:50px">
+        Cols: <input type="number" id="cols" value="6" style="width:50px">
+        FPS: <input type="number" id="fps" value="12" style="width:50px">
+        <button id="update">Update</button>
+    </div>
+    <div class="preview-container">
+        <div>
+            <h3>Animation</h3>
+            <canvas id="animCanvas"></canvas>
+        </div>
+        <div>
+            <h3>Full Sheet</h3>
+            <canvas id="sheetCanvas"></canvas>
+        </div>
+    </div>
+
+    <script>
+        const fileSelect = document.getElementById('fileSelect');
+        const rowsInput = document.getElementById('rows');
+        const colsInput = document.getElementById('cols');
+        const fpsInput = document.getElementById('fps');
+        const updateBtn = document.getElementById('update');
+        const animCanvas = document.getElementById('animCanvas');
+        const sheetCanvas = document.getElementById('sheetCanvas');
+        const animCtx = animCanvas.getContext('2d');
+        const sheetCtx = sheetCanvas.getContext('2d');
+
+        let img = new Image();
+        let frame = 0;
+        let lastTime = 0;
+
+        function update() {
+            img.src = fileSelect.value;
+            img.onload = () => {
+                sheetCanvas.width = img.width / 4; // Scale down for preview
+                sheetCanvas.height = img.height / 4;
+                sheetCtx.drawImage(img, 0, 0, sheetCanvas.width, sheetCanvas.height);
+                
+                const frameW = img.width / colsInput.value;
+                const frameH = img.height / rowsInput.value;
+                animCanvas.width = frameW;
+                animCanvas.height = frameH;
+            };
+        }
+
+        function loop(t) {
+            const dt = t - lastTime;
+            const fps = fpsInput.value || 12;
+            if (dt > 1000 / fps) {
+                lastTime = t;
+                const rows = parseInt(rowsInput.value);
+                const cols = parseInt(colsInput.value);
+                frame = (frame + 1) % (rows * cols);
+                
+                const frameW = img.width / cols;
+                const frameH = img.height / rows;
+                const fx = (frame % cols) * frameW;
+                const fy = Math.floor(frame / cols) * frameH;
+                
+                animCtx.clearRect(0, 0, animCanvas.width, animCanvas.height);
+                animCtx.drawImage(img, fx, fy, frameW, frameH, 0, 0, frameW, frameH);
+            }
+            requestAnimationFrame(loop);
+        }
+
+        updateBtn.onclick = update;
+        fileSelect.onchange = update;
+        update();
+        requestAnimationFrame(loop);
+    </script>
+</body>
+</html>

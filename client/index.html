@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Stellar Drift — прототип</title>
+  <style>
+    html, body { margin: 0; padding: 0; height: 100%; background: #05070f; overflow: hidden; }
+    #game { width: 100vw; height: 100vh; }
+    /* Скрываем системный курсор над канвасом — рисуем свой прицел в игре */
+    canvas { display: block; cursor: crosshair; }
+    #loading {
+      position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+      color: #4dd0e1; font-family: 'Orbitron', system-ui, sans-serif; letter-spacing: 2px;
+      font-size: 20px; z-index: 10; pointer-events: none;
+    }
+  </style>
+  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700&family=Inter:wght@400;600&display=swap" rel="stylesheet">
+</head>
+<body>
+  <div id="loading">STELLAR DRIFT…</div>
+  <div id="game"></div>
+  <script type="module" src="./src/main.js"></script>
+</body>
+</html>

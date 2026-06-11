@@ -1,0 +1,146 @@
+{
+  "emp_strike": {
+    "sheet": "assets/vfx/emp_strike_sheet.png",
+    "frameWidth": 612,
+    "frameHeight": 380,
+    "frameCount": 16,
+    "fps": 16,
+    "tween": {
+      "scaleFrom": 0.3,
+      "scalePeak": 1.1,
+      "scaleEnd": 0.85,
+      "alphaEnd": 0.0,
+      "introDur": 300,
+      "outroDur": 250,
+      "ease": "Quint.Out"
+    }
+  },
+  "engine_particle": {
+    "sheet": "assets/vfx/engine_particle_sheet.png",
+    "frameWidth": 710,
+    "frameHeight": 562,
+    "frameCount": 12,
+    "fps": 12,
+    "tween": {
+      "scaleFrom": 0.7,
+      "scalePeak": 1.0,
+      "scaleEnd": 1.0,
+      "alphaEnd": 0.6,
+      "introDur": 200,
+      "outroDur": 350,
+      "ease": "Sine.Out"
+    }
+  },
+  "hull_hit": {
+    "sheet": "assets/vfx/hull_hit_sheet.png",
+    "frameWidth": 478,
+    "frameHeight": 424,
+    "frameCount": 12,
+    "fps": 12,
+    "tween": {
+      "scaleFrom": 0.4,
+      "scalePeak": 1.15,
+      "scaleEnd": 0.9,
+      "alphaEnd": 0.0,
+      "introDur": 200,
+      "outroDur": 280,
+      "ease": "Back.Out"
+    }
+  },
+  "laser_beam1": {
+    "sheet": "assets/vfx/laser_beam1_sheet.png",
+    "frameWidth": 628,
+    "frameHeight": 542,
+    "frameCount": 12,
+    "fps": 12,
+    "tween": {
+      "scaleFrom": 0.05,
+      "scalePeak": 1.0,
+      "scaleEnd": 0.9,
+      "alphaEnd": 0.1,
+      "introDur": 60,
+      "outroDur": 200,
+      "ease": "Expo.Out"
+    }
+  },
+  "laser_beam2": {
+    "sheet": "assets/vfx/laser_beam2_sheet.png",
+    "frameWidth": 602,
+    "frameHeight": 856,
+    "frameCount": 8,
+    "fps": 12,
+    "tween": {
+      "scaleFrom": 0.2,
+      "scalePeak": 1.2,
+      "scaleEnd": 1.0,
+      "alphaEnd": 0.0,
+      "introDur": 100,
+      "outroDur": 200,
+      "ease": "Back.Out"
+    }
+  },
+  "plasma_bolt": {
+    "sheet": "assets/vfx/plasma_bolt_sheet.png",
+    "frameWidth": 478,
+    "frameHeight": 424,
+    "frameCount": 12,
+    "fps": 12,
+    "tween": {
+      "scaleFrom": 0.3,
+      "scalePeak": 1.0,
+      "scaleEnd": 0.95,
+      "alphaEnd": 0.1,
+      "introDur": 160,
+      "outroDur": 280,
+      "ease": "Sine.Out"
+    }
+  },
+  "plasma_burst": {
+    "sheet": "assets/vfx/plasma_burst_sheet.png",
+    "frameWidth": 478,
+    "frameHeight": 424,
+    "frameCount": 12,
+    "fps": 12,
+    "tween": {
+      "scaleFrom": 0.25,
+      "scalePeak": 1.1,
+      "scaleEnd": 0.9,
+      "alphaEnd": 0.0,
+      "introDur": 240,
+      "outroDur": 300,
+      "ease": "Quint.Out"
+    }
+  },
+  "repair_pulse": {
+    "sheet": "assets/vfx/repair_pulse_sheet.png",
+    "frameWidth": 596,
+    "frameHeight": 568,
+    "frameCount": 12,
+    "fps": 10,
+    "tween": {
+      "scaleFrom": 0.45,
+      "scalePeak": 1.05,
+      "scaleEnd": 1.0,
+      "alphaEnd": 0.1,
+      "introDur": 350,
+      "outroDur": 400,
+      "ease": "Sine.InOut"
+    }
+  },
+  "targeting_reticle": {
+    "sheet": "assets/vfx/targeting_reticle_sheet.png",
+    "frameWidth": 636,
+    "frameHeight": 636,
+    "frameCount": 6,
+    "fps": 8,
+    "tween": {
+      "scaleFrom": 1.5,
+      "scalePeak": 1.0,
+      "scaleEnd": 1.0,
+      "alphaEnd": 0.8,
+      "introDur": 500,
+      "outroDur": 300,
+      "ease": "Expo.Out"
+    }
+  }
+}
