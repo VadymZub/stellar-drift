@@ -1,0 +1,330 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Hull Hit · Frame Editor</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: #0a0a14; color: #aaa; font-family: 'Courier New', monospace;
+       display: flex; flex-direction: column; align-items: center; padding: 12px; gap: 8px; }
+h2 { color: #4af; font-size: 13px; letter-spacing: 3px; text-transform: uppercase; }
+.hint { font-size: 9px; color: #334; letter-spacing: 2px; }
+#layout { display: flex; gap: 12px; align-items: flex-start; }
+
+/* Canvas */
+#cvWrap { position: relative; }
+canvas#cv { display: block; cursor: crosshair; border: 1px solid #1a3a2a; }
+
+/* Frame strip */
+#strip { display: flex; gap: 3px; flex-wrap: wrap; max-width: 620px; margin-top: 6px; }
+.thumb { cursor: pointer; border: 2px solid #1a2a3a; }
+.thumb.sel { border-color: #3d8; }
+.thumb:hover { border-color: #5af; }
+
+/* Sidebar */
+#side { width: 190px; display: flex; flex-direction: column; gap: 8px; }
+.block { background: #0d1220; border: 1px solid #1a2a3a; padding: 8px; }
+.block label { font-size: 9px; color: #567; display: block; margin-bottom: 3px; letter-spacing: 1px; }
+.block strong { color: #3d8; font-size: 13px; }
+input[type=number] {
+  width: 72px; background: #080c18; border: 1px solid #2a3a5a;
+  color: #8cf; padding: 3px 6px; font-family: monospace; font-size: 12px;
+}
+.row2 { display: flex; gap: 6px; align-items: center; }
+.row2 span { font-size: 10px; color: #445; }
+button {
+  background: #0d2218; border: 1px solid #1d4a2a; color: #4d8;
+  padding: 5px 10px; font-family: monospace; font-size: 11px; cursor: pointer; width: 100%;
+}
+button:hover { background: #142a1e; }
+button.play { background: #0d2030; border-color: #1a3a5a; color: #4af; }
+button.play:hover { background: #142438; }
+button.danger { background: #1a0d0d; border-color: #4a1a1a; color: #a44; }
+button.danger:hover { background: #221010; }
+button.copy { background: #1a1a0d; border-color: #4a4a1a; color: #aa4; }
+button.copy:hover { background: #222210; }
+
+/* Output textarea */
+#outWrap { width: 100%; max-width: 820px; }
+#outWrap label { font-size: 9px; color: #456; display: block; margin-bottom: 3px; letter-spacing: 1px; }
+textarea {
+  width: 100%; height: 110px; background: #060810; border: 1px solid #1a2a3a;
+  color: #4bf; font-family: monospace; font-size: 10px; padding: 6px; resize: vertical;
+}
+</style>
+</head>
+<body>
+<h2>Hull Hit · Frame Editor</h2>
+<p class="hint">drag frame · arrow keys = 1px nudge · shift+arrow = 10px · click thumbnail to jump frame</p>
+
+<div id="layout">
+  <div>
+    <div id="cvWrap"><canvas id="cv"></canvas></div>
+    <div id="strip"></div>
+  </div>
+
+  <div id="side">
+    <div class="block">
+      <label>CURRENT FRAME</label>
+      <strong id="fnum">0</strong>
+      <span style="font-size:10px; color:#334"> / 11</span>
+    </div>
+    <div class="block">
+      <label>PASTE OFFSET (px)</label>
+      <div class="row2"><span>ox</span><input id="oxIn" type="number" value="108"></div>
+      <div class="row2" style="margin-top:4px;"><span>oy</span><input id="oyIn" type="number" value="80"></div>
+    </div>
+    <div class="block">
+      <label>PLAYBACK</label>
+      <button id="btnPlay" class="play">▶  Play  12 fps</button>
+      <div style="margin-top:4px;">
+        <button id="btnPrev" style="width:48%; display:inline-block">◀ Prev</button>
+        <button id="btnNext" style="width:48%; display:inline-block; margin-left:4%">Next ▶</button>
+      </div>
+    </div>
+    <div class="block">
+      <button id="btnReset" class="danger">↺ Reset this frame</button>
+      <button id="btnResetAll" class="danger" style="margin-top:4px;">↺ Reset ALL frames</button>
+    </div>
+    <div class="block">
+      <button id="btnCopy" class="copy">⧉ Copy MANUAL_OFFSETS</button>
+    </div>
+  </div>
+</div>
+
+<div id="outWrap">
+  <label>PYTHON — paste into fix_centering.py → MANUAL_OFFSETS</label>
+  <textarea id="pyOut" readonly></textarea>
+</div>
+
+<script>
+const NC = 4, NR = 3, NFRAMES = 12;
+const CELL_W = 384, CELL_H = 342;   // approx cell size (may vary 1px)
+const CVW = 620, CVH = 500;
+const DEF_OX = Math.round((CVW - CELL_W) / 2);  // 118
+const DEF_OY = Math.round((CVH - CELL_H) / 2);  // 79
+
+const offsets = Array.from({length: NFRAMES}, () => [DEF_OX, DEF_OY]);
+const imgs    = new Array(NFRAMES);
+let loaded    = 0;
+let curFrame  = 0;
+let dragging  = false, dragSX, dragSY, dragSOX, dragSOY;
+let playing   = false, playTimer = null;
+
+// ── Canvas setup ──────────────────────────────────────────────────────────
+const cv  = document.getElementById('cv');
+const ctx = cv.getContext('2d');
+cv.width  = CVW;
+cv.height = CVH;
+
+// ── Load frames ───────────────────────────────────────────────────────────
+for (let i = 0; i < NFRAMES; i++) {
+  const img = new Image();
+  img.src = `assets/vfx/hull_hit_raw/frame_${String(i).padStart(2,'0')}.png`;
+  img.onload  = () => { if (++loaded === NFRAMES) init(); };
+  img.onerror = () => { if (++loaded === NFRAMES) init(); };
+  imgs[i] = img;
+}
+
+// ── Draw ──────────────────────────────────────────────────────────────────
+function draw(highlightBounds = true) {
+  ctx.clearRect(0, 0, CVW, CVH);
+
+  // Background
+  ctx.fillStyle = '#02020f';
+  ctx.fillRect(0, 0, CVW, CVH);
+
+  // Grid dots
+  ctx.fillStyle = '#0e1a28';
+  for (let x = 0; x < CVW; x += 40)
+    for (let y = 0; y < CVH; y += 40)
+      ctx.fillRect(x, y, 1, 1);
+
+  // Frame image
+  const [ox, oy] = offsets[curFrame];
+  const img = imgs[curFrame];
+  if (img && img.naturalWidth > 0) {
+    ctx.drawImage(img, ox, oy, img.naturalWidth, img.naturalHeight);
+  }
+
+  // Cell boundary
+  if (highlightBounds) {
+    ctx.strokeStyle = '#1a4a2a';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(ox, oy, CELL_W, CELL_H);
+  }
+
+  // Center crosshair
+  ctx.strokeStyle = '#1a3a4a';
+  ctx.lineWidth = 1;
+  ctx.setLineDash([5, 5]);
+  ctx.beginPath(); ctx.moveTo(CVW/2, 0);   ctx.lineTo(CVW/2, CVH);   ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(0, CVH/2);   ctx.lineTo(CVW, CVH/2);   ctx.stroke();
+  ctx.setLineDash([]);
+
+  // Canvas-center dot
+  ctx.fillStyle = '#ffffff44';
+  ctx.beginPath(); ctx.arc(CVW/2, CVH/2, 3, 0, Math.PI*2); ctx.fill();
+
+  // Cell-center dot
+  ctx.fillStyle = '#ff6644';
+  ctx.beginPath(); ctx.arc(ox + CELL_W/2, oy + CELL_H/2, 3, 0, Math.PI*2); ctx.fill();
+
+  // Frame label
+  ctx.fillStyle = '#334';
+  ctx.font = '10px Courier New';
+  ctx.fillText(`f${String(curFrame).padStart(2,'0')}  ox=${ox} oy=${oy}`, 6, CVH - 5);
+}
+
+// ── Select frame ──────────────────────────────────────────────────────────
+function selectFrame(i) {
+  curFrame = ((i % NFRAMES) + NFRAMES) % NFRAMES;
+  document.getElementById('fnum').textContent = curFrame;
+  document.getElementById('oxIn').value = offsets[curFrame][0];
+  document.getElementById('oyIn').value = offsets[curFrame][1];
+  document.querySelectorAll('.thumb').forEach((t, ti) =>
+    t.classList.toggle('sel', ti === curFrame));
+  draw();
+  updateOutput();
+}
+
+// ── Thumbnails ────────────────────────────────────────────────────────────
+function buildStrip() {
+  const strip = document.getElementById('strip');
+  strip.innerHTML = '';
+  for (let i = 0; i < NFRAMES; i++) {
+    const c  = document.createElement('canvas');
+    const tw = 66, th = Math.round(66 * CELL_H / CELL_W);
+    c.width = tw; c.height = th;
+    c.className = 'thumb' + (i === 0 ? ' sel' : '');
+    c.title = `Frame ${i}`;
+    const tc = c.getContext('2d');
+    tc.fillStyle = '#02020f';
+    tc.fillRect(0, 0, tw, th);
+    if (imgs[i] && imgs[i].naturalWidth > 0)
+      tc.drawImage(imgs[i], 0, 0, tw, th);
+    const label = document.createElement('div');
+    label.style.cssText = 'font-size:8px;color:#334;text-align:center;margin-bottom:2px';
+    label.textContent = `f${i}`;
+    const wrap = document.createElement('div');
+    wrap.style.cssText = 'display:inline-flex;flex-direction:column;align-items:center;';
+    wrap.appendChild(c);
+    wrap.appendChild(label);
+    wrap.addEventListener('click', () => selectFrame(i));
+    strip.appendChild(wrap);
+  }
+}
+
+// ── Python output ─────────────────────────────────────────────────────────
+function updateOutput() {
+  const lines = ['MANUAL_OFFSETS["hull_hit"] = {'];
+  for (let i = 0; i < NFRAMES; i++)
+    lines.push(`    ${i}: (${offsets[i][0]}, ${offsets[i][1]}),`);
+  lines.push('}');
+  document.getElementById('pyOut').value = lines.join('\n');
+}
+
+// ── Init ──────────────────────────────────────────────────────────────────
+function init() {
+  buildStrip();
+  selectFrame(0);
+}
+
+// ── Drag ──────────────────────────────────────────────────────────────────
+function canvasPos(e) {
+  const r = cv.getBoundingClientRect();
+  return [
+    (e.clientX - r.left) * CVW / r.width,
+    (e.clientY - r.top)  * CVH / r.height,
+  ];
+}
+
+cv.addEventListener('mousedown', e => {
+  const [mx, my] = canvasPos(e);
+  const [ox, oy] = offsets[curFrame];
+  if (mx >= ox && mx <= ox + CELL_W && my >= oy && my <= oy + CELL_H) {
+    dragging = true;
+    dragSX = mx; dragSY = my;
+    dragSOX = ox; dragSOY = oy;
+    cv.style.cursor = 'grabbing';
+  }
+});
+window.addEventListener('mousemove', e => {
+  if (!dragging) return;
+  const [mx, my] = canvasPos(e);
+  offsets[curFrame][0] = Math.round(dragSOX + mx - dragSX);
+  offsets[curFrame][1] = Math.round(dragSOY + my - dragSY);
+  document.getElementById('oxIn').value = offsets[curFrame][0];
+  document.getElementById('oyIn').value = offsets[curFrame][1];
+  draw(); updateOutput();
+});
+window.addEventListener('mouseup', () => {
+  if (dragging) { dragging = false; cv.style.cursor = 'crosshair'; }
+});
+
+// ── Keyboard ──────────────────────────────────────────────────────────────
+window.addEventListener('keydown', e => {
+  const arrows = { ArrowLeft:[-1,0], ArrowRight:[1,0], ArrowUp:[0,-1], ArrowDown:[0,1] };
+  if (arrows[e.key]) {
+    e.preventDefault();
+    const step = e.shiftKey ? 10 : 1;
+    const [dx, dy] = arrows[e.key];
+    offsets[curFrame][0] += dx * step;
+    offsets[curFrame][1] += dy * step;
+    document.getElementById('oxIn').value = offsets[curFrame][0];
+    document.getElementById('oyIn').value = offsets[curFrame][1];
+    draw(); updateOutput();
+  }
+  if (e.key === ',') selectFrame(curFrame - 1);
+  if (e.key === '.') selectFrame(curFrame + 1);
+});
+
+// ── Inputs ────────────────────────────────────────────────────────────────
+document.getElementById('oxIn').addEventListener('input', e => {
+  offsets[curFrame][0] = parseInt(e.target.value) || 0;
+  draw(); updateOutput();
+});
+document.getElementById('oyIn').addEventListener('input', e => {
+  offsets[curFrame][1] = parseInt(e.target.value) || 0;
+  draw(); updateOutput();
+});
+
+// ── Play ──────────────────────────────────────────────────────────────────
+document.getElementById('btnPlay').addEventListener('click', () => {
+  if (playing) {
+    clearInterval(playTimer); playing = false;
+    document.getElementById('btnPlay').textContent = '▶  Play  12 fps';
+  } else {
+    playing = true;
+    document.getElementById('btnPlay').textContent = '⏹  Stop';
+    let f = curFrame;
+    playTimer = setInterval(() => { selectFrame(f); f = (f + 1) % NFRAMES; }, 1000 / 12);
+  }
+});
+
+document.getElementById('btnPrev').addEventListener('click', () => selectFrame(curFrame - 1));
+document.getElementById('btnNext').addEventListener('click', () => selectFrame(curFrame + 1));
+
+// ── Reset ─────────────────────────────────────────────────────────────────
+document.getElementById('btnReset').addEventListener('click', () => {
+  offsets[curFrame] = [DEF_OX, DEF_OY];
+  document.getElementById('oxIn').value = DEF_OX;
+  document.getElementById('oyIn').value = DEF_OY;
+  draw(); updateOutput();
+});
+document.getElementById('btnResetAll').addEventListener('click', () => {
+  for (let i = 0; i < NFRAMES; i++) offsets[i] = [DEF_OX, DEF_OY];
+  selectFrame(curFrame); draw(); updateOutput();
+});
+
+// ── Copy ──────────────────────────────────────────────────────────────────
+document.getElementById('btnCopy').addEventListener('click', () => {
+  navigator.clipboard.writeText(document.getElementById('pyOut').value).then(() => {
+    const b = document.getElementById('btnCopy');
+    b.textContent = '✓ Copied!';
+    setTimeout(() => b.textContent = '⧉ Copy MANUAL_OFFSETS', 1800);
+  });
+});
+</script>
+</body>
+</html>

@@ -55,6 +55,9 @@ export default class BootScene extends Phaser.Scene {
     this.load.image('bg_corp_helios', 'assets/UI BACKGROUNDS/Corp_Hub_Helios.png');
     this.load.image('bg_corp_karaks', 'assets/UI BACKGROUNDS/Corp_Hub_Karaks.png');
     this.load.image('bg_corp_tides', 'assets/UI BACKGROUNDS/Corp_Hub_Tides.png');
+
+    // VFX manifest — frame sizes read in create() to load sprite sheets
+    this.load.json('vfx_manifest', 'assets/vfx/vfx_manifest.json');
   }
 
   create() {
@@ -64,7 +67,7 @@ export default class BootScene extends Phaser.Scene {
     this.makeStarTexture('stars_far', 0.5, 90);
     this.makeStarTexture('stars_near', 1.0, 50);
     this.makeGlowTexture('glow', 18);      // мягкий круглый glow (шлейф, вспышки, additive)
-    this.makeBoltTexture('plasma_bolt');   // вытянутая светящаяся капсула снаряда
+    this.makeBoltTexture('bolt_sprite');   // вытянутая светящаяся капсула снаряда
     this.makeLootTexture('lootbox');
 
     // Анимации взрывов — все кадры листа (28), ~28 fps ≈ 1 сек на класс.
@@ -81,7 +84,28 @@ export default class BootScene extends Phaser.Scene {
     const loading = document.getElementById('loading');
     if (loading) loading.remove();
 
-    this.scene.start('LoginScene');
+    this._loadVFX();
+  }
+
+  _loadVFX() {
+    const manifest = this.cache.json.get('vfx_manifest');
+    if (!manifest) { this.scene.start('LoginScene'); return; }
+
+    for (const [key, m] of Object.entries(manifest)) {
+      this.load.spritesheet(key, m.sheet, { frameWidth: m.frameWidth, frameHeight: m.frameHeight });
+    }
+    this.load.once('complete', () => {
+      for (const [key, m] of Object.entries(manifest)) {
+        this.anims.create({
+          key,
+          frames: this.anims.generateFrameNumbers(key, { start: 0, end: m.frameCount - 1 }),
+          frameRate: m.fps,
+          repeat: 0,
+        });
+      }
+      this.scene.start('LoginScene');
+    });
+    this.load.start();
   }
 
   // Тайл звёздного поля для параллакса

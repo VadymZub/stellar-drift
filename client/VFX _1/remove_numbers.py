@@ -1,8 +1,8 @@
 """
 Remove frame-number watermarks from sprite sheets.
-Strategy: for each cell, scan the top-left patch area and zero the alpha only
-for pixels whose RGB is close to the background color (digits = background RGB
-but opaque). Dark content (smoke, fire, bolts) is left untouched.
+Strategy: for each cell, scan the top-left patch area and zero the alpha of
+pixels that match the neutral-gray digit watermark (medium brightness, low
+saturation). Dark smoke and bright sparks are left untouched.
 
 Usage:
   python remove_numbers.py emp_strike
@@ -25,7 +25,7 @@ GRIDS = {
     "Laser beam1.png":               ("laser_beam1",       4, 3, 12),
     "Laser beam2.png":               ("laser_beam2",       4, 2,  8),
     "Plasma bolt.png":               ("plasma_bolt",       4, 4, 16),
-    "plasma burst skill effect.png": ("plasma_burst",      4, 4, 16),
+    "plasma burst skill effect.png": ("plasma_burst",      4, 3, 12),
     "Repair Pulse skill.png":        ("repair_pulse",      4, 4, 16),
     "Targeting reticle.png":         ("targeting_reticle", 2, 3,  6),
 }
@@ -33,36 +33,35 @@ GRIDS = {
 # Patch region covering digit in top-left of each cell (conservative max).
 PATCH_W = 160
 PATCH_H = 150
-# Colour-distance tolerance: pixels within this delta of background RGB are treated as digits.
-RGB_TOL = 50
 
 
-def erase_digit(cell_arr, pw, ph, tol=RGB_TOL):
+def erase_digit(cell_arr, pw, ph):
     """
-    Zero the alpha ONLY for patch pixels whose RGB matches the background colour.
-    Background is sampled from the top-right corner (same rows, mirrored X).
-    Dark content (smoke, fire, bolts) differs from background → untouched.
+    Zero alpha for digit-watermark pixels in the top-left patch.
+
+    Digits are neutral gray overlaid on a transparent background.
+    Original PNGs store transparent-pixel RGB as (0,0,0), so sampling a
+    background colour always returns black — unreliable.  Instead detect
+    digits by their photometric properties:
+      brightness  80-200  (above dark smoke, below bright sparks)
+      saturation  <= 40   (neutral gray, not coloured explosion content)
     """
     h, w = cell_arr.shape[:2]
     pw = min(pw, w // 2)
     ph = min(ph, h // 2)
 
-    # Sample background RGB from top-right corner
-    bg_sample = cell_arr[:ph, w - pw:w, :3].reshape(-1, 3).astype(float)
-    bg_rgb = np.median(bg_sample, axis=0)          # (3,)
-
-    # Patch region as view
     patch = cell_arr[:ph, :pw, :]
+    rgb = patch[:, :, :3].astype(float)
+    brightness = rgb.max(axis=-1)
+    saturation = rgb.max(axis=-1) - rgb.min(axis=-1)
 
-    # Per-pixel max-channel distance from background
-    dist = np.abs(patch[:, :, :3].astype(float) - bg_rgb).max(axis=-1)  # (ph, pw)
-
-    # Pixels close to background AND visible → digit watermark → erase
-    is_digit = (dist <= tol) & (patch[:, :, 3] > 0)
+    is_digit = (
+        (patch[:, :, 3] > 0) &
+        (brightness >= 80) & (brightness <= 200) &
+        (saturation <= 40)
+    )
     patch[:, :, 3] = np.where(is_digit, 0, patch[:, :, 3])
-
-    n_erased = int(is_digit.sum())
-    return n_erased
+    return int(is_digit.sum())
 
 
 def process(folder_name):

@@ -35,7 +35,7 @@ const DISPLAY = {
   repair_pulse:      { label:'Repair Pulse',       sub:'Healing ring skill',
     tw:{ from:0.45, peak:1.05, end:1.00, aEnd:0.1, intro:340, outro:420, ease:'Sine.easeInOut' } },
   targeting_reticle: { label:'Targeting Reticle',  sub:'Lock-on animation',
-    tw:{ from:1.50, peak:1.00, end:1.00, aEnd:0.8, intro:480, outro:320, ease:'Expo.easeOut'   } },
+    tw:{ from:1.50, peak:1.00, end:1.00, aEnd:0.0, intro:480, outro:320, ease:'Expo.easeOut'   } },
 };
 
 const KEYS  = Object.keys(DISPLAY);
@@ -174,7 +174,10 @@ class VFXScene extends Phaser.Scene {
     spr.stop();
     spr.setFrame(0);
     spr.setScale(tw.from * dispScale);
-    spr.setAlpha(1);
+
+    // Effects that scale DOWN (from > peak) pop in large — hide with fade-in.
+    const scalesDown = tw.from > tw.peak;
+    spr.setAlpha(scalesDown ? 0 : 1);
 
     // ── Looping effect (engine_particle) ──────────────────────────────────
     if (disp.loop) {
@@ -187,11 +190,17 @@ class VFXScene extends Phaser.Scene {
     this.anims.get(k).repeat = 0;
     spr.play(k);
 
-    // Intro: scale up to peak
+    // Intro: scale to peak; fade in if needed
     this.tweens.add({
       targets: spr, scale: tw.peak * dispScale,
       duration: tw.intro, ease: tw.ease,
     });
+    if (scalesDown) {
+      this.tweens.add({
+        targets: spr, alpha: 1,
+        duration: tw.intro * 0.45, ease: 'Sine.easeIn',
+      });
+    }
 
     // Outro: scale + alpha fade (starts before animation ends)
     if (tw.outro > 0) {

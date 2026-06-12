@@ -17,7 +17,7 @@ export default class Projectile {
 
     // Светящаяся капсула: additive-blend + тинт по владельцу, повёрнута по вектору полёта.
     const big = owner === 'player';
-    this.sprite = scene.add.image(fromX, fromY, 'plasma_bolt').setDepth(60);
+    this.sprite = scene.add.image(fromX, fromY, 'bolt_sprite').setDepth(60);
     this.sprite.setTint(color).setBlendMode(Phaser.BlendModes.ADD);
     this.sprite.setDisplaySize(big ? 42 : 32, big ? 17 : 13);
     this.sprite.rotation = ang;

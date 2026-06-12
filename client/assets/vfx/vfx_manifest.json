@@ -1,8 +1,8 @@
 {
   "emp_strike": {
     "sheet": "assets/vfx/emp_strike_sheet.png",
-    "frameWidth": 612,
-    "frameHeight": 380,
+    "frameWidth": 640,
+    "frameHeight": 420,
     "frameCount": 16,
     "fps": 16,
     "tween": {
@@ -17,8 +17,8 @@
   },
   "engine_particle": {
     "sheet": "assets/vfx/engine_particle_sheet.png",
-    "frameWidth": 710,
-    "frameHeight": 562,
+    "frameWidth": 700,
+    "frameHeight": 520,
     "frameCount": 12,
     "fps": 12,
     "tween": {
@@ -33,8 +33,8 @@
   },
   "hull_hit": {
     "sheet": "assets/vfx/hull_hit_sheet.png",
-    "frameWidth": 478,
-    "frameHeight": 424,
+    "frameWidth": 560,
+    "frameHeight": 500,
     "frameCount": 12,
     "fps": 12,
     "tween": {
@@ -49,8 +49,8 @@
   },
   "laser_beam1": {
     "sheet": "assets/vfx/laser_beam1_sheet.png",
-    "frameWidth": 628,
-    "frameHeight": 542,
+    "frameWidth": 620,
+    "frameHeight": 500,
     "frameCount": 12,
     "fps": 12,
     "tween": {
@@ -65,8 +65,8 @@
   },
   "laser_beam2": {
     "sheet": "assets/vfx/laser_beam2_sheet.png",
-    "frameWidth": 602,
-    "frameHeight": 856,
+    "frameWidth": 620,
+    "frameHeight": 660,
     "frameCount": 8,
     "fps": 12,
     "tween": {
@@ -81,10 +81,10 @@
   },
   "plasma_bolt": {
     "sheet": "assets/vfx/plasma_bolt_sheet.png",
-    "frameWidth": 478,
-    "frameHeight": 424,
-    "frameCount": 12,
-    "fps": 12,
+    "frameWidth": 640,
+    "frameHeight": 420,
+    "frameCount": 16,
+    "fps": 16,
     "tween": {
       "scaleFrom": 0.3,
       "scalePeak": 1.0,
@@ -97,10 +97,10 @@
   },
   "plasma_burst": {
     "sheet": "assets/vfx/plasma_burst_sheet.png",
-    "frameWidth": 478,
-    "frameHeight": 424,
+    "frameWidth": 620,
+    "frameHeight": 500,
     "frameCount": 12,
-    "fps": 12,
+    "fps": 16,
     "tween": {
       "scaleFrom": 0.25,
       "scalePeak": 1.1,
@@ -113,10 +113,10 @@
   },
   "repair_pulse": {
     "sheet": "assets/vfx/repair_pulse_sheet.png",
-    "frameWidth": 596,
-    "frameHeight": 568,
-    "frameCount": 12,
-    "fps": 10,
+    "frameWidth": 640,
+    "frameHeight": 420,
+    "frameCount": 16,
+    "fps": 14,
     "tween": {
       "scaleFrom": 0.45,
       "scalePeak": 1.05,
@@ -129,15 +129,15 @@
   },
   "targeting_reticle": {
     "sheet": "assets/vfx/targeting_reticle_sheet.png",
-    "frameWidth": 636,
-    "frameHeight": 636,
+    "frameWidth": 720,
+    "frameHeight": 720,
     "frameCount": 6,
     "fps": 8,
     "tween": {
       "scaleFrom": 1.5,
       "scalePeak": 1.0,
       "scaleEnd": 1.0,
-      "alphaEnd": 0.8,
+      "alphaEnd": 0.0,
       "introDur": 500,
       "outroDur": 300,
       "ease": "Expo.Out"

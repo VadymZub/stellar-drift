@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>VFX Frame Editor</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: #0a0a14; color: #aaa; font-family: 'Courier New', monospace;
+       display: flex; flex-direction: column; align-items: center; padding: 12px; gap: 8px; }
+h2 { color: #4af; font-size: 13px; letter-spacing: 3px; text-transform: uppercase; }
+.hint { font-size: 9px; color: #334; letter-spacing: 2px; }
+select { background: #0d1220; border: 1px solid #2a3a5a; color: #8cf;
+         padding: 4px 8px; font-family: monospace; font-size: 12px; cursor: pointer; }
+#layout { display: flex; gap: 12px; align-items: flex-start; }
+#cvWrap { position: relative; }
+canvas#cv { display: block; cursor: crosshair; border: 1px solid #1a3a2a; }
+#strip { display: flex; gap: 3px; flex-wrap: wrap; margin-top: 6px; }
+.thumb-wrap { display: inline-flex; flex-direction: column; align-items: center; }
+.thumb { cursor: pointer; border: 2px solid #1a2a3a; }
+.thumb.sel { border-color: #3d8; }
+.thumb:hover { border-color: #5af; }
+.thumb-lbl { font-size: 8px; color: #334; text-align: center; margin-bottom: 2px; }
+#side { width: 190px; display: flex; flex-direction: column; gap: 8px; }
+.block { background: #0d1220; border: 1px solid #1a2a3a; padding: 8px; }
+.block label { font-size: 9px; color: #567; display: block; margin-bottom: 3px; letter-spacing: 1px; }
+.block strong { color: #3d8; font-size: 13px; }
+input[type=number] { width: 72px; background: #080c18; border: 1px solid #2a3a5a;
+  color: #8cf; padding: 3px 6px; font-family: monospace; font-size: 12px; }
+.row2 { display: flex; gap: 6px; align-items: center; }
+.row2 span { font-size: 10px; color: #445; }
+button { background: #0d2218; border: 1px solid #1d4a2a; color: #4d8;
+  padding: 5px 10px; font-family: monospace; font-size: 11px; cursor: pointer; width: 100%; }
+button:hover { background: #142a1e; }
+button.play { background: #0d2030; border-color: #1a3a5a; color: #4af; }
+button.play:hover { background: #142438; }
+button.danger { background: #1a0d0d; border-color: #4a1a1a; color: #a44; }
+button.danger:hover { background: #221010; }
+button.copy { background: #1a1a0d; border-color: #4a4a1a; color: #aa4; }
+button.copy:hover { background: #222210; }
+#outWrap { width: 100%; max-width: 820px; }
+#outWrap label { font-size: 9px; color: #456; display: block; margin-bottom: 3px; letter-spacing: 1px; }
+textarea { width: 100%; height: 130px; background: #060810; border: 1px solid #1a2a3a;
+  color: #4bf; font-family: monospace; font-size: 10px; padding: 6px; resize: vertical; }
+</style>
+</head>
+<body>
+<h2>VFX Frame Editor</h2>
+<p class="hint">drag frame · arrow keys = 1px · shift+arrow = 10px · , / . = prev/next frame</p>
+
+<div style="margin-bottom:4px; display:flex; gap:8px; align-items:center;">
+  <span style="font-size:10px;color:#567;">EFFECT:</span>
+  <select id="effectSel"></select>
+</div>
+
+<div id="layout">
+  <div>
+    <div id="cvWrap"><canvas id="cv"></canvas></div>
+    <div id="strip"></div>
+  </div>
+  <div id="side">
+    <div class="block">
+      <label>CURRENT FRAME</label>
+      <strong id="fnum">0</strong><span style="font-size:10px;color:#334"> / <span id="ftotal">0</span></span>
+    </div>
+    <div class="block">
+      <label>PASTE OFFSET (px)</label>
+      <div class="row2"><span>ox</span><input id="oxIn" type="number" value="0"></div>
+      <div class="row2" style="margin-top:4px;"><span>oy</span><input id="oyIn" type="number" value="0"></div>
+    </div>
+    <div class="block">
+      <label>PLAYBACK</label>
+      <button id="btnPlay" class="play">▶  Play</button>
+      <div style="margin-top:4px; display:flex; gap:4px;">
+        <button id="btnPrev" style="width:48%">◀ Prev</button>
+        <button id="btnNext" style="width:48%">Next ▶</button>
+      </div>
+    </div>
+    <div class="block">
+      <button id="btnReset" class="danger">↺ Reset this frame</button>
+      <button id="btnResetAll" class="danger" style="margin-top:4px;">↺ Reset ALL frames</button>
+    </div>
+    <div class="block">
+      <button id="btnCopy" class="copy">⧉ Copy MANUAL_OFFSETS</button>
+    </div>
+  </div>
+</div>
+
+<div id="outWrap">
+  <label>PYTHON — paste into fix_centering.py → MANUAL_OFFSETS</label>
+  <textarea id="pyOut" readonly></textarea>
+</div>
+
+<script>
+// ── Effect configs ────────────────────────────────────────────────────────
+const EFFECTS = {
+  emp_strike:        { nc:4, nr:4, nframes:16, cellW:384, cellH:256, fps:16, cvW:640, cvH:420 },
+  engine_particle:   { nc:3, nr:4, nframes:12, cellW:418, cellH:314, fps:12, cvW:700, cvH:520 },
+  hull_hit:          { nc:4, nr:3, nframes:12, cellW:384, cellH:342, fps:12, cvW:620, cvH:500 },
+  laser_beam1:       { nc:4, nr:3, nframes:12, cellW:384, cellH:341, fps:12, cvW:620, cvH:500 },
+  laser_beam2:       { nc:4, nr:2, nframes:8,  cellW:384, cellH:512, fps:12, cvW:620, cvH:660 },
+  plasma_bolt:       { nc:4, nr:4, nframes:16, cellW:384, cellH:256, fps:16, cvW:640, cvH:420 },
+  plasma_burst:      { nc:4, nr:3, nframes:12, cellW:384, cellH:341, fps:16, cvW:620, cvH:500 },
+  repair_pulse:      { nc:4, nr:4, nframes:16, cellW:384, cellH:256, fps:14, cvW:640, cvH:420 },
+  targeting_reticle: { nc:2, nr:3, nframes:6,  cellW:512, cellH:512, fps:8,  cvW:720, cvH:720 },
+};
+
+// ── State ─────────────────────────────────────────────────────────────────
+let cfg, offsets, imgs, curFrame, dragging, playing, playTimer;
+let dragSX, dragSY, dragSOX, dragSOY;
+
+const cv  = document.getElementById('cv');
+const ctx = cv.getContext('2d');
+
+// ── Effect selector ───────────────────────────────────────────────────────
+const sel = document.getElementById('effectSel');
+Object.keys(EFFECTS).forEach(k => {
+  const opt = document.createElement('option'); opt.value = k; opt.textContent = k;
+  sel.appendChild(opt);
+});
+// read ?effect=xxx from URL
+const urlEffect = new URLSearchParams(location.search).get('effect');
+if (urlEffect && EFFECTS[urlEffect]) sel.value = urlEffect;
+sel.addEventListener('change', () => loadEffect(sel.value));
+
+function loadEffect(name) {
+  if (playing) { clearInterval(playTimer); playing = false; document.getElementById('btnPlay').textContent = '▶  Play'; }
+  cfg = EFFECTS[name];
+  cv.width  = cfg.cvW;
+  cv.height = cfg.cvH;
+  const defOX = Math.round((cfg.cvW - cfg.cellW) / 2);
+  const defOY = Math.round((cfg.cvH - cfg.cellH) / 2);
+  offsets   = Array.from({length: cfg.nframes}, () => [defOX, defOY]);
+  imgs      = new Array(cfg.nframes);
+  curFrame  = 0;
+  dragging  = false; playing = false; playTimer = null;
+  document.getElementById('ftotal').textContent = cfg.nframes - 1;
+
+  let loaded = 0;
+  for (let i = 0; i < cfg.nframes; i++) {
+    const img = new Image();
+    img.src = `assets/vfx/${name}_raw/frame_${String(i).padStart(2,'0')}.png`;
+    img.onload  = () => { if (++loaded === cfg.nframes) init(); };
+    img.onerror = () => { if (++loaded === cfg.nframes) init(); };
+    imgs[i] = img;
+  }
+}
+
+// ── Draw ──────────────────────────────────────────────────────────────────
+function draw() {
+  const { cvW, cvH, cellW, cellH } = cfg;
+  ctx.clearRect(0, 0, cvW, cvH);
+  ctx.fillStyle = '#02020f'; ctx.fillRect(0, 0, cvW, cvH);
+
+  ctx.fillStyle = '#0e1a28';
+  for (let x = 0; x < cvW; x += 40)
+    for (let y = 0; y < cvH; y += 40)
+      ctx.fillRect(x, y, 1, 1);
+
+  const [ox, oy] = offsets[curFrame];
+  const img = imgs[curFrame];
+  if (img && img.naturalWidth > 0)
+    ctx.drawImage(img, ox, oy, img.naturalWidth, img.naturalHeight);
+
+  ctx.strokeStyle = '#1a4a2a'; ctx.lineWidth = 1;
+  ctx.strokeRect(ox, oy, cellW, cellH);
+
+  ctx.strokeStyle = '#1a3a4a'; ctx.lineWidth = 1;
+  ctx.setLineDash([5, 5]);
+  ctx.beginPath(); ctx.moveTo(cvW/2, 0);  ctx.lineTo(cvW/2, cvH);  ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(0, cvH/2);  ctx.lineTo(cvW, cvH/2);  ctx.stroke();
+  ctx.setLineDash([]);
+
+  ctx.fillStyle = '#ffffff44';
+  ctx.beginPath(); ctx.arc(cvW/2, cvH/2, 3, 0, Math.PI*2); ctx.fill();
+  ctx.fillStyle = '#ff6644';
+  ctx.beginPath(); ctx.arc(ox + cellW/2, oy + cellH/2, 3, 0, Math.PI*2); ctx.fill();
+
+  ctx.fillStyle = '#334'; ctx.font = '10px Courier New';
+  ctx.fillText(`f${String(curFrame).padStart(2,'0')}  ox=${ox} oy=${oy}`, 6, cvH - 5);
+}
+
+// ── Thumbnails ────────────────────────────────────────────────────────────
+function buildStrip() {
+  const strip = document.getElementById('strip');
+  strip.innerHTML = '';
+  const tw = 64, th = Math.round(64 * cfg.cellH / cfg.cellW);
+  for (let i = 0; i < cfg.nframes; i++) {
+    const c  = document.createElement('canvas');
+    c.width = tw; c.height = th;
+    c.className = 'thumb' + (i === 0 ? ' sel' : '');
+    c.title = `Frame ${i}`;
+    const tc = c.getContext('2d');
+    tc.fillStyle = '#02020f'; tc.fillRect(0, 0, tw, th);
+    if (imgs[i] && imgs[i].naturalWidth > 0) tc.drawImage(imgs[i], 0, 0, tw, th);
+    const lbl = document.createElement('div');
+    lbl.className = 'thumb-lbl'; lbl.textContent = `f${i}`;
+    const wrap = document.createElement('div');
+    wrap.className = 'thumb-wrap';
+    wrap.appendChild(c); wrap.appendChild(lbl);
+    wrap.addEventListener('click', () => selectFrame(i));
+    strip.appendChild(wrap);
+  }
+}
+
+// ── Select frame ──────────────────────────────────────────────────────────
+function selectFrame(i) {
+  curFrame = ((i % cfg.nframes) + cfg.nframes) % cfg.nframes;
+  document.getElementById('fnum').textContent = curFrame;
+  document.getElementById('oxIn').value = offsets[curFrame][0];
+  document.getElementById('oyIn').value = offsets[curFrame][1];
+  document.querySelectorAll('.thumb').forEach((t, ti) =>
+    t.classList.toggle('sel', ti === curFrame));
+  draw(); updateOutput();
+}
+
+// ── Python output ─────────────────────────────────────────────────────────
+function updateOutput() {
+  const name = sel.value;
+  const lines = [`MANUAL_OFFSETS["${name}"] = {`];
+  for (let i = 0; i < cfg.nframes; i++)
+    lines.push(`    ${i}: (${offsets[i][0]}, ${offsets[i][1]}),`);
+  lines.push('}');
+  document.getElementById('pyOut').value = lines.join('\n');
+}
+
+function init() { buildStrip(); selectFrame(0); }
+
+// ── Drag ──────────────────────────────────────────────────────────────────
+function canvasPos(e) {
+  const r = cv.getBoundingClientRect();
+  return [(e.clientX - r.left) * cfg.cvW / r.width,
+          (e.clientY - r.top)  * cfg.cvH / r.height];
+}
+cv.addEventListener('mousedown', e => {
+  const [mx, my] = canvasPos(e);
+  const [ox, oy] = offsets[curFrame];
+  if (mx >= ox && mx <= ox + cfg.cellW && my >= oy && my <= oy + cfg.cellH) {
+    dragging = true;
+    dragSX = mx; dragSY = my; dragSOX = ox; dragSOY = oy;
+    cv.style.cursor = 'grabbing';
+  }
+});
+window.addEventListener('mousemove', e => {
+  if (!dragging) return;
+  const [mx, my] = canvasPos(e);
+  offsets[curFrame][0] = Math.round(dragSOX + mx - dragSX);
+  offsets[curFrame][1] = Math.round(dragSOY + my - dragSY);
+  document.getElementById('oxIn').value = offsets[curFrame][0];
+  document.getElementById('oyIn').value = offsets[curFrame][1];
+  draw(); updateOutput();
+});
+window.addEventListener('mouseup', () => { if (dragging) { dragging = false; cv.style.cursor = 'crosshair'; } });
+
+// ── Keyboard ──────────────────────────────────────────────────────────────
+window.addEventListener('keydown', e => {
+  const arrows = { ArrowLeft:[-1,0], ArrowRight:[1,0], ArrowUp:[0,-1], ArrowDown:[0,1] };
+  if (arrows[e.key]) {
+    e.preventDefault();
+    const step = e.shiftKey ? 10 : 1;
+    offsets[curFrame][0] += arrows[e.key][0] * step;
+    offsets[curFrame][1] += arrows[e.key][1] * step;
+    document.getElementById('oxIn').value = offsets[curFrame][0];
+    document.getElementById('oyIn').value = offsets[curFrame][1];
+    draw(); updateOutput();
+  }
+  if (e.key === ',') selectFrame(curFrame - 1);
+  if (e.key === '.') selectFrame(curFrame + 1);
+});
+
+// ── Inputs ────────────────────────────────────────────────────────────────
+document.getElementById('oxIn').addEventListener('input', e => {
+  offsets[curFrame][0] = parseInt(e.target.value) || 0;
+  draw(); updateOutput();
+});
+document.getElementById('oyIn').addEventListener('input', e => {
+  offsets[curFrame][1] = parseInt(e.target.value) || 0;
+  draw(); updateOutput();
+});
+
+// ── Play ──────────────────────────────────────────────────────────────────
+document.getElementById('btnPlay').addEventListener('click', () => {
+  if (playing) {
+    clearInterval(playTimer); playing = false;
+    document.getElementById('btnPlay').textContent = '▶  Play';
+  } else {
+    playing = true;
+    document.getElementById('btnPlay').textContent = '⏹  Stop';
+    let f = curFrame;
+    playTimer = setInterval(() => { selectFrame(f); f = (f + 1) % cfg.nframes; }, 1000 / cfg.fps);
+  }
+});
+document.getElementById('btnPrev').addEventListener('click', () => selectFrame(curFrame - 1));
+document.getElementById('btnNext').addEventListener('click', () => selectFrame(curFrame + 1));
+
+// ── Reset ─────────────────────────────────────────────────────────────────
+function defaultOffset() {
+  return [Math.round((cfg.cvW - cfg.cellW) / 2), Math.round((cfg.cvH - cfg.cellH) / 2)];
+}
+document.getElementById('btnReset').addEventListener('click', () => {
+  offsets[curFrame] = defaultOffset();
+  document.getElementById('oxIn').value = offsets[curFrame][0];
+  document.getElementById('oyIn').value = offsets[curFrame][1];
+  draw(); updateOutput();
+});
+document.getElementById('btnResetAll').addEventListener('click', () => {
+  const d = defaultOffset();
+  for (let i = 0; i < cfg.nframes; i++) offsets[i] = [...d];
+  selectFrame(curFrame); draw(); updateOutput();
+});
+
+// ── Copy ──────────────────────────────────────────────────────────────────
+document.getElementById('btnCopy').addEventListener('click', () => {
+  navigator.clipboard.writeText(document.getElementById('pyOut').value).then(() => {
+    const b = document.getElementById('btnCopy');
+    b.textContent = '✓ Copied!';
+    setTimeout(() => b.textContent = '⧉ Copy MANUAL_OFFSETS', 1800);
+  });
+});
+
+// ── Boot ──────────────────────────────────────────────────────────────────
+loadEffect(sel.value);
+</script>
+</body>
+</html>

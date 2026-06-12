@@ -13,6 +13,7 @@ import { levelInfo, xpToNext, MAX_LEVEL } from '../leveling.js';
 import { SHIP_BY_KEY } from '../ships.js';    
 import { SECTORS, galaxy, neighbors, edgeDir, sectorAccess } from '../galaxy.js';
 import { calculateRating, getRank } from '../ranking.js';
+import VFXManager from '../systems/VFXManager.js';
 
 const PICKUP_RADIUS = 95;
 const PICKUP_TIME = 2000;
@@ -136,6 +137,12 @@ export default class GameScene extends Phaser.Scene {
     this.jumping = false;
     
     this.createSpaceDust();
+
+    this.vfx = new VFXManager(this);
+    this.engineFxList = [];
+    this._engineFxShipKey = null;
+    this._spawnEngineFx();
+    this._targetFx = null;
 
     this.time.delayedCall(60, () => this.log(i18n.t('log.entered', { sector: SECTORS[galaxy.current].name })));
   }
@@ -599,7 +606,12 @@ export default class GameScene extends Phaser.Scene {
     for (const o of overlays) { if (o !== key && this.scene.isActive(o)) this.scene.stop(o); }
     if (this.scene.isActive(key)) this.scene.stop(key); else this.scene.launch(key, data);
   }
-  selectTarget(mob) { this.target = mob; if (!mob) this.isFiring = false; }
+  selectTarget(mob) {
+    this.target = mob;
+    if (this._targetFx?.active) { this.vfx?.stopLoop(this._targetFx); this._targetFx = null; }
+    if (!mob) { this.isFiring = false; return; }
+    this._targetFx = this.vfx?.playLoop('targeting_reticle', mob.x, mob.y, { scale: 0.18, depth: 46 });
+  }
   cycleTarget() {
     const alive = this.mobs.filter((m) => m.alive).sort((a, b) => Phaser.Math.Distance.Between(this.player.x, this.player.y, a.x, a.y) - Phaser.Math.Distance.Between(this.player.x, this.player.y, b.x, b.y));
     if (!alive.length) { this.target = null; return; }
@@ -624,10 +636,20 @@ export default class GameScene extends Phaser.Scene {
   }
   onProjectileHit(proj, res) {
     if (proj.owner === 'player') {
-      const m = proj.victim; this.hitFlash(m.x, m.y, (res.hullHit || 0) > 0); this.showDamage(m.x, m.y, res); if (res.killed) this.onMobKilled(m);
+      const m = proj.victim;
+      const toHull = (res.hullHit || 0) > 0;
+      this.hitFlash(m.x, m.y, toHull);
+      if (toHull && this._onScreen(m.x, m.y)) this.vfx?.play('hull_hit', m.x, m.y, { scale: 0.15, depth: 67 });
+      this.showDamage(m.x, m.y, res);
+      if (res.killed) this.onMobKilled(m);
     } else {
       if (res.dodged) { this.showDodge(this.player.x, this.player.y); return; }
-      this.hitFlash(this.player.x, this.player.y, (res.hullHit || 0) > 0); this.showDamage(this.player.x, this.player.y, res); if (res.brokeShield) this.log(i18n.t('log.shield_down')); if (!this.player.alive) this.onPlayerKilled();
+      const toHull = (res.hullHit || 0) > 0;
+      this.hitFlash(this.player.x, this.player.y, toHull);
+      if (toHull) this.vfx?.play('hull_hit', this.player.x, this.player.y, { scale: 0.15, depth: 67 });
+      this.showDamage(this.player.x, this.player.y, res);
+      if (res.brokeShield) this.log(i18n.t('log.shield_down'));
+      if (!this.player.alive) this.onPlayerKilled();
     }
   }
   onMobKilled(mob) {
@@ -638,7 +660,18 @@ export default class GameScene extends Phaser.Scene {
     this.credits = (this.credits || 0) + credits; this.gainXp(xp); if (this.target === mob) this.target = null;
     const sg = rollStarGold(mob); if (sg > 0) { this.starGold = (this.starGold || 0) + sg; this.log(i18n.t('log.stargold', { amount: sg })); }
     if (Phaser.Math.FloatBetween(0, 1) < dropChance(mob)) { this.loot.push(new Loot(this, mob.x, mob.y, rollLootForMob(mob))); }
+    if (this._targetFx?.active && this.target === mob) { this.vfx?.stopLoop(this._targetFx); this._targetFx = null; }
     this.time.delayedCall(RESPAWN_MS, () => { if (!mob.alive) { mob.respawn(); this.log(i18n.t('log.respawn', { name, lvl })); } });
+  }
+  _spawnEngineFx() {
+    for (const fx of this.engineFxList) this.vfx.stopLoop(fx);
+    this.engineFxList = [];
+    const ship = this.player.ship;
+    if (!ship) return;
+    this._engineFxShipKey = ship.key;
+    for (const _n of (ship.engines || [{ x: 0, y: 42 }])) {
+      this.engineFxList.push(this.vfx.playLoop('engine_particle', this.player.x, this.player.y, { scale: 0.12, depth: 52 }));
+    }
   }
   onPlayerKilled() {
     if (this.playerRespawning) return;
@@ -647,7 +680,11 @@ export default class GameScene extends Phaser.Scene {
     this.explosion(this.player.x, this.player.y, 1.1);
     this.log(i18n.t('log.you_died'));
     this.target = null;
-    this.time.delayedCall(3000, () => { this.player.respawn(this.worldWidth / 2, this.worldHeight / 2 - 40); this.playerRespawning = false; });
+    this.time.delayedCall(3000, () => {
+      this.player.respawn(this.worldWidth / 2, this.worldHeight / 2 - 40);
+      this.playerRespawning = false;
+      this._spawnEngineFx();
+    });
   }
   showDamage(x, y, res) {
     const total = Math.round((res.shieldHit || 0) + (res.hullHit || 0)); if (total <= 0) return;
@@ -691,11 +728,47 @@ export default class GameScene extends Phaser.Scene {
       this.showDamage(p.x, p.y, res); if (!p.alive) this.onPlayerKilled();
     }
   }
+  _onScreen(x, y) { return this.cameras.main.worldView.contains(x, y); }
   log(msg) { this.game.events.emit('hud-log', msg); }
   update(time, delta) {
     const dt = delta / 1000;
     this.bgNear.tilePositionX = this.cameras.main.scrollX * 0.05;
     this.bgNear.tilePositionY = this.cameras.main.scrollY * 0.05;
+
+    // Engine particles: one emitter per nozzle, positioned in ship-local space.
+    // Coordinate formula (sprite drawn nose-down, artAngleOffset -π/2):
+    //   wx = px + nx·sin(f) − ny·cos(f),  wy = py − nx·cos(f) − ny·sin(f)
+    if (!this.player.alive) {
+      if (this.engineFxList.length) {
+        for (const fx of this.engineFxList) this.vfx.stopLoop(fx);
+        this.engineFxList = [];
+        this._engineFxShipKey = null;
+      }
+    } else {
+      if (this.player.ship?.key !== this._engineFxShipKey) this._spawnEngineFx();
+      const f = this.player.facing;
+      const px = this.player.x, py = this.player.y;
+      const alpha = this.player.speed > 8 ? 1 : 0;
+      const nozzles = this.player.ship?.engines || [{ x: 0, y: 42 }];
+      this.engineFxList.forEach((fx, i) => {
+        if (!fx?.active) return;
+        const n = nozzles[i] || nozzles[0];
+        fx.setPosition(px + n.x * Math.sin(f) - n.y * Math.cos(f),
+                       py - n.x * Math.cos(f) - n.y * Math.sin(f));
+        fx.setRotation(f + Math.PI);
+        fx.setAlpha(alpha);
+      });
+    }
+
+    // Targeting reticle follows locked target
+    if (this._targetFx?.active) {
+      if (this.target?.alive) {
+        this._targetFx.setPosition(this.target.x, this.target.y);
+      } else {
+        this.vfx.stopLoop(this._targetFx);
+        this._targetFx = null;
+      }
+    }
 
     // Эффект варп-пыли (проносящиеся мимо частицы) при форсаже
     if (this.player.boosting && this.player.speed > 50) {
@@ -736,21 +809,6 @@ export default class GameScene extends Phaser.Scene {
     });
     this.updateAoe();
     
-    this.reticle.clear();
-    if (this.target && this.target.alive) {
-      const m = this.target;
-      const s = m.tpl.displaySize * 0.85;
-      const gap = s * 0.25; 
-      this.reticle.lineStyle(2, 0xff3d00, 1.0); 
-      this.reticle.lineBetween(m.x - s/2, m.y - s/2, m.x - gap/2, m.y - s/2);
-      this.reticle.lineBetween(m.x + gap/2, m.y - s/2, m.x + s/2, m.y - s/2);
-      this.reticle.lineBetween(m.x - s/2, m.y + s/2, m.x - gap/2, m.y + s/2);
-      this.reticle.lineBetween(m.x + gap/2, m.y + s/2, m.x + s/2, m.y + s/2);
-      this.reticle.lineBetween(m.x - s/2, m.y - s/2, m.x - s/2, m.y - gap/2);
-      this.reticle.lineBetween(m.x - s/2, m.y + gap/2, m.x - s/2, m.y + s/2);
-      this.reticle.lineBetween(m.x + s/2, m.y - s/2, m.x + s/2, m.y - gap/2);
-      this.reticle.lineBetween(m.x + s/2, m.y + gap/2, m.x + s/2, m.y + s/2);
-    }
 
     this.projectiles = this.projectiles.filter((p) => !p.dead); 
     this.projectiles.forEach((p) => p.update(dt));
