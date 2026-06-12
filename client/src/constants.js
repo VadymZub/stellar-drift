@@ -112,9 +112,6 @@ export const MOBS = {
   sec_drone: { key: 'aegis', nameKey: 'mob.sec_drone', faction: 'security', artAngleOffset: Math.PI / 2, displaySize: 75, hull: 220, shield: 350, damage: 24, speed: 205, aggro: 850, range: 450, fireRate: 1.0,  credits: 380,  xp: 95,  patrolRadius: 250, leash: 700, neutral: true },
   sec_destroyer: { key: 'anvil', nameKey: 'mob.sec_destroyer', faction: 'security', artAngleOffset: Math.PI / 2, displaySize: 180, hull: 1400, shield: 750, damage: 68, speed: 135, aggro: 1100, range: 650, fireRate: 0.5, credits: 4500, xp: 1100, patrolRadius: 200, leash: 480, boss: true, neutral: true, starGold: { min: 15, max: 35, chance: 1 } },
 
-  // ── Добывающие базы (PvP) ──
-  mining_base: { key: 'aegis', nameKey: 'mob.sec_base', faction: 'security', artAngleOffset: Math.PI / 2, displaySize: 320, hull: 5000, shield: 0, damage: 0, speed: 0, aggro: 1200, range: 0, fireRate: 0, credits: 5000, xp: 2000, patrolRadius: 0, leash: 0, boss: true, neutral: true },
-
   // ── Древние (биомех) — ур. 30-50 ──
   ancient_01: { key: 'ancient_01', nameKey: 'mob.ancient_01', faction: 'ancient', artAngleOffset: -Math.PI / 2, displaySize: 130, hull: 500, shield: 320, damage: 44, speed: 140, aggro: 950, range: 500, fireRate: 0.65, credits: 700,  xp: 180, patrolRadius: 220, leash: 520 },
   ancient_02: { key: 'ancient_02', nameKey: 'mob.ancient_02', faction: 'ancient', artAngleOffset: -Math.PI / 2, displaySize: 126, hull: 460, shield: 380, damage: 48, speed: 150, aggro: 950, range: 520, fireRate: 0.6,  credits: 760,  xp: 195, patrolRadius: 230, leash: 540 },

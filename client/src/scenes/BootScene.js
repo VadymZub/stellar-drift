@@ -56,6 +56,15 @@ export default class BootScene extends Phaser.Scene {
     this.load.image('bg_corp_karaks', 'assets/UI BACKGROUNDS/Corp_Hub_Karaks.png');
     this.load.image('bg_corp_tides', 'assets/UI BACKGROUNDS/Corp_Hub_Tides.png');
 
+    // Mining base sprites
+    for (const key of ['base_destroyed', 'base_building', 'base_helios', 'base_karax', 'base_tides', 'base_neutral']) {
+      this.load.image(key, `assets/bases/${key}.png`);
+    }
+    for (const corp of ['helios', 'karax', 'tides', 'neutral']) {
+      this.load.image(`cannon1_${corp}`, `assets/bases/cannon1_${corp}.png`);
+      this.load.image(`cannon2_${corp}`, `assets/bases/cannon2_${corp}.png`);
+    }
+
     // VFX manifest — frame sizes read in create() to load sprite sheets
     this.load.json('vfx_manifest', 'assets/vfx/vfx_manifest.json');
   }

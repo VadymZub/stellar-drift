@@ -14,6 +14,7 @@ import { SHIP_BY_KEY } from '../ships.js';
 import { SECTORS, galaxy, neighbors, edgeDir, sectorAccess } from '../galaxy.js';
 import { calculateRating, getRank } from '../ranking.js';
 import VFXManager from '../systems/VFXManager.js';
+import MiningBase from '../entities/MiningBase.js';
 
 const PICKUP_RADIUS = 95;
 const PICKUP_TIME = 2000;
@@ -111,6 +112,9 @@ export default class GameScene extends Phaser.Scene {
       this.player.applyShip(SHIP_BY_KEY[this.activeShip]);
       this.player.hull = this.player.maxHull; this.player.shield = this.player.maxShield;   
     }
+
+    this.playerName  = this.playerName  || 'Player';
+    this.miningBases = [];
 
     this.steering = false;
     this.collectTarget = null;
@@ -221,6 +225,10 @@ export default class GameScene extends Phaser.Scene {
   }
 
   spawnMobs() {
+    // Clean up any previous base visuals (scene restart)
+    for (const b of this.miningBases) b.destroy();
+    this.miningBases = [];
+
     const sec = SECTORS[galaxy.current];
     const cx = this.worldWidth / 2, cy = this.worldHeight / 2, M = MOBS;
     const Lmin = sec.lvlMin, Lmax = Math.min(50, sec.lvlMax);
@@ -249,14 +257,16 @@ export default class GameScene extends Phaser.Scene {
         basePoints = [[-d, -d], [d, -d], [d, d], [-d, d]];
       }
 
-      const bases = basePoints.map(p => {
-        const b = add('mining_base', Lmax, p[0], p[1], { behavior: 'guard', patrolRadius: 0 });
-        this.add.circle(b.x, b.y, 160, 0x4dd0e1, 0.05).setDepth(-5);
-        this.add.text(b.x, b.y - 180, "MINING STATION", { fontFamily: 'Orbitron', fontSize: '20px', color: '#4dd0e1' }).setOrigin(0.5).setDepth(5);
-        return b;
+      const miningBases = basePoints.map((p, idx) => {
+        const base = new MiningBase(this, cx + p[0], cy + p[1], {
+          id: `${galaxy.current}_base_${idx}`,
+          pvpTier: pvpLvl,
+        });
+        this.miningBases.push(base);
+        return base;
       });
-      
-      const baseTargets = bases.map(b => ({ x: b.x, y: b.y }));
+
+      const baseTargets = miningBases.map(b => ({ x: b.x, y: b.y }));
 
       if (pvpLvl === 1) {
         // PvP 1: 3 дрона курсируют между базами (стаей)
@@ -275,9 +285,9 @@ export default class GameScene extends Phaser.Scene {
         const config = compositions[pvpLvl] || compositions[2];
         
         for (let i = 0; i < config.destroyers; i++) {
-          const b = bases[i % bases.length];
+          const b = miningBases[i % miningBases.length];
           // Патрули теперь ROAM (курсируют между всеми базами), но стартуют у баз
-          const dest = add('sec_destroyer', Lmax, b.spawnX - cx + rnd(-200, 200), b.spawnY - cy + rnd(-200, 200), { behavior: 'roam', targets: baseTargets });
+          const dest = add('sec_destroyer', Lmax, b.x - cx + rnd(-200, 200), b.y - cy + rnd(-200, 200), { behavior: 'roam', targets: baseTargets });
           for (let j = 0; j < config.dronesPerDest; j++) {
             add('sec_drone', Lmax, dest.spawnX - cx + rnd(-100, 100), dest.spawnY - cy + rnd(-100, 100), { leader: dest });
           }
@@ -497,13 +507,20 @@ export default class GameScene extends Phaser.Scene {
       
       const wpt = this.cameras.main.getWorldPoint(pointer.x, pointer.y);
       const wx = wpt.x, wy = wpt.y;
-      const mob = this.mobAt(wx, wy);
+      const mob  = this.mobAt(wx, wy);
+      const base = !mob ? this.baseAt(wx, wy) : null;
 
       const now = this.time.now;
       if (mob && (now - lastClickTime < 350)) {
         this.selectTarget(mob);
         this.isFiring = true;
         this.log("ATTACK: " + i18n.t(mob.tpl.nameKey));
+        lastClickTime = 0;
+        return;
+      }
+      if (base && (now - lastClickTime < 350) && base.canBeAttacked) {
+        this.selectTarget(base);
+        this.isFiring = true;
         lastClickTime = 0;
         return;
       }
@@ -537,19 +554,25 @@ export default class GameScene extends Phaser.Scene {
       }
       
       if (mob) { this.cancelCollect(); this.selectTarget(mob); return; }
+      if (base) { this.cancelCollect(); this.selectTarget(base.canBeAttacked ? base : null); return; }
       if (this.player.alive && !this.jumping) { this.cancelCollect(); this.steering = true; this.movement.setWaypoint(wx, wy, false); this.pingAt(wx, wy); }
     });
 
     this.input.on('pointerup', () => { this.steering = false; });
-    this.input.keyboard.addCapture('TAB,ESC,I,G,M,J,CTRL');
+    this.input.keyboard.addCapture('TAB,ESC,I,G,M,J,F,CTRL');
     
     this.input.keyboard.on('keydown-TAB', (e) => { e.preventDefault(); this.cycleTarget(); });
     this.input.keyboard.on('keydown-ESC', () => {
       this.selectTarget(null);
       this.isFiring = false;
-      for (const o of ['GarageScene', 'InventoryScene', 'MapScene', 'MissionsScene', 'ShopScene', 'CorpScene']) {
+      for (const o of ['GarageScene', 'InventoryScene', 'MapScene', 'MissionsScene', 'ShopScene', 'CorpScene', 'BaseMenuScene']) {
         if (this.scene.isActive(o)) this.scene.stop(o);
       }
+    });
+    this.input.keyboard.on('keydown-F', () => {
+      if (!this.player.alive) return;
+      const near = this.miningBases.find(b => Phaser.Math.Distance.Between(this.player.x, this.player.y, b.x, b.y) < 360);
+      if (near) near.interact(this.playerName);
     });
     this.input.keyboard.on('keydown-I', () => this.toggleOverlay('InventoryScene'));
     this.input.keyboard.on('keydown-G', () => { this.player.waypoint = null; this.cancelCollect(); this.toggleOverlay('GarageScene'); });
@@ -598,6 +621,11 @@ export default class GameScene extends Phaser.Scene {
   lootAt(wx, wy) {
     let best = null, bestD = Infinity;
     for (const l of this.loot) { if (!l.alive) continue; const d = Phaser.Math.Distance.Between(wx, wy, l.x, l.y); if (d < 40 && d < bestD) { best = l; bestD = d; } }
+    return best;
+  }
+  baseAt(wx, wy) {
+    let best = null, bestD = Infinity;
+    for (const b of this.miningBases) { const d = Phaser.Math.Distance.Between(wx, wy, b.x, b.y); if (d < 200 && d < bestD) { best = b; bestD = d; } }
     return best;
   }
   cancelCollect() { this.collectTarget = null; this.collectTimer = 0; }
@@ -810,7 +838,8 @@ export default class GameScene extends Phaser.Scene {
     this.updateAoe();
     
 
-    this.projectiles = this.projectiles.filter((p) => !p.dead); 
+    this.miningBases.forEach(b => b.update(dt));
+    this.projectiles = this.projectiles.filter((p) => !p.dead);
     this.projectiles.forEach((p) => p.update(dt));
     this.updateLoot(dt); this.updateGates(dt);
     if (this.pendingGate && Phaser.Math.Distance.Between(this.player.x, this.player.y, this.pendingGate.x, this.pendingGate.y) < 60) { this.pendingGate = null; }

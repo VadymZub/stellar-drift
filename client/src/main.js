@@ -11,6 +11,7 @@ import MapScene from './scenes/MapScene.js';
 import MissionsScene from './scenes/MissionsScene.js';
 import ShopScene from './scenes/ShopScene.js';
 import CorpScene from './scenes/CorpScene.js';
+import BaseMenuScene from './scenes/BaseMenuScene.js';
 
 const W = () => Math.floor(window.innerWidth * DPR);
 const H = () => Math.floor(window.innerHeight * DPR);
@@ -40,8 +41,8 @@ const config = {
     }
   },
   scene: [
-    BootScene, LoginScene, BackgroundScene, GameScene, HudScene, 
-    InventoryScene, GarageScene, MapScene, MissionsScene, ShopScene, CorpScene
+    BootScene, LoginScene, BackgroundScene, GameScene, HudScene,
+    InventoryScene, GarageScene, MapScene, MissionsScene, ShopScene, CorpScene, BaseMenuScene
   ],
 };
 
