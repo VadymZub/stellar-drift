@@ -80,6 +80,31 @@ export default class MiningBase {
     gs.scene.launch('BaseMenuScene', { base: this, playerName });
   }
 
+  // Cost in star-gold to instantly finish construction: 10 for PvP 1-3, 20 for PvP 4-5
+  get speedUpCost() { return this.pvpTier >= 4 ? 20 : 10; }
+
+  speedUpBuild(playerName) {
+    const gs   = this.scene;
+    const cost = this.speedUpCost;
+    if (!this.owners.some(o => o.name === playerName)) {
+      gs.log('Только владелец может ускорить строительство');
+      return false;
+    }
+    if ((gs.starGold || 0) < cost) {
+      gs.log(`Недостаточно ⭐ (нужно ${cost})`);
+      return false;
+    }
+    gs.starGold -= cost;
+    this.state = 'active';
+    this.hull  = BASE_CONFIG.hullMax;
+    this._buildTimer = BASE_CONFIG.buildTimeSec;
+    this._labelTick  = 0;
+    this._refreshVisuals();
+    this._persist();
+    gs.log(`Строительство завершено за ${cost} ⭐!`);
+    return true;
+  }
+
   buyBase(playerName) {
     const gs = this.scene;
     if ((gs.credits || 0) < BASE_CONFIG.baseCostCredits) {

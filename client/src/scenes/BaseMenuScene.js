@@ -74,12 +74,15 @@ export default class BaseMenuScene extends Phaser.Scene {
     const goldPerHr  = +(BASE_CONFIG.goldPerSec * 3600 / n).toFixed(1);
 
     // Measure content height dynamically
+    const isOwner    = this.base.owners.some(o => o.name === this.playerName);
     const ownerRows  = Math.max(1, this.base.owners.length);
     const turretH    = isActive ? (106 + 10) : 0;
+    const speedUpH   = (!isActive && isOwner) ? 54 : 0; // speed-up button during construction
     const H          = Math.min(600,
       PAD + 14             // title
       + 20                 // state
       + 30                 // hp bar block
+      + speedUpH           // accelerate button
       + 20                 // spacer
       + 16 + 4             // owners header
       + ownerRows * 20     // owner rows
@@ -117,6 +120,28 @@ export default class BaseMenuScene extends Phaser.Scene {
     refreshHp();
     this.time.addEvent({ delay: 1000, loop: true, callback: refreshHp });
     y += 32;
+
+    // ── Speed-up button (building state, owners only) ─────────────────────────
+    if (!isActive && isOwner) {
+      const cost      = this.base.speedUpCost;
+      const gs        = this.scene.get('GameScene');
+      const canAfford = (gs?.starGold || 0) >= cost;
+      const btnColor  = canAfford ? 0x1a2a10 : 0x1a1a10;
+      const lblColor  = canAfford ? '#c8e86a' : '#665533';
+      const btn = this.add.rectangle(cx, y + 18, W - PAD * 2, 40, btnColor)
+        .setStrokeStyle(2, canAfford ? 0xa0c840 : 0x665533, 0.9).setInteractive();
+      this.add.text(cx, y + 10, `УСКОРИТЬ СТРОИТЕЛЬСТВО`, { ...TF, fontSize: '12px', color: lblColor }).setOrigin(0.5);
+      this.add.text(cx, y + 26, `${cost} ⭐  (у вас: ${Math.floor(gs?.starGold || 0)} ⭐)`, { ...TF, fontSize: '11px', color: canAfford ? '#ffcc44' : '#554422' }).setOrigin(0.5);
+      if (canAfford) {
+        btn.on('pointerover',  () => btn.setFillStyle(0x263d16));
+        btn.on('pointerout',   () => btn.setFillStyle(btnColor));
+        btn.on('pointerdown',  () => {
+          const ok = this.base.speedUpBuild(this.playerName);
+          if (ok) this.scene.restart({ base: this.base, playerName: this.playerName });
+        });
+      }
+      y += speedUpH;
+    }
 
     // Income info (active only)
     if (isActive && this.base.owners.length > 0) {
