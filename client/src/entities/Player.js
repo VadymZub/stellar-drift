@@ -67,22 +67,9 @@ export default class Player {
   // Пересчёт статов: суммирование по всем занятым слотам корабля.
   recomputeStats() {
     const isAdmin = this.ship.tier === 'ADMIN';
-    const m = isAdmin ? shipLevelMods(SHIP_MAX_LEVEL) : shipLevelMods(this.shipLevel || 1);
+    // Admin uses level-1 multipliers (×1.0) so bare ship stats stay flat; gear still adds on top.
+    const m = shipLevelMods(isAdmin ? 1 : (this.shipLevel || 1));
     const ship = this.ship;
-
-    if (isAdmin) {
-      // Админ-корабль: плоские статы без множителей прокачки
-      this.weaponDamage = Math.round(ship.hullMax * 0.5 * m.damage); // Огромный урон
-      this.weaponPenetration = 0.5;
-      this.weaponFireRate = 2.0;
-      this.maxShield = ship.shieldBase; // без множителя уровня — ровно shieldBase
-      this.shieldRegenPerSec = 500;
-      this.evasion = 0.25;
-      this.baseSpeed = Math.round(ship.baseSpeed * m.speed);
-      this.weaponRange = 1500;
-      if (this.shield > this.maxShield) this.shield = this.maxShield;
-      return;
-    }
 
     // Берем только те модули из глобального списка, для которых есть физические слоты на текущем корпусе.
     const W = (this.slots.weapon || []).slice(0, ship.wSlots).filter(Boolean);
@@ -91,18 +78,19 @@ export default class Player {
 
     // modMult(x) — кредитный апгрейд модуля (+1.5%/ур, до +7.5%).
     const sumDmg = W.reduce((a, w) => a + w.damage * modMult(w), 0);
-    this.weaponDamage = Math.round(sumDmg * this.shipDmgMod * m.damage);
-    this.weaponPenetration = W.length ? Math.max(...W.map((w) => w.penetration * modMult(w))) : 0;
-    this.weaponFireRate = 1.0;
+    // Admin fallback damage if no cannons equipped: 500 per shot
+    this.weaponDamage = Math.round((sumDmg || (isAdmin ? 500 : 0)) * this.shipDmgMod * m.damage);
+    this.weaponPenetration = W.length ? Math.max(...W.map((w) => w.penetration * modMult(w))) : (isAdmin ? 0.5 : 0);
+    this.weaponFireRate = isAdmin ? 2.0 : 1.0;
 
     const sumDur = S.reduce((a, s) => a + s.durability * modMult(s), 0);
     this.maxShield = Math.round((this.shipShieldBase + sumDur) * m.shield);
-    this.shieldRegenPerSec = S.length ? Math.round(S.reduce((a, s) => a + s.regen * modMult(s), 0)) : PLAYER.baseShieldRegen;
-    this.evasion = Math.min(0.15, S.reduce((a, s) => a + s.evasion * modMult(s), 0));
+    this.shieldRegenPerSec = S.length ? Math.round(S.reduce((a, s) => a + s.regen * modMult(s), 0)) : (isAdmin ? 500 : PLAYER.baseShieldRegen);
+    this.evasion = Math.min(isAdmin ? 0.25 : 0.15, S.reduce((a, s) => a + s.evasion * modMult(s), 0));
 
     const sumSpd = E.reduce((a, e) => a + (e.speed || 0) * modMult(e), 0);
     this.baseSpeed = Math.round((this.shipBaseSpeed + sumSpd) * m.speed);
-    this.weaponRange = this.cfg.weaponRange; // Добавляем дальность стрельбы
+    this.weaponRange = isAdmin ? 1500 : this.cfg.weaponRange;
 
     if (this.shield > this.maxShield) this.shield = this.maxShield;
   }
