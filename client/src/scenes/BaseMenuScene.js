@@ -1,5 +1,5 @@
 import * as Phaser from 'https://cdn.jsdelivr.net/npm/phaser@4.1.0/dist/phaser.esm.js';
-import { BASE_CONFIG, TURRET_SLOTS } from '../bases.js';
+import { BASE_CONFIG, TURRET_SLOTS, cannon2GoldCost } from '../bases.js';
 import { COLORS, UI_RES } from '../constants.js';
 
 const W   = 500;
@@ -237,23 +237,34 @@ export default class BaseMenuScene extends Phaser.Scene {
     this.add.text(cx, cy - ph / 2 + 16, `СЛОТ ${slotIdx + 1} — выбор турели`, { ...TF, fontSize: '13px', color: '#4dd0e1' }).setOrigin(0.5);
     created.push(this.children.getAll().at(-1));
 
+    const gs = this.scene.get('GameScene');
+    const c2cost = cannon2GoldCost(this.base.pvpTier);
+    const c2affordable = (gs?.starGold || 0) >= c2cost;
+    const c1affordable = (gs?.credits  || 0) >= BASE_CONFIG.turretCostCredits;
+
     const options = [
-      { label: 'Cannon I  (одиночная)',  desc: `${BASE_CONFIG.turretCostCredits.toLocaleString()} кр`, type: 'cannon1' },
-      { label: 'Cannon II (спаренная)',  desc: `${BASE_CONFIG.turretCostCredits.toLocaleString()} кр`, type: 'cannon2' },
+      { label: 'Cannon I  (одиночная)', desc: `${BASE_CONFIG.turretCostCredits.toLocaleString()} кр`, type: 'cannon1', ok: c1affordable },
+      { label: 'Cannon II (спаренная)', desc: `${c2cost} ⭐`,                                          type: 'cannon2', ok: c2affordable },
     ];
     options.forEach((opt, i) => {
-      const by  = cy - 20 + i * 52;
-      const btn = this.add.rectangle(cx, by, pw - 48, 42, 0x101c28).setStrokeStyle(1, 0x336688, 0.8).setInteractive();
-      const lbl = this.add.text(cx, by - 7, opt.label, { ...TF, fontSize: '13px', color: '#ccddee' }).setOrigin(0.5);
-      const sub = this.add.text(cx, by + 9,  opt.desc,  { ...TF, fontSize: '11px', color: '#556677' }).setOrigin(0.5);
+      const by      = cy - 20 + i * 52;
+      const fillClr = opt.ok ? 0x101c28 : 0x120d0d;
+      const brdClr  = opt.ok ? 0x336688 : 0x442222;
+      const txtClr  = opt.ok ? '#ccddee' : '#664444';
+      const subClr  = opt.ok ? (opt.type === 'cannon2' ? '#ffcc44' : '#556677') : '#443333';
+      const btn = this.add.rectangle(cx, by, pw - 48, 42, fillClr).setStrokeStyle(1, brdClr, 0.8).setInteractive();
+      const lbl = this.add.text(cx, by - 7, opt.label, { ...TF, fontSize: '13px', color: txtClr }).setOrigin(0.5);
+      const sub = this.add.text(cx, by + 9,  opt.desc,  { ...TF, fontSize: '11px', color: subClr }).setOrigin(0.5);
       created.push(btn, lbl, sub);
-      btn.on('pointerover',  () => btn.setFillStyle(0x1a2e40));
-      btn.on('pointerout',   () => btn.setFillStyle(0x101c28));
-      btn.on('pointerdown',  () => {
-        created.forEach(o => o?.destroy());
-        this.base.buyTurret(slotIdx, opt.type, this.playerName);
-        this.scene.restart({ base: this.base, playerName: this.playerName });
-      });
+      if (opt.ok) {
+        btn.on('pointerover',  () => btn.setFillStyle(0x1a2e40));
+        btn.on('pointerout',   () => btn.setFillStyle(fillClr));
+        btn.on('pointerdown',  () => {
+          created.forEach(o => o?.destroy());
+          this.base.buyTurret(slotIdx, opt.type, this.playerName);
+          this.scene.restart({ base: this.base, playerName: this.playerName });
+        });
+      }
     });
 
     const cancel = this.add.text(cx, cy + ph / 2 - 16, 'Отмена', { ...TF, fontSize: '12px', color: '#445566' }).setOrigin(0.5).setInteractive();

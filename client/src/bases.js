@@ -27,6 +27,9 @@ export const TURRET_SLOTS = [
   { x:  90, y:  140 },
 ];
 
+// Cannon II costs star-gold; price scales with PvP tier (1⭐ on pvp1 … 5⭐ on pvp5)
+export function cannon2GoldCost(pvpTier) { return Math.max(1, Math.min(5, pvpTier || 1)); }
+
 // Corp → base/cannon asset key suffixes
 export const CORP_ASSETS = {
   helios:  { base: 'base_helios',  cannon1: 'cannon1_helios',  cannon2: 'cannon2_helios'  },

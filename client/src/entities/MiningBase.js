@@ -1,5 +1,5 @@
 import * as Phaser from 'https://cdn.jsdelivr.net/npm/phaser@4.1.0/dist/phaser.esm.js';
-import { BASE_CONFIG, TURRET_SLOTS, CORP_ASSETS } from '../bases.js';
+import { BASE_CONFIG, TURRET_SLOTS, CORP_ASSETS, cannon2GoldCost } from '../bases.js';
 import { COLORS, UI_RES } from '../constants.js';
 
 // Persists base ownership/state across sector re-entries.
@@ -127,11 +127,20 @@ export default class MiningBase {
     if (this.state !== 'active') return;
     if (this.turrets[slotIdx] !== null) return;
     const gs = this.scene;
-    if ((gs.credits || 0) < BASE_CONFIG.turretCostCredits) {
-      gs.log(`Недостаточно кредитов (нужно ${BASE_CONFIG.turretCostCredits})`);
-      return;
+    if (type === 'cannon2') {
+      const cost = cannon2GoldCost(this.pvpTier);
+      if ((gs.starGold || 0) < cost) {
+        gs.log(`Недостаточно ⭐ (нужно ${cost})`);
+        return;
+      }
+      gs.starGold -= cost;
+    } else {
+      if ((gs.credits || 0) < BASE_CONFIG.turretCostCredits) {
+        gs.log(`Недостаточно кредитов (нужно ${BASE_CONFIG.turretCostCredits})`);
+        return;
+      }
+      gs.credits -= BASE_CONFIG.turretCostCredits;
     }
-    gs.credits -= BASE_CONFIG.turretCostCredits;
     this.turrets[slotIdx] = type;
     this._refreshTurrets();
     this._persist();
