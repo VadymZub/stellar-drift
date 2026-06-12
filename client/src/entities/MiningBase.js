@@ -73,13 +73,11 @@ export default class MiningBase {
     return { hullHit: actual, shieldHit: 0, killed: false }; // destruction handled internally
   }
 
-  // Called from GameScene when player presses F near a base
+  // Called from GameScene when player presses F near a base — always opens menu
   interact(playerName) {
-    if (this.state === 'destroyed') {
-      this.buyBase(playerName);
-    } else if (this.state === 'active') {
-      this.scene.scene.launch('BaseMenuScene', { base: this, playerName });
-    }
+    const gs = this.scene;
+    if (gs.scene.isActive('BaseMenuScene')) gs.scene.stop('BaseMenuScene');
+    gs.scene.launch('BaseMenuScene', { base: this, playerName });
   }
 
   buyBase(playerName) {
@@ -259,7 +257,7 @@ export default class MiningBase {
 
   _refreshStateLabel() {
     if (this.state === 'destroyed') {
-      this._stateLabel.setText('[ РАЗРУШЕНА ] [F] купить за 20 000 кр');
+      this._stateLabel.setText('[ РАЗРУШЕНА ]  (нажмите для покупки)');
     } else if (this.state === 'building') {
       const rem = Math.ceil(BASE_CONFIG.buildTimeSec - this._buildTimer);
       const m = Math.floor(rem / 60), s = rem % 60;

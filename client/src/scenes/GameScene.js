@@ -33,7 +33,7 @@ export default class GameScene extends Phaser.Scene {
     this.worldWidth = BASE_WORLD.width * scale;
     this.worldHeight = BASE_WORLD.height * scale;
     this.safeZoneRadius = BASE_WORLD.safeZoneRadius;
-    this.objScale = isPvp ? 0.7 : 1.0; // Масштабирование объектов для PvP-карт
+    this.objScale = 1.0;
 
     // Камера БЕЗ границ (корабль всегда в центре). Физика ОСТАЁТСЯ в границах.
     this.physics.world.setBounds(0, 0, this.worldWidth, this.worldHeight);
@@ -504,26 +504,9 @@ export default class GameScene extends Phaser.Scene {
 
     this.input.on('pointerdown', (pointer) => {
       if (this.scene.isActive('GarageScene') || this.scene.isActive('InventoryScene') || this.scene.isActive('MapScene')) return;
-      
-      const wpt = this.cameras.main.getWorldPoint(pointer.x, pointer.y);
-      const wx = wpt.x, wy = wpt.y;
-      const mob  = this.mobAt(wx, wy);
-      const base = !mob ? this.baseAt(wx, wy) : null;
 
       const now = this.time.now;
-      if (mob && (now - lastClickTime < 350)) {
-        this.selectTarget(mob);
-        this.isFiring = true;
-        this.log("ATTACK: " + i18n.t(mob.tpl.nameKey));
-        lastClickTime = 0;
-        return;
-      }
-      if (base && (now - lastClickTime < 350) && base.canBeAttacked) {
-        this.selectTarget(base);
-        this.isFiring = true;
-        lastClickTime = 0;
-        return;
-      }
+      const isDouble = (now - lastClickTime < 350);
       lastClickTime = now;
 
       const mr = minimapRect(this);
@@ -533,28 +516,52 @@ export default class GameScene extends Phaser.Scene {
         if (this.player.alive && !this.jumping) this.movement.setWaypoint(wp.x, wp.y, true);
         return;
       }
-      
+
+      const wpt = this.cameras.main.getWorldPoint(pointer.x, pointer.y);
+      const wx = wpt.x, wy = wpt.y;
+
       if (this.movement.isOverBoostChevron(wx, wy)) { this.movement.toggleBoost(); return; }
+
       const gate = this.gateAt(wx, wy);
       if (gate) {
         this.cancelCollect(); this.selectTarget(null); this.pendingGate = gate; this.steering = false;
         if (this.player.alive && !this.jumping) this.movement.setWaypoint(gate.x, gate.y, false);
         return;
       }
+
       const box = this.lootAt(wx, wy);
       if (box) {
         this.cancelCollect();
-        this.collectTarget = box; 
+        this.collectTarget = box;
         this.collectTimer = 0;
-        if (this.player.alive && !this.jumping) {
-          // Подлетаем НЕ в центр, а чуть выше (на 85px), чтобы не перекрывать спрайтом
-          this.movement.setWaypoint(box.x, box.y - 85, false);
-        }
+        if (this.player.alive && !this.jumping) this.movement.setWaypoint(box.x, box.y - 85, false);
         return;
       }
-      
+
+      const mob  = this.mobAt(wx, wy);
+      const base = !mob ? this.baseAt(wx, wy) : null;
+
+      // Double-click mob → attack
+      if (isDouble && mob) {
+        this.selectTarget(mob); this.isFiring = true;
+        this.log("ATTACK: " + i18n.t(mob.tpl.nameKey));
+        return;
+      }
+      // Double-click active base → attack
+      if (isDouble && base?.canBeAttacked) {
+        this.selectTarget(base); this.isFiring = true;
+        return;
+      }
+      // Single-click mob → select
       if (mob) { this.cancelCollect(); this.selectTarget(mob); return; }
-      if (base) { this.cancelCollect(); this.selectTarget(base.canBeAttacked ? base : null); return; }
+      // Single-click base (any state) → open menu
+      if (base) {
+        this.cancelCollect();
+        if (this.scene.isActive('BaseMenuScene')) this.scene.stop('BaseMenuScene');
+        this.scene.launch('BaseMenuScene', { base, playerName: this.playerName });
+        return;
+      }
+      // Empty space → move
       if (this.player.alive && !this.jumping) { this.cancelCollect(); this.steering = true; this.movement.setWaypoint(wx, wy, false); this.pingAt(wx, wy); }
     });
 
@@ -625,7 +632,7 @@ export default class GameScene extends Phaser.Scene {
   }
   baseAt(wx, wy) {
     let best = null, bestD = Infinity;
-    for (const b of this.miningBases) { const d = Phaser.Math.Distance.Between(wx, wy, b.x, b.y); if (d < 200 && d < bestD) { best = b; bestD = d; } }
+    for (const b of this.miningBases) { const d = Phaser.Math.Distance.Between(wx, wy, b.x, b.y); if (d < 260 && d < bestD) { best = b; bestD = d; } }
     return best;
   }
   cancelCollect() { this.collectTarget = null; this.collectTimer = 0; }
