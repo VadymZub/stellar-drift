@@ -97,18 +97,25 @@ export default class BaseMenuScene extends Phaser.Scene {
     this.add.text(cx, y + 12, `ДОБЫВАЮЩАЯ БАЗА${corpName}`, { ...TF, fontSize: '16px', color: '#4dd0e1' }).setOrigin(0.5);
     y += 28;
 
-    // State line
+    // State line — stored so the per-second timer can update it
     const stateColor = isActive ? '#4dd0e1' : '#ffb74d';
-    this.add.text(cx, y, this._stateText(), { ...TF, fontSize: '12px', color: stateColor }).setOrigin(0.5);
+    const stateLbl = this.add.text(cx, y, this._stateText(), { ...TF, fontSize: '12px', color: stateColor }).setOrigin(0.5);
+    this.time.addEvent({ delay: 1000, loop: true, callback: () => { if (stateLbl?.active) stateLbl.setText(this._stateText()); } });
     y += 22;
 
-    // HP bar
-    const barW = W - PAD * 2;
-    const frac  = BASE_CONFIG.hullMax > 0 ? this.base.hull / BASE_CONFIG.hullMax : 0;
-    const barColor = frac > 0.5 ? 0x4dd0e1 : frac > 0.25 ? 0xffb74d : 0xef5350;
+    // HP bar — live-updated each second during construction
+    const barW   = W - PAD * 2;
     this.add.rectangle(cx, y, barW, 10, 0x222233).setOrigin(0.5);
-    if (frac > 0) this.add.rectangle(cx - barW / 2, y, Math.round(barW * frac), 10, barColor).setOrigin(0, 0.5);
-    this.add.text(cx, y + 14, `HP  ${this.base.hull.toLocaleString()} / ${BASE_CONFIG.hullMax.toLocaleString()}`, { ...TF, fontSize: '11px', color: '#6688aa' }).setOrigin(0.5);
+    const hpFill = this.add.rectangle(cx - barW / 2, y, 1, 10, 0x4dd0e1).setOrigin(0, 0.5);
+    const hpTxt  = this.add.text(cx, y + 14, '', { ...TF, fontSize: '11px', color: '#6688aa' }).setOrigin(0.5);
+    const refreshHp = () => {
+      const f  = BASE_CONFIG.hullMax > 0 ? this.base.hull / BASE_CONFIG.hullMax : 0;
+      const c  = f > 0.5 ? 0x4dd0e1 : f > 0.25 ? 0xffb74d : 0xef5350;
+      if (hpFill?.active) { hpFill.setDisplaySize(Math.max(1, Math.round(barW * f)), 10).setFillStyle(c); }
+      if (hpTxt?.active)  { hpTxt.setText(`HP  ${this.base.hull.toLocaleString()} / ${BASE_CONFIG.hullMax.toLocaleString()}`); }
+    };
+    refreshHp();
+    this.time.addEvent({ delay: 1000, loop: true, callback: refreshHp });
     y += 32;
 
     // Income info (active only)

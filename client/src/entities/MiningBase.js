@@ -120,6 +120,9 @@ export default class MiningBase {
       const frac = Math.min(1, this._buildTimer / BASE_CONFIG.buildTimeSec);
       this.hull = Math.round(BASE_CONFIG.hullMax * frac);
       this._refreshHpBar();
+      // Refresh world label once per second so countdown is visible
+      this._labelTick = (this._labelTick || 0) + dt;
+      if (this._labelTick >= 1) { this._labelTick = 0; this._refreshStateLabel(); }
       if (this._buildTimer >= BASE_CONFIG.buildTimeSec) {
         this.state = 'active';
         this.hull  = BASE_CONFIG.hullMax;
