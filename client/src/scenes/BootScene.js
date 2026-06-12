@@ -3,6 +3,7 @@ import { i18n } from '../i18n.js';
 import { MOBS } from '../constants.js';
 import { SHIPS } from '../ships.js';
 import { SECTORS } from '../galaxy.js';
+import { PERK_DEFS } from '../perks.js';
 
 // Классы взрывов (px нативного кадра). Стек 28 кадров на класс — из design/slice_explosion24.py,
 // лежит в client/explosion24/<class>_sheet.png (игра берёт свежий стек оттуда).
@@ -55,6 +56,9 @@ export default class BootScene extends Phaser.Scene {
     this.load.image('bg_corp_helios', 'assets/UI BACKGROUNDS/Corp_Hub_Helios.png');
     this.load.image('bg_corp_karaks', 'assets/UI BACKGROUNDS/Corp_Hub_Karaks.png');
     this.load.image('bg_corp_tides', 'assets/UI BACKGROUNDS/Corp_Hub_Tides.png');
+
+    // Perk images (slot perks for weapon/shield modules)
+    for (const p of PERK_DEFS) this.load.image(p.key, `assets/perks/${p.imgFile}`);
 
     // Mining base sprites
     for (const key of ['base_destroyed', 'base_building', 'base_helios', 'base_karax', 'base_tides', 'base_neutral']) {

@@ -1,5 +1,6 @@
 import * as Phaser from 'https://cdn.jsdelivr.net/npm/phaser@4.1.0/dist/phaser.esm.js';
 import { i18n } from './i18n.js';
+import { rollPerk } from './perks.js';
 
 // Модули MVP: Плазма-пушки и Дефлекторы (щиты), тиры T1-T4.
 // Числа подобраны под играбельность прототипа (сохраняя дизайн-пропорции тиров).
@@ -37,6 +38,7 @@ export function rollCannon(tier, mobLevel) {
     damage: Math.round(t.dmg * roll() * scale),
     penetration: +(t.pen * roll()).toFixed(3),
     fireRate: 1.0,
+    perk: rollPerk('cannon'),
   };
 }
 
@@ -48,6 +50,7 @@ export function rollShield(tier, mobLevel) {
     durability: Math.round(t.dur * roll() * scale),
     regen: Math.round(t.regen * roll()),
     evasion: +(t.eva * roll()).toFixed(3),
+    perk: rollPerk('shield'),
   };
 }
 

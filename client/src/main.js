@@ -12,6 +12,7 @@ import MissionsScene from './scenes/MissionsScene.js';
 import ShopScene from './scenes/ShopScene.js';
 import CorpScene from './scenes/CorpScene.js';
 import BaseMenuScene from './scenes/BaseMenuScene.js';
+import SkillScene from './scenes/SkillScene.js';
 
 // Физическое разрешение канваса (DPR для чёткости на HiDPI / Windows-масштаб).
 const W = () => Math.floor(window.innerWidth  * DPR);
@@ -41,7 +42,7 @@ const config = {
   },
   scene: [
     BootScene, LoginScene, BackgroundScene, GameScene, HudScene,
-    InventoryScene, GarageScene, MapScene, MissionsScene, ShopScene, CorpScene, BaseMenuScene,
+    InventoryScene, GarageScene, MapScene, MissionsScene, ShopScene, CorpScene, BaseMenuScene, SkillScene,
   ],
 };
 

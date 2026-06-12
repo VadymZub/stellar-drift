@@ -121,6 +121,12 @@ export default class GameScene extends Phaser.Scene {
       'neutral';
     this.corpSwitchCount = this.corpSwitchCount || 0;
 
+    // Skill system (account-level, persistent across sector restarts)
+    this.skillLevels = this.skillLevels || {};
+    this.actionBar   = this.actionBar   || Array(10).fill(null);
+    this.respeckCount     = this.respeckCount     || 0;
+    this.skillAchievementSP = this.skillAchievementSP || 0;
+
     this.playerName  = this.playerName  || 'Player';
     this.miningBases = [];
     this.homeBases   = [];
@@ -545,7 +551,7 @@ export default class GameScene extends Phaser.Scene {
     let lastClickTime = 0;
 
     this.input.on('pointerdown', (pointer) => {
-      if (this.scene.isActive('GarageScene') || this.scene.isActive('InventoryScene') || this.scene.isActive('MapScene') || this.scene.isActive('BaseMenuScene') || this.scene.isActive('CorpScene')) return;
+      if (this.scene.isActive('GarageScene') || this.scene.isActive('InventoryScene') || this.scene.isActive('MapScene') || this.scene.isActive('BaseMenuScene') || this.scene.isActive('CorpScene') || this.scene.isActive('SkillScene')) return;
 
       const now = this.time.now;
       const isDouble = (now - lastClickTime < 350);
@@ -620,6 +626,7 @@ export default class GameScene extends Phaser.Scene {
     this.input.keyboard.on('keydown-I', () => this.toggleOverlay('InventoryScene'));
     this.input.keyboard.on('keydown-G', () => { this.player.waypoint = null; this.cancelCollect(); this.toggleOverlay('GarageScene'); });
     this.input.keyboard.on('keydown-M', () => { this.player.waypoint = null; this.cancelCollect(); this.toggleOverlay('MapScene'); });
+    this.input.keyboard.on('keydown-K', () => { this.player.waypoint = null; this.cancelCollect(); this.toggleOverlay('SkillScene'); });
     this.input.keyboard.on('keydown-O', () => { this.player.waypoint = null; this.cancelCollect(); this.toggleOverlay('MissionsScene'); });
     this.input.keyboard.on('keydown-P', () => { this.player.waypoint = null; this.cancelCollect(); this.toggleOverlay('ShopScene'); });
     this.input.keyboard.on('keydown-H', () => { this.player.waypoint = null; this.cancelCollect(); this.toggleOverlay('CorpScene'); });

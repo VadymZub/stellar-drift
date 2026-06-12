@@ -3,6 +3,7 @@ import { COLORS, UI_RES } from '../constants.js';
 import { i18n } from '../i18n.js';
 import { itemName, itemStats, itemSellPrice, SLOT_KEY, creditUpgradeCost, starUpgradeCost, modMult } from '../items.js';
 import { SHIPS, SHIP_BY_KEY, purchaseState, shipLevelCost, SHIP_MAX_LEVEL } from '../ships.js';
+import { PERK_MAP, RARITY_COLOR, RARITY_LABEL, rollPerk, perkBonus, creditUpgCost, starUpgCost, PERK_CREDIT_COST, PERK_STAR_COST, PERK_REROLL_BASE } from '../perks.js';
 
 // Гараж (хоткей G). Два таба:
 //  • КОРАБЛИ — витрина всего модельного ряда. Купленные активны, остальные серые,
@@ -44,13 +45,15 @@ export default class GarageScene extends Phaser.Scene {
 
     // ── Табы ──
     this.tab = this.gs.garageTab || 'ships';
-    this.tabBtn(px + 150, py + 20, 'garage.tab_ships', 'ships');
-    this.tabBtn(px + 300, py + 20, 'garage.tab_equip', 'equip');
-    this.tabBtn(px + 470, py + 20, 'garage.tab_upgrade', 'upgrade');
+    this.tabBtn(px + 130, py + 20, 'garage.tab_ships',   'ships');
+    this.tabBtn(px + 270, py + 20, 'garage.tab_equip',   'equip');
+    this.tabBtn(px + 430, py + 20, 'garage.tab_upgrade', 'upgrade');
+    this.tabBtn(px + 590, py + 20, 'garage.tab_perks',   'perks');
 
-    if (this.tab === 'ships') this.renderShipsTab();
-    else if (this.tab === 'equip') this.renderEquipTab();
-    else this.renderUpgradeTab();
+    if      (this.tab === 'ships')   this.renderShipsTab();
+    else if (this.tab === 'equip')   this.renderEquipTab();
+    else if (this.tab === 'perks')   this.renderPerksTab();
+    else                             this.renderUpgradeTab();
 
     this.input.keyboard.on('keydown-ESC', () => this.scene.stop());
   }
@@ -565,5 +568,256 @@ export default class GarageScene extends Phaser.Scene {
     arr[i] = null;
     p.recomputeStats();
     this.scene.restart();
+  }
+
+  // ════════════════ ТАБ «ПЕРКИ» ════════════════════════════════════════════
+  // Отображает случайные перки для слотов оружия/щита активного корабля.
+  // Левая колонка — список слотов, правая — детали выбранного слота.
+  renderPerksTab() {
+    const { px, py, pw, ph } = this.box;
+    const gs = this.gs;
+
+    // Retroactively assign perks to equipped items that lack them
+    for (const slot of ['weapon', 'shield']) {
+      for (const item of (gs.equipped[slot] || [])) {
+        if (item && !item.perk) item.perk = rollPerk(item.type);
+      }
+    }
+
+    // Build a flat list of all equipped perkable slots
+    const slots = [];
+    for (const item of (gs.equipped.weapon || [])) {
+      if (item) slots.push({ item, label: `Орудие T${item.tier}` });
+    }
+    for (const item of (gs.equipped.shield || [])) {
+      if (item) slots.push({ item, label: `Щит T${item.tier}` });
+    }
+
+    if (slots.length === 0) {
+      this.add.text(px + pw / 2, py + ph / 2, 'Нет надетых модулей',
+        this.F('16px', '#445566')).setOrigin(0.5);
+      return;
+    }
+
+    // Track selected slot index
+    if (gs.perksSlotIdx === undefined || gs.perksSlotIdx >= slots.length) gs.perksSlotIdx = 0;
+    const selIdx = gs.perksSlotIdx;
+    const selSlot = slots[selIdx];
+
+    const contentY = py + 58;
+    const contentH = ph - 62;
+
+    // ── Left: slot list ──────────────────────────────────────────────────
+    const listW = 180;
+    const listX = px + 18;
+    const itemH = 52;
+
+    this.add.text(listX + listW / 2, contentY + 6, 'СЛОТЫ МОДУЛЕЙ',
+      this.O('11px', '#2a4a5a')).setOrigin(0.5, 0);
+
+    slots.forEach(({ item, label }, i) => {
+      const iy = contentY + 30 + i * (itemH + 6);
+      const active = i === selIdx;
+      const pDef = item.perk ? PERK_MAP[item.perk.key] : null;
+      const rarColor = pDef ? RARITY_COLOR[pDef.rarity] : 0x334455;
+
+      const card = this.add.rectangle(listX, iy, listW, itemH, active ? 0x0d2030 : 0x081018)
+        .setOrigin(0, 0).setStrokeStyle(active ? 2 : 1, active ? COLORS.primary : 0x1a2a3a, 0.9)
+        .setInteractive({ useHandCursor: true });
+      card.on('pointerdown', () => { gs.perksSlotIdx = i; this.scene.restart(); });
+      card.on('pointerover', () => { if (!active) card.setFillStyle(0x0c1828); });
+      card.on('pointerout',  () => { if (!active) card.setFillStyle(0x081018); });
+
+      this.add.text(listX + 8, iy + 8, label, this.O('11px', active ? '#4dd0e1' : '#446677')).setOrigin(0, 0);
+      if (pDef) {
+        const dot = this.add.graphics();
+        dot.fillStyle(rarColor, 1); dot.fillCircle(listX + 10, iy + itemH - 14, 4);
+        this.add.text(listX + 18, iy + itemH - 22, pDef.name,
+          this.F('10px', `#${rarColor.toString(16).padStart(6, '0')}`)).setOrigin(0, 0);
+      } else {
+        this.add.text(listX + 8, iy + itemH - 22, 'нет перка', this.F('10px', '#223344')).setOrigin(0, 0);
+      }
+    });
+
+    // ── Right: perk detail ───────────────────────────────────────────────
+    const detX = px + listW + 28;
+    const detW = pw - listW - 38;
+    const detH = contentH - 8;
+
+    const bg = this.add.graphics();
+    bg.fillStyle(0x070e18, 0.9); bg.fillRoundedRect(detX, contentY, detW, detH, 8);
+    bg.lineStyle(1, 0x162030, 0.8); bg.strokeRoundedRect(detX, contentY, detW, detH, 8);
+
+    const item = selSlot.item;
+    const perk = item.perk;
+
+    if (!perk) {
+      this.add.text(detX + detW / 2, contentY + detH / 2, 'Перк не назначен',
+        this.F('14px', '#334455')).setOrigin(0.5);
+      this._perkRerollBtn(detX, contentY, detW, detH, item, selIdx, gs);
+      return;
+    }
+
+    const pDef = PERK_MAP[perk.key];
+    if (!pDef) return;
+
+    const rarHex    = RARITY_COLOR[pDef.rarity];
+    const rarLabel  = RARITY_LABEL[pDef.rarity];
+    const rarColor  = `#${rarHex.toString(16).padStart(6, '0')}`;
+    const bonus     = perkBonus(perk);
+
+    let cy = contentY + 18;
+    const cx = detX + detW / 2;
+
+    // Perk image
+    const imgSize = 96;
+    if (this.textures.exists(pDef.key)) {
+      const img = this.add.image(cx, cy + imgSize / 2, pDef.key);
+      const sc = imgSize / Math.max(img.width, img.height);
+      img.setScale(sc).setOrigin(0.5);
+    } else {
+      // Fallback rect if texture not loaded
+      const fg = this.add.graphics();
+      fg.fillStyle(rarHex, 0.3); fg.fillRoundedRect(cx - imgSize / 2, cy, imgSize, imgSize, 8);
+      fg.lineStyle(2, rarHex, 0.7); fg.strokeRoundedRect(cx - imgSize / 2, cy, imgSize, imgSize, 8);
+    }
+    cy += imgSize + 12;
+
+    // Rarity badge
+    const rbg = this.add.graphics();
+    const rlw = 110, rlh = 22;
+    rbg.fillStyle(rarHex, 0.15); rbg.fillRoundedRect(cx - rlw / 2, cy, rlw, rlh, 5);
+    rbg.lineStyle(1, rarHex, 0.6); rbg.strokeRoundedRect(cx - rlw / 2, cy, rlw, rlh, 5);
+    this.add.text(cx, cy + rlh / 2, rarLabel, this.O('10px', rarColor)).setOrigin(0.5);
+    cy += rlh + 10;
+
+    // Name
+    this.add.text(cx, cy, pDef.name, this.O('16px', rarColor)).setOrigin(0.5, 0);
+    cy += 24;
+
+    // Base effect
+    this.add.text(cx, cy, pDef.desc(bonus), this.F('13px', '#aaccdd')).setOrigin(0.5, 0);
+    cy += 20;
+
+    // Bonus breakdown
+    const cLvl = perk.creditLvl || 0, sLvl = perk.starLvl || 0;
+    this.add.text(cx, cy,
+      `Кред: +${(cLvl * 0.9).toFixed(1)}%  ·  Звёзды: +${(sLvl * 9).toFixed(0)}%`,
+      this.F('10px', '#2a4a5a')).setOrigin(0.5, 0);
+    cy += 18;
+
+    // Separator
+    const dg = this.add.graphics();
+    dg.lineStyle(1, 0x162030, 1);
+    dg.strokeLineShape(new Phaser.Geom.Line(detX + 16, cy, detX + detW - 16, cy));
+    cy += 10;
+
+    // Two upgrade columns
+    const halfW = (detW - 40) / 2;
+    const colLX = detX + 12, colRX = detX + 20 + halfW;
+
+    // Credits upgrade
+    const nextCLvl = cLvl + 1;
+    const cCost    = cLvl < 5 ? PERK_CREDIT_COST[cLvl] : null;
+    const canCred  = cCost !== null && (gs.credits || 0) >= cCost;
+
+    this.add.text(colLX + halfW / 2, cy, `💰 ПРОКАЧКА (кредиты)`,
+      this.O('10px', '#3a6a4a')).setOrigin(0.5, 0);
+    this.add.text(colLX + halfW / 2, cy + 16,
+      `Ур. ${cLvl}/5  →  +${(cLvl * 0.9).toFixed(1)}% бонус`,
+      this.F('10px', '#2a4a3a')).setOrigin(0.5, 0);
+
+    if (cCost !== null) {
+      const cbg = this.add.rectangle(colLX + halfW / 2, cy + 48, halfW - 4, 32,
+        canCred ? 0x081a10 : 0x060810)
+        .setOrigin(0.5).setStrokeStyle(1, canCred ? 0x44aa55 : 0x1a2a1a, 0.9)
+        .setInteractive({ useHandCursor: canCred });
+      this.add.text(colLX + halfW / 2, cy + 48,
+        canCred ? `▲ ${cCost.toLocaleString('ru')} кр` : `🔒 ${cCost.toLocaleString('ru')} кр`,
+        this.F('12px', canCred ? '#66cc77' : '#334455')).setOrigin(0.5);
+      if (canCred) {
+        cbg.on('pointerover', () => cbg.setFillStyle(0x102818));
+        cbg.on('pointerout',  () => cbg.setFillStyle(0x081a10));
+        cbg.on('pointerdown', () => {
+          gs.credits  = (gs.credits || 0) - cCost;
+          item.perk.creditLvl = nextCLvl - 1 + 1; // = nextCLvl
+          this.scene.restart();
+        });
+      }
+    } else {
+      this.add.text(colLX + halfW / 2, cy + 48, '✓ MAX (кред.)',
+        this.F('11px', '#66cc77')).setOrigin(0.5);
+    }
+
+    // Stars upgrade
+    const nextSLvl = sLvl + 1;
+    const sCost    = sLvl < 5 ? PERK_STAR_COST[sLvl] : null;
+    const canStar  = sCost !== null && (gs.starGold || 0) >= sCost;
+
+    this.add.text(colRX + halfW / 2, cy, `⭐ ПРОКАЧКА (звёзды)`,
+      this.O('10px', '#3a5a1a')).setOrigin(0.5, 0);
+    this.add.text(colRX + halfW / 2, cy + 16,
+      `Ур. ${sLvl}/5  →  +${(sLvl * 9).toFixed(0)}% бонус`,
+      this.F('10px', '#3a4a1a')).setOrigin(0.5, 0);
+
+    if (sCost !== null) {
+      const sbg = this.add.rectangle(colRX + halfW / 2, cy + 48, halfW - 4, 32,
+        canStar ? 0x1a1200 : 0x060810)
+        .setOrigin(0.5).setStrokeStyle(1, canStar ? 0xaa9900 : 0x2a2200, 0.9)
+        .setInteractive({ useHandCursor: canStar });
+      this.add.text(colRX + halfW / 2, cy + 48,
+        canStar ? `▲ ${sCost} ⭐` : `🔒 ${sCost} ⭐`,
+        this.F('12px', canStar ? '#ffcc44' : '#334455')).setOrigin(0.5);
+      if (canStar) {
+        sbg.on('pointerover', () => sbg.setFillStyle(0x261c00));
+        sbg.on('pointerout',  () => sbg.setFillStyle(0x1a1200));
+        sbg.on('pointerdown', () => {
+          gs.starGold    = (gs.starGold || 0) - sCost;
+          item.perk.starLvl = nextSLvl - 1 + 1;
+          this.scene.restart();
+        });
+      }
+    } else {
+      this.add.text(colRX + halfW / 2, cy + 48, '✓ MAX (звёзды)',
+        this.F('11px', '#ffcc44')).setOrigin(0.5);
+    }
+
+    cy += 80;
+
+    // Reroll section
+    this._perkRerollBtn(detX, cy, detW, 0, item, selIdx, gs);
+  }
+
+  _perkRerollBtn(detX, cy, detW, detH, item, slotIdx, gs) {
+    const cx = detX + detW / 2;
+    // Reroll count tracking per slot (reset daily → simplified: per session count)
+    if (!gs.perkRerollCounts) gs.perkRerollCounts = {};
+    const rerollKey = `slot_${slotIdx}`;
+    const rerollN   = gs.perkRerollCounts[rerollKey] || 0;
+    const rerollCost = PERK_REROLL_BASE * Math.pow(2, rerollN); // 200, 400, 800...
+    const canReroll  = (gs.starGold || 0) >= rerollCost;
+
+    const ry = detH ? cy + detH - 58 : cy + 12;
+    const rbg = this.add.rectangle(cx, ry, 220, 36, canReroll ? 0x100818 : 0x060810)
+      .setStrokeStyle(1, canReroll ? 0x664488 : 0x2a1a3a, 0.9)
+      .setInteractive({ useHandCursor: canReroll });
+    this.add.text(cx, ry,
+      canReroll ? `🔄 Реролл перка: ${rerollCost} ⭐  (попытка ${rerollN + 1})` : `🔄 Реролл: ${rerollCost} ⭐ (нет звёзд)`,
+      this.F('12px', canReroll ? '#bb88dd' : '#334455')).setOrigin(0.5);
+    if (canReroll) {
+      rbg.on('pointerover', () => rbg.setFillStyle(0x180a24));
+      rbg.on('pointerout',  () => rbg.setFillStyle(0x100818));
+      rbg.on('pointerdown', () => {
+        gs.starGold = (gs.starGold || 0) - rerollCost;
+        gs.perkRerollCounts[rerollKey] = rerollN + 1;
+        const slotType = item.type === 'cannon' ? 'cannon' : 'shield';
+        item.perk = rollPerk(slotType);
+        this.scene.restart();
+      });
+    }
+
+    // Daily reset hint
+    this.add.text(cx, ry + 24, 'Счётчик попыток сбрасывается в 00:00 UTC',
+      this.F('9px', '#1a2535')).setOrigin(0.5, 0);
   }
 }
