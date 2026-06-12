@@ -71,11 +71,11 @@ export default class Player {
     const ship = this.ship;
 
     if (isAdmin) {
-      // Админ-корабль: игнорируем модули, даем сразу топовые статы
+      // Админ-корабль: плоские статы без множителей прокачки
       this.weaponDamage = Math.round(ship.hullMax * 0.5 * m.damage); // Огромный урон
       this.weaponPenetration = 0.5;
       this.weaponFireRate = 2.0;
-      this.maxShield = Math.round(ship.shieldBase * m.shield);
+      this.maxShield = ship.shieldBase; // без множителя уровня — ровно shieldBase
       this.shieldRegenPerSec = 500;
       this.evasion = 0.25;
       this.baseSpeed = Math.round(ship.baseSpeed * m.speed);

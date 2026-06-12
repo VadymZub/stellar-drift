@@ -41,7 +41,7 @@ export const SHIPS = [
     engines: [{ x: 0, y: 70 }] },
 
   // Admin Ship
-  { key: 'argus',    nameKey: 'ship.argus',    descKey: 'shipdesc.argus',    tier: 'ADMIN',    levelGate: 99, price: 0,      currency: null,      displaySize: 182, hullMax: 10000, shieldBase: 5000, baseSpeed: 450, wSlots: 10, sSlots: 10, eSlots: 10, dmgMod: 2.0, artAngleOffset: -Math.PI / 2,
+  { key: 'argus',    nameKey: 'ship.argus',    descKey: 'shipdesc.argus',    tier: 'ADMIN',    levelGate: 99, price: 0,      currency: null,      displaySize: 182, hullMax: 15000, shieldBase: 15000, baseSpeed: 450, wSlots: 10, sSlots: 10, eSlots: 10, dmgMod: 2.0, artAngleOffset: -Math.PI / 2,
     engines: [{ x: -35, y: 72 }, { x: -12, y: 76 }, { x: 12, y: 76 }, { x: 35, y: 72 }] },
 ];
 
