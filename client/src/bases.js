@@ -3,32 +3,48 @@ export const CORPS = ['neutral', 'helios', 'karax', 'tides'];
 
 export const BASE_CONFIG = {
   hullMax:          12000,
-  displaySize:      320,   // px, matches art footprint
-  captureRadius:    180,   // px, collision / F-key range
+  displaySize:      460,   // active / building sprite px
+  displayDestroyed: 340,   // destroyed sprite (smaller, dimmed)
+  captureRadius:    180,   // F-key interact range
   buildTimeSec:     900,   // 15 min
-  neutralOpenSec:   1800,  // 30 min  open / immune cycle
+  neutralOpenSec:   1800,  // 30 min open / immune cycle
   neutralImmuneSec: 3600,  // 60 min
   turretSlots:      6,
   turretCostCredits: 5000,
+  turretSize:       80,    // turret sprite display size px
   baseCostCredits:  20000,
-  pointsPerSec:     1,     // credits+points earned per owner per second while active
-  goldPerSec:       0.05,  // star-gold per owner per second
+  pointsPerSec:     1,
+  goldPerHrLow:     1,   // pvpTier 1-2
+  goldPerHrHigh:    2,   // pvpTier 3-5
   maxOwners:        10,
+
+  cannon1Range:  400,
+  cannon1Damage: 80,
+  cannon1Rate:   0.8,   // shots / sec
+
+  cannon2Range:  550,
+  cannon2Damage: 130,
+  cannon2Rate:   1.2,
 };
 
-// Canonical turret slot offsets (x, y) relative to base center, in world px.
-// Layout matches the 6-pod octagonal art: 2 top, 2 middle, 2 bottom.
+// Turret slot offsets relative to base center (world px), tuned for displaySize 460.
+// Layout: 2 top, 2 middle (widest), 2 bottom — matches the 6-pod octagonal art.
 export const TURRET_SLOTS = [
-  { x: -90, y: -140 },
-  { x:  90, y: -140 },
-  { x: -130, y:   0 },
-  { x:  130, y:   0 },
-  { x: -90, y:  140 },
-  { x:  90, y:  140 },
+  { x: -120, y: -175 },
+  { x:  120, y: -175 },
+  { x: -170, y:    0 },
+  { x:  170, y:    0 },
+  { x: -120, y:  175 },
+  { x:  120, y:  175 },
 ];
 
 // Cannon II costs star-gold; price scales with PvP tier (1⭐ on pvp1 … 5⭐ on pvp5)
 export function cannon2GoldCost(pvpTier) { return Math.max(1, Math.min(5, pvpTier || 1)); }
+
+// Gold earned per second per owner; 1/hr on low tiers, 2/hr on high tiers
+export function goldPerSecByTier(pvpTier) {
+  return (pvpTier >= 3 ? BASE_CONFIG.goldPerHrHigh : BASE_CONFIG.goldPerHrLow) / 3600;
+}
 
 // Corp → base/cannon asset key suffixes
 export const CORP_ASSETS = {

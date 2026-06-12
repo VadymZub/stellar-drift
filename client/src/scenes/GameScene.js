@@ -15,6 +15,7 @@ import { SECTORS, galaxy, neighbors, edgeDir, sectorAccess } from '../galaxy.js'
 import { calculateRating, getRank } from '../ranking.js';
 import VFXManager from '../systems/VFXManager.js';
 import MiningBase from '../entities/MiningBase.js';
+import HomeBase from '../entities/HomeBase.js';
 
 const PICKUP_RADIUS = 95;
 const PICKUP_TIME = 2000;
@@ -110,11 +111,19 @@ export default class GameScene extends Phaser.Scene {
 
     if (this.activeShip !== 'wisp' && SHIP_BY_KEY[this.activeShip]) {
       this.player.applyShip(SHIP_BY_KEY[this.activeShip]);
-      this.player.hull = this.player.maxHull; this.player.shield = this.player.maxShield;   
+      this.player.hull = this.player.maxHull; this.player.shield = this.player.maxShield;
     }
+
+    // Derive corp from active prestige ship first, then any owned prestige ship, else neutral.
+    // This means Helios pilots build Helios bases regardless of which ship they fly now.
+    this.playerCorp = this.player?.ship?.corp ||
+      Object.values(SHIP_BY_KEY).find(s => s.prestige && this.ownedShips.has(s.key))?.corp ||
+      'neutral';
+    this.corpSwitchCount = this.corpSwitchCount || 0;
 
     this.playerName  = this.playerName  || 'Player';
     this.miningBases = [];
+    this.homeBases   = [];
 
     this.steering = false;
     this.collectTarget = null;
@@ -228,6 +237,9 @@ export default class GameScene extends Phaser.Scene {
     // Clean up any previous base visuals (scene restart)
     for (const b of this.miningBases) b.destroy();
     this.miningBases = [];
+    for (const b of this.homeBases) b.destroy();
+    this.homeBases = [];
+    this._spawnHomeBase();
 
     const sec = SECTORS[galaxy.current];
     const cx = this.worldWidth / 2, cy = this.worldHeight / 2, M = MOBS;
@@ -337,8 +349,38 @@ export default class GameScene extends Phaser.Scene {
       const gx = 1500, gy = 950;
       add(boss, Lmax, gx, gy, { behavior: 'guard', patrolRadius: 180, leash: 480 });
       for (const [ox, oy] of [[-240, -130], [250, -90], [-110, 250]]) {
-        add(pool[0], rnd(Lmin, Lmax), gx + ox, gy + oy, { patrolRadius: 150, leash: 520 });   
+        add(pool[0], rnd(Lmin, Lmax), gx + ox, gy + oy, { patrolRadius: 150, leash: 520 });
       }
+    }
+  }
+
+  _spawnHomeBase() {
+    const cur = galaxy.current;
+    const sec = SECTORS[cur];
+    if (sec?.isDungeon) return; // Данжи — без штабов
+
+    const cx  = this.worldWidth / 2;
+    const cy  = this.worldHeight / 2;
+    // Gate edge margin (same formula as createJumpgates)
+    const my  = this.worldHeight / 2 - 320;
+
+    const add = (corp, ox, oy) => {
+      const hb = new HomeBase(this, cx + ox, cy + oy, corp);
+      this.homeBases.push(hb);
+    };
+
+    if (cur.startsWith('helios')) { add('helios', 0, 0); return; }
+    if (cur.startsWith('karax'))  { add('karax',  0, 0); return; }
+    if (cur.startsWith('tides'))  { add('tides',  0, 0); return; }
+
+    if (cur.startsWith('pvp')) {
+      // Each corp has a forward base near the top edge (toward helios/home sectors)
+      // Helios: centered, just inside the top gate
+      // Karax: offset left (territory is upper-left in galaxy grid)
+      // Tides: offset right (territory is lower-right in galaxy grid)
+      add('helios',     0, -(my - 500));
+      add('karax',  -2600, -(my - 500));
+      add('tides',   2600, -(my - 500));
     }
   }
 
@@ -503,7 +545,7 @@ export default class GameScene extends Phaser.Scene {
     let lastClickTime = 0;
 
     this.input.on('pointerdown', (pointer) => {
-      if (this.scene.isActive('GarageScene') || this.scene.isActive('InventoryScene') || this.scene.isActive('MapScene')) return;
+      if (this.scene.isActive('GarageScene') || this.scene.isActive('InventoryScene') || this.scene.isActive('MapScene') || this.scene.isActive('BaseMenuScene') || this.scene.isActive('CorpScene')) return;
 
       const now = this.time.now;
       const isDouble = (now - lastClickTime < 350);
@@ -538,8 +580,7 @@ export default class GameScene extends Phaser.Scene {
         return;
       }
 
-      const mob  = this.mobAt(wx, wy);
-      const base = !mob ? this.baseAt(wx, wy) : null;
+      const mob = this.mobAt(wx, wy);
 
       // Double-click mob → attack
       if (isDouble && mob) {
@@ -547,21 +588,14 @@ export default class GameScene extends Phaser.Scene {
         this.log("ATTACK: " + i18n.t(mob.tpl.nameKey));
         return;
       }
-      // Double-click active base → attack
-      if (isDouble && base?.canBeAttacked) {
-        this.selectTarget(base); this.isFiring = true;
-        return;
+      // Double-click empty space → check for base attack
+      if (isDouble && !mob) {
+        const base = this.baseAt(wx, wy);
+        if (base?.canBeAttacked) { this.selectTarget(base); this.isFiring = true; return; }
       }
       // Single-click mob → select
       if (mob) { this.cancelCollect(); this.selectTarget(mob); return; }
-      // Single-click base (any state) → open menu
-      if (base) {
-        this.cancelCollect();
-        if (this.scene.isActive('BaseMenuScene')) this.scene.stop('BaseMenuScene');
-        this.scene.launch('BaseMenuScene', { base, playerName: this.playerName });
-        return;
-      }
-      // Empty space → move
+      // Empty space → move  (menu opens via in-world button or F key only)
       if (this.player.alive && !this.jumping) { this.cancelCollect(); this.steering = true; this.movement.setWaypoint(wx, wy, false); this.pingAt(wx, wy); }
     });
 
@@ -578,15 +612,17 @@ export default class GameScene extends Phaser.Scene {
     });
     this.input.keyboard.on('keydown-F', () => {
       if (!this.player.alive) return;
-      const near = this.miningBases.find(b => Phaser.Math.Distance.Between(this.player.x, this.player.y, b.x, b.y) < 360);
-      if (near) near.interact(this.playerName);
+      const nearMining = this.miningBases.find(b => Phaser.Math.Distance.Between(this.player.x, this.player.y, b.x, b.y) < 360);
+      if (nearMining) { nearMining.interact(this.playerName); return; }
+      const nearHome = this.homeBases.find(b => Phaser.Math.Distance.Between(this.player.x, this.player.y, b.x, b.y) < 380);
+      if (nearHome) nearHome.openInfo();
     });
     this.input.keyboard.on('keydown-I', () => this.toggleOverlay('InventoryScene'));
     this.input.keyboard.on('keydown-G', () => { this.player.waypoint = null; this.cancelCollect(); this.toggleOverlay('GarageScene'); });
     this.input.keyboard.on('keydown-M', () => { this.player.waypoint = null; this.cancelCollect(); this.toggleOverlay('MapScene'); });
     this.input.keyboard.on('keydown-O', () => { this.player.waypoint = null; this.cancelCollect(); this.toggleOverlay('MissionsScene'); });
     this.input.keyboard.on('keydown-P', () => { this.player.waypoint = null; this.cancelCollect(); this.toggleOverlay('ShopScene'); });
-    this.input.keyboard.on('keydown-H', () => { this.player.waypoint = null; this.cancelCollect(); this.toggleOverlay('CorpScene', { corp: 'helios' }); });
+    this.input.keyboard.on('keydown-H', () => { this.player.waypoint = null; this.cancelCollect(); this.toggleOverlay('CorpScene'); });
     
     this.input.keyboard.on('keydown-CTRL', (e) => {
       e.preventDefault();
@@ -632,7 +668,7 @@ export default class GameScene extends Phaser.Scene {
   }
   baseAt(wx, wy) {
     let best = null, bestD = Infinity;
-    for (const b of this.miningBases) { const d = Phaser.Math.Distance.Between(wx, wy, b.x, b.y); if (d < 260 && d < bestD) { best = b; bestD = d; } }
+    for (const b of this.miningBases) { const d = Phaser.Math.Distance.Between(wx, wy, b.x, b.y); if (d < 120 && d < bestD) { best = b; bestD = d; } }
     return best;
   }
   cancelCollect() { this.collectTarget = null; this.collectTimer = 0; }
@@ -846,6 +882,7 @@ export default class GameScene extends Phaser.Scene {
     
 
     this.miningBases.forEach(b => b.update(dt));
+    this.homeBases.forEach(b => b.update(dt));
     this.projectiles = this.projectiles.filter((p) => !p.dead);
     this.projectiles.forEach((p) => p.update(dt));
     this.updateLoot(dt); this.updateGates(dt);

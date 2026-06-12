@@ -60,6 +60,10 @@ export default class BootScene extends Phaser.Scene {
     for (const key of ['base_destroyed', 'base_building', 'base_helios', 'base_karax', 'base_tides', 'base_neutral']) {
       this.load.image(key, `assets/bases/${key}.png`);
     }
+    // Home base sprites (corp HQ)
+    for (const corp of ['helios', 'karax', 'tides']) {
+      this.load.image(`home_base_${corp}`, `assets/bases/home_base_${corp}.png`);
+    }
     for (const corp of ['helios', 'karax', 'tides', 'neutral']) {
       this.load.image(`cannon1_${corp}`, `assets/bases/cannon1_${corp}.png`);
       this.load.image(`cannon2_${corp}`, `assets/bases/cannon2_${corp}.png`);

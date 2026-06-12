@@ -13,7 +13,8 @@ import ShopScene from './scenes/ShopScene.js';
 import CorpScene from './scenes/CorpScene.js';
 import BaseMenuScene from './scenes/BaseMenuScene.js';
 
-const W = () => Math.floor(window.innerWidth * DPR);
+// Физическое разрешение канваса (DPR для чёткости на HiDPI / Windows-масштаб).
+const W = () => Math.floor(window.innerWidth  * DPR);
 const H = () => Math.floor(window.innerHeight * DPR);
 
 const config = {
@@ -21,8 +22,9 @@ const config = {
   parent: 'game',
   backgroundColor: COLORS.bg,
   scale: {
-    mode: Phaser.Scale.FIT,
-    autoCenter: Phaser.Scale.CENTER_BOTH,
+    // NONE: Phaser не трогает CSS — мы сами выставляем размер канваса в пикселях окна.
+    // Это устраняет искажения FIT при нецелых DPR (Windows 125%, 150% и т.д.).
+    mode: Phaser.Scale.NONE,
     width: W(),
     height: H(),
   },
@@ -35,17 +37,29 @@ const config = {
   },
   physics: {
     default: 'arcade',
-    arcade: {
-      gravity: { x: 0, y: 0 },
-      debug: false
-    }
+    arcade: { gravity: { x: 0, y: 0 }, debug: false },
   },
   scene: [
     BootScene, LoginScene, BackgroundScene, GameScene, HudScene,
-    InventoryScene, GarageScene, MapScene, MissionsScene, ShopScene, CorpScene, BaseMenuScene
+    InventoryScene, GarageScene, MapScene, MissionsScene, ShopScene, CorpScene, BaseMenuScene,
   ],
 };
 
 const game = new Phaser.Game(config);
 
-window.addEventListener('resize', () => game.scale.resize(W(), H()));
+// CSS-размер канваса = точно размер окна в CSS-пикселях (без DPR).
+// Canvas при этом рендерится в DPR-кратном разрешении → чёткость HiDPI сохраняется.
+function fitCanvas() {
+  const c = game.canvas;
+  if (!c) return;
+  c.style.width  = window.innerWidth  + 'px';
+  c.style.height = window.innerHeight + 'px';
+  c.style.display = 'block'; // убирает margin-bottom у inline canvas
+}
+
+fitCanvas();
+
+window.addEventListener('resize', () => {
+  game.scale.resize(W(), H());
+  fitCanvas();
+});
