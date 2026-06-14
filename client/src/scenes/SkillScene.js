@@ -16,72 +16,74 @@ const BRANCH_META = {
 // type: 'active' → can be placed on action bar; 'passive' → always-on bonus
 // requires: [[skillKey, minLevel], ...]
 
+// SP budget: 61 total, player has 50 (level 50) → must skip ~11 SP, real choice required.
+// Passives: max 3-4 levels. Actives: max 1 level (strongest version immediately).
 const SKILLS_DEF = [
-  // ── COMBAT ──
+  // ── COMBAT ── (21 SP if all maxed)
   { key: 'sharpshooter',      branch: 'combat',      type: 'passive', nameRu: 'Снайпер',
-    maxLevel: 3, requires: [],
-    effects: ['+5% шанс крита', '+10% шанс крита', '+15% шанс крита'] },
+    maxLevel: 4, requires: [],
+    effects: ['+4% шанс крита', '+8% шанс крита', '+12% шанс крита', '+16% шанс крита'] },
   { key: 'heavy_caliber',     branch: 'combat',      type: 'passive', nameRu: 'Тяжёлый калибр',
-    maxLevel: 4, requires: [['sharpshooter', 3]],
-    effects: ['+8% урон', '+16% урон', '+24% урон', '+32% урон'] },
+    maxLevel: 4, requires: [['sharpshooter', 2]],
+    effects: ['+6% урон', '+12% урон', '+18% урон', '+24% урон'] },
   { key: 'penetrating_rounds', branch: 'combat',     type: 'passive', nameRu: 'Бронебойные снаряды',
-    maxLevel: 3, requires: [['heavy_caliber', 4]],
+    maxLevel: 3, requires: [['heavy_caliber', 2]],
     effects: ['+10% пробивание', '+20% пробивание', '+30% пробивание'] },
   { key: 'overcharge_shot',   branch: 'combat',      type: 'active',  nameRu: 'Перегрузочный выстрел',
-    maxLevel: 3, icon: '⚡', requires: [['penetrating_rounds', 3]],
-    effects: ['×1.6 урон, КД 35c', '×1.8 урон, КД 30c', '×2.0 урон, КД 25c'] },
+    maxLevel: 1, icon: '⚡', requires: [['penetrating_rounds', 2]],
+    effects: ['×2.0 урон, КД 25c'] },
   { key: 'salvo',             branch: 'combat',      type: 'active',  nameRu: 'Залп',
-    maxLevel: 4, icon: '🚀', requires: [['penetrating_rounds', 3]],
-    effects: ['×3c все орудия, КД 70c', '×4c все орудия, КД 65c', '×5c, КД 60c', '×5c, КД 55c'] },
+    maxLevel: 1, icon: '🚀', requires: [['penetrating_rounds', 2]],
+    effects: ['×5c все орудия, КД 55c'] },
   { key: 'targeting_ai',      branch: 'combat',      type: 'passive', nameRu: 'ИИ прицеливания',
-    maxLevel: 2, requires: [['overcharge_shot', 1]],
-    effects: ['+15% захват цели', '+30% захват цели'] },
+    maxLevel: 4, requires: [['overcharge_shot', 1]],
+    effects: ['+8% захват цели', '+16% захват цели', '+24% захват цели', '+32% захват цели'] },
   { key: 'berserker',         branch: 'combat',      type: 'active',  nameRu: 'Берсерк',
     maxLevel: 4, icon: '💀', requires: [['salvo', 1]],
-    effects: ['+30%урон HP<40% КД90c', '+40%урон HP<35% КД80c', '+50%урон HP<30% КД70c', '+60%урон HP<25% КД60c'] },
+    effects: ['+25% урон HP<40% КД 90c', '+35% урон HP<35% КД 80c', '+50% урон HP<30% КД 70c', '+60% урон HP<25% КД 60c'] },
 
-  // ── ENGINEERING ──
+  // ── ENGINEERING ── (22 SP if all maxed)
   { key: 'reinforced_hull',   branch: 'engineering', type: 'passive', nameRu: 'Усиленный корпус',
-    maxLevel: 3, requires: [],
-    effects: ['+8% макс. HP', '+16% макс. HP', '+25% макс. HP'] },
+    maxLevel: 4, requires: [],
+    effects: ['+6% макс. HP', '+12% макс. HP', '+18% макс. HP', '+25% макс. HP'] },
   { key: 'shield_optimizer',  branch: 'engineering', type: 'passive', nameRu: 'Оптимизатор щита',
-    maxLevel: 2, requires: [['reinforced_hull', 3]],
-    effects: ['+10% макс. щит', '+20% макс. щит'] },
+    maxLevel: 4, requires: [['reinforced_hull', 2]],
+    effects: ['+5% макс. щит', '+10% макс. щит', '+15% макс. щит', '+20% макс. щит'] },
   { key: 'fast_regen',        branch: 'engineering', type: 'passive', nameRu: 'Быстрая регенерация',
-    maxLevel: 2, requires: [['shield_optimizer', 2]],
-    effects: ['-30% задержка рег.', '-50% задержка рег.'] },
+    maxLevel: 4, requires: [['shield_optimizer', 2]],
+    effects: ['-15% задержка рег.', '-25% задержка рег.', '-35% задержка рег.', '-50% задержка рег.'] },
   { key: 'emergency_repair',  branch: 'engineering', type: 'active',  nameRu: 'Аварийный ремонт',
-    maxLevel: 3, icon: '💉', requires: [['fast_regen', 2]],
-    effects: ['+20% HP, КД 120c', '+25% HP, КД 120c', '+30% HP, КД 120c'] },
+    maxLevel: 1, icon: '💉', requires: [['fast_regen', 2]],
+    effects: ['+30% HP, КД 120c'] },
   { key: 'shield_burst',      branch: 'engineering', type: 'active',  nameRu: 'Всплеск щита',
-    maxLevel: 3, icon: '🛡', requires: [['emergency_repair', 1]],
-    effects: ['+80% щит, КД 90c', '+100% щит, КД 90c', '+120% щит, КД 85c'] },
+    maxLevel: 1, icon: '🛡', requires: [['emergency_repair', 1]],
+    effects: ['+120% щит, КД 85c'] },
   { key: 'damage_resist',     branch: 'engineering', type: 'passive', nameRu: 'Снижение урона',
-    maxLevel: 3, requires: [['emergency_repair', 1]],
-    effects: ['-8% вх. урон', '-15% вх. урон', '-20% вх. урон'] },
+    maxLevel: 4, requires: [['emergency_repair', 1]],
+    effects: ['-5% вх. урон', '-10% вх. урон', '-15% вх. урон', '-20% вх. урон'] },
   { key: 'module_specialist', branch: 'engineering', type: 'passive', nameRu: 'Спец. модулей',
-    maxLevel: 3, requires: [['damage_resist', 1]],
-    effects: ['+10% эфф. модулей', '+20% эфф. модулей', '+30% эфф. модулей'] },
+    maxLevel: 4, requires: [['damage_resist', 2]],
+    effects: ['-10% КД активных', '-20% КД активных', '-30% КД активных', '-40% КД активных'] },
 
-  // ── TRADING ──
+  // ── TRADING ── (18 SP if all maxed)
   { key: 'loot_magnet',       branch: 'trading',     type: 'passive', nameRu: 'Магнит лута',
-    maxLevel: 2, requires: [],
-    effects: ['+40% радиус сбора', '+80% радиус сбора'] },
+    maxLevel: 4, requires: [],
+    effects: ['+30% радиус сбора', '+50% радиус сбора', '+70% радиус сбора', '+100% радиус сбора'] },
   { key: 'salvager',          branch: 'trading',     type: 'passive', nameRu: 'Сборщик',
-    maxLevel: 2, requires: [['loot_magnet', 2]],
-    effects: ['+1 предмет с моба', '+2 предмета с моба'] },
+    maxLevel: 4, requires: [['loot_magnet', 2]],
+    effects: ['+10% дроп-шанс', '+20% дроп-шанс', '+35% дроп-шанс', '+50% дроп-шанс'] },
   { key: 'merchants_eye',     branch: 'trading',     type: 'passive', nameRu: 'Торговый взгляд',
-    maxLevel: 2, requires: [['salvager', 2]],
-    effects: ['+10% цена продажи', '+20% цена продажи'] },
+    maxLevel: 3, requires: [['salvager', 2]],
+    effects: ['-10% стоимость ремонта', '-20% стоимость ремонта', '-30% стоимость ремонта'] },
   { key: 'scanner_boost',     branch: 'trading',     type: 'passive', nameRu: 'Усиление сканера',
-    maxLevel: 3, requires: [['merchants_eye', 2]],
-    effects: ['+20% радиус скана', '+40% радиус скана', '+60% радиус скана'] },
+    maxLevel: 3, requires: [['merchants_eye', 1]],
+    effects: ['+20% дальность скана', '+40% дальность скана', '+60% дальность скана'] },
   { key: 'cargo_expand',      branch: 'trading',     type: 'passive', nameRu: 'Расш. грузов',
-    maxLevel: 3, requires: [['merchants_eye', 2]],
+    maxLevel: 3, requires: [['merchants_eye', 1]],
     effects: ['+20 груз. мест', '+35 груз. мест', '+50 груз. мест'] },
   { key: 'stealth_sprint',    branch: 'trading',     type: 'active',  nameRu: 'Скрытный рывок',
-    maxLevel: 3, icon: '👻', requires: [['cargo_expand', 1]],
-    effects: ['+25%скор+стелс 5c КД60c', '+30%скор+стелс 6c КД60c', '+35%скор+стелс 8c КД55c'] },
+    maxLevel: 1, icon: '👻', requires: [['cargo_expand', 2]],
+    effects: ['+35% скор + стелс 8c, КД 55c'] },
 ];
 
 const SKILL_MAP = {};
@@ -89,8 +91,7 @@ for (const s of SKILLS_DEF) SKILL_MAP[s.key] = s;
 
 // ─── Per-branch node grid positions (relative to branch center x, tree start y) ──
 
-function layoutFor(branch, cx, sy, rh) {
-  const f = 70; // fork half-width
+function layoutFor(branch, cx, sy, rh, f) {
   const L = {
     combat: {
       sharpshooter:       { x: cx,     y: sy },
@@ -139,11 +140,11 @@ export default class SkillScene extends Phaser.Scene {
     if (!gs.actionBar)      gs.actionBar      = Array(10).fill(null);
     if (!gs.respeckCount)   gs.respeckCount   = 0;
 
-    // Panel geometry
-    const pw = Math.min(980, W - 40);
-    const ph = Math.min(700, H - 40);
-    const px = (W - pw) / 2;
-    const py = (H - ph) / 2;
+    // Panel geometry — fullscreen
+    const pw = W - 20;
+    const ph = H - 20;
+    const px = 10;
+    const py = 10;
     this._p = { px, py, pw, ph };
 
     // Dark overlay (closes tooltip on click)
@@ -159,7 +160,26 @@ export default class SkillScene extends Phaser.Scene {
     this._tooltipObjs = [];
     this._selectedKey = null;
 
+    // Scroll state (reset on scene open)
+    this._treeScrollX    = 0;
+    this._treeScrollY    = 0;
+    this._treeMaxScrollX = 0;
+    this._treeMaxScrollY = 0;
+
     this._redraw();
+
+    // Wheel scroll for tree
+    this.input.on('wheel', (_p, _o, dx, dy) => {
+      let changed = false;
+      if (this._treeMaxScrollX > 0 && Math.abs(dx) > Math.abs(dy)) {
+        const nx = Phaser.Math.Clamp(this._treeScrollX - dx * 0.6, -this._treeMaxScrollX, 0);
+        if (nx !== this._treeScrollX) { this._treeScrollX = nx; changed = true; }
+      } else if (this._treeMaxScrollY > 0) {
+        const ny = Phaser.Math.Clamp(this._treeScrollY - dy * 0.6, -this._treeMaxScrollY, 0);
+        if (ny !== this._treeScrollY) { this._treeScrollY = ny; changed = true; }
+      }
+      if (changed) this._redraw();
+    });
 
     // Input
     const kb = this.input.keyboard;
@@ -192,7 +212,7 @@ export default class SkillScene extends Phaser.Scene {
 
   // ── SP helpers ────────────────────────────────────────────────────────────
 
-  _spTotal()  { return Math.max(0, (this._gs.pilotLevel || 1) - 1) + (this._gs.skillAchievementSP || 0); }
+  _spTotal()  { return (this._gs.pilotLevel || 1) + (this._gs.skillAchievementSP || 0); }
   _spSpent()  { return Object.values(this._gs.skillLevels).reduce((a, v) => a + v, 0); }
   _spAvail()  { return this._spTotal() - this._spSpent(); }
   _lvl(key)   { return this._gs.skillLevels[key] || 0; }
@@ -223,30 +243,31 @@ export default class SkillScene extends Phaser.Scene {
     const total = this._spTotal();
 
     const t1 = this.add.text(px + 20, py + 17, 'ДЕРЕВО СПОСОБНОСТЕЙ',
-      { ...TF, fontSize: '18px', color: '#4dd0e1' }).setDepth(10);
+      { ...TF, fontSize: '18px', color: '#4dd0e1' }).setDepth(22);
 
     const spClr = avail > 0 ? '#66cc88' : '#557799';
     const t2 = this.add.text(px + pw / 2, py + 20,
       `Очки умений: ${avail}  (потрачено ${spent} / ${total})`,
-      { ...TF, fontSize: '13px', color: spClr }).setOrigin(0.5, 0).setDepth(10);
+      { ...TF, fontSize: '13px', color: spClr }).setOrigin(0.5, 0).setDepth(22);
 
     // Respeck button
     const rbg = this.add.rectangle(px + pw - 90, py + 28, 150, 30, 0x130610)
-      .setStrokeStyle(1, 0x553366, 0.8).setDepth(10).setInteractive({ useHandCursor: true });
+      .setStrokeStyle(1, 0x553366, 0.8).setDepth(22).setInteractive({ useHandCursor: true });
     const rtxt = this.add.text(px + pw - 90, py + 28, '🔄 СБРОС SP',
-      { ...TFS, fontSize: '12px', color: '#cc88bb' }).setOrigin(0.5).setDepth(11);
+      { ...TFS, fontSize: '12px', color: '#cc88bb' }).setOrigin(0.5).setDepth(23);
     rbg.on('pointerover', () => rbg.setFillStyle(0x200a20));
     rbg.on('pointerout',  () => rbg.setFillStyle(0x130610));
     rbg.on('pointerdown', () => this._showRespeckModal());
 
-    // Divider line
-    const dg = this.add.graphics().setDepth(10);
+    // Divider line — drawn again at depth 22 (cover panel redraws it at 19 too,
+    // but header text needs to be above it)
+    const dg = this.add.graphics().setDepth(22);
     dg.lineStyle(1, 0x162030, 1);
     dg.strokeLineShape(new Phaser.Geom.Line(px + 8, py + 54, px + pw - 8, py + 54));
 
     // Close hint
     const th = this.add.text(px + pw - 12, py + 16, '[ K / ESC ]',
-      { ...TFS, fontSize: '10px', color: '#22333f' }).setOrigin(1, 0).setDepth(10);
+      { ...TFS, fontSize: '10px', color: '#22333f' }).setOrigin(1, 0).setDepth(22);
 
     this._objs.push(t1, t2, rbg, rtxt, dg, th);
   }
@@ -254,49 +275,95 @@ export default class SkillScene extends Phaser.Scene {
   // ── Branch tree ───────────────────────────────────────────────────────────
 
   _drawBranches(px, py, pw, ph) {
-    const HEADER_H   = 58;   // space for title + divider
-    const ACTIONBAR_H = 72;  // action bar at bottom
-    const treeAreaY  = py + HEADER_H;
-    const treeAreaH  = ph - HEADER_H - ACTIONBAR_H;
+    const HEADER_H    = 58;
+    const ACTIONBAR_H = 72;
+    const treeAreaY   = py + HEADER_H;
+    const treeAreaH   = ph - HEADER_H - ACTIONBAR_H;
 
-    const bw  = Math.floor((pw - 16) / 3);
+    const bw       = Math.floor((pw - 16) / 3);
+    // fork constraint: 2*nw + gap(12) + col_margin(20) <= bw
+    const nw       = Math.min(160, Math.floor((bw - 32) / 2));
+    const iconSize = 90;
+    // nodeH: 4 top + 90 icon + 6 gap + 18 stars + 6 bottom = 124 (name shown in tooltip only)
+    const nodeH    = 124;
+    const f        = Math.floor(nw / 2) + 6;
+    // LABEL_H: space for branch name above first node
+    const LABEL_H  = 28;
+    // rowH must be >= nodeH to prevent adjacent rows from overlapping
+    const rowH     = Math.max(nodeH + 4, Math.floor((treeAreaH - LABEL_H - nodeH) / 5));
     const BRANCHES = ['combat', 'engineering', 'trading'];
 
-    // rowH based on engineering (deepest: 6 rows = 5 gaps + 1 node)
-    // tree start y = treeAreaY + 36 (branch label height)
-    // total height = nodeH + 5*rowH ≤ treeAreaH - 36
-    const nodeH = 64;
-    const rowH  = Math.floor((treeAreaH - 36 - nodeH) / 5);
+    // startY is CENTER of first node — placed so top edge = treeAreaY + LABEL_H
+    const totalTreeH = LABEL_H + nodeH + 5 * rowH;
+    this._treeMaxScrollY = Math.max(0, totalTreeH - treeAreaH);
+    this._treeMaxScrollX = 0;
+
+    const scrollY = this._treeScrollY || 0;
+
+    // Column dividers
+    const divGfx = this.add.graphics().setDepth(7);
+    divGfx.lineStyle(1, 0x0e1828, 0.9);
+    for (let i = 1; i < 3; i++) {
+      const divX = px + 8 + i * bw;
+      divGfx.strokeLineShape(new Phaser.Geom.Line(divX, treeAreaY + 4, divX, treeAreaY + treeAreaH - 4));
+    }
+    this._objs.push(divGfx);
 
     BRANCHES.forEach((branch, ci) => {
       const bx  = px + 8 + ci * bw;
       const bcx = bx + bw / 2;
       const bm  = BRANCH_META[branch];
 
-      // Branch header
-      const hdr = this.add.text(bcx, treeAreaY + 10, bm.label,
-        { ...TF, fontSize: '13px', color: bm.color }).setOrigin(0.5, 0).setDepth(10);
+      // Branch label sits in LABEL_H zone above first node
+      const hdr = this.add.text(bcx, treeAreaY + 6 + scrollY, bm.label,
+        { ...TF, fontSize: '12px', color: bm.color }).setOrigin(0.5, 0).setDepth(10);
       this._objs.push(hdr);
 
-      // Compute layout
-      const startY = treeAreaY + 36;
-      const layout = layoutFor(branch, bcx, startY, rowH);
+      // First node center = treeAreaY + LABEL_H + nodeH/2, shifted by scrollY
+      const startY = treeAreaY + LABEL_H + Math.floor(nodeH / 2) + scrollY;
+      const layout = layoutFor(branch, bcx, startY, rowH, f);
 
-      // Draw edges behind nodes
-      this._drawEdges(layout, branch);
+      this._drawEdges(layout, branch, nodeH);
 
-      // Draw nodes
       for (const [key, pos] of Object.entries(layout)) {
-        this._drawNode(key, pos.x, pos.y, bw, nodeH);
+        this._drawNode(key, pos.x, pos.y, nw, nodeH, iconSize);
       }
     });
+
+    // Cover panels — opaque fill over header/actionbar zones so scrolled nodes
+    // don't bleed visually (geometry mask is unsupported in WebGL Phaser 4)
+    const covGfx = this.add.graphics().setDepth(19);
+    covGfx.fillStyle(0x06090f, 1);
+    covGfx.fillRect(px, py, pw, HEADER_H);
+    covGfx.fillRect(px, py + ph - ACTIONBAR_H, pw, ACTIONBAR_H);
+    // Re-draw panel border and header divider on top of the fill
+    covGfx.lineStyle(2, COLORS.primary, 0.65);
+    covGfx.strokeRoundedRect(px, py, pw, ph, 10);
+    covGfx.lineStyle(1, 0x162030, 1);
+    covGfx.strokeLineShape(new Phaser.Geom.Line(px + 8, py + 54, px + pw - 8, py + 54));
+    this._objs.push(covGfx);
+
+    // Scroll indicators
+    if (this._treeMaxScrollY > 0) {
+      const cx = px + pw / 2;
+      if (scrollY < 0) {
+        const up = this.add.text(cx, treeAreaY + 4, '▲  ПРОКРУТИТЬ ВВЕРХ',
+          { ...TFS, fontSize: '11px', color: '#3a5566' }).setOrigin(0.5, 0).setDepth(20);
+        this._objs.push(up);
+      }
+      if (scrollY > -(this._treeMaxScrollY)) {
+        const dn = this.add.text(cx, treeAreaY + treeAreaH - 18, '▼  ПРОКРУТИТЬ ВНИЗ',
+          { ...TFS, fontSize: '11px', color: '#3a5566' }).setOrigin(0.5, 0).setDepth(20);
+        this._objs.push(dn);
+      }
+    }
   }
 
-  _drawEdges(layout, branch) {
+  _drawEdges(layout, branch, nodeH) {
     const eg = this.add.graphics().setDepth(8);
     this._objs.push(eg);
     const bm = BRANCH_META[branch];
-    const nHalf = 32; // half node height for edge attachment
+    const nHalf = Math.floor(nodeH / 2);
 
     for (const s of SKILLS_DEF.filter(s => s.branch === branch)) {
       for (const [reqKey] of s.requires) {
@@ -322,17 +389,14 @@ export default class SkillScene extends Phaser.Scene {
     }
   }
 
-  _drawNode(key, cx, cy, bw, nodeH) {
+  _drawNode(key, cx, cy, nw, nodeH, iconSize = 128) {
     const s     = SKILL_MAP[key];
     const state = this._nodeState(key);
     const lv    = this._lvl(key);
     const bm    = BRANCH_META[s.branch];
 
-    // Node width: full-width nodes are narrower, forked nodes slightly smaller
-    const nw = Math.min(128, Math.floor(bw * 0.72));
-
     let fillHex = 0x080c14, borderHex = 0x141e2a, borderAlpha = 0.9;
-    let nameClr = '#2a3a44', starsClr = '#1a2a35';
+    let nameClr = '#2a3a44', starsClr = '#3d5a6a';   // locked — visible but dim
 
     if (state === 'unlocked') {
       fillHex = bm.fill || 0x0a1820;
@@ -341,52 +405,60 @@ export default class SkillScene extends Phaser.Scene {
     } else if (state === 'available') {
       fillHex = 0x0c1420;
       borderHex = bm.hex; borderAlpha = 0.45;
-      nameClr = '#4a6a7a'; starsClr = '#2a3a44';
+      nameClr = '#4a6a7a'; starsClr = '#5a8090';     // available — clearly visible
     } else if (state === 'available_no_sp') {
       fillHex = 0x0a1018;
       borderHex = bm.hex; borderAlpha = 0.25;
-      nameClr = '#2e4a55'; starsClr = '#1a2a35';
+      nameClr = '#2e4a55'; starsClr = '#3d5a6a';
     }
 
     const ng = this.add.graphics().setDepth(12);
     ng.fillStyle(fillHex, 1);
-    ng.fillRoundedRect(cx - nw / 2, cy - nodeH / 2, nw, nodeH, 5);
+    ng.fillRoundedRect(cx - nw / 2, cy - nodeH / 2, nw, nodeH, 6);
     ng.lineStyle(state === 'locked' ? 1 : 1.5, borderHex, borderAlpha);
-    ng.strokeRoundedRect(cx - nw / 2, cy - nodeH / 2, nw, nodeH, 5);
+    ng.strokeRoundedRect(cx - nw / 2, cy - nodeH / 2, nw, nodeH, 6);
     this._objs.push(ng);
 
-    // Name text
-    const nt = this.add.text(cx, cy - 18, s.nameRu,
-      { ...TFS, fontSize: '11px', color: nameClr, wordWrap: { width: nw - 10 }, align: 'center' })
-      .setOrigin(0.5, 0).setDepth(13);
-    this._objs.push(nt);
+    // ── Icon ─────────────────────────────────────────────────────────────
+    const iconKey = `skill_${key}`;
+    const hasIcon = this.textures.exists(iconKey);
+    // top-pad 4 + iconSize/2 below top edge → iconCY
+    const iconCY  = cy - Math.floor(nodeH / 2) + 4 + Math.floor(iconSize / 2);
 
-    // Stars  ★ filled / ☆ empty
-    const stars = '★'.repeat(lv) + '☆'.repeat(s.maxLevel - lv);
-    const st = this.add.text(cx, cy + 8, stars,
-      { ...TFS, fontSize: '11px', color: starsClr, letterSpacing: 1 })
+    if (hasIcon) {
+      const ico = this.add.image(cx, iconCY, iconKey)
+        .setDisplaySize(iconSize, iconSize)
+        .setDepth(13)
+        .setAlpha(state === 'locked' ? 0.22 : 1.0);
+      this._objs.push(ico);
+    }
+
+    // ── Stars (name is shown in tooltip only) ─────────────────────────────
+    const stars  = '★'.repeat(lv) + '☆'.repeat(s.maxLevel - lv);
+    const starsY = iconCY + Math.floor(iconSize / 2) + 6;
+    const st = this.add.text(cx, starsY, stars,
+      { ...TFS, fontSize: '14px', color: starsClr, letterSpacing: 3 })
       .setOrigin(0.5, 0).setDepth(13);
     this._objs.push(st);
 
-    // Active badge + icon, or lock icon
+    // ── Badge (top-right): lock / active icon / pinned ────────────────────
     if (state === 'locked') {
       const lt = this.add.text(cx + nw / 2 - 4, cy - nodeH / 2 + 4, '🔒',
-        { fontSize: '9px' }).setOrigin(1, 0).setDepth(13);
+        { fontSize: '10px' }).setOrigin(1, 0).setDepth(13);
       this._objs.push(lt);
     } else if (s.type === 'active') {
-      const it = this.add.text(cx - nw / 2 + 5, cy - nodeH / 2 + 4, s.icon || '⚡',
-        { fontSize: '11px' }).setOrigin(0, 0).setDepth(13);
+      const it = this.add.text(cx + nw / 2 - 4, cy - nodeH / 2 + 4, s.icon || '⚡',
+        { fontSize: '10px' }).setOrigin(1, 0).setDepth(13);
       this._objs.push(it);
-      // Check if on action bar
       const onBar = (this._gs.actionBar || []).includes(key);
       if (onBar) {
-        const bt = this.add.text(cx + nw / 2 - 4, cy - nodeH / 2 + 4, '📌',
-          { fontSize: '9px' }).setOrigin(1, 0).setDepth(13);
+        const bt = this.add.text(cx + nw / 2 - 4, cy + nodeH / 2 - 4, '📌',
+          { fontSize: '10px' }).setOrigin(1, 1).setDepth(13);
         this._objs.push(bt);
       }
     }
 
-    // Invisible hit zone
+    // ── Hit zone ──────────────────────────────────────────────────────────
     const hit = this.add.rectangle(cx, cy, nw, nodeH, 0x000000, 0).setDepth(14)
       .setInteractive({ useHandCursor: state !== 'locked' });
     this._objs.push(hit);
@@ -553,6 +625,7 @@ export default class SkillScene extends Phaser.Scene {
   _upgradeSkill(key) {
     if (!this._canUpgrade(key)) return;
     this._gs.skillLevels[key] = (this._gs.skillLevels[key] || 0) + 1;
+    this._gs.player?.recomputeStats();
     this._redraw();
     // Re-show tooltip for the upgraded skill (positions may shift slightly, find node)
     // Simple approach: let user re-click. Tooltip is cleared by _redraw().
@@ -587,7 +660,7 @@ export default class SkillScene extends Phaser.Scene {
     const startX = px + pw / 2 - totalW / 2;
 
     const lbl = this.add.text(px + 14, barY - 16, 'ПАНЕЛЬ ДЕЙСТВИЙ  ( 1 – 0 )  ·  ПКМ — снять скилл',
-      { ...TFS, fontSize: '10px', color: '#223344' }).setDepth(10);
+      { ...TFS, fontSize: '10px', color: '#223344' }).setDepth(22);
     this._objs.push(lbl);
 
     for (let i = 0; i < 10; i++) {
@@ -596,7 +669,7 @@ export default class SkillScene extends Phaser.Scene {
       const key = bar[i];
       const s   = key ? SKILL_MAP[key] : null;
 
-      const sg = this.add.graphics().setDepth(10);
+      const sg = this.add.graphics().setDepth(22);
       sg.fillStyle(0x050910, 1);
       sg.fillRoundedRect(sx, sy, slotW, slotH, 4);
       sg.lineStyle(1, s ? 0x223344 : 0x0e1822, 0.9);
@@ -606,22 +679,22 @@ export default class SkillScene extends Phaser.Scene {
       // Hotkey label (top-left of slot)
       const hkLabel = i < 9 ? `${i + 1}` : '0';
       const hkt = this.add.text(sx + 3, sy + 2, hkLabel,
-        { ...TFS, fontSize: '8px', color: '#1a2a35' }).setDepth(11);
+        { ...TFS, fontSize: '8px', color: '#1a2a35' }).setDepth(23);
       this._objs.push(hkt);
 
       if (s) {
         const bm = BRANCH_META[s.branch];
         // Icon
         const it = this.add.text(sx + slotW / 2, sy + slotH / 2 - 6, s.icon || '⚡',
-          { fontSize: '16px' }).setOrigin(0.5).setDepth(11);
+          { fontSize: '16px' }).setOrigin(0.5).setDepth(23);
         // Short name
         const nt = this.add.text(sx + slotW / 2, sy + slotH - 11, s.nameRu.split(' ')[0].slice(0, 8),
-          { ...TFS, fontSize: '7px', color: bm.color }).setOrigin(0.5, 0).setDepth(11);
+          { ...TFS, fontSize: '7px', color: bm.color }).setOrigin(0.5, 0).setDepth(23);
         this._objs.push(it, nt);
 
         // Right-click to remove
         const hit = this.add.rectangle(sx + slotW / 2, sy + slotH / 2, slotW, slotH, 0, 0)
-          .setDepth(12).setInteractive({ useHandCursor: true });
+          .setDepth(24).setInteractive({ useHandCursor: true });
         this._objs.push(hit);
         hit.on('pointerdown', (ptr) => {
           if (ptr.rightButtonDown()) { this._gs.actionBar[i] = null; this._redraw(); }
@@ -721,6 +794,7 @@ export default class SkillScene extends Phaser.Scene {
 
   _doRespeck() {
     this._gs.skillLevels = {};
+    this._gs.player?.recomputeStats();
     this._redraw();
   }
 }

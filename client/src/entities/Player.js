@@ -1,6 +1,7 @@
 import * as Phaser from 'https://cdn.jsdelivr.net/npm/phaser@4.1.0/dist/phaser.esm.js';
 import { PLAYER, ART_ANGLE_OFFSET, HANDLING } from '../constants.js';
 import { defaultLoadout, modMult } from '../items.js';
+import { perkBonus } from '../perks.js';
 import { SHIP_BY_KEY, shipLevelMods, SHIP_MAX_LEVEL } from '../ships.js';
 
 // Корабль игрока. cfg = PLAYER — общие константы движения/регена (одинаковы для всех корпусов).
@@ -92,6 +93,45 @@ export default class Player {
     this.baseSpeed = Math.round((this.shipBaseSpeed + sumSpd) * m.speed);
     this.weaponRange = isAdmin ? 1500 : this.cfg.weaponRange;
 
+    // ── Skill passive bonuses (from gs.skillLevels) ────────────────────────
+    const sl = k => ((this.scene.skillLevels || {})[k] || 0);
+
+    // Combat
+    this.weaponDamage      = Math.round(this.weaponDamage * (1 + sl('heavy_caliber') * 0.06));
+    this.weaponPenetration = Math.min(0.95, this.weaponPenetration + sl('penetrating_rounds') * 0.10);
+    this.critChance        = Math.min(0.65, sl('sharpshooter') * 0.04);
+    // Engineering — maxHull вычисляется от базы корабля, а не от this.maxHull (иначе накопление)
+    this.maxHull           = Math.round(this.ship.hullMax * m.hull * (1 + sl('reinforced_hull') * 0.06));
+    this.hull              = Math.min(this.hull, this.maxHull);
+    this.maxShield         = Math.round(this.maxShield * (1 + sl('shield_optimizer') * 0.05));
+    this.shieldRegenDelayMod = Math.max(0.30, 1 - sl('fast_regen')    * 0.15);
+    this.damageResistMod     = Math.max(0.20, 1 - sl('damage_resist') * 0.05);
+    this.activeCooldownMod   = Math.max(0.30, 1 - sl('module_specialist') * 0.10);
+    // Trading
+    this.lootPickupRadiusMult = 1 + sl('loot_magnet') * 0.30;
+    this.dropChanceMult       = 1 + sl('salvager')    * 0.10;
+    this.repairCostMult       = Math.max(0.30, 1 - sl('merchants_eye') * 0.10);
+
+    // ── Perk bonuses (weapon slots) ────────────────────────────────────────
+    let perkDmgMult = 1;
+    for (const w of W) {
+      if (!w.perk) continue;
+      const pb = perkBonus(w.perk);
+      if (w.perk.key === 'perk_steady_aim')    perkDmgMult        *= 1 + 0.10 * (1 + pb);
+      if (w.perk.key === 'perk_critical_edge') this.critChance     = Math.min(0.65, this.critChance + 0.12 * (1 + pb));
+      if (w.perk.key === 'perk_hull_breaker')  this.weaponPenetration = Math.min(0.95, this.weaponPenetration + 0.18 * (1 + pb));
+    }
+    this.weaponDamage = Math.round(this.weaponDamage * perkDmgMult);
+
+    // ── Perk bonuses (shield slots) ────────────────────────────────────────
+    for (const s of S) {
+      if (!s.perk) continue;
+      const pb = perkBonus(s.perk);
+      if (s.perk.key === 'perk_resonance')      this.shieldRegenPerSec  = Math.round(this.shieldRegenPerSec * (1 + 0.12 * (1 + pb)));
+      if (s.perk.key === 'perk_hardened')       this.damageResistMod    = Math.max(0.20, this.damageResistMod - 0.10 * (1 + pb));
+      if (s.perk.key === 'perk_quick_recovery') this.shieldRegenDelayMod = Math.max(0.30, this.shieldRegenDelayMod * (1 - 0.30 * (1 + pb)));
+    }
+
     if (this.shield > this.maxShield) this.shield = this.maxShield;
   }
 
@@ -99,10 +139,10 @@ export default class Player {
   // ignoreEvasion: AoE-залпы боссов нельзя увернуться статом — спасает только уход из круга.
   takeDamage(amount, penetration = 0, ignoreEvasion = false) {
     if (!this.alive) return { shieldHit: 0, hullHit: 0, brokeShield: false };
-    // Уклонение от щита-дефлектора — шанс полностью избежать урона
     if (!ignoreEvasion && this.evasion && Phaser.Math.FloatBetween(0, 1) < this.evasion) {
       return { shieldHit: 0, hullHit: 0, brokeShield: false, dodged: true };
     }
+    amount = Math.round(amount * (this.damageResistMod ?? 1));
     this.lastDamageAt = this.scene.time.now;
 
     const direct = amount * penetration;
@@ -147,7 +187,8 @@ export default class Player {
     const sinceBoost = now - this.lastBoostAt;
 
     // Реген щита: 10 с после урона И 5 с после окончания форсажа (оба условия).
-    if (!this.boosting && sinceDamage > this.cfg.shieldRegenDelayDamage &&
+    const regenDelay = this.cfg.shieldRegenDelayDamage * (this.shieldRegenDelayMod ?? 1);
+    if (!this.boosting && sinceDamage > regenDelay &&
         sinceBoost > this.cfg.shieldRegenDelayBoost && this.shield < this.maxShield) {
       this.shield = Math.min(this.maxShield, this.shield + this.shieldRegenPerSec * dt);
     }

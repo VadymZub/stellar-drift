@@ -140,8 +140,10 @@ export default class Mob {
 
     const dist = Phaser.Math.Distance.Between(this.x, this.y, player.x, player.y);
 
-    // Игрок в безопасной зоне (или мёртв) — моб НЕ атакует, даже если уже преследовал.
-    if (playerInSafeZone || !player.alive) {
+    const playerStealthed = (this.scene._stealthEndTime || 0) > now;
+
+    // Игрок в безопасной зоне, мёртв или в стелсе — моб НЕ атакует и сбрасывает агро.
+    if (playerInSafeZone || !player.alive || playerStealthed) {
        this.state = 'idle';
     } else if (dist < this.tpl.aggro) {
        if (!this.neutral) this.state = 'aggro';

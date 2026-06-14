@@ -73,6 +73,17 @@ export default class BootScene extends Phaser.Scene {
       this.load.image(`cannon2_${corp}`, `assets/bases/cannon2_${corp}.png`);
     }
 
+    // Skill tree icons (20 skills, 128×128)
+    const SKILL_KEYS = [
+      'sharpshooter', 'heavy_caliber', 'penetrating_rounds', 'overcharge_shot',
+      'salvo', 'targeting_ai', 'berserker',
+      'reinforced_hull', 'shield_optimizer', 'fast_regen', 'emergency_repair',
+      'shield_burst', 'damage_resist', 'module_specialist',
+      'loot_magnet', 'salvager', 'merchants_eye', 'scanner_boost',
+      'cargo_expand', 'stealth_sprint',
+    ];
+    for (const k of SKILL_KEYS) this.load.image(`skill_${k}`, `assets/skills/${k}.png`);
+
     // VFX manifest — frame sizes read in create() to load sprite sheets
     this.load.json('vfx_manifest', 'assets/vfx/vfx_manifest.json');
   }

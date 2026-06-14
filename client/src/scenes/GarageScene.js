@@ -587,10 +587,10 @@ export default class GarageScene extends Phaser.Scene {
     // Build a flat list of all equipped perkable slots
     const slots = [];
     for (const item of (gs.equipped.weapon || [])) {
-      if (item) slots.push({ item, label: `Орудие T${item.tier}` });
+      if (item) slots.push({ item, label: itemName(item) });
     }
     for (const item of (gs.equipped.shield || [])) {
-      if (item) slots.push({ item, label: `Щит T${item.tier}` });
+      if (item) slots.push({ item, label: itemName(item) });
     }
 
     if (slots.length === 0) {

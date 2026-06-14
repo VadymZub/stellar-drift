@@ -32,9 +32,10 @@ const config = {
   render: {
     antialias: true,
     antialiasGL: true,
-    roundPixels: false,
+    roundPixels: true,
     powerPreference: 'high-performance',
     pixelArt: false,
+    mipmapFilter: 'LINEAR_MIPMAP_LINEAR',
   },
   physics: {
     default: 'arcade',

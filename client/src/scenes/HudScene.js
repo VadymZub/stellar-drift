@@ -47,6 +47,80 @@ export default class HudScene extends Phaser.Scene {
     this.logEntries = [];
     this.game.events.on('hud-log', this.pushLog, this);
     this.events.once('shutdown', () => this.game.events.off('hud-log', this.pushLog, this));
+
+    // Action bar (10 slots)
+    this._abSlots = null;
+    this._buildActionBarHUD();
+  }
+
+  _buildActionBarHUD() {
+    const W = this.scale.width, H = this.scale.height;
+    const SW = 52, SH = 52, GAP = 4, N = 10;
+    const startX = Math.round((W - (N * SW + (N - 1) * GAP)) / 2);
+    const barY   = H - SH - 10;
+
+    this._abSlots = Array.from({ length: N }, (_, i) => {
+      const sx = startX + i * (SW + GAP);
+
+      const bg = this.add.graphics().setDepth(101);
+      bg.fillStyle(0x0a1828, 0.92);
+      bg.fillRoundedRect(sx, barY, SW, SH, 5);
+      bg.lineStyle(1, 0x1e4060, 1);
+      bg.strokeRoundedRect(sx, barY, SW, SH, 5);
+
+      const cdGfx = this.add.graphics().setDepth(103);
+      const hkStyle = { fontFamily: 'Inter, sans-serif', fontSize: '9px', color: '#4a6680', resolution: UI_RES };
+      const hk = this.add.text(sx + 3, barY + 2, i < 9 ? `${i + 1}` : '0', hkStyle).setDepth(104);
+      const cdStyle = { fontFamily: 'Orbitron, sans-serif', fontSize: '12px', color: '#ffffff', resolution: UI_RES };
+      const cdTxt = this.add.text(sx + SW / 2, barY + SH / 2, '', cdStyle).setOrigin(0.5).setDepth(104);
+
+      return { sx, sy: barY, SW, SH, bg, cdGfx, hk, cdTxt, iconImg: null, _key: null };
+    });
+    this._rebuildActionBarIcons();
+  }
+
+  _rebuildActionBarIcons() {
+    if (!this._abSlots) return;
+    const gs = this.gs;
+    this._abSlots.forEach((slot, i) => {
+      const key = (gs.actionBar || [])[i] || null;
+      slot._key = key;
+      if (slot.iconImg) { slot.iconImg.destroy(); slot.iconImg = null; }
+      if (!key) return;
+      const texKey = `skill_${key}`;
+      if (!this.textures.exists(texKey)) return;
+      slot.iconImg = this.add.image(slot.sx + slot.SW / 2, slot.sy + slot.SH / 2, texKey)
+        .setDisplaySize(slot.SW - 4, slot.SH - 4).setDepth(102);
+    });
+  }
+
+  _updateActionBarHUD(time) {
+    if (!this._abSlots) return;
+    const gs  = this.gs;
+    const bar = gs.actionBar || [];
+    if (this._abSlots.some((s, i) => s._key !== (bar[i] || null))) this._rebuildActionBarIcons();
+
+    for (let i = 0; i < 10; i++) {
+      const slot  = this._abSlots[i];
+      const key   = bar[i] || null;
+      const cdEnd = key ? (gs.skillCooldowns[key] || 0) : 0;
+      const cdMs  = key ? gs._skillCooldownMs(key) : 1;
+      const rem   = Math.max(0, cdEnd - time);
+
+      slot.cdGfx.clear();
+      if (key && rem > 0) {
+        const prog = rem / cdMs;
+        slot.cdGfx.fillStyle(0x000000, 0.68);
+        slot.cdGfx.fillRoundedRect(slot.sx, slot.sy, slot.SW, Math.ceil(slot.SH * prog), 5);
+        slot.cdTxt.setText(Math.ceil(rem / 1000));
+      } else {
+        slot.cdTxt.setText('');
+      }
+      if (slot.iconImg) {
+        const lv = gs.skillLevels?.[key] || 0;
+        slot.iconImg.setAlpha(lv === 0 ? 0.25 : rem > 0 ? 0.45 : 1.0);
+      }
+    }
   }
 
   pushLog(text) {
@@ -122,8 +196,11 @@ export default class HudScene extends Phaser.Scene {
     // ── Миникарта (векторные блипы) ──
     this.drawMinimap();
 
-    // ── Подсказка ──
-    this.hint.setPosition(W / 2, H - 12);
+    // ── Подсказка (выше action bar) ──
+    this.hint.setPosition(W / 2, H - 66);
+
+    // ── Action bar ──
+    this._updateActionBarHUD(this.time.now);
 
     // ── Лог (снизу вверх, с угасанием по возрасту) ──
     const baseY = H - 120;

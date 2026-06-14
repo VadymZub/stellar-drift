@@ -61,7 +61,7 @@ export default class GameScene extends Phaser.Scene {
 
     this.cameras.main.startFollow(this.player.sprite, false, 0.15, 0.15);
     this.cameras.main.setZoom(DPR);   
-    this.cameras.main.roundPixels = false;    
+    this.cameras.main.roundPixels = true;
 
     this.reticle = this.add.graphics().setDepth(45);
     this.target = null;
@@ -126,6 +126,13 @@ export default class GameScene extends Phaser.Scene {
     this.actionBar   = this.actionBar   || Array(10).fill(null);
     this.respeckCount     = this.respeckCount     || 0;
     this.skillAchievementSP = this.skillAchievementSP || 0;
+
+    // Active skill runtime state (reset per session)
+    this.skillCooldowns    = {};
+    this._overchargeActive = false;
+    this._berserkerBuff    = null;   // { endTime, mult } | null
+    this._stealthEndTime   = 0;
+    this._stealthOrigSpeed = 0;
 
     this.playerName  = this.playerName  || 'Player';
     this.miningBases = [];
@@ -553,6 +560,17 @@ export default class GameScene extends Phaser.Scene {
     this.input.on('pointerdown', (pointer) => {
       if (this.scene.isActive('GarageScene') || this.scene.isActive('InventoryScene') || this.scene.isActive('MapScene') || this.scene.isActive('BaseMenuScene') || this.scene.isActive('CorpScene') || this.scene.isActive('SkillScene')) return;
 
+      // Action bar click (physical canvas coords, SH=52 GAP=4 N=10)
+      {
+        const AB_SH = 52, AB_SW = 52, AB_GAP = 4, AB_N = 10;
+        const abBarY = this.scale.height - AB_SH - 10;
+        if (pointer.y >= abBarY) {
+          const abStartX = Math.round((this.scale.width - (AB_N * AB_SW + (AB_N - 1) * AB_GAP)) / 2);
+          const slotI = Math.floor((pointer.x - abStartX) / (AB_SW + AB_GAP));
+          if (slotI >= 0 && slotI < AB_N) { this._activateSkillSlot(slotI); return; }
+        }
+      }
+
       const now = this.time.now;
       const isDouble = (now - lastClickTime < 350);
       lastClickTime = now;
@@ -623,13 +641,28 @@ export default class GameScene extends Phaser.Scene {
       const nearHome = this.homeBases.find(b => Phaser.Math.Distance.Between(this.player.x, this.player.y, b.x, b.y) < 380);
       if (nearHome) nearHome.openInfo();
     });
-    this.input.keyboard.on('keydown-I', () => this.toggleOverlay('InventoryScene'));
-    this.input.keyboard.on('keydown-G', () => { this.player.waypoint = null; this.cancelCollect(); this.toggleOverlay('GarageScene'); });
+    this.input.keyboard.on('keydown-I', () => {
+      if (!this._canOpenBase()) { this.log('📦 Склад доступен только на базе'); return; }
+      this.toggleOverlay('InventoryScene');
+    });
+    this.input.keyboard.on('keydown-G', () => {
+      if (!this._canOpenBase()) { this.log('🛠 Гараж доступен только на базе'); return; }
+      this.player.waypoint = null; this.cancelCollect(); this.toggleOverlay('GarageScene');
+    });
     this.input.keyboard.on('keydown-M', () => { this.player.waypoint = null; this.cancelCollect(); this.toggleOverlay('MapScene'); });
     this.input.keyboard.on('keydown-K', () => { this.player.waypoint = null; this.cancelCollect(); this.toggleOverlay('SkillScene'); });
-    this.input.keyboard.on('keydown-O', () => { this.player.waypoint = null; this.cancelCollect(); this.toggleOverlay('MissionsScene'); });
-    this.input.keyboard.on('keydown-P', () => { this.player.waypoint = null; this.cancelCollect(); this.toggleOverlay('ShopScene'); });
-    this.input.keyboard.on('keydown-H', () => { this.player.waypoint = null; this.cancelCollect(); this.toggleOverlay('CorpScene'); });
+    this.input.keyboard.on('keydown-O', () => {
+      if (!this._canOpenBase()) { this.log('📋 Миссии доступны только на базе'); return; }
+      this.player.waypoint = null; this.cancelCollect(); this.toggleOverlay('MissionsScene');
+    });
+    this.input.keyboard.on('keydown-P', () => {
+      if (!this._canOpenBase()) { this.log('🏪 Магазин доступен только на базе'); return; }
+      this.player.waypoint = null; this.cancelCollect(); this.toggleOverlay('ShopScene');
+    });
+    this.input.keyboard.on('keydown-H', () => {
+      if (!this._canOpenBase()) { this.log('🏛 Корпорация доступна только на базе'); return; }
+      this.player.waypoint = null; this.cancelCollect(); this.toggleOverlay('CorpScene');
+    });
     
     this.input.keyboard.on('keydown-CTRL', (e) => {
       e.preventDefault();
@@ -638,6 +671,12 @@ export default class GameScene extends Phaser.Scene {
         this.log(this.isFiring ? "FIRE ON" : "FIRE OFF");
       }
     });
+
+    // Action bar hotkeys 1-9 / 0
+    ['ONE','TWO','THREE','FOUR','FIVE','SIX','SEVEN','EIGHT','NINE'].forEach((k, i) => {
+      this.input.keyboard.on(`keydown-${k}`, () => this._activateSkillSlot(i));
+    });
+    this.input.keyboard.on('keydown-ZERO', () => this._activateSkillSlot(9));
 
     if (DEV_MODE) {
       this.input.keyboard.on('keydown-ZERO', () => {
@@ -652,6 +691,102 @@ export default class GameScene extends Phaser.Scene {
         this.log('DEV: +1 000 000 кр, +500 ⭐');
       });
     }
+  }
+
+  // ── Active skill system ────────────────────────────────────────────────
+
+  _skillCooldownMs(key) {
+    const lv  = Math.max(1, (this.skillLevels || {})[key] || 1);
+    const mod = this.player?.activeCooldownMod ?? 1;
+    const base = { overcharge_shot: 25000, salvo: 55000, emergency_repair: 120000,
+                   shield_burst: 85000, stealth_sprint: 55000,
+                   berserker: [90000, 80000, 70000, 60000][lv - 1] ?? 90000 };
+    return Math.round((base[key] || 30000) * mod);
+  }
+
+  _activateSkillSlot(i) {
+    const key = (this.actionBar || [])[i];
+    if (!key || !this.player?.alive) return;
+    const lv = (this.skillLevels || {})[key] || 0;
+    if (lv === 0) return;
+    const now = this.time.now;
+    const cdEnd = this.skillCooldowns[key] || 0;
+    if (now < cdEnd) { this.log(`⏳ КД: ${Math.ceil((cdEnd - now) / 1000)}с`); return; }
+    const cd = this._skillCooldownMs(key);
+    switch (key) {
+      case 'overcharge_shot':  this._doOverchargeShot(now, cd);  break;
+      case 'salvo':            this._doSalvo(now, cd);           break;
+      case 'emergency_repair': this._doEmergencyRepair(now, cd); break;
+      case 'shield_burst':     this._doShieldBurst(now, cd);     break;
+      case 'stealth_sprint':   this._doStealthSprint(now, cd);   break;
+      case 'berserker':        this._doBerserker(lv, now, cd);   break;
+    }
+  }
+
+  _doOverchargeShot(now, cd) {
+    this.skillCooldowns.overcharge_shot = now + cd;
+    this._overchargeActive = true;
+    this.log('⚡ Перегрузочный выстрел — следующий выстрел ×2');
+    this.muzzleFlash(this.player.x, this.player.y, 0xff8800);
+  }
+
+  _doSalvo(now, cd) {
+    this.skillCooldowns.salvo = now + cd;
+    this.log('🚀 Залп!');
+    for (let i = 0; i < 5; i++) {
+      this.time.delayedCall(i * 100, () => {
+        if (this.target?.alive && this.player.alive) this.firePlayerWeapon();
+      });
+    }
+  }
+
+  _doEmergencyRepair(now, cd) {
+    this.skillCooldowns.emergency_repair = now + cd;
+    const heal = Math.round(this.player.maxHull * 0.30);
+    this.player.hull = Math.min(this.player.maxHull, this.player.hull + heal);
+    this.log(`💉 Ремонт: +${heal} HP`);
+    this.hitFlash(this.player.x, this.player.y, true);
+  }
+
+  _doShieldBurst(now, cd) {
+    this.skillCooldowns.shield_burst = now + cd;
+    const boost = Math.round(this.player.maxShield * 1.20);
+    this.player.shield = Math.min(this.player.maxShield, this.player.shield + boost);
+    this.log(`🛡 Всплеск щита: +${boost}`);
+    this.hitFlash(this.player.x, this.player.y, false);
+  }
+
+  _doStealthSprint(now, cd) {
+    if (this._stealthEndTime > now) return;
+    this.skillCooldowns.stealth_sprint = now + cd;
+    this._stealthEndTime = now + 8000;
+    this._stealthOrigSpeed = this.player.shipBaseSpeed;
+    this.player.shipBaseSpeed = Math.round(this.player.shipBaseSpeed * 1.30);
+    this.player.recomputeStats();
+    this.player.sprite.setAlpha(0.35);
+    this.log('👻 Стелс-рывок: +30% скорость, 8с');
+    this.time.delayedCall(8000, () => {
+      if (!this.player?.alive) return;
+      this.player.shipBaseSpeed = this._stealthOrigSpeed;
+      this.player.recomputeStats();
+      this.player.sprite.setAlpha(1.0);
+      this._stealthEndTime = 0;
+      this.log('👻 Стелс завершён');
+    });
+  }
+
+  _doBerserker(lv, now, cd) {
+    const thresholds = [0.40, 0.35, 0.30, 0.25];
+    const boosts     = [0.25, 0.35, 0.50, 0.60];
+    const thresh = thresholds[lv - 1] ?? 0.40;
+    const boost  = boosts[lv - 1]     ?? 0.25;
+    if (this.player.hull / this.player.maxHull > thresh) {
+      this.log(`💀 Берсерк: нужно HP < ${thresh * 100}%`); return;
+    }
+    this.skillCooldowns.berserker = now + cd;
+    this._berserkerBuff = { endTime: now + 15000, mult: 1 + boost };
+    this.log(`💀 Берсерк: +${Math.round(boost * 100)}% урон, 15с`);
+    this.hitFlash(this.player.x, this.player.y, true);
   }
 
   gainXp(amount) {
@@ -679,6 +814,20 @@ export default class GameScene extends Phaser.Scene {
     return best;
   }
   cancelCollect() { this.collectTarget = null; this.collectTimer = 0; }
+  _canOpenBase() {
+    const sec = SECTORS[galaxy.current];
+    // Данжи, арены, boss-карта (R-1-boss) — isDungeon:true, доступа нет
+    if (sec.isDungeon) return false;
+    // PvP — доступ только рядом с домашней базой корпорации
+    if (sec.pvp) {
+      return this.homeBases.some(b =>
+        Phaser.Math.Distance.Between(this.player.x, this.player.y, b.x, b.y) < 380
+      );
+    }
+    // Обычные секторы — в пределах безопасной зоны у базы
+    return this.inSafeZone(this.player.x, this.player.y);
+  }
+
   toggleOverlay(key, data) {
     const overlays = ['GarageScene', 'InventoryScene', 'MapScene', 'MissionsScene', 'ShopScene', 'CorpScene'];
     for (const o of overlays) { if (o !== key && this.scene.isActive(o)) this.scene.stop(o); }
@@ -697,8 +846,26 @@ export default class GameScene extends Phaser.Scene {
   }
   firePlayerWeapon() {
     const t = this.target, p = this.player;
-    this.projectiles.push(new Projectile(this, 'player', p.x, p.y, t.x, t.y, t, p.weaponDamage, p.weaponPenetration, PROJECTILE.playerColor));
-    this.muzzleFlash(p.x, p.y, 0x8fe6ff);
+
+    // Active skill multipliers
+    let skillMult = 1;
+    if (this._overchargeActive) { skillMult *= 2.0; this._overchargeActive = false; }
+    if (this._berserkerBuff && this.time.now < this._berserkerBuff.endTime) skillMult *= this._berserkerBuff.mult;
+
+    const isCrit  = p.critChance > 0 && Math.random() < p.critChance;
+    const dmg     = Math.round(p.weaponDamage * skillMult * (isCrit ? 2 : 1));
+    const isOC    = skillMult >= 2;
+    const color   = isOC ? 0xff8800 : isCrit ? 0xffee44 : PROJECTILE.playerColor;
+    this.projectiles.push(new Projectile(this, 'player', p.x, p.y, t.x, t.y, t, dmg, p.weaponPenetration, color));
+    this.muzzleFlash(p.x, p.y, isOC ? 0xff8800 : isCrit ? 0xffee44 : 0x8fe6ff);
+    if (isCrit || isOC) {
+      const label = isOC ? '⚡ УДАР!' : 'КРИТ!';
+      const clr   = isOC ? '#ff8800' : '#ffee44';
+      const txt = this.add.text(t.x, t.y - 40, label,
+        { fontFamily: 'Orbitron', fontSize: '14px', color: clr, fontStyle: 'bold', resolution: 2 })
+        .setOrigin(0.5).setDepth(71);
+      this.tweens.add({ targets: txt, y: t.y - 80, alpha: 0, duration: 600, ease: 'Quad.easeOut', onComplete: () => txt.destroy() });
+    }
   }
   fireMobWeapon(mob, tx, ty) {
     this.projectiles.push(new Projectile(this, 'mob', mob.x, mob.y, tx, ty, this.player, mob.damage, 0.05, PROJECTILE.mobColor));
@@ -735,10 +902,13 @@ export default class GameScene extends Phaser.Scene {
     const name = i18n.t(mob.tpl.nameKey); const lvl = `${i18n.t('mob.level')}${mob.level}`;
     const lvlScale = 1 + 0.5 * (mob.level - 1); const credits = Math.round(mob.tpl.credits * lvlScale); const xp = Math.round(mob.tpl.xp * lvlScale);
     this.log(i18n.t('log.killed', { name, lvl })); this.log(i18n.t('log.reward', { credits, xp }));
-    this.credits = (this.credits || 0) + credits; this.gainXp(xp); if (this.target === mob) this.target = null;
+    this.credits = (this.credits || 0) + credits; this.gainXp(xp);
+    if (this.target === mob) {
+      this.target = null; this.isFiring = false;
+      if (this._targetFx?.active) { this.vfx?.stopLoop(this._targetFx); this._targetFx = null; }
+    }
     const sg = rollStarGold(mob); if (sg > 0) { this.starGold = (this.starGold || 0) + sg; this.log(i18n.t('log.stargold', { amount: sg })); }
     if (Phaser.Math.FloatBetween(0, 1) < dropChance(mob)) { this.loot.push(new Loot(this, mob.x, mob.y, rollLootForMob(mob))); }
-    if (this._targetFx?.active && this.target === mob) { this.vfx?.stopLoop(this._targetFx); this._targetFx = null; }
     this.time.delayedCall(RESPAWN_MS, () => { if (!mob.alive) { mob.respawn(); this.log(i18n.t('log.respawn', { name, lvl })); } });
   }
   _spawnEngineFx() {
@@ -905,7 +1075,8 @@ export default class GameScene extends Phaser.Scene {
     const dist = Phaser.Math.Distance.Between(this.player.x, this.player.y, target.x, target.y);
     
     // Начинаем сбор только если мы в радиусе. Если далеко — просто ждем прибытия.
-    if (dist <= PICKUP_RADIUS + 10) {
+    const pickupR = PICKUP_RADIUS * (this.player.lootPickupRadiusMult || 1);
+    if (dist <= pickupR + 10) {
       this.collectTimer += dt * 1000;
       const frac = Math.min(1, this.collectTimer / PICKUP_TIME);
       
