@@ -80,11 +80,11 @@ export default class HomeBase {
     const gs = this.scene;
     const d  = Phaser.Math.Distance.Between(gs.player.x, gs.player.y, this.x, this.y);
     const near = d < AURA_R && gs.player.alive;
-    gs.nearBase = near;
 
     const pvp = SECTORS[galaxy.current]?.pvp;
     const corpMatch = !pvp || gs.playerCorp === this.corp || gs.playerCorp === 'neutral';
-    this._healHint.setVisible(near);
+    gs.nearBase = near && corpMatch;
+    this._healHint.setVisible(near && corpMatch);
     this._enterBtn.setVisible(near && !gs.atBase && corpMatch);
     this._enterLbl.setVisible(near && !gs.atBase && corpMatch);
 

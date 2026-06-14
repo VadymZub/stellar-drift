@@ -98,7 +98,9 @@ export default class GarageScene extends Phaser.Scene {
 
     // Hero art (garageKey) — крупное изображение в карточке
     const heroBox = Math.round(h * 0.66);
-    const img = this.shipImg(x + w / 2, y + Math.round(heroBox / 2) + 8, heroBox, ship);
+    const _cardMult = { stiletto: 1.2, wisp: 1.0, anvil: 1.0 };
+    const imgBox = Math.round(heroBox * (_cardMult[ship.key] ?? 1.3));
+    const img = this.shipImg(x + w / 2, y + Math.round(heroBox / 2) + 8, imgBox, ship);
     if (locked) img.setTint(0x44525a).setAlpha(0.55);
 
     this.add.text(x + w / 2, y + heroBox + 14, i18n.t(ship.nameKey),
@@ -139,7 +141,8 @@ export default class GarageScene extends Phaser.Scene {
     const locked = !owned && !purchaseState(ship, gs).ok;
 
     const cx = x + w / 2;
-    const im = this.shipImg(cx, y + 88, 156, ship);   // фото в описании +30% (120→156)
+    const _heroBox = { stiletto: 187, wisp: 156, anvil: 156 };
+    const im = this.shipImg(cx, y + 88, _heroBox[ship.key] ?? 203, ship);
     if (locked) im.setTint(0x55636b).setAlpha(0.7);
     this.add.text(cx, y + 176, i18n.t(ship.nameKey), this.O('20px', '#cfe9ee')).setOrigin(0.5, 0);
     this.add.text(cx, y + 204, `${i18n.t('garage.tier')} ${ship.tier}`, this.F('12px', '#ffb74d')).setOrigin(0.5, 0);
@@ -222,15 +225,16 @@ export default class GarageScene extends Phaser.Scene {
   }
 
   // ════════════════ СКЛАД (в вкладке ОБОРУДОВАНИЕ) ════════════════
-  renderWarehouse(x, y, w, h) {
+  renderWarehouse(x, y, w, h, clipBotH) {
     const gs = this.gs;
     const max = 10 + ((gs.skillLevels?.cargo_expand || 0) >= 1 ? 40 : 0);
-    this._renderSlotGrid(x, y, w, h, gs.warehouse || [], max, 'warehouse');
+    this._renderSlotGrid(x, y, w, h, gs.warehouse || [], max, 'warehouse', clipBotH);
   }
 
   // Универсальная слот-сетка: 5 колонок × N рядов, clip-маска + колесо мыши для скролла.
   // type = 'inventory' (трюм, надеть/продать) | 'warehouse' (склад, → трюм)
-  _renderSlotGrid(ax, ay, aw, ah, items, maxSlots, type) {
+  // clipBotH: высота нижней полосы-заглушки (null = до низа панели, число = ровно столько)
+  _renderSlotGrid(ax, ay, aw, ah, items, maxSlots, type, clipBotH) {
     const gs = this.gs;
     const SZ = 68, GAP = 6, COLS = 5;
     const container = this.add.container(ax, ay);
@@ -312,18 +316,30 @@ export default class GarageScene extends Phaser.Scene {
       }
     }
 
-    // Clip overflow via cover strips (GeometryMask not supported in WebGL)
-    const COV = 200;
-    this.add.rectangle(ax, ay,        aw, COV, 0x080e1a).setOrigin(0, 1).setDepth(12);
-    this.add.rectangle(ax, ay + ah,   aw, COV, 0x080e1a).setOrigin(0, 0).setDepth(12);
+    // ── Cover strips: clip overflow outside the visible grid area ─────────
+    // Bottom strip: clipped to [clipBotH] or exactly to panel bottom (не заходит в следующую секцию)
+    const { py: _py, ph: _ph, px: _px, pw: _pw } = this.box;
+    const botH = clipBotH != null ? clipBotH : Math.max(4, _py + _ph - ay - ah);
+    if (botH > 0) this.add.rectangle(ax, ay + ah, aw, botH, 0x080e1a).setOrigin(0, 0).setDepth(12);
+    // Right strip: закрывает overflow ячеек вправо (от правого края сетки до края панели)
+    const rW = Math.max(0, _px + _pw - ax - aw);
+    if (rW > 0) this.add.rectangle(ax + aw, ay, rW, ah, 0x080e1a).setOrigin(0, 0).setDepth(12);
 
-    // Wheel scroll (only fires when pointer is over this grid region)
+    // ── Wheel scroll + scrollbar ───────────────────────────────────────────
     const totalH = Math.ceil(maxSlots / COLS) * (SZ + GAP);
     if (totalH > ah) {
       const startY = ay, minY = ay - (totalH - ah);
+      const SBW = 3, thumbH = Math.max(20, Math.round(ah * ah / totalH));
+      const thumb = this.add.rectangle(ax + aw - SBW - 2, ay, SBW, thumbH, 0x2a6080, 0.7)
+        .setOrigin(0, 0).setDepth(13);
+      const updateSB = () => {
+        const frac = startY > minY ? (startY - container.y) / (startY - minY) : 0;
+        thumb.setY(ay + Math.round(frac * (ah - thumbH)));
+      };
       this.input.on('wheel', (p, _o, _dx, dy) => {
         if (p.x < ax || p.x > ax + aw || p.y < ay || p.y > ay + ah) return;
         container.y = Phaser.Math.Clamp(container.y - dy * 0.5, minY, startY);
+        updateSB();
       });
     }
   }
@@ -561,11 +577,13 @@ export default class GarageScene extends Phaser.Scene {
     const warehouseMax = 10 + ((gs.skillLevels?.cargo_expand || 0) >= 1 ? 40 : 0);
     this.add.text(rx, py + 60, `ТРЮМ  ${gs.inventory.length}/${cargoMax}`, this.O('15px', '#ffe0b2'));
     const invH = Math.floor((ph - 150) * 0.55);
-    this.renderInventory(rx, py + 92, rw, invH);
     const whY = py + 92 + invH + 12;
+    const whAY = whY + 28; // верх сетки склада
+    // Трюм — нижняя полоса только до метки «СКЛАД» (40 px), не заходит в секцию склада
+    this.renderInventory(rx, py + 92, rw, invH, whAY - (py + 92 + invH));
     const warehouseCount = (gs.warehouse || []).length;
     this.add.text(rx, whY, `СКЛАД  ${warehouseCount}/${warehouseMax}`, this.O('14px', '#b8e4c4'));
-    this.renderWarehouse(rx, whY + 28, rw, ph - 150 - invH - 40);
+    this.renderWarehouse(rx, whAY, rw, ph - 150 - invH - 40);
   }
 
   // Ряд слотов одного типа: подпись (занято/всего) + квадраты. Клик по занятому → снять.
@@ -612,10 +630,10 @@ export default class GarageScene extends Phaser.Scene {
     });
   }
 
-  renderInventory(x, y, w, h) {
+  renderInventory(x, y, w, h, clipBotH) {
     const gs = this.gs;
     const max = 5 + ((gs.skillLevels?.cargo_expand || 0) >= 1 ? 40 : 0);
-    this._renderSlotGrid(x, y, w, h, gs.inventory || [], max, 'inventory');
+    this._renderSlotGrid(x, y, w, h, gs.inventory || [], max, 'inventory', clipBotH);
   }
 
   // Модалка подтверждения продажи (без restart — отдельные объекты, чистятся по выбору)

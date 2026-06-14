@@ -40,8 +40,11 @@ export default class CargoScene extends Phaser.Scene {
     const capColor = cargoCount >= cargoMax ? '#ef5350' : '#4a6678';
     this.add.text(px + 22, py + 46, `${cargoCount} / ${cargoMax} слотов`, this.F('12px', capColor));
 
+    this.panelBox = { px, py, pw, ph };
+
     if (atBase) {
-      const colW = Math.floor((pw - 36) / 2);
+      // Минимум 364 px = ровно 5 колонок × 68 px + 4 зазора × 6 px
+      const colW = Math.max(364, Math.floor((pw - 36) / 2));
       this._renderSlotGrid(px + 12, py + 72, colW, ph - 90, this.gs.inventory || [], cargoMax, 'cargo');
       this._renderSlotGrid(px + colW + 24, py + 72, colW, ph - 90, this.gs.warehouse || [], whMax, 'warehouse');
       // Column headers
@@ -58,7 +61,7 @@ export default class CargoScene extends Phaser.Scene {
   }
 
   // Слот-сетка: type = 'cargo' | 'cargo_nosell' | 'warehouse'
-  _renderSlotGrid(ax, ay, aw, ah, items, maxSlots, type) {
+  _renderSlotGrid(ax, ay, aw, ah, items, maxSlots, type, clipBotH) {
     const gs = this.gs;
     const SZ = 68, GAP = 6, COLS = 5;
     const container = this.add.container(ax, ay);
@@ -137,18 +140,31 @@ export default class CargoScene extends Phaser.Scene {
       }
     }
 
-    // Clip overflow via cover strips (GeometryMask not supported in WebGL)
-    const COV = 200;
-    this.add.rectangle(ax, ay,        aw, COV, 0x080e1a).setOrigin(0, 1).setDepth(12);
-    this.add.rectangle(ax, ay + ah,   aw, COV, 0x080e1a).setOrigin(0, 0).setDepth(12);
+    // ── Cover strips: clip overflow outside the visible grid area ─────────
+    const pbox = this.panelBox;
+    const botH = clipBotH != null ? clipBotH : (pbox ? Math.max(4, pbox.py + pbox.ph - ay - ah) : 20);
+    if (botH > 0) this.add.rectangle(ax, ay + ah, aw, botH, 0x080e1a).setOrigin(0, 0).setDepth(12);
+    // Right strip: только малый отступ панели (≤20px), не покрывает соседние колонки
+    if (pbox) {
+      const rW = pbox.px + pbox.pw - ax - aw;
+      if (rW > 0 && rW <= 20) this.add.rectangle(ax + aw, ay, rW, ah, 0x080e1a).setOrigin(0, 0).setDepth(12);
+    }
 
-    // Wheel scroll
+    // ── Wheel scroll + scrollbar ───────────────────────────────────────────
     const totalH = Math.ceil(maxSlots / COLS) * (SZ + GAP);
     if (totalH > ah) {
       const startY = ay, minY = ay - (totalH - ah);
+      const SBW = 3, thumbH = Math.max(20, Math.round(ah * ah / totalH));
+      const thumb = this.add.rectangle(ax + aw - SBW - 2, ay, SBW, thumbH, 0x2a6080, 0.7)
+        .setOrigin(0, 0).setDepth(13);
+      const updateSB = () => {
+        const frac = startY > minY ? (startY - container.y) / (startY - minY) : 0;
+        thumb.setY(ay + Math.round(frac * (ah - thumbH)));
+      };
       this.input.on('wheel', (p, _o, _dx, dy) => {
         if (p.x < ax || p.x > ax + aw || p.y < ay || p.y > ay + ah) return;
         container.y = Phaser.Math.Clamp(container.y - dy * 0.5, minY, startY);
+        updateSB();
       });
     }
   }

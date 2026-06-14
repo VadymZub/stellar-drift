@@ -86,7 +86,8 @@ export default class Player {
 
     const sumDur = S.reduce((a, s) => a + s.durability * modMult(s), 0);
     this.maxShield = Math.round((this.shipShieldBase + sumDur) * m.shield);
-    this.shieldRegenPerSec = S.length ? Math.round(S.reduce((a, s) => a + s.regen * modMult(s), 0)) : (isAdmin ? 500 : PLAYER.baseShieldRegen);
+    const defaultRegen = Math.round(this.maxShield * 0.03);
+    this.shieldRegenPerSec = S.length ? Math.round(S.reduce((a, s) => a + s.regen * modMult(s), 0)) : (isAdmin ? 500 : defaultRegen);
     this.evasion = Math.min(isAdmin ? 0.25 : 0.15, S.reduce((a, s) => a + s.evasion * modMult(s), 0));
 
     const sumSpd = E.reduce((a, e) => a + (e.speed || 0) * modMult(e), 0);
@@ -104,7 +105,9 @@ export default class Player {
     this.maxHull           = Math.round(this.ship.hullMax * m.hull * (1 + sl('reinforced_hull') * 0.06));
     this.hull              = Math.min(this.hull, this.maxHull);
     this.maxShield         = Math.round(this.maxShield * (1 + sl('shield_optimizer') * 0.05));
-    this.shieldRegenDelayMod = Math.max(0.30, 1 - sl('fast_regen')    * 0.15);
+    const fastRegen = sl('fast_regen');
+    this.shieldRegenDelaySec = 6 - fastRegen * 0.25;
+    if (!S.length && !isAdmin && fastRegen > 0) this.shieldRegenPerSec = Math.round(this.maxShield * (0.03 + fastRegen * 0.0175));
     this.damageResistMod     = Math.max(0.20, 1 - sl('damage_resist') * 0.05);
     this.activeCooldownMod   = Math.max(0.30, 1 - sl('module_specialist') * 0.10);
     // Trading
@@ -130,7 +133,7 @@ export default class Player {
       const pb = perkBonus(s.perk);
       if (s.perk.key === 'perk_resonance')      this.shieldRegenPerSec  = Math.round(this.shieldRegenPerSec * (1 + 0.12 * (1 + pb)));
       if (s.perk.key === 'perk_hardened')       this.damageResistMod    = Math.max(0.20, this.damageResistMod - 0.10 * (1 + pb));
-      if (s.perk.key === 'perk_quick_recovery') this.shieldRegenDelayMod = Math.max(0.30, this.shieldRegenDelayMod * (1 - 0.30 * (1 + pb)));
+      if (s.perk.key === 'perk_quick_recovery') this.shieldRegenDelaySec = Math.max(1, this.shieldRegenDelaySec * (1 - 0.30 * (1 + pb)));
     }
 
     if (this.shield > this.maxShield) this.shield = this.maxShield;
@@ -187,10 +190,10 @@ export default class Player {
     const sinceDamage = now - this.lastDamageAt;
     const sinceBoost = now - this.lastBoostAt;
 
-    // Реген щита: 10 с после урона И 5 с после окончания форсажа (оба условия).
-    const regenDelay = this.cfg.shieldRegenDelayDamage * (this.shieldRegenDelayMod ?? 1);
-    if (!this.boosting && sinceDamage > regenDelay &&
-        sinceBoost > this.cfg.shieldRegenDelayBoost && this.shield < this.maxShield) {
+    // Реген щита: 6 с после урона И после окончания форсажа (оба условия, одна задержка).
+    const regenDelayMs = (this.shieldRegenDelaySec ?? 6) * 1000;
+    if (!this.boosting && sinceDamage > regenDelayMs &&
+        sinceBoost > regenDelayMs && this.shield < this.maxShield) {
       this.shield = Math.min(this.maxShield, this.shield + this.shieldRegenPerSec * dt);
     }
     // Авто-ремонт корпуса: если не атакуют hullRepairDelay (10 с) — чиним 5%/сек.

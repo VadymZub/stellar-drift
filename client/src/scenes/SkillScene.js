@@ -51,7 +51,7 @@ const SKILLS_DEF = [
     effects: ['+5% макс. щит', '+10% макс. щит', '+15% макс. щит', '+20% макс. щит'] },
   { key: 'fast_regen',        branch: 'engineering', type: 'passive', nameRu: 'Быстрая регенерация',
     maxLevel: 4, requires: [['shield_optimizer', 2]],
-    effects: ['-15% задержка рег.', '-25% задержка рег.', '-35% задержка рег.', '-50% задержка рег.'] },
+    effects: ['итого реген 5%/с, задержка 5.75с', 'итого реген 6.5%/с, задержка 5.5с', 'итого реген 8%/с, задержка 5.25с', 'итого реген 10%/с, задержка 5с'] },
   { key: 'emergency_repair',  branch: 'engineering', type: 'active',  nameRu: 'Аварийный ремонт',
     maxLevel: 1, icon: '💉', requires: [['fast_regen', 2]],
     effects: ['+30% HP, КД 120c'] },

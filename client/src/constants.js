@@ -38,8 +38,8 @@ export const RANKS = [
 
 // Базовые размеры мира. PvP-секторы масштабируются отдельно.
 export const BASE_WORLD = {
-  width: 6929,
-  height: 3900,
+  width: 8315,
+  height: 4680,
   safeZoneRadius: 320, 
   safeCombatGrace: 2000,
 };
@@ -59,7 +59,7 @@ export const PLAYER = {
   boostMult: 2.0,         // afterburner ×2
   baseShieldRegen: 20,    // щит/сек без модуля (с модулем — его regen)
   shieldRegenDelayDamage: 10000, // мс после последнего урона до регена щита
-  shieldRegenDelayBoost: 5000,   // мс после окончания форсажа до регена щита
+  shieldRegenDelayBoost: 6000,   // мс после окончания форсажа до регена щита
   hullRepairDelay: 10000, // мс без атаки до начала авто-ремонта корпуса
   hullRepairPctPerSec: 0.05, // корпус/сек = 5% от макс (полный за 20 сек)
   boostDrainPerSec: 60,   // щит/сек расход на форсаже (≈10% щита/сек)

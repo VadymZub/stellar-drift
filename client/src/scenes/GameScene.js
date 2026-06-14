@@ -276,12 +276,12 @@ export default class GameScene extends Phaser.Scene {
       // Конфигурация количества баз согласно ТЗ:
       // PvP-1: 2 базы, PvP-2: 3, PvP-3: 3, PvP-4: 4, PvP-5: 4
       if (pvpLvl === 1) {
-        basePoints = [[-1000, -800], [1000, 800]]; // 2 базы по диагонали
+        basePoints = [[-1200, -960], [1200, 960]]; // 2 базы по диагонали
       } else if (pvpLvl === 2 || pvpLvl === 3) {
-        basePoints = [[-1400, -1000], [0, 0], [1400, 1000]]; // 3 базы в ряд по диагонали
+        basePoints = [[-1680, -1200], [0, 0], [1680, 1200]]; // 3 базы в ряд по диагонали
       } else {
         // 4 базы квадратом
-        const d = 1500;
+        const d = 1800;
         basePoints = [[-d, -d], [d, -d], [d, d], [-d, d]];
       }
 
@@ -298,7 +298,7 @@ export default class GameScene extends Phaser.Scene {
 
       if (pvpLvl === 1) {
         // PvP 1: 3 дрона курсируют между базами (стаей)
-        const leader = add('sec_drone', Lmax, rnd(-1500, 1500), rnd(-1000, 1000), { behavior: 'roam', targets: baseTargets });
+        const leader = add('sec_drone', Lmax, rnd(-1800, 1800), rnd(-1200, 1200), { behavior: 'roam', targets: baseTargets });
         for (let i = 0; i < 2; i++) {
           add('sec_drone', Lmax, leader.spawnX - cx + rnd(-100, 100), leader.spawnY - cy + rnd(-100, 100), { leader });
         }
@@ -326,7 +326,7 @@ export default class GameScene extends Phaser.Scene {
 
     if (galaxy.current === 'R-1-boss') {
       // Специальный спавн для босс-уровня Алгол: Зов Апофиса
-      const ring = [[600, 600], [-600, 600], [600, -600], [-600, -600]];
+      const ring = [[720, 720], [-720, 720], [720, -720], [-720, -720]];
       ring.forEach(o => add('ancient_06', 50, o[0], o[1], { behavior: 'guard', patrolRadius: 300 }));
       add('apophis', 50, 0, 0, { behavior: 'guard', patrolRadius: 100, leash: Infinity });
       return;
@@ -355,14 +355,14 @@ export default class GameScene extends Phaser.Scene {
     
     if (galaxy.current === 'dungeon_5') {
       // Плотный спавн для Хранилища Древних
-      const pts = [[800, 800], [-800, 800], [800, -800], [-800, -800], [0, 1500], [0, -1500], [1800, 0], [-1800, 0]];
+      const pts = [[960, 960], [-960, 960], [960, -960], [-960, -960], [0, 1800], [0, -1800], [2160, 0], [-2160, 0]];
       pts.forEach((o, i) => add(pool[i % pool.length], rnd(Lmin, Lmax), o[0], o[1], { patrolRadius: 400 }));
       // Босс в центре (где обычно база)
       add(boss, Lmax, 0, 0, { behavior: 'guard', patrolRadius: 300, leash: 900 });
     } else {
-      const ring = [[1000, -300], [-1100, 400], [400, 1050], [-850, -700], [1500, 520], [-1500, -150]];
-      ring.forEach((o, i) => add(pool[i % pool.length], rnd(Lmin, Lmax), o[0], o[1]));        
-      const gx = 1500, gy = 950;
+      const ring = [[1200, -360], [-1320, 480], [480, 1260], [-1020, -840], [1800, 624], [-1800, -180]];
+      ring.forEach((o, i) => add(pool[i % pool.length], rnd(Lmin, Lmax), o[0], o[1]));
+      const gx = 1800, gy = 1140;
       add(boss, Lmax, gx, gy, { behavior: 'guard', patrolRadius: 180, leash: 480 });
       for (const [ox, oy] of [[-240, -130], [250, -90], [-110, 250]]) {
         add(pool[0], rnd(Lmin, Lmax), gx + ox, gy + oy, { patrolRadius: 150, leash: 520 });
@@ -395,8 +395,8 @@ export default class GameScene extends Phaser.Scene {
       // Karax: offset left (territory is upper-left in galaxy grid)
       // Tides: offset right (territory is lower-right in galaxy grid)
       add('helios',     0, -(my - 500));
-      add('karax',  -2600, -(my - 500));
-      add('tides',   2600, -(my - 500));
+      add('karax',  -3120, -(my - 500));
+      add('tides',   3120, -(my - 500));
     }
   }
 
