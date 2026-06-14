@@ -88,7 +88,7 @@ export default class BootScene extends Phaser.Scene {
       ['npc_hazard',   'Хазард.png'],
     ];
     for (const [key, file] of NPC_PORTRAITS) {
-      this.load.image(key, `../../space-mmo-validation/design/NPC PORTRAITS for missions/${file}`);
+      this.load.image(key, `assets/npc/${file}`);
     }
 
     // Skill tree icons (20 skills, 128×128)

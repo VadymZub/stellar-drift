@@ -137,10 +137,10 @@ export default class CargoScene extends Phaser.Scene {
       }
     }
 
-    // Clip mask
-    const maskGfx = this.make.graphics({ x: 0, y: 0, add: false });
-    maskGfx.fillStyle(0xffffff); maskGfx.fillRect(ax, ay, aw, ah);
-    container.setMask(new Phaser.Display.Masks.GeometryMask(this, maskGfx));
+    // Clip overflow via cover strips (GeometryMask not supported in WebGL)
+    const COV = 200;
+    this.add.rectangle(ax, ay,        aw, COV, 0x080e1a).setOrigin(0, 1).setDepth(12);
+    this.add.rectangle(ax, ay + ah,   aw, COV, 0x080e1a).setOrigin(0, 0).setDepth(12);
 
     // Wheel scroll
     const totalH = Math.ceil(maxSlots / COLS) * (SZ + GAP);
