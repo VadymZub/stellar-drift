@@ -33,9 +33,8 @@ const CORP_MOCK_POINTS = { helios: 8400, karax: 7200, tides: 6100 };
 const CORP_HOME = { helios: 'helios_1', karax: 'karax_1', tides: 'tides_1' };
 
 function switchCost(n) {
-  if (n === 0) return 100;
-  if (n === 1) return 300;
-  return 1000;
+  if (n === 0) return { type: 'gold', amount: 100 };
+  return { type: 'penalty', honorPct: 0.20, contribPct: 0.20 };
 }
 
 export default class CorpScene extends Phaser.Scene {
@@ -45,8 +44,11 @@ export default class CorpScene extends Phaser.Scene {
     const { width: W, height: H } = this.scale;
     const gs = this.scene.get('GameScene');
 
-    // Dark overlay
-    this.add.rectangle(0, 0, W, H, 0x000000, 0.65).setOrigin(0);
+    const _corpBgMap = { helios: 'bg_corp_helios', karax: 'bg_corp_karaks', tides: 'bg_corp_tides' };
+    this.add.rectangle(0, 0, W, H, 0x05070f, 1.0).setOrigin(0);
+    const _bgCorp = this.add.image(W / 2, H / 2, _corpBgMap[gs?.playerCorp] || 'bg_corp_helios');
+    _bgCorp.setScale(Math.max(W / _bgCorp.width, H / _bgCorp.height)).setAlpha(0.75).setTint(0x556677);
+    this.add.rectangle(0, 0, W, H, 0x000000, 0.28).setOrigin(0);
 
     // Panel
     const pw = Math.min(920, W - 40);
@@ -66,15 +68,29 @@ export default class CorpScene extends Phaser.Scene {
     this.add.text(px + pw - 22, py + 18, `Ваша корп: ${cm.label}`,
       { ...TF, fontSize: '14px', color: cm.color }).setOrigin(1, 0);
 
+    // → Клан button (compact, in header)
+    const clanBtnW = 90, clanBtnH = 24;
+    const clanBtnX = px + pw - clanBtnW - 22, clanBtnY = py + 40;
+    const clanBg = this.add.graphics();
+    clanBg.fillStyle(0x0a1a28, 0.9); clanBg.fillRoundedRect(clanBtnX, clanBtnY, clanBtnW, clanBtnH, 4);
+    clanBg.lineStyle(1, COLORS.primary, 0.4); clanBg.strokeRoundedRect(clanBtnX, clanBtnY, clanBtnW, clanBtnH, 4);
+    const clanBtn = this.add.rectangle(clanBtnX + clanBtnW / 2, clanBtnY + clanBtnH / 2, clanBtnW, clanBtnH, 0, 0)
+      .setInteractive({ useHandCursor: true });
+    this.add.text(clanBtnX + clanBtnW / 2, clanBtnY + clanBtnH / 2, '→ КЛАН',
+      { ...TF, fontSize: '11px', color: '#4dd0e1' }).setOrigin(0.5);
+    clanBtn.on('pointerover',  () => { clanBg.clear(); clanBg.fillStyle(0x102535, 0.95); clanBg.fillRoundedRect(clanBtnX, clanBtnY, clanBtnW, clanBtnH, 4); });
+    clanBtn.on('pointerout',   () => { clanBg.clear(); clanBg.fillStyle(0x0a1a28, 0.9); clanBg.fillRoundedRect(clanBtnX, clanBtnY, clanBtnW, clanBtnH, 4); });
+    clanBtn.on('pointerdown',  () => { this.scene.stop(); gs.toggleOverlay('ClanScene'); });
+
     // Divider
     const dg = this.add.graphics();
     dg.lineStyle(1, 0x182838, 1);
-    dg.strokeLineShape(new Phaser.Geom.Line(px + 8, py + 52, px + pw - 8, py + 52));
+    dg.strokeLineShape(new Phaser.Geom.Line(px + 8, py + 70, px + pw - 8, py + 70));
 
-    // Tabs
-    const TABS = ['ТОП XP', 'ТОП PvP', 'КОРПОРАЦИИ', 'СМЕНИТЬ КОРП'];
+    // Tabs — merged XP+PvP into РЕЙТИНГИ (3 tabs instead of 4)
+    const TABS = ['РЕЙТИНГИ', 'КОРПОРАЦИИ', 'СМЕНИТЬ КОРП'];
     const tabW = Math.floor((pw - 16) / TABS.length);
-    const tabY = py + 57;
+    const tabY = py + 75;
     this._tabBgs  = [];
     this._tabTxts = [];
     this._tab     = -1;
@@ -110,56 +126,74 @@ export default class CorpScene extends Phaser.Scene {
       this._tabTxts[i].setColor(on ? '#4dd0e1' : '#557799');
     });
 
-    const draw = [this._drawXp, this._drawPvp, this._drawStandings, this._drawSwitch];
+    const draw = [this._drawRatings, this._drawStandings, this._drawSwitch];
     draw[idx].call(this, px, cy, pw, gs);
   }
 
-  // ── Tab 0: Top XP ───────────────────────────────────────────────────────────
+  // ── Tab 0: Ratings (XP + PvP with sub-switcher) ────────────────────────────
 
-  _drawXp(px, cy, pw, gs) {
-    const me = { name: gs?.playerName || 'You', xp: gs?.pilotXp || 0, honor: gs?.pilotHonor || 0, corp: gs?.playerCorp || 'neutral', level: gs?.pilotLevel || 1, isMe: true };
-    const all = [...MOCK_PLAYERS.map(p => ({ ...p, level: Math.min(50, 1 + Math.floor(p.xp / 100000)) })), me]
-      .sort((a, b) => b.xp - a.xp);
+  _drawRatings(px, cy, pw, gs) {
+    if (!gs._corpRatingMode) gs._corpRatingMode = 'xp';
 
-    this._sectionTitle(px + pw / 2, cy + 8, 'ТОП ИГРОКОВ ПО ОПЫТУ');
-    this._rowHdr(px, cy + 26, pw, ['#', 'ИМЯ', 'УРОВЕНЬ', 'КОРП', 'ОПЫТ'],
-      [20, 58, pw - 270, pw - 170, pw - 60]);
-
-    let y = cy + 46;
-    all.slice(0, 12).forEach((p, i) => {
-      const c    = CORP_META[p.corp] || CORP_META.neutral;
-      const clr  = p.isMe ? '#4dd0e1' : (i < 3 ? '#ffcc44' : '#aabbcc');
-      const xpK  = `${Math.round(p.xp / 1000)}k`;
-      const data = [`${i + 1}.`, (p.isMe ? '▶ ' : '') + p.name, `${p.level}`, c.label, xpK];
-      const row  = this._row(px, y, pw, data, [20, 58, pw - 270, pw - 170, pw - 60], clr);
-      // Corp column gets corp color
-      row[3]?.setColor(c.color);
-      y += 28;
+    const subTabs = ['ТОП XP', 'ТОП PvP'];
+    const stW = 110, stH = 24, stY = cy + 4;
+    subTabs.forEach((lbl, i) => {
+      const key = i === 0 ? 'xp' : 'pvp';
+      const sel = gs._corpRatingMode === key;
+      const stX = px + pw / 2 - stW - 4 + i * (stW + 8);
+      const sbg = this.add.graphics();
+      sbg.fillStyle(sel ? 0x0a2035 : 0x0d1a26, 1);
+      sbg.fillRoundedRect(stX, stY, stW, stH, 4);
+      sbg.lineStyle(1, sel ? COLORS.primary : 0x1e3a50, 0.8);
+      sbg.strokeRoundedRect(stX, stY, stW, stH, 4);
+      this._objs.push(sbg);
+      const btn = this.add.rectangle(stX + stW / 2, stY + stH / 2, stW, stH, 0, 0)
+        .setInteractive({ useHandCursor: !sel });
+      btn.on('pointerdown', () => { gs._corpRatingMode = key; this._showTab(0, px, cy, pw, gs); });
+      this._objs.push(btn);
+      const t = this.add.text(stX + stW / 2, stY + stH / 2, lbl,
+        { ...TF, fontSize: '12px', color: sel ? '#4dd0e1' : '#557799' }).setOrigin(0.5);
+      this._objs.push(t);
     });
+
+    const contentY = cy + 34;
+    if (gs._corpRatingMode !== 'pvp') {
+      const me = { name: gs?.playerName || 'You', xp: gs?.pilotXp || 0, corp: gs?.playerCorp || 'neutral', level: gs?.pilotLevel || 1, isMe: true };
+      const all = [...MOCK_PLAYERS.map(p => ({ ...p, level: Math.min(50, 1 + Math.floor(p.xp / 100000)) })), me]
+        .sort((a, b) => b.xp - a.xp);
+      this._sectionTitle(px + pw / 2, contentY + 4, 'ТОП ИГРОКОВ ПО ОПЫТУ');
+      this._rowHdr(px, contentY + 22, pw, ['#', 'ИМЯ', 'УРОВЕНЬ', 'КОРП', 'ОПЫТ'],
+        [20, 58, pw - 270, pw - 170, pw - 60]);
+      let y = contentY + 42;
+      all.slice(0, 12).forEach((p, i) => {
+        const c   = CORP_META[p.corp] || CORP_META.neutral;
+        const clr = p.isMe ? '#4dd0e1' : (i < 3 ? '#ffcc44' : '#aabbcc');
+        const row = this._row(px, y, pw,
+          [`${i + 1}.`, (p.isMe ? '▶ ' : '') + p.name, `${p.level}`, c.label, `${Math.round(p.xp / 1000)}k`],
+          [20, 58, pw - 270, pw - 170, pw - 60], clr);
+        row[3]?.setColor(c.color);
+        y += 28;
+      });
+    } else {
+      const me = { name: gs?.playerName || 'You', honor: gs?.pilotHonor || 0, corp: gs?.playerCorp || 'neutral', isMe: true };
+      const all = [...MOCK_PLAYERS, me].sort((a, b) => b.honor - a.honor);
+      this._sectionTitle(px + pw / 2, contentY + 4, 'ТОП ИГРОКОВ ПО PvP (ЧЕСТЬ)');
+      this._rowHdr(px, contentY + 22, pw, ['#', 'ИМЯ', 'КОРП', 'ОЧКИ ЧЕСТИ'],
+        [20, 58, pw - 230, pw - 80]);
+      let y = contentY + 42;
+      all.slice(0, 12).forEach((p, i) => {
+        const c   = CORP_META[p.corp] || CORP_META.neutral;
+        const clr = p.isMe ? '#4dd0e1' : (i < 3 ? '#ffcc44' : '#aabbcc');
+        const row = this._row(px, y, pw,
+          [`${i + 1}.`, (p.isMe ? '▶ ' : '') + p.name, c.label, `${Math.round(p.honor / 1000)}k`],
+          [20, 58, pw - 230, pw - 80], clr);
+        row[2]?.setColor(c.color);
+        y += 28;
+      });
+    }
   }
 
-  // ── Tab 1: Top PvP ──────────────────────────────────────────────────────────
-
-  _drawPvp(px, cy, pw, gs) {
-    const me = { name: gs?.playerName || 'You', xp: gs?.pilotXp || 0, honor: gs?.pilotHonor || 0, corp: gs?.playerCorp || 'neutral', isMe: true };
-    const all = [...MOCK_PLAYERS, me].sort((a, b) => b.honor - a.honor);
-
-    this._sectionTitle(px + pw / 2, cy + 8, 'ТОП ИГРОКОВ ПО PvP (ЧЕСТЬ)');
-    this._rowHdr(px, cy + 26, pw, ['#', 'ИМЯ', 'КОРП', 'ОЧКИ ЧЕСТИ'],
-      [20, 58, pw - 230, pw - 80]);
-
-    let y = cy + 46;
-    all.slice(0, 12).forEach((p, i) => {
-      const c   = CORP_META[p.corp] || CORP_META.neutral;
-      const clr = p.isMe ? '#4dd0e1' : (i < 3 ? '#ffcc44' : '#aabbcc');
-      const data = [`${i + 1}.`, (p.isMe ? '▶ ' : '') + p.name, c.label, `${Math.round(p.honor / 1000)}k`];
-      const row  = this._row(px, y, pw, data, [20, 58, pw - 230, pw - 80], clr);
-      row[2]?.setColor(c.color);
-      y += 28;
-    });
-  }
-
-  // ── Tab 2: Corp standings ───────────────────────────────────────────────────
+  // ── Tab 1: Corp standings ──────────────────────────────────────────────────
 
   _drawStandings(px, cy, pw, gs) {
     // Aggregate real base data on top of mock baseline
@@ -206,35 +240,44 @@ export default class CorpScene extends Phaser.Scene {
     });
   }
 
-  // ── Tab 3: Switch corp ──────────────────────────────────────────────────────
+  // ── Tab 2: Switch corp ──────────────────────────────────────────────────────
 
   _drawSwitch(px, cy, pw, gs) {
     const switchCount = gs?.corpSwitchCount || 0;
-    const cost        = switchCost(switchCount);
-    const balance     = gs?.starGold || 0;
-    const canAfford   = balance >= cost;
+    const costDef     = switchCost(switchCount);
     const playerCorp  = gs?.playerCorp || 'neutral';
     const cm          = CORP_META[playerCorp];
 
+    let canAfford = true;
+    let costLine  = '';
+    let costHint  = '';
+
+    if (costDef.type === 'gold') {
+      const balance = gs?.starGold || 0;
+      canAfford = balance >= costDef.amount;
+      costLine  = `Стоимость: ${costDef.amount} ⭐   (у вас: ${Math.floor(balance)} ⭐)`;
+      costHint  = `Первый переход — только за золото`;
+    } else {
+      const honor  = gs?.pilotHonor      || 0;
+      const contrib= gs?.corpContribution|| 0;
+      const hLoss  = Math.round(honor   * costDef.honorPct);
+      const cLoss  = Math.round(contrib * costDef.contribPct);
+      costLine  = `Штраф: −20% чести (−${hLoss.toLocaleString()})  ·  −20% вклада (−${cLoss.toLocaleString()})`;
+      costHint  = `Переходов: ${switchCount} — каждый повторный снимает 20% чести и вклада`;
+    }
+
     this._sectionTitle(px + pw / 2, cy + 8, 'СМЕНИТЬ КОРПОРАЦИЮ');
 
-    // Current corp
     const t1 = this.add.text(px + pw / 2, cy + 36, `Текущая корпорация:  ${cm.label}`,
       { ...TF, fontSize: '18px', color: cm.color }).setOrigin(0.5);
     this._objs.push(t1);
 
-    // Cost / balance
-    const costClr = canAfford ? '#ffcc44' : '#884444';
-    const t2 = this.add.text(px + pw / 2, cy + 64,
-      `Стоимость перехода: ${cost} ⭐  (у вас: ${Math.floor(balance)} ⭐)`,
-      { ...TF, fontSize: '15px', color: costClr }).setOrigin(0.5);
+    const costClr = (costDef.type === 'gold' && !canAfford) ? '#884444' : '#ffcc44';
+    const t2 = this.add.text(px + pw / 2, cy + 64, costLine,
+      { ...TF, fontSize: '14px', color: costClr }).setOrigin(0.5);
     this._objs.push(t2);
 
-    // History / next-cost hint
-    const nthLabel   = switchCount === 0 ? 'первый' : switchCount === 1 ? 'второй' : 'третий и далее';
-    const nextCost   = switchCost(switchCount + 1);
-    const t3 = this.add.text(px + pw / 2, cy + 88,
-      `Переходов: ${switchCount}  (это будет ${nthLabel} — ${cost} ⭐)   ·   следующий: ${nextCost} ⭐`,
+    const t3 = this.add.text(px + pw / 2, cy + 88, costHint,
       { ...TF, fontSize: '12px', color: '#334455' }).setOrigin(0.5);
     this._objs.push(t3);
 
@@ -246,39 +289,42 @@ export default class CorpScene extends Phaser.Scene {
 
     targets.forEach((corp, i) => {
       const meta   = CORP_META[corp];
-      const cx     = px + 10 + i * (cardW + 14) + cardW / 2;
+      const cardX  = px + 10 + i * (cardW + 14) + cardW / 2;
       const fill   = canAfford ? meta.fill : 0x0a0d12;
       const border = canAfford ? meta.hex  : 0x222222;
 
-      const card = this.add.rectangle(cx, cardY + cardH / 2, cardW, cardH, fill)
+      const card = this.add.rectangle(cardX, cardY + cardH / 2, cardW, cardH, fill)
         .setStrokeStyle(2, border, canAfford ? 0.9 : 0.3)
         .setInteractive({ useHandCursor: canAfford });
       this._objs.push(card);
 
-      const tc  = canAfford ? meta.color : '#333';
-      const tl1 = this.add.text(cx, cardY + 48,  meta.label,   { ...TF, fontSize: '26px', color: tc }).setOrigin(0.5);
-      const tl2 = this.add.text(cx, cardY + 88,  `${cost} ⭐`, { ...TF, fontSize: '18px', color: canAfford ? '#ffcc44' : '#443333' }).setOrigin(0.5);
-      const tl3 = this.add.text(cx, cardY + 138, canAfford ? '[ ВСТУПИТЬ ]' : '🔒 НЕДОСТАТОЧНО ⭐',
+      const tc   = canAfford ? meta.color : '#333';
+      const tl1  = this.add.text(cardX, cardY + 48, meta.label, { ...TF, fontSize: '26px', color: tc }).setOrigin(0.5);
+      let costStr = '';
+      if (costDef.type === 'gold') costStr = `${costDef.amount} ⭐`;
+      else costStr = '−20% чести / вклада';
+      const tl2  = this.add.text(cardX, cardY + 88, costStr,
+        { ...TF, fontSize: '16px', color: canAfford ? '#ffcc44' : '#443333' }).setOrigin(0.5);
+      const tl3  = this.add.text(cardX, cardY + 138, canAfford ? '[ ВСТУПИТЬ ]' : '🔒 НЕДОСТАТОЧНО ⭐',
         { ...TF, fontSize: '14px', color: canAfford ? '#aabbcc' : '#443333' }).setOrigin(0.5);
       this._objs.push(tl1, tl2, tl3);
 
       if (canAfford) {
         card.on('pointerover',  () => card.setFillStyle(0x0f2840));
         card.on('pointerout',   () => card.setFillStyle(fill));
-        card.on('pointerdown',  () => this._confirmSwitch(corp, cost, switchCount, gs));
+        card.on('pointerdown',  () => this._confirmSwitch(corp, costDef, switchCount, gs));
       }
     });
   }
 
   // Modal confirmation dialog for corp switch
-  _confirmSwitch(corp, cost, switchCount, gs) {
+  _confirmSwitch(corp, costDef, switchCount, gs) {
     const { width: W, height: H } = this.scale;
     const cx = W / 2, cy = H / 2;
     const pw = 480, ph = 280;
     const created = [];
 
-    const nextCost = switchCost(switchCount + 1);
-    const meta     = CORP_META[corp];
+    const meta = CORP_META[corp];
 
     // Full dim that cancels on click
     const dim = this.add.rectangle(cx, cy, W, H, 0x000000, 0.55)
@@ -295,15 +341,26 @@ export default class CorpScene extends Phaser.Scene {
       { ...TF, fontSize: '20px', color: meta.color }).setOrigin(0.5).setDepth(22);
     created.push(title);
 
-    // Cost line
-    const costLbl = this.add.text(cx, cy - 44,
-      `Будет списано: ${cost} ⭐`,
-      { ...TF, fontSize: '16px', color: '#ffcc44' }).setOrigin(0.5).setDepth(22);
+    // Cost / penalty line
+    let costStr = '';
+    let warnStr = '';
+    if (costDef.type === 'gold') {
+      costStr = `Будет списано: ${costDef.amount} ⭐`;
+      warnStr = 'Повторная смена будет стоить 20% чести и вклада';
+    } else {
+      const honor  = gs?.pilotHonor      || 0;
+      const contrib= gs?.corpContribution|| 0;
+      const hLoss  = Math.round(honor   * costDef.honorPct);
+      const cLoss  = Math.round(contrib * costDef.contribPct);
+      costStr = `Штраф: −${hLoss.toLocaleString()} чести  ·  −${cLoss.toLocaleString()} вклада`;
+      warnStr = 'Каждая повторная смена снимает −20% чести и −20% вклада';
+    }
+
+    const costLbl = this.add.text(cx, cy - 44, costStr,
+      { ...TF, fontSize: '15px', color: '#ffcc44' }).setOrigin(0.5).setDepth(22);
     created.push(costLbl);
 
-    // Warning about next switch
-    const warnLbl = this.add.text(cx, cy - 14,
-      `Следующая смена корпорации будет стоить ${nextCost} ⭐`,
+    const warnLbl = this.add.text(cx, cy - 14, warnStr,
       { ...TF, fontSize: '12px', color: '#664422' }).setOrigin(0.5).setDepth(22);
     created.push(warnLbl);
 
@@ -320,13 +377,17 @@ export default class CorpScene extends Phaser.Scene {
     confirmBg.on('pointerout',   () => confirmBg.setFillStyle(0x0a2a10));
     confirmBg.on('pointerdown',  () => {
       close();
-      gs.playerCorp      = corp;
       gs.corpSwitchCount = (gs.corpSwitchCount || 0) + 1;
-      gs.starGold        = Math.floor((gs.starGold || 0) - cost);
-      // Teleport to new corp's home sector
+      if (costDef.type === 'gold') {
+        gs.starGold = Math.floor((gs.starGold || 0) - costDef.amount);
+      } else {
+        gs.pilotHonor       = Math.round((gs.pilotHonor       || 0) * (1 - costDef.honorPct));
+        gs.corpContribution = Math.round((gs.corpContribution || 0) * (1 - costDef.contribPct));
+      }
+      gs.playerCorp = corp;
       galaxy.current = CORP_HOME[corp] || 'helios_1';
-      this.scene.stop();        // close CorpScene overlay
-      gs.scene.restart();       // restart GameScene in the new sector (player spawns at center)
+      this.scene.stop();
+      gs.scene.restart();
     });
 
     // CANCEL button

@@ -22,38 +22,35 @@ export default class GarageScene extends Phaser.Scene {
     this.gs = this.scene.get('GameScene');
     const W = this.scale.width, H = this.scale.height;
 
-    // Сплошной темный фон, чтобы полностью скрыть карту
-    this.add.rectangle(0, 0, W, H, 0x05070f, 1.0).setOrigin(0).setDepth(-11);
+    // Полностью непрозрачный фон — игровой мир не просвечивает
+    this.add.rectangle(0, 0, W, H, 0x05070f, 1.0).setOrigin(0);
+    const bg = this.add.image(W / 2, H / 2, 'bg_garage');
+    bg.setScale(Math.max(W / bg.width, H / bg.height)).setAlpha(0.7).setTint(0x667788);
+    this.add.rectangle(0, 0, W, H, 0x000000, 0.25).setOrigin(0);
 
-    // Фоновая иллюстрация Гаража
-    const bg = this.add.image(W / 2, H / 2, 'bg_garage').setDepth(-10);
-    const scale = Math.max(W / bg.width, H / bg.height);
-    bg.setScale(scale).setAlpha(0.8).setTint(0x556677); // Увеличиваем альфу до 0.8
-
-    // Дополнительное затемнение для читаемости UI
-    this.add.rectangle(0, 0, W, H, 0x000000, 0.2).setOrigin(0).setDepth(-9);
-
-    const pw = Math.min(960, W - 40), ph = Math.min(640, H - 40);
+    const pw = Math.min(960, W - 40), ph = Math.min(660, H - 40);
     const px = (W - pw) / 2, py = (H - ph) / 2;
     this.box = { px, py, pw, ph };
     const g = this.add.graphics();
-    g.fillStyle(0x0b1622, 0.98); g.fillRoundedRect(px, py, pw, ph, 12);
-    g.lineStyle(2, COLORS.primary, 0.8); g.strokeRoundedRect(px, py, pw, ph, 12);
+    g.fillStyle(0x080d18, 0.88); g.fillRoundedRect(px, py, pw, ph, 12);
+    g.lineStyle(2, COLORS.primary, 0.75); g.strokeRoundedRect(px, py, pw, ph, 12);
 
     this.add.text(px + 24, py + 16, i18n.t('garage.title'), this.O('22px', '#4dd0e1'));
-    this.add.text(px + pw - 20, py + 22, 'G / ESC', this.F('12px', '#7e9398')).setOrigin(1, 0);
+    this.add.text(px + pw - 20, py + 55, 'G / ESC', this.F('12px', '#7e9398')).setOrigin(1, 0);
 
-    // ── Табы ──
+    // ── Табы (3 вкладки) ──
+    // Migrate old 4-tab state
+    if (this.gs.garageTab === 'upgrade' || this.gs.garageTab === 'perks') this.gs.garageTab = 'upg';
     this.tab = this.gs.garageTab || 'ships';
-    this.tabBtn(px + 130, py + 20, 'garage.tab_ships',   'ships');
-    this.tabBtn(px + 270, py + 20, 'garage.tab_equip',   'equip');
-    this.tabBtn(px + 430, py + 20, 'garage.tab_upgrade', 'upgrade');
-    this.tabBtn(px + 590, py + 20, 'garage.tab_perks',   'perks');
 
-    if      (this.tab === 'ships')   this.renderShipsTab();
-    else if (this.tab === 'equip')   this.renderEquipTab();
-    else if (this.tab === 'perks')   this.renderPerksTab();
-    else                             this.renderUpgradeTab();
+    const tabSpan = pw / 3;
+    this.tabBtn(px + tabSpan * 0.5, py + 20, 'garage.tab_ships', 'ships');
+    this.tabBtn(px + tabSpan * 1.5, py + 20, 'garage.tab_equip', 'equip');
+    this.tabBtn(px + tabSpan * 2.5, py + 20, 'garage.upg_tab',   'upg');
+
+    if      (this.tab === 'ships') this.renderShipsTab();
+    else if (this.tab === 'equip') this.renderEquipTab();
+    else                           this.renderUpgradePerksTab();
 
     this.input.keyboard.on('keydown-ESC', () => this.scene.stop());
   }
@@ -72,16 +69,16 @@ export default class GarageScene extends Phaser.Scene {
     const sel = SHIP_BY_KEY[this.gs.garageSel] ? this.gs.garageSel : this.gs.activeShip;
     this.gs.garageSel = sel;
 
-    // Витрина 3×3 слева
-    const cw = 148, ch = 112, gap = 10, lx = px + 28, gy = py + 64;
+    // Витрина 3×3 слева — крупные плитки с геройским артом
+    const cw = 200, ch = 152, gap = 12, lx = px + 18, gy = py + 64;
     SHIPS.forEach((ship, i) => {
       const c = i % 3, r = Math.floor(i / 3);
       this.shipCard(lx + c * (cw + gap), gy + r * (ch + gap), cw, ch, ship, ship.key === sel);
     });
 
     // Панель описания справа
-    const rx = lx + 3 * (cw + gap) + 12;
-    const rw = px + pw - rx - 24;
+    const rx = lx + 3 * (cw + gap) + 10;
+    const rw = px + pw - rx - 16;
     this.shipDetail(rx, py + 64, rw, ph - 92, SHIP_BY_KEY[sel]);
   }
 
@@ -99,19 +96,22 @@ export default class GarageScene extends Phaser.Scene {
       .setInteractive({ useHandCursor: true });
     rect.on('pointerdown', () => { this.gs.garageSel = ship.key; this.scene.restart(); });
 
-    const img = this.shipImg(x + w / 2, y + 42, 62, ship);
+    // Hero art (garageKey) — крупное изображение в карточке
+    const heroBox = Math.round(h * 0.66);
+    const img = this.shipImg(x + w / 2, y + Math.round(heroBox / 2) + 8, heroBox, ship);
     if (locked) img.setTint(0x44525a).setAlpha(0.55);
 
-    this.add.text(x + w / 2, y + 76, i18n.t(ship.nameKey), this.O('14px', locked ? '#6c8086' : '#cfe9ee')).setOrigin(0.5, 0);
+    this.add.text(x + w / 2, y + heroBox + 14, i18n.t(ship.nameKey),
+      this.O('13px', locked ? '#6c8086' : '#cfe9ee')).setOrigin(0.5, 0);
 
     // Статус-строка внизу карточки
     let badge, color;
     if (active) { badge = i18n.t('garage.active'); color = '#ffb74d'; }
     else if (owned) { badge = i18n.t('garage.owned'); color = '#4dd0e1'; }
     else if (buyable) { badge = this.priceStr(ship); color = '#66bb6a'; }
-    else if (gs.pilotLevel < ship.levelGate) { badge = `🔒 ${i18n.t('mob.level')}${ship.levelGate}`; color = '#7e9398'; }
-    else { badge = '🔒'; color = '#7e9398'; }            // престиж-гейт не выполнен
-    this.add.text(x + w / 2, y + h - 20, badge, this.F('11px', color)).setOrigin(0.5, 0);
+    else if (gs.pilotLevel < ship.levelGate) { badge = `Lv${ship.levelGate}`; color = '#7e9398'; }
+    else { badge = '🔒'; color = '#7e9398'; }
+    this.add.text(x + w / 2, y + h - 16, badge, this.F('11px', color)).setOrigin(0.5, 0);
   }
 
   // Картинка корабля для Гаража: геройский арт (garageKey) если есть, иначе игровой спрайт.
@@ -221,6 +221,141 @@ export default class GarageScene extends Phaser.Scene {
     this.scene.restart();
   }
 
+  // ════════════════ СКЛАД (в вкладке ОБОРУДОВАНИЕ) ════════════════
+  renderWarehouse(x, y, w, h) {
+    const gs = this.gs;
+    const max = 10 + ((gs.skillLevels?.cargo_expand || 0) >= 1 ? 40 : 0);
+    this._renderSlotGrid(x, y, w, h, gs.warehouse || [], max, 'warehouse');
+  }
+
+  // Универсальная слот-сетка: 5 колонок × N рядов, clip-маска + колесо мыши для скролла.
+  // type = 'inventory' (трюм, надеть/продать) | 'warehouse' (склад, → трюм)
+  _renderSlotGrid(ax, ay, aw, ah, items, maxSlots, type) {
+    const gs = this.gs;
+    const SZ = 68, GAP = 6, COLS = 5;
+    const container = this.add.container(ax, ay);
+
+    for (let i = 0; i < maxSlots; i++) {
+      const col = i % COLS, row = Math.floor(i / COLS);
+      const sx = col * (SZ + GAP), sy = row * (SZ + GAP);
+      const item = items[i] || null;
+
+      if (!item) {
+        container.add(
+          this.add.rectangle(sx, sy, SZ, SZ, 0x060c14, 0.45).setOrigin(0, 0)
+            .setStrokeStyle(1, 0x1a2838, 0.25)
+        );
+        continue;
+      }
+
+      const pDef   = item.perk ? PERK_MAP[item.perk.key] : null;
+      const rarHex = pDef ? RARITY_COLOR[pDef.rarity] : null;
+      const bdrHex = rarHex ?? (COLORS.primary & 0xffffff);
+      const SELL_H = 16, BODY_H = SZ - SELL_H;
+
+      if (type === 'inventory') {
+        // Верхняя зона: equip
+        const eq = this.add.rectangle(sx, sy, SZ, BODY_H, 0x0d1e2c, 0.95).setOrigin(0, 0)
+          .setStrokeStyle(2, bdrHex, 0.75).setInteractive({ useHandCursor: true });
+        eq.on('pointerover', (p) => { eq.setFillStyle(0x142838); this._showTooltip(p.x, p.y, item); });
+        eq.on('pointerout',  ()  => { eq.setFillStyle(0x0d1e2c); this._hideTooltip(); });
+        eq.on('pointerdown', ()  => this.equip(item));
+
+        // Нижняя полоска: sell (заблокировано если starLvl > 0)
+        const goldLocked = (item.perk?.starLvl || 0) > 0;
+        const sl = this.add.rectangle(sx, sy + BODY_H, SZ, SELL_H,
+          goldLocked ? 0x1a1200 : 0x1e0e00, 0.9).setOrigin(0, 0)
+          .setStrokeStyle(1, goldLocked ? 0x444422 : 0x664422, 0.5);
+        const slT = this.add.text(sx + SZ / 2, sy + BODY_H + SELL_H / 2,
+          goldLocked ? '⭐ блок' : `₵ ${itemSellPrice(item)}`,
+          this.F('9px', goldLocked ? '#666644' : '#aa7744')).setOrigin(0.5);
+        if (!goldLocked) {
+          sl.setInteractive({ useHandCursor: true });
+          sl.on('pointerdown', () => this.showSellConfirm(item));
+        }
+
+        const tier = this.add.text(sx + SZ / 2, sy + BODY_H / 2 - 7, `T${item.tier}`,
+          this.O('14px', '#ffe0b2')).setOrigin(0.5);
+        const typeL = this.add.text(sx + SZ / 2, sy + BODY_H / 2 + 9,
+          item.type.slice(0, 3).toUpperCase(), this.F('10px', '#445566')).setOrigin(0.5);
+        container.add([eq, sl, slT, tier, typeL]);
+      } else {
+        // Warehouse cell
+        const box = this.add.rectangle(sx, sy, SZ, BODY_H, 0x0c1a10, 0.9).setOrigin(0, 0)
+          .setStrokeStyle(1, bdrHex, pDef ? 0.5 : 0.22).setInteractive({ useHandCursor: true });
+        box.on('pointerover', (p) => { box.setFillStyle(0x102018); this._showTooltip(p.x, p.y, item); });
+        box.on('pointerout',  ()  => { box.setFillStyle(0x0c1a10); this._hideTooltip(); });
+        box.on('pointerdown', ()  => {
+          const cargoMax = 5 + ((gs.skillLevels?.cargo_expand || 0) >= 1 ? 40 : 0);
+          const inv = gs.inventory || [];
+          if (inv.length >= cargoMax) return;
+          const idx = (gs.warehouse || []).indexOf(item); if (idx < 0) return;
+          gs.warehouse.splice(idx, 1); inv.push(item);
+          this.scene.restart();
+        });
+        const moveLbl = this.add.rectangle(sx, sy + BODY_H, SZ, SELL_H, 0x0a1a0a, 0.9).setOrigin(0, 0)
+          .setStrokeStyle(1, 0x2a6840, 0.4);
+        const moveTxt = this.add.text(sx + SZ / 2, sy + BODY_H + SELL_H / 2, '→ трюм',
+          this.F('9px', '#4a9860')).setOrigin(0.5);
+        const tier = this.add.text(sx + SZ / 2, sy + BODY_H / 2 - 7, `T${item.tier}`,
+          this.O('14px', '#b8e4c4')).setOrigin(0.5);
+        const typeL = this.add.text(sx + SZ / 2, sy + BODY_H / 2 + 9,
+          item.type.slice(0, 3).toUpperCase(), this.F('10px', '#2a5a38')).setOrigin(0.5);
+        container.add([box, moveLbl, moveTxt, tier, typeL]);
+      }
+
+      // Rarity dot (top-right corner)
+      if (rarHex) {
+        const dg = this.add.graphics();
+        dg.fillStyle(rarHex, 1); dg.fillCircle(sx + SZ - 6, sy + 6, 4);
+        container.add(dg);
+      }
+    }
+
+    // Clip mask
+    const maskGfx = this.make.graphics({ x: 0, y: 0, add: false });
+    maskGfx.fillStyle(0xffffff); maskGfx.fillRect(ax, ay, aw, ah);
+    container.setMask(new Phaser.Display.Masks.GeometryMask(this, maskGfx));
+
+    // Wheel scroll (only fires when pointer is over this grid region)
+    const totalH = Math.ceil(maxSlots / COLS) * (SZ + GAP);
+    if (totalH > ah) {
+      const startY = ay, minY = ay - (totalH - ah);
+      this.input.on('wheel', (p, _o, _dx, dy) => {
+        if (p.x < ax || p.x > ax + aw || p.y < ay || p.y > ay + ah) return;
+        container.y = Phaser.Math.Clamp(container.y - dy * 0.5, minY, startY);
+      });
+    }
+  }
+
+  // ════════════════ ТАБ «АПГРЕЙД + ПЕРКИ» — объединённая вкладка ════════════════
+  renderUpgradePerksTab() {
+    if (!this.gs.garageUpgSubTab) this.gs.garageUpgSubTab = 'upgrade';
+    const subTab = this.gs.garageUpgSubTab;
+    const { px, py, pw } = this.box;
+
+    // Sub-tab switcher
+    const sw = 160, sh = 28, sy = py + 58;
+    const subBtns = [
+      { label: 'АПГРЕЙД', id: 'upgrade' },
+      { label: 'ПЕРКИ',   id: 'perks'   },
+    ];
+    subBtns.forEach(({ label, id }, i) => {
+      const bx = px + pw / 2 - sw - 4 + i * (sw + 8);
+      const active = subTab === id;
+      const btn = this.add.rectangle(bx + sw / 2, sy + sh / 2, sw, sh,
+        active ? 0x0a2035 : 0x060c18, active ? 0.95 : 0.7)
+        .setStrokeStyle(1, active ? COLORS.primary : 0x1e3a50, active ? 1 : 0.6)
+        .setInteractive({ useHandCursor: true });
+      this.add.text(bx + sw / 2, sy + sh / 2, label, this.O('12px', active ? '#4dd0e1' : '#446677'))
+        .setOrigin(0.5);
+      if (!active) btn.on('pointerdown', () => { this.gs.garageUpgSubTab = id; this.scene.restart(); });
+    });
+
+    if (subTab === 'upgrade') this.renderUpgradeTab();
+    else                      this.renderPerksTab();
+  }
+
   // ════════════════ ТАБ «АПГРЕЙД» — уровень корабля + кредит-апгрейд модулей ════════════════
   renderUpgradeTab() {
     const { px, py, pw, ph } = this.box;
@@ -256,8 +391,8 @@ export default class GarageScene extends Phaser.Scene {
 
     // ── Правая колонка: кредит-апгрейд установленных модулей ──
     const rx = px + 400, rw = pw - 440;
-    this.add.text(rx, py + 60, i18n.t('garage.modules'), this.O('16px', '#ffe0b2'));
-    this.renderModuleUpgrades(rx, py + 92, rw, ph - 150);
+    this.add.text(rx, py + 98, i18n.t('garage.modules'), this.O('15px', '#ffe0b2'));
+    this.renderModuleUpgrades(rx, py + 126, rw, ph - 186);
   }
 
   renderModuleUpgrades(x, y, w, h) {
@@ -421,8 +556,16 @@ export default class GarageScene extends Phaser.Scene {
     this.add.text(lx, py + 376, lines.join('\n'), this.F('13px', '#9fb3b8')).setLineSpacing(7);
 
     const rx = px + 380, rw = pw - 420;
-    this.add.text(rx, py + 60, `${i18n.t('inv.title')}  (${this.gs.inventory.length})`, this.O('16px', '#ffe0b2'));
-    this.renderInventory(rx, py + 92, rw, ph - 150);
+    const gs = this.gs;
+    const cargoMax = 5 + ((gs.skillLevels?.cargo_expand || 0) >= 1 ? 40 : 0);
+    const warehouseMax = 10 + ((gs.skillLevels?.cargo_expand || 0) >= 1 ? 40 : 0);
+    this.add.text(rx, py + 60, `ТРЮМ  ${gs.inventory.length}/${cargoMax}`, this.O('15px', '#ffe0b2'));
+    const invH = Math.floor((ph - 150) * 0.55);
+    this.renderInventory(rx, py + 92, rw, invH);
+    const whY = py + 92 + invH + 12;
+    const warehouseCount = (gs.warehouse || []).length;
+    this.add.text(rx, whY, `СКЛАД  ${warehouseCount}/${warehouseMax}`, this.O('14px', '#b8e4c4'));
+    this.renderWarehouse(rx, whY + 28, rw, ph - 150 - invH - 40);
   }
 
   // Ряд слотов одного типа: подпись (занято/всего) + квадраты. Клик по занятому → снять.
@@ -448,40 +591,31 @@ export default class GarageScene extends Phaser.Scene {
       const col = i % 7;
       const sx = x + col * (sz + gap);
       const rowY = sy + row * (sz + gap);
+
+      // Border: perk rarity color if equipped, else slot type color
+      const pDef      = it?.perk ? PERK_MAP[it.perk.key] : null;
+      const borderCol = it ? (pDef ? RARITY_COLOR[pDef.rarity] : color) : 0x33484f;
+      const borderAlpha = it ? 0.9 : 0.7;
+
       const box = this.add.rectangle(sx, rowY, sz, sz, it ? 0x12222e : 0x0c1118, 0.95).setOrigin(0, 0)
-        .setStrokeStyle(it ? 2 : 1, it ? color : 0x33484f, it ? 0.95 : 0.7);
+        .setStrokeStyle(it ? 2 : 1, borderCol, borderAlpha);
       if (it) {
-        this.add.text(sx + sz / 2, rowY + sz / 2, `T${it.tier}`, this.O('13px', '#e8f3f5')).setOrigin(0.5);
+        this.add.text(sx + sz / 2, rowY + sz / 2 - 4, `T${it.tier}`, this.O('12px', '#e8f3f5')).setOrigin(0.5);
+        // Small rarity dot at bottom-right if has perk
+        if (pDef) {
+          const dg = this.add.graphics();
+          dg.fillStyle(RARITY_COLOR[pDef.rarity], 1);
+          dg.fillCircle(sx + sz - 5, rowY + sz - 5, 4);
+        }
         box.setInteractive({ useHandCursor: true }).on('pointerdown', () => this.unequip(key, i));
       }
     });
   }
 
   renderInventory(x, y, w, h) {
-    const inv = this.gs.inventory;
-    if (!inv.length) { this.add.text(x, y, i18n.t('inv.empty'), this.F('14px', '#5e7378')); return; }
-    const rowH = 64, gap = 6, maxRows = Math.floor(h / (rowH + gap));
-    const bw = 104, bh = 24;            // размеры кнопки «продать»
-    inv.slice(0, maxRows).forEach((it, i) => {
-      const ry = y + i * (rowH + gap);
-      const rect = this.add.rectangle(x, ry, w, rowH, 0x10202b, 0.95).setOrigin(0, 0)
-        .setStrokeStyle(1, COLORS.primary, 0.2).setInteractive({ useHandCursor: true });
-      rect.on('pointerdown', () => this.equip(it));
-      this.add.image(x + 30, ry + rowH / 2, 'lootbox').setDisplaySize(28, 28);
-
-      const price = itemSellPrice(it);
-      const bx = x + w - bw - 10, by = ry + (rowH - bh) / 2;
-      const sell = this.add.rectangle(bx, by, bw, bh, 0x2a1c10, 0.95).setOrigin(0, 0).setDepth(5)
-        .setStrokeStyle(1, COLORS.amber, 0.6).setInteractive({ useHandCursor: true });
-      this.add.text(bx + bw / 2, by + bh / 2, `${i18n.t('garage.sell')} ${price}`, this.F('11px', '#ffb74d')).setOrigin(0.5).setDepth(6);
-      sell.on('pointerdown', () => this.showSellConfirm(it));
-
-      const textW = bx - 14 - (x + 56);
-      this.add.text(x + 56, ry + 9, itemName(it), this.O('14px', '#ffe0b2'));
-      this.add.text(x + 56, ry + 33, itemStats(it), { ...this.F('11px', '#cfe9ee'), wordWrap: { width: textW } });
-      this.add.text(x + w - 10, ry + 6, i18n.t('garage.equip'), this.F('11px', '#66bb6a')).setOrigin(1, 0);
-    });
-    if (inv.length > maxRows) this.add.text(x, y + maxRows * (rowH + gap) + 2, `… +${inv.length - maxRows}`, this.F('12px', '#7e9398'));
+    const gs = this.gs;
+    const max = 5 + ((gs.skillLevels?.cargo_expand || 0) >= 1 ? 40 : 0);
+    this._renderSlotGrid(x, y, w, h, gs.inventory || [], max, 'inventory');
   }
 
   // Модалка подтверждения продажи (без restart — отдельные объекты, чистятся по выбору)
@@ -604,16 +738,16 @@ export default class GarageScene extends Phaser.Scene {
     const selIdx = gs.perksSlotIdx;
     const selSlot = slots[selIdx];
 
-    const contentY = py + 58;
-    const contentH = ph - 62;
+    const contentY = py + 98;   // смещено вниз для sub-tab switcher
+    const contentH = ph - 102;
 
     // ── Left: slot list ──────────────────────────────────────────────────
-    const listW = 180;
+    const listW = 200;
     const listX = px + 18;
-    const itemH = 52;
+    const itemH = 68;  // увеличен для отображения значения перка
 
     this.add.text(listX + listW / 2, contentY + 6, 'СЛОТЫ МОДУЛЕЙ',
-      this.O('11px', '#2a4a5a')).setOrigin(0.5, 0);
+      this.O('13px', '#2a4a5a')).setOrigin(0.5, 0);
 
     slots.forEach(({ item, label }, i) => {
       const iy = contentY + 30 + i * (itemH + 6);
@@ -628,14 +762,16 @@ export default class GarageScene extends Phaser.Scene {
       card.on('pointerover', () => { if (!active) card.setFillStyle(0x0c1828); });
       card.on('pointerout',  () => { if (!active) card.setFillStyle(0x081018); });
 
-      this.add.text(listX + 8, iy + 8, label, this.O('11px', active ? '#4dd0e1' : '#446677')).setOrigin(0, 0);
+      this.add.text(listX + 8, iy + 8, label, this.O('12px', active ? '#4dd0e1' : '#446677')).setOrigin(0, 0);
       if (pDef) {
+        const rarColorHex = `#${rarColor.toString(16).padStart(6, '0')}`;
         const dot = this.add.graphics();
-        dot.fillStyle(rarColor, 1); dot.fillCircle(listX + 10, iy + itemH - 14, 4);
-        this.add.text(listX + 18, iy + itemH - 22, pDef.name,
-          this.F('10px', `#${rarColor.toString(16).padStart(6, '0')}`)).setOrigin(0, 0);
+        dot.fillStyle(rarColor, 1); dot.fillCircle(listX + 10, iy + 34, 4);
+        this.add.text(listX + 18, iy + 28, pDef.name, this.F('11px', rarColorHex)).setOrigin(0, 0);
+        // Значение перка — ключевой фикс несовпадения
+        this.add.text(listX + 8, iy + 46, pDef.desc(perkBonus(item.perk)), this.F('12px', '#2a6070')).setOrigin(0, 0);
       } else {
-        this.add.text(listX + 8, iy + itemH - 22, 'нет перка', this.F('10px', '#223344')).setOrigin(0, 0);
+        this.add.text(listX + 8, iy + 32, 'нет перка', this.F('12px', '#223344')).setOrigin(0, 0);
       }
     });
 
@@ -669,41 +805,40 @@ export default class GarageScene extends Phaser.Scene {
     let cy = contentY + 18;
     const cx = detX + detW / 2;
 
-    // Perk image
-    const imgSize = 96;
+    // Perk image — doubled size (96 → 192, user requested ×2)
+    const imgSize = 192;
     if (this.textures.exists(pDef.key)) {
       const img = this.add.image(cx, cy + imgSize / 2, pDef.key);
       const sc = imgSize / Math.max(img.width, img.height);
       img.setScale(sc).setOrigin(0.5);
     } else {
-      // Fallback rect if texture not loaded
       const fg = this.add.graphics();
-      fg.fillStyle(rarHex, 0.3); fg.fillRoundedRect(cx - imgSize / 2, cy, imgSize, imgSize, 8);
-      fg.lineStyle(2, rarHex, 0.7); fg.strokeRoundedRect(cx - imgSize / 2, cy, imgSize, imgSize, 8);
+      fg.fillStyle(rarHex, 0.3); fg.fillRoundedRect(cx - imgSize / 2, cy, imgSize, imgSize, 10);
+      fg.lineStyle(2, rarHex, 0.7); fg.strokeRoundedRect(cx - imgSize / 2, cy, imgSize, imgSize, 10);
     }
-    cy += imgSize + 12;
+    cy += imgSize + 10;
 
     // Rarity badge
     const rbg = this.add.graphics();
-    const rlw = 110, rlh = 22;
+    const rlw = 130, rlh = 24;
     rbg.fillStyle(rarHex, 0.15); rbg.fillRoundedRect(cx - rlw / 2, cy, rlw, rlh, 5);
     rbg.lineStyle(1, rarHex, 0.6); rbg.strokeRoundedRect(cx - rlw / 2, cy, rlw, rlh, 5);
-    this.add.text(cx, cy + rlh / 2, rarLabel, this.O('10px', rarColor)).setOrigin(0.5);
+    this.add.text(cx, cy + rlh / 2, rarLabel, this.O('11px', rarColor)).setOrigin(0.5);
     cy += rlh + 10;
 
     // Name
-    this.add.text(cx, cy, pDef.name, this.O('16px', rarColor)).setOrigin(0.5, 0);
-    cy += 24;
+    this.add.text(cx, cy, pDef.name, this.O('18px', rarColor)).setOrigin(0.5, 0);
+    cy += 28;
 
-    // Base effect
-    this.add.text(cx, cy, pDef.desc(bonus), this.F('13px', '#aaccdd')).setOrigin(0.5, 0);
-    cy += 20;
+    // Base effect — крупнее, это главный текст
+    this.add.text(cx, cy, pDef.desc(bonus), this.F('15px', '#aaccdd')).setOrigin(0.5, 0);
+    cy += 24;
 
     // Bonus breakdown
     const cLvl = perk.creditLvl || 0, sLvl = perk.starLvl || 0;
     this.add.text(cx, cy,
       `Кред: +${(cLvl * 0.9).toFixed(1)}%  ·  Звёзды: +${(sLvl * 9).toFixed(0)}%`,
-      this.F('10px', '#2a4a5a')).setOrigin(0.5, 0);
+      this.F('12px', '#2a4a5a')).setOrigin(0.5, 0);
     cy += 18;
 
     // Separator
@@ -717,15 +852,17 @@ export default class GarageScene extends Phaser.Scene {
     const colLX = detX + 12, colRX = detX + 20 + halfW;
 
     // Credits upgrade
+    const goldLocked = sLvl > 0; // starLvl > 0 блокирует кредитный апгрейд
     const nextCLvl = cLvl + 1;
-    const cCost    = cLvl < 5 ? PERK_CREDIT_COST[cLvl] : null;
+    const cCost    = (!goldLocked && cLvl < 5) ? PERK_CREDIT_COST[cLvl] : null;
     const canCred  = cCost !== null && (gs.credits || 0) >= cCost;
 
     this.add.text(colLX + halfW / 2, cy, `💰 ПРОКАЧКА (кредиты)`,
-      this.O('10px', '#3a6a4a')).setOrigin(0.5, 0);
-    this.add.text(colLX + halfW / 2, cy + 16,
-      `Ур. ${cLvl}/5  →  +${(cLvl * 0.9).toFixed(1)}% бонус`,
-      this.F('10px', '#2a4a3a')).setOrigin(0.5, 0);
+      this.O('13px', goldLocked ? '#2a3a2a' : '#3a6a4a')).setOrigin(0.5, 0);
+    this.add.text(colLX + halfW / 2, cy + 18,
+      goldLocked ? '⭐-прокачка активна — кред. заблокированы'
+        : `Ур. ${cLvl}/5  →  +${(cLvl * 0.9).toFixed(1)}% бонус`,
+      this.F('12px', goldLocked ? '#444433' : '#2a4a3a')).setOrigin(0.5, 0);
 
     if (cCost !== null) {
       const cbg = this.add.rectangle(colLX + halfW / 2, cy + 48, halfW - 4, 32,
@@ -734,7 +871,7 @@ export default class GarageScene extends Phaser.Scene {
         .setInteractive({ useHandCursor: canCred });
       this.add.text(colLX + halfW / 2, cy + 48,
         canCred ? `▲ ${cCost.toLocaleString('ru')} кр` : `🔒 ${cCost.toLocaleString('ru')} кр`,
-        this.F('12px', canCred ? '#66cc77' : '#334455')).setOrigin(0.5);
+        this.F('13px', canCred ? '#66cc77' : '#334455')).setOrigin(0.5);
       if (canCred) {
         cbg.on('pointerover', () => cbg.setFillStyle(0x102818));
         cbg.on('pointerout',  () => cbg.setFillStyle(0x081a10));
@@ -746,7 +883,7 @@ export default class GarageScene extends Phaser.Scene {
       }
     } else {
       this.add.text(colLX + halfW / 2, cy + 48, '✓ MAX (кред.)',
-        this.F('11px', '#66cc77')).setOrigin(0.5);
+        this.F('13px', '#66cc77')).setOrigin(0.5);
     }
 
     // Stars upgrade
@@ -755,10 +892,10 @@ export default class GarageScene extends Phaser.Scene {
     const canStar  = sCost !== null && (gs.starGold || 0) >= sCost;
 
     this.add.text(colRX + halfW / 2, cy, `⭐ ПРОКАЧКА (звёзды)`,
-      this.O('10px', '#3a5a1a')).setOrigin(0.5, 0);
-    this.add.text(colRX + halfW / 2, cy + 16,
+      this.O('13px', '#3a5a1a')).setOrigin(0.5, 0);
+    this.add.text(colRX + halfW / 2, cy + 18,
       `Ур. ${sLvl}/5  →  +${(sLvl * 9).toFixed(0)}% бонус`,
-      this.F('10px', '#3a4a1a')).setOrigin(0.5, 0);
+      this.F('12px', '#3a4a1a')).setOrigin(0.5, 0);
 
     if (sCost !== null) {
       const sbg = this.add.rectangle(colRX + halfW / 2, cy + 48, halfW - 4, 32,
@@ -767,7 +904,7 @@ export default class GarageScene extends Phaser.Scene {
         .setInteractive({ useHandCursor: canStar });
       this.add.text(colRX + halfW / 2, cy + 48,
         canStar ? `▲ ${sCost} ⭐` : `🔒 ${sCost} ⭐`,
-        this.F('12px', canStar ? '#ffcc44' : '#334455')).setOrigin(0.5);
+        this.F('13px', canStar ? '#ffcc44' : '#334455')).setOrigin(0.5);
       if (canStar) {
         sbg.on('pointerover', () => sbg.setFillStyle(0x261c00));
         sbg.on('pointerout',  () => sbg.setFillStyle(0x1a1200));
@@ -779,7 +916,7 @@ export default class GarageScene extends Phaser.Scene {
       }
     } else {
       this.add.text(colRX + halfW / 2, cy + 48, '✓ MAX (звёзды)',
-        this.F('11px', '#ffcc44')).setOrigin(0.5);
+        this.F('13px', '#ffcc44')).setOrigin(0.5);
     }
 
     cy += 80;
@@ -803,7 +940,7 @@ export default class GarageScene extends Phaser.Scene {
       .setInteractive({ useHandCursor: canReroll });
     this.add.text(cx, ry,
       canReroll ? `🔄 Реролл перка: ${rerollCost} ⭐  (попытка ${rerollN + 1})` : `🔄 Реролл: ${rerollCost} ⭐ (нет звёзд)`,
-      this.F('12px', canReroll ? '#bb88dd' : '#334455')).setOrigin(0.5);
+      this.F('13px', canReroll ? '#bb88dd' : '#334455')).setOrigin(0.5);
     if (canReroll) {
       rbg.on('pointerover', () => rbg.setFillStyle(0x180a24));
       rbg.on('pointerout',  () => rbg.setFillStyle(0x100818));
@@ -818,6 +955,48 @@ export default class GarageScene extends Phaser.Scene {
 
     // Daily reset hint
     this.add.text(cx, ry + 24, 'Счётчик попыток сбрасывается в 00:00 UTC',
-      this.F('9px', '#1a2535')).setOrigin(0.5, 0);
+      this.F('11px', '#1a2535')).setOrigin(0.5, 0);
+  }
+
+  _showTooltip(wx, wy, item) {
+    this._hideTooltip();
+    if (!item) return;
+    const W = this.scale.width, H = this.scale.height;
+    const pDef = item.perk ? PERK_MAP[item.perk.key] : null;
+    const rarColor = pDef ? `#${RARITY_COLOR[pDef.rarity].toString(16).padStart(6, '0')}` : null;
+    const TW = 230, LINE_H = 17;
+
+    const lines = [
+      { text: itemName(item),  sty: this.O('13px', '#ffe0b2') },
+      { text: itemStats(item), sty: this.F('11px', '#9fb3b8') },
+    ];
+    if (pDef) {
+      lines.push({ text: pDef.name,                       sty: this.F('11px', rarColor) });
+      lines.push({ text: pDef.desc(perkBonus(item.perk)), sty: this.F('11px', '#aaccdd') });
+    }
+
+    const TH = 10 + lines.length * LINE_H + 6;
+    let tx = wx + 16, ty = wy - TH / 2;
+    if (tx + TW > W - 8) tx = wx - TW - 8;
+    if (ty < 4) ty = 4;
+    if (ty + TH > H - 4) ty = H - TH - 4;
+
+    const g = this.add.graphics().setDepth(200);
+    g.fillStyle(0x08121e, 0.97); g.fillRoundedRect(tx, ty, TW, TH, 6);
+    g.lineStyle(1, 0x1e3a50, 0.9); g.strokeRoundedRect(tx, ty, TW, TH, 6);
+    const objs = [g];
+    let ly = ty + 8;
+    for (const l of lines) {
+      objs.push(this.add.text(tx + 10, ly, l.text,
+        { ...l.sty, wordWrap: { width: TW - 20 } }).setDepth(201));
+      ly += LINE_H;
+    }
+    this._tooltipObjs = objs;
+  }
+
+  _hideTooltip() {
+    if (!this._tooltipObjs) return;
+    this._tooltipObjs.forEach(o => o?.destroy());
+    this._tooltipObjs = null;
   }
 }

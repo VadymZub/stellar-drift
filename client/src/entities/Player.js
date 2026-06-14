@@ -1,5 +1,5 @@
 import * as Phaser from 'https://cdn.jsdelivr.net/npm/phaser@4.1.0/dist/phaser.esm.js';
-import { PLAYER, ART_ANGLE_OFFSET, HANDLING } from '../constants.js';
+import { PLAYER, ART_ANGLE_OFFSET, HANDLING, BASE_SCAN_RADIUS } from '../constants.js';
 import { defaultLoadout, modMult } from '../items.js';
 import { perkBonus } from '../perks.js';
 import { SHIP_BY_KEY, shipLevelMods, SHIP_MAX_LEVEL } from '../ships.js';
@@ -110,7 +110,8 @@ export default class Player {
     // Trading
     this.lootPickupRadiusMult = 1 + sl('loot_magnet') * 0.30;
     this.dropChanceMult       = 1 + sl('salvager')    * 0.10;
-    this.repairCostMult       = Math.max(0.30, 1 - sl('merchants_eye') * 0.10);
+    this.repairCostMult       = Math.max(0.30, 1 - sl('merchants_eye') * 0.15);
+    this.scene.scanRadius     = Math.round(BASE_SCAN_RADIUS * (1 + sl('scanner_boost') * 0.20));
 
     // ── Perk bonuses (weapon slots) ────────────────────────────────────────
     let perkDmgMult = 1;

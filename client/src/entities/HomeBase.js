@@ -1,5 +1,6 @@
 import * as Phaser from 'https://cdn.jsdelivr.net/npm/phaser@4.1.0/dist/phaser.esm.js';
 import { UI_RES } from '../constants.js';
+import { SECTORS, galaxy } from '../galaxy.js';
 
 const SIZE   = 520;   // sprite display size
 const AURA_R = 380;   // heal radius
@@ -35,22 +36,28 @@ export default class HomeBase {
     this._healHint = scene.add.text(x, y - SIZE / 2 - 14, '[ зона восстановления ]',
       { ...tf, fontSize: '12px', color: '#66cc88' }).setOrigin(0.5).setDepth(7).setVisible(false);
 
-    // Corp menu button — opens CorpScene overlay
+    // Enter base button — shows when player is near, sets gs.atBase = true
     const btnY = y + SIZE / 2 + 44;
-    this._btnBg = scene.add.rectangle(x, btnY, 220, 32, 0x0d1a26, 0.92)
-      .setDepth(8).setStrokeStyle(1, hexCol, 0.8).setInteractive({ useHandCursor: true });
-    this._btnLbl = scene.add.text(x, btnY, '[ КОРПОРАЦИЯ ]',
-      { ...tf, fontSize: '13px', color }).setOrigin(0.5).setDepth(9);
+    this._enterBtn = scene.add.rectangle(x, btnY, 200, 34, 0x0a1f0a, 0.92)
+      .setDepth(8).setStrokeStyle(2, 0x44aa55, 0.9).setInteractive({ useHandCursor: true })
+      .setVisible(false);
+    this._enterLbl = scene.add.text(x, btnY, '[ ВОЙТИ ]',
+      { ...tf, fontSize: '14px', color: '#66cc77' }).setOrigin(0.5).setDepth(9).setVisible(false);
 
-    this._btnBg.on('pointerover', () => this._btnBg.setFillStyle(0x1a2838));
-    this._btnBg.on('pointerout',  () => this._btnBg.setFillStyle(0x0d1a26));
-    this._btnBg.on('pointerdown', () => this.openInfo());
+    this._enterBtn.on('pointerover', () => this._enterBtn.setFillStyle(0x102a10));
+    this._enterBtn.on('pointerout',  () => this._enterBtn.setFillStyle(0x0a1f0a));
+    this._enterBtn.on('pointerdown', () => this.enterBase('GarageScene'));
 
     this._healTimer = 0;
+
+    // Register for smart hotkey entry and respawn position lookup
+    if (!scene.homeBases) scene.homeBases = [];
+    scene.homeBases.push(this);
+    if (!scene.homeBasePositions) scene.homeBasePositions = {};
+    scene.homeBasePositions[corp] = { x, y };
   }
 
-  // Called by F key or button click — stops ship and opens CorpScene overlay
-  openInfo() {
+  enterBase(sceneKey) {
     const gs = this.scene;
     const p  = gs.player;
     if (p) {
@@ -62,17 +69,24 @@ export default class HomeBase {
         gs.movement.courseArrow?.setVisible(false);
       }
     }
-    if (!gs.scene.isActive('CorpScene')) {
-      gs.scene.launch('CorpScene');
-    }
+    gs.atBase = true;
+    if (sceneKey && gs.toggleOverlay) gs.toggleOverlay(sceneKey);
   }
+
+  // Legacy: F key opens corp scene directly (kept for backwards compatibility)
+  openInfo() { this.enterBase(); }
 
   update(dt) {
     const gs = this.scene;
     const d  = Phaser.Math.Distance.Between(gs.player.x, gs.player.y, this.x, this.y);
     const near = d < AURA_R && gs.player.alive;
+    gs.nearBase = near;
 
+    const pvp = SECTORS[galaxy.current]?.pvp;
+    const corpMatch = !pvp || gs.playerCorp === this.corp || gs.playerCorp === 'neutral';
     this._healHint.setVisible(near);
+    this._enterBtn.setVisible(near && !gs.atBase && corpMatch);
+    this._enterLbl.setVisible(near && !gs.atBase && corpMatch);
 
     if (near) {
       this._healTimer += dt;
@@ -88,7 +102,11 @@ export default class HomeBase {
   }
 
   destroy() {
-    [this._zone, this._sprite, this._label, this._healHint, this._btnBg, this._btnLbl]
+    if (this.scene.homeBases) {
+      const idx = this.scene.homeBases.indexOf(this);
+      if (idx >= 0) this.scene.homeBases.splice(idx, 1);
+    }
+    [this._zone, this._sprite, this._label, this._healHint, this._enterBtn, this._enterLbl]
       .forEach(o => o?.destroy());
   }
 }

@@ -73,6 +73,24 @@ export default class BootScene extends Phaser.Scene {
       this.load.image(`cannon2_${corp}`, `assets/bases/cannon2_${corp}.png`);
     }
 
+    // NPC portraits for Missions scene (128×192 px, relative to client/)
+    const NPC_PORTRAITS = [
+      ['npc_corvus',   'Бригадир Корвус.png'],
+      ['npc_lynx',     'Брокер Линкс.png'],
+      ['npc_ancient',  'голос Древних.png'],
+      ['npc_erixon',   'Доктор Эриксонpng.png'],
+      ['npc_morgan',   'Капитан Морган.png'],
+      ['npc_orion',    'Капитан Орион.png'],
+      ['npc_artemis',  'Командор Артемис.png'],
+      ['npc_terranov', 'Магнат Терранов.png'],
+      ['npc_siren',    'Сирена.png'],
+      ['npc_jakob',    'Старый Якоб.png'],
+      ['npc_hazard',   'Хазард.png'],
+    ];
+    for (const [key, file] of NPC_PORTRAITS) {
+      this.load.image(key, `../../space-mmo-validation/design/NPC PORTRAITS for missions/${file}`);
+    }
+
     // Skill tree icons (20 skills, 128×128)
     const SKILL_KEYS = [
       'sharpshooter', 'heavy_caliber', 'penetrating_rounds', 'overcharge_shot',

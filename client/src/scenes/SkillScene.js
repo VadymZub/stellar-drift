@@ -74,15 +74,15 @@ const SKILLS_DEF = [
     effects: ['+10% дроп-шанс', '+20% дроп-шанс', '+35% дроп-шанс', '+50% дроп-шанс'] },
   { key: 'merchants_eye',     branch: 'trading',     type: 'passive', nameRu: 'Торговый взгляд',
     maxLevel: 3, requires: [['salvager', 2]],
-    effects: ['-10% стоимость ремонта', '-20% стоимость ремонта', '-30% стоимость ремонта'] },
+    effects: ['итого −15% к цене ремонта (cr и ⭐)', 'итого −30% к цене ремонта (cr и ⭐)', 'итого −45% к цене ремонта (cr и ⭐)'] },
   { key: 'scanner_boost',     branch: 'trading',     type: 'passive', nameRu: 'Усиление сканера',
     maxLevel: 3, requires: [['merchants_eye', 1]],
     effects: ['+20% дальность скана', '+40% дальность скана', '+60% дальность скана'] },
   { key: 'cargo_expand',      branch: 'trading',     type: 'passive', nameRu: 'Расш. грузов',
-    maxLevel: 3, requires: [['merchants_eye', 1]],
-    effects: ['+20 груз. мест', '+35 груз. мест', '+50 груз. мест'] },
+    maxLevel: 1, requires: [['merchants_eye', 1]],
+    effects: ['+40 слотов (трюм + склад)'] },
   { key: 'stealth_sprint',    branch: 'trading',     type: 'active',  nameRu: 'Скрытный рывок',
-    maxLevel: 1, icon: '👻', requires: [['cargo_expand', 2]],
+    maxLevel: 1, icon: '👻', requires: [['cargo_expand', 1]],
     effects: ['+35% скор + стелс 8c, КД 55c'] },
 ];
 
@@ -147,8 +147,13 @@ export default class SkillScene extends Phaser.Scene {
     const py = 10;
     this._p = { px, py, pw, ph };
 
-    // Dark overlay (closes tooltip on click)
-    const overlay = this.add.rectangle(0, 0, W, H, 0x000000, 0.72).setOrigin(0).setInteractive();
+    // Полностью непрозрачный фон
+    this.add.rectangle(0, 0, W, H, 0x05070f, 1.0).setOrigin(0);
+    const _bgSkill = this.add.image(W / 2, H / 2, 'bg_garage');
+    _bgSkill.setScale(Math.max(W / _bgSkill.width, H / _bgSkill.height)).setAlpha(0.7).setTint(0x667788);
+    this.add.rectangle(0, 0, W, H, 0x000000, 0.25).setOrigin(0);
+    // Overlay для закрытия тултипа по клику на фон
+    const overlay = this.add.rectangle(0, 0, W, H, 0x000000, 0).setOrigin(0).setInteractive();
     overlay.on('pointerdown', () => this._closeTooltip());
 
     // Panel background

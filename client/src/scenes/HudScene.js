@@ -1,5 +1,5 @@
 import * as Phaser from 'https://cdn.jsdelivr.net/npm/phaser@4.1.0/dist/phaser.esm.js';
-import { COLORS, UI_RES } from '../constants.js';
+import { COLORS, UI_RES, BASE_SCAN_RADIUS } from '../constants.js';
 import { i18n } from '../i18n.js';
 import { levelInfo, MAX_LEVEL } from '../leveling.js';
 import { minimapRect, worldToMinimap } from '../systems/minimap.js';
@@ -51,6 +51,13 @@ export default class HudScene extends Phaser.Scene {
     // Action bar (10 slots)
     this._abSlots = null;
     this._buildActionBarHUD();
+
+    // Cargo indicator (always visible)
+    this._cargoTxt = this.add.text(0, 0, '', F('11px', '#7e9398')).setOrigin(1, 0.5).setDepth(101);
+
+    // Base nav bar (dynamic — built/destroyed on atBase change)
+    this._navObjs = null;
+    this._lastAtBase = false;
   }
 
   _buildActionBarHUD() {
@@ -121,6 +128,66 @@ export default class HudScene extends Phaser.Scene {
         slot.iconImg.setAlpha(lv === 0 ? 0.25 : rem > 0 ? 0.45 : 1.0);
       }
     }
+  }
+
+  _showBaseNav() {
+    if (this._navObjs) return;
+    const W = this.scale.width, H = this.scale.height;
+    const BTN_W = 124, BTN_H = 36, GAP = 6;
+    const EXIT_W = 160;
+    const O = (s, c) => ({ fontFamily: 'Orbitron, sans-serif', fontSize: s, color: c, resolution: UI_RES });
+
+    const ITEMS = [
+      { label: 'ГАРАЖ  G',   key: 'GarageScene' },
+      { label: 'КЛАН  N',    key: 'ClanScene'   },
+      { label: 'КОРП  H',    key: 'CorpScene'   },
+      { label: 'МИССИИ  O',  key: 'MissionsScene' },
+      { label: 'МАГАЗИН  P', key: 'ShopScene'   },
+      { label: 'СКИЛЛЫ  K',  key: 'SkillScene'  },
+      { label: 'ТРЮМ  C',    key: 'CargoScene'  },
+    ];
+
+    const totalW = ITEMS.length * BTN_W + (ITEMS.length - 1) * GAP + GAP + EXIT_W;
+    const startX = Math.round((W - totalW) / 2);
+    const barY   = 5;
+    this._navObjs = [];
+
+    const navBg = this.add.rectangle(W / 2, barY + BTN_H / 2 + 2, W, BTN_H + 10, 0x020508, 0.92).setDepth(105);
+    this._navObjs.push(navBg);
+
+    ITEMS.forEach(({ label, key }, i) => {
+      const bx = startX + i * (BTN_W + GAP) + BTN_W / 2;
+      const btn = this.add.rectangle(bx, barY + BTN_H / 2, BTN_W, BTN_H, 0x081420, 0.95)
+        .setDepth(106).setStrokeStyle(1, 0x1e3a50, 1).setInteractive({ useHandCursor: true });
+      const txt = this.add.text(bx, barY + BTN_H / 2, label, O('12px', '#3a8aaa'))
+        .setOrigin(0.5).setDepth(107);
+
+      btn.on('pointerover',  () => { btn.setFillStyle(0x0f2535); txt.setColor('#4dd0e1'); });
+      btn.on('pointerout',   () => { btn.setFillStyle(0x081420); txt.setColor('#3a8aaa'); });
+      btn.on('pointerdown',  () => this.gs.toggleOverlay(key));
+      this._navObjs.push(btn, txt);
+    });
+
+    const exitX = startX + ITEMS.length * (BTN_W + GAP) + GAP + EXIT_W / 2;
+    const exitBtn = this.add.rectangle(exitX, barY + BTN_H / 2, EXIT_W, BTN_H, 0x1a0808, 0.95)
+      .setDepth(106).setStrokeStyle(1, 0x883333, 0.9).setInteractive({ useHandCursor: true });
+    const exitTxt = this.add.text(exitX, barY + BTN_H / 2, 'ВЫХОД В КОСМОС', O('12px', '#aa4444'))
+      .setOrigin(0.5).setDepth(107);
+    exitBtn.on('pointerover',  () => { exitBtn.setFillStyle(0x2a1010); exitTxt.setColor('#ef5350'); });
+    exitBtn.on('pointerout',   () => { exitBtn.setFillStyle(0x1a0808); exitTxt.setColor('#aa4444'); });
+    exitBtn.on('pointerdown',  () => {
+      this.gs.atBase = false;
+      ['GarageScene','ClanScene','CorpScene','MissionsScene','ShopScene','SkillScene','CargoScene'].forEach(k => {
+        if (this.scene.isActive(k)) this.scene.stop(k);
+      });
+    });
+    this._navObjs.push(exitBtn, exitTxt);
+  }
+
+  _hideBaseNav() {
+    if (!this._navObjs) return;
+    this._navObjs.forEach(o => o?.destroy());
+    this._navObjs = null;
   }
 
   pushLog(text) {
@@ -196,6 +263,19 @@ export default class HudScene extends Phaser.Scene {
     // ── Миникарта (векторные блипы) ──
     this.drawMinimap();
 
+    // ── Base nav bar (показываем/скрываем при смене atBase) ──
+    if (this.gs.atBase !== this._lastAtBase) {
+      this._lastAtBase = this.gs.atBase;
+      if (this.gs.atBase) this._showBaseNav(); else this._hideBaseNav();
+    }
+
+    // ── Cargo indicator ──
+    const cargoCount = this.gs.inventory?.length || 0;
+    const cargoMax   = 30;
+    this._cargoTxt.setPosition(W - 16, H - 80)
+      .setText(`ТРЮМ  ${cargoCount}/${cargoMax}`)
+      .setColor(cargoCount >= cargoMax ? '#ef5350' : '#4a6678');
+
     // ── Подсказка (выше action bar) ──
     this.hint.setPosition(W / 2, H - 66);
 
@@ -240,13 +320,27 @@ export default class HudScene extends Phaser.Scene {
       g.fillStyle(COLORS.primary, 0.9); g.fillCircle(base.x, base.y, 3);
     }
 
-    // Лут (янтарные точки)
-    g.fillStyle(COLORS.amber, 0.9);
-    for (const l of gs.loot) { if (!l.alive) continue; const p = worldToMinimap(l.x, l.y, r, ww, wh); g.fillCircle(p.x, p.y, 1.6); }
+    // Скан-радиус: враги/лут видны только в радиусе сканирования
+    const sr = gs.scanRadius ?? BASE_SCAN_RADIUS;
+    const px2 = gs.player?.x ?? ww / 2, py2 = gs.player?.y ?? wh / 2;
+    const mmScale = Math.min(r.w / ww, r.h / wh);
+    // Кольцо радиуса сканирования
+    const pCenter = worldToMinimap(px2, py2, r, ww, wh);
+    g.lineStyle(1, 0x4de1aa, 0.3);
+    g.strokeCircle(pCenter.x, pCenter.y, sr * mmScale);
 
-    // Мобы (красные; боссы крупнее/оранжевые)
+    // Лут (янтарные точки) — только в радиусе скана
+    g.fillStyle(COLORS.amber, 0.9);
+    for (const l of gs.loot) {
+      if (!l.alive) continue;
+      if (Phaser.Math.Distance.Between(px2, py2, l.x, l.y) > sr) continue;
+      const p = worldToMinimap(l.x, l.y, r, ww, wh); g.fillCircle(p.x, p.y, 1.6);
+    }
+
+    // Мобы (красные; боссы крупнее/оранжевые) — только в радиусе скана
     for (const m of gs.mobs) {
       if (!m.alive) continue;
+      if (Phaser.Math.Distance.Between(px2, py2, m.x, m.y) > sr) continue;
       const p = worldToMinimap(m.x, m.y, r, ww, wh);
       if (m.isBoss) { g.fillStyle(0xff7a6b, 1); g.fillCircle(p.x, p.y, 3.4); }
       else { g.fillStyle(COLORS.danger, 0.95); g.fillCircle(p.x, p.y, 2); }

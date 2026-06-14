@@ -71,6 +71,8 @@ export default class GameScene extends Phaser.Scene {
     this.projectiles = [];
     this.loot = [];
     this.inventory = [];
+    this.warehouse = this.warehouse ?? [];
+    this.atBase    = this.atBase    ?? false;
     this.credits  = this.credits  ?? (DEV_MODE ? 3000000 : 0);
     this.starGold = this.starGold ?? (DEV_MODE ? 20000   : 0);
 
@@ -232,6 +234,7 @@ export default class GameScene extends Phaser.Scene {
   createBaseAndSafeZone() {
     const sec = SECTORS[galaxy.current];
     if (sec.isDungeon) return; // В данжах нет безопасных зон
+    if (sec.pvp) return; // В PvP секторах нет центральной базы
 
     const cx = this.worldWidth / 2, cy = this.worldHeight / 2;
     this.safeZoneGfx = this.add.graphics().setDepth(-10);
@@ -558,7 +561,8 @@ export default class GameScene extends Phaser.Scene {
     let lastClickTime = 0;
 
     this.input.on('pointerdown', (pointer) => {
-      if (this.scene.isActive('GarageScene') || this.scene.isActive('InventoryScene') || this.scene.isActive('MapScene') || this.scene.isActive('BaseMenuScene') || this.scene.isActive('CorpScene') || this.scene.isActive('SkillScene')) return;
+      if (this.scene.isActive('GarageScene') || this.scene.isActive('CargoScene') || this.scene.isActive('MapScene') || this.scene.isActive('BaseMenuScene') || this.scene.isActive('CorpScene') || this.scene.isActive('SkillScene') || this.scene.isActive('ClanScene') || this.scene.isActive('MissionsScene') || this.scene.isActive('ShopScene')) return;
+      if (this.atBase) return;
 
       // Action bar click (physical canvas coords, SH=52 GAP=4 N=10)
       {
@@ -624,13 +628,14 @@ export default class GameScene extends Phaser.Scene {
     });
 
     this.input.on('pointerup', () => { this.steering = false; });
-    this.input.keyboard.addCapture('TAB,ESC,I,G,M,J,F,CTRL');
+    this.input.keyboard.addCapture('TAB,ESC,G,M,J,F,CTRL');
     
     this.input.keyboard.on('keydown-TAB', (e) => { e.preventDefault(); this.cycleTarget(); });
     this.input.keyboard.on('keydown-ESC', () => {
       this.selectTarget(null);
       this.isFiring = false;
-      for (const o of ['GarageScene', 'InventoryScene', 'MapScene', 'MissionsScene', 'ShopScene', 'CorpScene', 'BaseMenuScene']) {
+      this.atBase = false;
+      for (const o of ['GarageScene', 'CargoScene', 'MapScene', 'MissionsScene', 'ShopScene', 'CorpScene', 'BaseMenuScene', 'SkillScene', 'ClanScene']) {
         if (this.scene.isActive(o)) this.scene.stop(o);
       }
     });
@@ -641,28 +646,23 @@ export default class GameScene extends Phaser.Scene {
       const nearHome = this.homeBases.find(b => Phaser.Math.Distance.Between(this.player.x, this.player.y, b.x, b.y) < 380);
       if (nearHome) nearHome.openInfo();
     });
-    this.input.keyboard.on('keydown-I', () => {
-      if (!this._canOpenBase()) { this.log('📦 Склад доступен только на базе'); return; }
-      this.toggleOverlay('InventoryScene');
+    this.input.keyboard.on('keydown-C', () => {
+      this.player.waypoint = null; this.cancelCollect(); this.toggleOverlay('CargoScene');
     });
-    this.input.keyboard.on('keydown-G', () => {
-      if (!this._canOpenBase()) { this.log('🛠 Гараж доступен только на базе'); return; }
-      this.player.waypoint = null; this.cancelCollect(); this.toggleOverlay('GarageScene');
-    });
+    const _openBase = (sceneKey, hint) => {
+      if (!this.atBase) {
+        if (!this.nearBase) { this.log(`${hint} — подлетите к базе`); return; }
+        this._enterNearestBase(sceneKey); return;
+      }
+      this.player.waypoint = null; this.cancelCollect(); this.toggleOverlay(sceneKey);
+    };
+    this.input.keyboard.on('keydown-G', () => _openBase('GarageScene',   'Гараж'));
     this.input.keyboard.on('keydown-M', () => { this.player.waypoint = null; this.cancelCollect(); this.toggleOverlay('MapScene'); });
-    this.input.keyboard.on('keydown-K', () => { this.player.waypoint = null; this.cancelCollect(); this.toggleOverlay('SkillScene'); });
-    this.input.keyboard.on('keydown-O', () => {
-      if (!this._canOpenBase()) { this.log('📋 Миссии доступны только на базе'); return; }
-      this.player.waypoint = null; this.cancelCollect(); this.toggleOverlay('MissionsScene');
-    });
-    this.input.keyboard.on('keydown-P', () => {
-      if (!this._canOpenBase()) { this.log('🏪 Магазин доступен только на базе'); return; }
-      this.player.waypoint = null; this.cancelCollect(); this.toggleOverlay('ShopScene');
-    });
-    this.input.keyboard.on('keydown-H', () => {
-      if (!this._canOpenBase()) { this.log('🏛 Корпорация доступна только на базе'); return; }
-      this.player.waypoint = null; this.cancelCollect(); this.toggleOverlay('CorpScene');
-    });
+    this.input.keyboard.on('keydown-K', () => _openBase('SkillScene',    'Скиллы'));
+    this.input.keyboard.on('keydown-O', () => _openBase('MissionsScene', 'Миссии'));
+    this.input.keyboard.on('keydown-P', () => _openBase('ShopScene',     'Магазин'));
+    this.input.keyboard.on('keydown-H', () => _openBase('CorpScene',     'Корпорация'));
+    this.input.keyboard.on('keydown-N', () => _openBase('ClanScene',     'Клан'));
     
     this.input.keyboard.on('keydown-CTRL', (e) => {
       e.preventDefault();
@@ -702,6 +702,14 @@ export default class GameScene extends Phaser.Scene {
                    shield_burst: 85000, stealth_sprint: 55000,
                    berserker: [90000, 80000, 70000, 60000][lv - 1] ?? 90000 };
     return Math.round((base[key] || 30000) * mod);
+  }
+
+  _enterNearestBase(sceneKey = 'GarageScene') {
+    this.player.waypoint = null; this.cancelCollect();
+    for (const hb of (this.homeBases || [])) {
+      const d = Phaser.Math.Distance.Between(this.player.x, this.player.y, hb.x, hb.y);
+      if (d < 420) { hb.enterBase(sceneKey); return; }
+    }
   }
 
   _activateSkillSlot(i) {
@@ -829,7 +837,7 @@ export default class GameScene extends Phaser.Scene {
   }
 
   toggleOverlay(key, data) {
-    const overlays = ['GarageScene', 'InventoryScene', 'MapScene', 'MissionsScene', 'ShopScene', 'CorpScene'];
+    const overlays = ['GarageScene', 'CargoScene', 'MapScene', 'MissionsScene', 'ShopScene', 'CorpScene', 'ClanScene', 'SkillScene'];
     for (const o of overlays) { if (o !== key && this.scene.isActive(o)) this.scene.stop(o); }
     if (this.scene.isActive(key)) this.scene.stop(key); else this.scene.launch(key, data);
   }
@@ -925,14 +933,107 @@ export default class GameScene extends Phaser.Scene {
     if (this.playerRespawning) return;
     this.playerRespawning = true;
     this.jumping = false;
-    this.explosion(this.player.x, this.player.y, 1.1);
+    const deathX = this.player.x, deathY = this.player.y;
+    this.explosion(deathX, deathY, 1.1);
     this.log(i18n.t('log.you_died'));
     this.target = null;
-    this.time.delayedCall(3000, () => {
-      this.player.respawn(this.worldWidth / 2, this.worldHeight / 2 - 40);
+    this.time.delayedCall(2000, () => this._showRepairDialog(deathX, deathY));
+  }
+  _showRepairDialog(deathX, deathY) {
+    const REPAIR_COST = {
+      wisp:     { credits: 0,       stars: 0 },
+      stiletto: { credits: 50000,   stars: 0 },
+      anvil:    { credits: 100000,  stars: 0 },
+      phantom:  { credits: 150000,  stars: 0 },
+      drover:   { credits: 150000,  stars: 0 },
+      helion:   { credits: 0,       stars: 3 },
+      argosy:   { credits: 0,       stars: 3 },
+      drifter:  { credits: 0,       stars: 3 },
+    };
+    const cam = this.cameras.main;
+    const W = cam.width, H = cam.height;
+    const tf = { fontFamily: 'Orbitron', resolution: UI_RES };
+
+    const shipKey = this.activeShip || 'wisp';
+    const raw = REPAIR_COST[shipKey] || { credits: 0, stars: 0 };
+    const mult = this.player?.repairCostMult ?? 1;
+    const baseCr = Math.round(raw.credits * mult);
+    const baseSt = raw.stars > 0 ? Math.max(1, Math.round(raw.stars       * mult)) : 0;
+    const spotCr = Math.round(raw.credits * 2 * mult);
+    const spotSt = raw.stars > 0 ? Math.max(1, Math.round(raw.stars * 2   * mult)) : 0;
+
+    const sec   = SECTORS[galaxy.current];
+    const isPvp = sec?.pvp === true;
+    const corpPos = isPvp ? this.homeBasePositions?.[this.playerCorp] : null;
+    const baseX = corpPos ? corpPos.x : this.worldWidth / 2;
+    const baseY = corpPos ? corpPos.y : this.worldHeight / 2 - 40;
+
+    const canAffordCheck = (cr, st) => st > 0 ? (this.starGold || 0) >= st : (this.credits || 0) >= cr;
+    const costStr = (cr, st) => st > 0 ? `${st} ⭐` : cr > 0 ? `${cr.toLocaleString()} cr` : 'бесплатно';
+    const canBase = canAffordCheck(baseCr, baseSt);
+    const canSpot = canAffordCheck(spotCr, spotSt);
+
+    const overlay = this.add.rectangle(0, 0, W, H, 0x000000, 0.72).setOrigin(0).setDepth(300).setScrollFactor(0);
+    const panel   = this.add.rectangle(W / 2, H / 2, 530, 260, 0x06101e, 1).setDepth(301).setScrollFactor(0)
+      .setStrokeStyle(2, 0xef5350, 0.9);
+    const txtTitle = this.add.text(W / 2, H / 2 - 112, 'ВЫ ПОГИБЛИ',
+      { ...tf, fontSize: '20px', color: '#ef5350', fontStyle: 'bold' })
+      .setOrigin(0.5).setDepth(302).setScrollFactor(0);
+
+    const allObjs = [overlay, panel, txtTitle];
+    const destroyAll = () => allObjs.forEach(o => o?.destroy());
+
+    const makeCard = (cx, title, hpLabel, cStr, affordable, onConfirm) => {
+      const fc = affordable ? 0x081a14 : 0x0d0d0d;
+      const bc = affordable ? 0x2a7a5a : 0x222222;
+      const cg = this.add.graphics().setDepth(302).setScrollFactor(0);
+      cg.fillStyle(fc, 1); cg.fillRoundedRect(cx - 110, H / 2 - 78, 220, 148, 7);
+      cg.lineStyle(2, bc, affordable ? 0.9 : 0.25);
+      cg.strokeRoundedRect(cx - 110, H / 2 - 78, 220, 148, 7);
+
+      const tc = affordable ? '#4dd0e1' : '#2a4455';
+      const t1 = this.add.text(cx, H / 2 - 56, title,
+        { ...tf, fontSize: '15px', color: tc }).setOrigin(0.5).setDepth(303).setScrollFactor(0);
+      const t2 = this.add.text(cx, H / 2 - 26, hpLabel,
+        { fontFamily: 'Inter,sans-serif', fontSize: '12px', color: affordable ? '#88bbaa' : '#2a3a3a', resolution: UI_RES })
+        .setOrigin(0.5).setDepth(303).setScrollFactor(0);
+      const t3 = this.add.text(cx, H / 2 + 2, cStr,
+        { ...tf, fontSize: '13px', color: affordable ? '#ffdd55' : '#443333' })
+        .setOrigin(0.5).setDepth(303).setScrollFactor(0);
+
+      const btnFill = affordable ? 0x0a2a18 : 0x111111;
+      const btnBord = affordable ? 0x44cc77 : 0x1a2a1a;
+      const btn = this.add.rectangle(cx, H / 2 + 46, 196, 32, btnFill, 1)
+        .setDepth(303).setScrollFactor(0)
+        .setStrokeStyle(2, btnBord, affordable ? 0.9 : 0.2)
+        .setInteractive({ useHandCursor: affordable });
+      const btnLbl = this.add.text(cx, H / 2 + 46,
+        affordable ? 'РЕМОНТИРОВАТЬ' : '🔒 НЕТ РЕСУРСОВ',
+        { ...tf, fontSize: '11px', color: affordable ? '#66dd88' : '#2a3a2a' })
+        .setOrigin(0.5).setDepth(304).setScrollFactor(0);
+
+      if (affordable) {
+        btn.on('pointerover', () => btn.setFillStyle(0x0f3a22));
+        btn.on('pointerout',  () => btn.setFillStyle(0x0a2a18));
+        btn.on('pointerdown', onConfirm);
+      }
+      allObjs.push(cg, t1, t2, t3, btn, btnLbl);
+    };
+
+    const finishRespawn = (rx, ry, fullHull, cr, st) => {
+      if (st > 0)      this.starGold = (this.starGold || 0) - st;
+      else if (cr > 0) this.credits  = (this.credits  || 0) - cr;
+      destroyAll();
+      this.player.respawn(rx, ry);
+      if (!fullHull) this.player.hull = Math.round(this.player.maxHull * 0.5);
       this.playerRespawning = false;
       this._spawnEngineFx();
-    });
+    };
+
+    makeCard(W / 2 - 130, 'К БАЗЕ', '100% прочности', costStr(baseCr, baseSt), canBase,
+      () => finishRespawn(baseX, baseY, true, baseCr, baseSt));
+    makeCard(W / 2 + 130, 'НА МЕСТЕ', '50% прочности', costStr(spotCr, spotSt), canSpot,
+      () => finishRespawn(deathX, deathY, false, spotCr, spotSt));
   }
   showDamage(x, y, res) {
     const total = Math.round((res.shieldHit || 0) + (res.hullHit || 0)); if (total <= 0) return;

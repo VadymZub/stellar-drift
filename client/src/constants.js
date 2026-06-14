@@ -176,4 +176,8 @@ export const UI_RES = Math.min(4, Math.max(2, Math.ceil((window.devicePixelRatio
 // Поэтому к углу движения прибавляем +90°, чтобы нос смотрел по курсу.
 export const ART_ANGLE_OFFSET = Math.PI / 2;
 
+// Базовый радиус сканирования врагов/лута на миникарте (мировые пиксели).
+// Скилл scanner_boost добавляет +20% за уровень (×3 уровня = до +60%).
+export const BASE_SCAN_RADIUS = 900;
+
 export const RESPAWN_MS = 8000; // моб возвращается в систему через 8 сек после смерти
