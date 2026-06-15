@@ -98,7 +98,7 @@ export default class Movement {
 
     // Плавный доворот носа к курсу
     const targetHeading = Math.atan2(dy, dx);
-    p.heading = Phaser.Math.Angle.RotateTo(p.heading, targetHeading, HANDLING.turnRate * dt);
+    p.heading = Phaser.Math.Angle.RotateTo(p.heading, targetHeading, HANDLING.turnRate * (p.turnRateMult ?? 1) * dt);
 
     let desired = p.baseSpeed;
     if (p.boosting) {

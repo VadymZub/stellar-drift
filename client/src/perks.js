@@ -137,14 +137,48 @@ export const PERK_DEFS = [
     slot: 'shield', rarity: 'rare',
     effect: '+40% длительность стелса',
     desc: (b) => `+${+(40 * (1 + b)).toFixed(1)}% длит. стелса` },
+
+  // Laser cannon perks
+  { key: 'perk_laser_precision', imgFile: 'Laser Precision.png', name: 'Laser Precision',
+    slot: 'laser', rarity: 'uncommon',
+    effect: '+15% точность лазера',
+    desc: (b) => `+${+(15 * (1 + b)).toFixed(1)}% точность` },
+
+  { key: 'perk_laser_shredder', imgFile: 'Laser Shredder.png', name: 'Laser Shredder',
+    slot: 'laser', rarity: 'rare',
+    effect: '+20% урон по корпусу',
+    desc: (b) => `+${+(20 * (1 + b)).toFixed(1)}% урон по корпусу` },
+
+  { key: 'perk_laser_overload', imgFile: 'Laser Overload.png', name: 'Laser Overload',
+    slot: 'laser', rarity: 'jackpot',
+    effect: '100% точность, -15% перезарядка',
+    desc: (b) => `100% точность, -${+(15 * (1 + b)).toFixed(1)}% КД` },
+
+  // Engine perks
+  { key: 'perk_engine_thrust', imgFile: 'Engine Thrust.png', name: 'Engine Thrust',
+    slot: 'engine', rarity: 'common',
+    effect: '+10% максимальная скорость',
+    desc: (b) => `+${+(10 * (1 + b)).toFixed(1)}% скорость` },
+
+  { key: 'perk_engine_agility', imgFile: 'Engine Agility.png', name: 'Engine Agility',
+    slot: 'engine', rarity: 'uncommon',
+    effect: '+15% скорость поворота',
+    desc: (b) => `+${+(15 * (1 + b)).toFixed(1)}% поворот` },
+
+  { key: 'perk_engine_boost', imgFile: 'Engine Boost.png', name: 'Afterburner',
+    slot: 'engine', rarity: 'rare',
+    effect: 'Форсаж: +35% скорость на 4с, КД 30с',
+    desc: (b) => `Форсаж +${+(35 * (1 + b)).toFixed(1)}% скор. 4с` },
 ];
 
 export const PERK_MAP = {};
 for (const p of PERK_DEFS) PERK_MAP[p.key] = p;
 
-// Weapon vs shield perk pools
+// Perk pools by slot type
 const WEAPON_PERKS = PERK_DEFS.filter(p => p.slot === 'weapon');
 const SHIELD_PERKS = PERK_DEFS.filter(p => p.slot === 'shield');
+const LASER_PERKS  = PERK_DEFS.filter(p => p.slot === 'laser');
+const ENGINE_PERKS = PERK_DEFS.filter(p => p.slot === 'engine');
 
 // Weighted random pick from a pool
 function weightedPick(pool) {
@@ -159,7 +193,10 @@ function weightedPick(pool) {
 
 // Roll a perk for a slot type
 export function rollPerk(slotType) {
-  const pool = slotType === 'cannon' ? WEAPON_PERKS : SHIELD_PERKS;
+  const pool = slotType === 'cannon' ? WEAPON_PERKS
+    : slotType === 'laser'  ? LASER_PERKS
+    : slotType === 'engine' ? ENGINE_PERKS
+    : SHIELD_PERKS;
   const def = weightedPick(pool);
   return { key: def.key, creditLvl: 0, starLvl: 0 };
 }

@@ -28,6 +28,12 @@ const ENGINE_TIERS = {
   4: { min: 31, speed: 80 },
 };
 
+// Laser cannon — single legendary, no tiers.
+// Dmg = Plasma T4 × 1.32 (10% above T4 + elite ammo).
+// Drops only from Apophis (bigboss). Occupies a weapon slot.
+// Special: -20% dmg to shields, +50% dmg to bare hull, 70% base accuracy.
+const LASER_DMG = 277;
+
 const roll = () => Phaser.Math.FloatBetween(0.85, 1.15);
 
 export function rollCannon(tier, mobLevel) {
@@ -57,7 +63,25 @@ export function rollShield(tier, mobLevel) {
 export function rollEngine(tier, mobLevel) {
   const t = ENGINE_TIERS[tier];
   const scale = 1 + Math.max(0, mobLevel - t.min) / 50;
-  return { type: 'engine', tier, speed: Math.round(t.speed * roll() * scale) };
+  return { type: 'engine', tier, speed: Math.round(t.speed * roll() * scale), perk: rollPerk('engine') };
+}
+
+export function rollLaser() {
+  return {
+    type: 'laser', tier: 4,
+    damage: Math.round(LASER_DMG * roll()),
+    penetration: 0,
+    fireRate: 1.0,
+    perk: rollPerk('laser'),
+  };
+}
+
+// Apophis boss drop: 8% laser, otherwise T4 random module.
+export function rollApophisLoot() {
+  if (Math.random() < 0.08) return rollLaser();
+  const r = Phaser.Math.Between(0, 99);
+  const maker = r < 45 ? rollCannon : r < 80 ? rollShield : rollEngine;
+  return maker(4, 50);
 }
 
 // Стартовое снаряжение (фиксированное, чтобы корабль сразу был боеспособен).
@@ -74,7 +98,7 @@ export function defaultLoadout(wSlots, sSlots, eSlots) {
 }
 
 // item.type → ключ группы слотов на корабле
-export const SLOT_KEY = { cannon: 'weapon', shield: 'shield', engine: 'engine' };
+export const SLOT_KEY = { cannon: 'weapon', laser: 'weapon', shield: 'shield', engine: 'engine' };
 
 // ── Апгрейд модулей: ДВА ВЗАИМОИСКЛЮЧАЮЩИХ пути (2026-06-04) ──
 //  • кредитный — дёшево, слабо: 5 уровней, +1.5%/ур → до +7.5%;
@@ -126,6 +150,7 @@ export function rollLootForMob(mob) {
 
 // Имя предмета (через i18n).
 export function itemName(item) {
+  if (item.type === 'laser') return i18n.t('item.laser');
   const key = item.type === 'cannon' ? 'item.cannon' : item.type === 'shield' ? 'item.shield' : 'item.engine';
   return `${i18n.t(key)} T${item.tier}`;
 }
@@ -134,6 +159,9 @@ export function itemName(item) {
 export function itemStats(item) {
   const k = modMult(item);
   const up = (item.creditLvl || 0) > 0 ? `   ·   ↑${item.creditLvl}` : '';
+  if (item.type === 'laser') {
+    return `${i18n.t('stat.damage')} ${Math.round(item.damage * k)}   ·   ${i18n.t('stat.accuracy')} 70%   ·   ${i18n.t('stat.firerate')} ${item.fireRate.toFixed(1)}/${i18n.t('unit.sec')}   ·   щит -20%  корпус +50%${up}`;
+  }
   if (item.type === 'cannon') {
     return `${i18n.t('stat.damage')} ${Math.round(item.damage * k)}   ·   ${i18n.t('stat.penetration')} ${Math.round(item.penetration * k * 100)}%   ·   ${i18n.t('stat.firerate')} ${item.fireRate.toFixed(1)}/${i18n.t('unit.sec')}${up}`;
   }

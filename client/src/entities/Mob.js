@@ -67,10 +67,12 @@ export default class Mob {
   get x() { return this.sprite.x; }
   get y() { return this.sprite.y; }
 
-  takeDamage(amount, penetration = 0) {
+  // opts.shieldMult: damage multiplier applied to the shield-bound portion (laser: 0.8).
+  // opts.hullMult: damage multiplier applied to hull damage (laser: 1.5).
+  takeDamage(amount, penetration = 0, opts = {}) {
     if (!this.alive) return { shieldHit: 0, hullHit: 0, killed: false };
     this.lastDamageAt = this.scene.time.now;
-    
+
     // Если атаковали нейтрального моба — он и его группа агрятся
     if (this.neutral) {
       this.neutral = false;
@@ -79,15 +81,26 @@ export default class Mob {
       if (this.group.length) this.group.forEach(m => { m.neutral = false; m.state = 'aggro'; });
     }
 
+    const shieldMult = opts.shieldMult ?? 1;
+    const hullMult   = opts.hullMult   ?? 1;
     const direct = amount * penetration;
-    let toShield = amount - direct;
-    let hullHit = direct;
-    if (toShield <= this.shield) this.shield -= toShield;
-    else { hullHit += (toShield - this.shield); this.shield = 0; }
+    const toShieldRaw = amount - direct;
+    let hullHit = direct * hullMult;
+    let shieldHit = 0;
+
+    if (this.shield > 0) {
+      const toShield = toShieldRaw * shieldMult;
+      shieldHit = toShield;
+      if (toShield <= this.shield) { this.shield -= toShield; }
+      else { hullHit += (toShield - this.shield) * hullMult; this.shield = 0; }
+    } else {
+      hullHit += toShieldRaw * hullMult;
+    }
+
     this.hull -= hullHit;
     let killed = false;
     if (this.hull <= 0) { this.hull = 0; killed = true; this.die(); }
-    return { shieldHit: toShield, hullHit, killed };
+    return { shieldHit, hullHit, killed };
   }
 
   die() {

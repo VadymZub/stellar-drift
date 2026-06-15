@@ -197,6 +197,39 @@ export default class Player {
     }
     this.weaponDamage = Math.round(this.weaponDamage * perkDmgMult);
 
+    // ── Laser weapon properties ────────────────────────────────────────────
+    const laserW = W.filter(w => w.type === 'laser');
+    this.weaponType        = laserW.length > 0 ? 'laser' : 'cannon';
+    this.weaponAccuracy    = 1.0;
+    this.weaponShieldMult  = 1.0;
+    this.weaponHullMult    = 1.0;
+    this.weaponFireRateMult = 1.0;
+    if (this.weaponType === 'laser') {
+      this.weaponPenetration = 0;  // laser uses shieldMult/hullMult instead
+      this.weaponAccuracy    = 0.70;
+      this.weaponShieldMult  = 0.80;
+      this.weaponHullMult    = 1.50;
+      for (const w of laserW) {
+        if (!w.perk) continue;
+        const pb = perkBonus(w.perk);
+        if (w.perk.key === 'perk_laser_precision') this.weaponAccuracy  = Math.min(1.0, this.weaponAccuracy + 0.15 * (1 + pb));
+        if (w.perk.key === 'perk_laser_shredder')  this.weaponHullMult += 0.20 * (1 + pb);
+        if (w.perk.key === 'perk_laser_overload')  { this.weaponAccuracy = 1.0; this.weaponFireRateMult *= 1 + 0.15 * (1 + pb); }
+      }
+    }
+
+    // ── Engine perk bonuses ────────────────────────────────────────────────
+    this.turnRateMult = 1.0;
+    this.hasAfterburnerPerk = false;
+    this.afterburnerMult = 1.35;
+    for (const e of E) {
+      if (!e.perk) continue;
+      const pb = perkBonus(e.perk);
+      if (e.perk.key === 'perk_engine_thrust')  this.baseSpeed = Math.round(this.baseSpeed * (1 + 0.10 * (1 + pb)));
+      if (e.perk.key === 'perk_engine_agility') this.turnRateMult *= 1 + 0.15 * (1 + pb);
+      if (e.perk.key === 'perk_engine_boost')   { this.hasAfterburnerPerk = true; this.afterburnerMult = 1 + 0.35 * (1 + pb); }
+    }
+
     // ── Perk bonuses (shield slots) ────────────────────────────────────────
     for (const s of S) {
       if (!s.perk) continue;
