@@ -1,5 +1,6 @@
 import * as Phaser from 'https://cdn.jsdelivr.net/npm/phaser@4.1.0/dist/phaser.esm.js';
 import { COLORS, UI_RES } from '../constants.js';
+import { prerenderTex } from '../utils/prerenderTex.js';
 
 // MVP hardcoded missions — 3 daily + 2 story
 const MISSIONS = [
@@ -198,9 +199,12 @@ export default class MissionsScene extends Phaser.Scene {
     const portX = x + 22, portY = y + 22;
 
     if (this.textures.exists(mission.npc)) {
-      const img = this.add.image(portX + portW / 2, portY + portH / 2, mission.npc);
-      const sc  = Math.min(portW / img.width, portH / img.height);
-      img.setScale(sc).setOrigin(0.5);
+      const src = this.textures.get(mission.npc).getSourceImage();
+      const sc  = Math.min(portW / src.width, portH / src.height);
+      const dw  = Math.round(src.width  * sc);
+      const dh  = Math.round(src.height * sc);
+      this.add.image(portX + portW / 2, portY + portH / 2, prerenderTex(this, mission.npc, dw, dh))
+        .setDisplaySize(dw, dh).setOrigin(0.5);
       const pfg = this.add.graphics();
       pfg.lineStyle(2, COLORS.primary, 0.5);
       pfg.strokeRoundedRect(portX, portY, portW, portH, 6);

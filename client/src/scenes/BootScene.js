@@ -187,6 +187,12 @@ export default class BootScene extends Phaser.Scene {
     for (const key of ['drover_g', 'phantom_g', 'argosy_g', 'helion_g', 'drifter_g']) {
       _prepShipTex(this, key, 446);
     }
+    // Pre-process NPC portraits: 941×1672 → 432px (2× the 216px portrait height)
+    // so prerenderTex in MissionsScene gets a clean ≤2× source.
+    for (const key of ['npc_corvus','npc_lynx','npc_ancient','npc_erixon','npc_morgan',
+                       'npc_orion','npc_artemis','npc_terranov','npc_siren','npc_jakob','npc_hazard']) {
+      _prepShipTex(this, key, 432);
+    }
 
     // Set LINEAR filter on all ship/mob textures (no mipmap sampling for non-POT assets).
     const LINEAR = 0;
