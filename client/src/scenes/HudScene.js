@@ -153,6 +153,7 @@ export default class HudScene extends Phaser.Scene {
   _showBaseNav() {
     if (this._navObjs) return;
     if (this.scene.isActive('MapScene')) this.scene.stop('MapScene');
+    this.scene.bringToTop('HudScene');
     const W = this.scale.width, H = this.scale.height;
     const BTN_W = 124, BTN_H = 36, GAP = 6;
     const EXIT_W = 160;
@@ -174,7 +175,7 @@ export default class HudScene extends Phaser.Scene {
     this._navObjs = [];
     this._navBtnItems = [];
 
-    const navBg = this.add.rectangle(W / 2, barY + BTN_H / 2 + 2, W, BTN_H + 10, 0x020508, 0.92).setDepth(105);
+    const navBg = this.add.rectangle(W / 2, barY + BTN_H / 2 + 2, W, BTN_H + 10, 0x020508, 1.0).setDepth(105);
     this._navObjs.push(navBg);
 
     ITEMS.forEach(({ label, key }, i) => {
@@ -228,61 +229,68 @@ export default class HudScene extends Phaser.Scene {
     const p = this.gs.player;
     if (!p) return;
 
-    // ── Игрок ── (бары под подписями: ЩИТ y48→бар y64, КОРПУС y82→бар y98)
-    this.pName.setText(i18n.t(p.ship.nameKey));
-    const sFrac = p.shield / p.maxShield, hFrac = p.hull / p.maxHull;
-    this.pShieldTxt.setText(`${i18n.t('hud.shield')}  ${Math.ceil(p.shield)} / ${p.maxShield}`);
-    this.bar(g, 20, 64, 220, 10, sFrac, COLORS.primary);
-    this.pHullTxt.setText(`${i18n.t('hud.hull')}  ${Math.ceil(p.hull)} / ${p.maxHull}`);
-    this.bar(g, 20, 98, 220, 10, hFrac, COLORS.emerald);
-    const boostTag = p.boosting ? `  ⚡${i18n.t('hud.boost')}` : '';
-    this.pSpeed.setText(`${i18n.t('hud.speed')}  ${Math.round(p.speed)}${boostTag}`)
-      .setColor(p.boosting ? '#ffb74d' : '#9fb3b8');
-    this.pCredits.setText(`${i18n.t('hud.credits')}  ${this.gs.credits || 0}`);
-    this.pStarGold.setText(`⭐ ${i18n.t('hud.stargold')}  ${this.gs.starGold || 0}`);
+    const atBase = this.gs.atBase;
 
-    // ── Уровень пилота + XP-бар ──
-    const info = levelInfo(this.gs.pilotXp || 0);
-    this.pPilot.setText(`${i18n.t('hud.pilot')}  ${i18n.t('mob.level')}${info.level}`);
-    
-    // Ранг (Милитаристский флот)
-    if (this.gs.pilotRank) {
-      this.pRank.setText(`${this.gs.pilotRank.name.toUpperCase()}`).setVisible(true);
-    } else {
-      this.pRank.setVisible(false);
-    }
+    if (!atBase) {
+      // ── Игрок ── (бары под подписями: ЩИТ y48→бар y64, КОРПУС y82→бар y98)
+      this.pName.setText(i18n.t(p.ship.nameKey)).setVisible(true);
+      const sFrac = p.shield / p.maxShield, hFrac = p.hull / p.maxHull;
+      this.pShieldTxt.setText(`${i18n.t('hud.shield')}  ${Math.ceil(p.shield)} / ${p.maxShield}`).setVisible(true);
+      this.bar(g, 20, 64, 220, 10, sFrac, COLORS.primary);
+      this.pHullTxt.setText(`${i18n.t('hud.hull')}  ${Math.ceil(p.hull)} / ${p.maxHull}`).setVisible(true);
+      this.bar(g, 20, 98, 220, 10, hFrac, COLORS.emerald);
+      const boostTag = p.boosting ? `  ⚡${i18n.t('hud.boost')}` : '';
+      this.pSpeed.setText(`${i18n.t('hud.speed')}  ${Math.round(p.speed)}${boostTag}`)
+        .setColor(p.boosting ? '#ffb74d' : '#9fb3b8').setVisible(true);
+      this.pCredits.setText(`${i18n.t('hud.credits')}  ${this.gs.credits || 0}`).setVisible(true);
+      this.pStarGold.setText(`⭐ ${i18n.t('hud.stargold')}  ${this.gs.starGold || 0}`).setVisible(true);
 
-    if (info.level >= MAX_LEVEL) {
-      this.pXpTxt.setText('MAX');
-      this.bar(g, 20, 204, 220, 6, 1, 0xb39ddb);
-    } else {
-      this.pXpTxt.setText(`${Math.floor(info.into)} / ${info.need}`);
-      this.bar(g, 20, 204, 220, 6, info.frac, 0xb39ddb);
-    }
-
-    // ── Цель ── (щит — cyan-полоска над корпусом, если у цели есть щит)
-    const t = this.gs.target;
-    let targetBottom = 16;
-    if (t && t.alive) {
-      const enrageTag = (t.isBoss && t.phase >= 2) ? `  ⚠${i18n.t('hud.enraged')}` : '';
-      this.tName.setX(W / 2).setText(`${i18n.t(t.tpl.nameKey)}  ${i18n.t('mob.level')}${t.level}${enrageTag}`).setVisible(true);
-      const bx = W / 2 - 110;
-      if (t.maxShield > 0) {
-        this.bar(g, bx, 40, 220, 6, t.shield / t.maxShield, COLORS.primary);
-        this.bar(g, bx, 50, 220, 8, t.hull / t.maxHull, COLORS.danger);
-        this.tHullTxt.setY(64).setText(`${i18n.t('hud.shield')} ${Math.ceil(t.shield)}  ·  ${i18n.t('hud.hull')} ${Math.ceil(t.hull)}/${t.maxHull}`);
+      // ── Уровень пилота + XP-бар ──
+      const info = levelInfo(this.gs.pilotXp || 0);
+      this.pPilot.setText(`${i18n.t('hud.pilot')}  ${i18n.t('mob.level')}${info.level}`).setVisible(true);
+      if (this.gs.pilotRank) {
+        this.pRank.setText(`${this.gs.pilotRank.name.toUpperCase()}`).setVisible(true);
       } else {
-        this.bar(g, bx, 44, 220, 8, t.hull / t.maxHull, COLORS.danger);
-        this.tHullTxt.setY(58).setText(`${i18n.t('hud.hull')} ${Math.ceil(t.hull)} / ${t.maxHull}`);
+        this.pRank.setVisible(false);
       }
-      this.tHullTxt.setX(W / 2).setVisible(true);
-      targetBottom = 86;
-    } else {
-      this.tName.setVisible(false); this.tHullTxt.setVisible(false);
-    }
+      if (info.level >= MAX_LEVEL) {
+        this.pXpTxt.setText('MAX').setVisible(true);
+        this.bar(g, 20, 204, 220, 6, 1, 0xb39ddb);
+      } else {
+        this.pXpTxt.setText(`${Math.floor(info.into)} / ${info.need}`).setVisible(true);
+        this.bar(g, 20, 204, 220, 6, info.frac, 0xb39ddb);
+      }
 
-    // ── Безопасная зона ── (гаснет, пока игрок атакует у базы — защита снята)
-    this.safeTxt.setX(W / 2).setY(targetBottom).setVisible(!!this.gs.safeProtected);
+      // ── Цель ── (щит — cyan-полоска над корпусом, если у цели есть щит)
+      const t = this.gs.target;
+      let targetBottom = 16;
+      if (t && t.alive) {
+        const enrageTag = (t.isBoss && t.phase >= 2) ? `  ⚠${i18n.t('hud.enraged')}` : '';
+        this.tName.setX(W / 2).setText(`${i18n.t(t.tpl.nameKey)}  ${i18n.t('mob.level')}${t.level}${enrageTag}`).setVisible(true);
+        const bx = W / 2 - 110;
+        if (t.maxShield > 0) {
+          this.bar(g, bx, 40, 220, 6, t.shield / t.maxShield, COLORS.primary);
+          this.bar(g, bx, 50, 220, 8, t.hull / t.maxHull, COLORS.danger);
+          this.tHullTxt.setY(64).setText(`${i18n.t('hud.shield')} ${Math.ceil(t.shield)}  ·  ${i18n.t('hud.hull')} ${Math.ceil(t.hull)}/${t.maxHull}`);
+        } else {
+          this.bar(g, bx, 44, 220, 8, t.hull / t.maxHull, COLORS.danger);
+          this.tHullTxt.setY(58).setText(`${i18n.t('hud.hull')} ${Math.ceil(t.hull)} / ${t.maxHull}`);
+        }
+        this.tHullTxt.setX(W / 2).setVisible(true);
+        targetBottom = 86;
+      } else {
+        this.tName.setVisible(false); this.tHullTxt.setVisible(false);
+      }
+
+      // ── Безопасная зона ──
+      this.safeTxt.setX(W / 2).setY(targetBottom).setVisible(!!this.gs.safeProtected);
+    } else {
+      // At base: hide all combat/flight stats
+      [this.pName, this.pShieldTxt, this.pHullTxt, this.pSpeed, this.pCredits,
+       this.pStarGold, this.pPilot, this.pXpTxt, this.pRank,
+       this.tName, this.tHullTxt, this.safeTxt].forEach(o => o.setVisible(false));
+      g.clear();
+    }
 
     // ── Миникарта (векторные блипы) ──
     this.drawMinimap();

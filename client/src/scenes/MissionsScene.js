@@ -86,29 +86,28 @@ export default class MissionsScene extends Phaser.Scene {
     const gs = this.gs;
     const W  = this.scale.width, H = this.scale.height;
 
-
     const _bgMiss = this.add.image(W / 2, H / 2, 'bg_missions');
     _bgMiss.setScale(Math.max(W / _bgMiss.width, H / _bgMiss.height)).setAlpha(0.8);
 
-    const pw = Math.min(960, W - 40);
-    const ph = Math.min(620, H - 60);
+    const pw = Math.min(1152, W - 40);
+    const ph = Math.min(744, H - 60);
     const px = (W - pw) / 2, py = (H - ph) / 2;
 
     const panel = this.add.graphics();
     panel.fillStyle(0x060c18, 0.96); panel.fillRoundedRect(px, py, pw, ph, 12);
     panel.lineStyle(2, COLORS.primary, 0.6); panel.strokeRoundedRect(px, py, pw, ph, 12);
 
-    this.add.text(px + 22, py + 16, 'МИССИИ', this.O('20px', '#4dd0e1'));
-    this.add.text(px + pw - 18, py + 20, 'O / ESC', this.F('10px', '#223344')).setOrigin(1, 0);
+    this.add.text(px + 26, py + 19, 'МИССИИ', this.O('24px', '#4dd0e1'));
+    this.add.text(px + pw - 22, py + 24, 'O / ESC', this.F('12px', '#223344')).setOrigin(1, 0);
 
     // Filter tabs
     const filters = ['all', 'active', 'completed'];
     const filterLabel = { all: 'ВСЕ', active: 'АКТИВНЫЕ', completed: 'ВЫПОЛНЕННЫЕ' };
     if (!gs.missionsFilter) gs.missionsFilter = 'all';
 
-    const ftabW = 120, ftabH = 26, ftabY = py + 46;
+    const ftabW = 144, ftabH = 31, ftabY = py + 55;
     filters.forEach((f, i) => {
-      const ftx = px + 20 + i * (ftabW + 6);
+      const ftx = px + 24 + i * (ftabW + 7);
       const sel = gs.missionsFilter === f;
       const fbg = this.add.graphics();
       fbg.fillStyle(sel ? 0x0d2030 : 0x040c15, sel ? 1 : 0.8);
@@ -121,7 +120,7 @@ export default class MissionsScene extends Phaser.Scene {
         .setInteractive({ useHandCursor: true });
       btn.on('pointerdown', () => { gs.missionsFilter = f; this.scene.restart(); });
       this.add.text(ftx + ftabW / 2, ftabY + ftabH / 2, filterLabel[f],
-        this.O('10px', sel ? '#4dd0e1' : '#2a4a5a')).setOrigin(0.5);
+        this.O('12px', sel ? '#4dd0e1' : '#2a4a5a')).setOrigin(0.5);
     });
 
     const filtered = this._filteredMissions(gs.missionsFilter);
@@ -132,8 +131,8 @@ export default class MissionsScene extends Phaser.Scene {
 
     const listW     = Math.floor(pw * 0.38);
     const detW      = pw - listW - 20;
-    const contentY  = py + 82;
-    const contentH  = ph - 90;
+    const contentY  = py + 98;
+    const contentH  = ph - 108;
 
     this._renderList(px + 8, contentY, listW, contentH, filtered, selIdx, gs);
     this._renderDetail(px + listW + 16, contentY, detW, contentH, selMission);
@@ -151,11 +150,11 @@ export default class MissionsScene extends Phaser.Scene {
   // ── Left mission list ────────────────────────────────────────────────────
   _renderList(x, y, w, h, missions, selIdx, gs) {
     if (!missions.length) {
-      this.add.text(x + w / 2, y + 40, 'Нет миссий', this.F('13px', '#2a3a4a')).setOrigin(0.5, 0);
+      this.add.text(x + w / 2, y + 48, 'Нет миссий', this.F('16px', '#2a3a4a')).setOrigin(0.5, 0);
       return;
     }
 
-    const rowH = 72, gap = 6;
+    const rowH = 86, gap = 7;
     missions.forEach((m, i) => {
       const ry  = y + i * (rowH + gap);
       const sel = i === selIdx;
@@ -173,13 +172,13 @@ export default class MissionsScene extends Phaser.Scene {
       btn.on('pointerout',   () => { if (!sel) bg.fillStyle(0x080e1a, 0.9); });
 
       const tColor = TYPE_COLOR[m.type] || '#4dd0e1';
-      this.add.text(x + 10, ry + 7,  TYPE_LABEL[m.type] || m.type, this.O('9px', tColor)).setOrigin(0, 0);
-      this.add.text(x + 10, ry + 24, m.title, this.O('12px', sel ? '#cce8f4' : '#8ab0bc')).setOrigin(0, 0);
+      this.add.text(x + 10, ry + 8,  TYPE_LABEL[m.type] || m.type, this.O('11px', tColor)).setOrigin(0, 0);
+      this.add.text(x + 10, ry + 29, m.title, this.O('14px', sel ? '#cce8f4' : '#8ab0bc')).setOrigin(0, 0);
 
       const sColor = STATUS_COLOR[m.status] || '#4a6678';
-      this.add.text(x + 10, ry + 46, STATUS_LABEL[m.status] || m.status, this.F('10px', sColor)).setOrigin(0, 0);
-      this.add.text(x + w - 10, ry + 46, `${m.rewards.xp} XP  ${m.rewards.credits}cr`,
-        this.F('10px', '#2a5060')).setOrigin(1, 0);
+      this.add.text(x + 10, ry + 55, STATUS_LABEL[m.status] || m.status, this.F('12px', sColor)).setOrigin(0, 0);
+      this.add.text(x + w - 10, ry + 55, `${m.rewards.xp} XP  ${m.rewards.credits}cr`,
+        this.F('12px', '#2a5060')).setOrigin(1, 0);
     });
   }
 
@@ -191,12 +190,12 @@ export default class MissionsScene extends Phaser.Scene {
 
     if (!mission) {
       this.add.text(x + w / 2, y + h / 2, 'Выберите миссию',
-        this.F('14px', '#1a2a3a')).setOrigin(0.5);
+        this.F('17px', '#1a2a3a')).setOrigin(0.5);
       return;
     }
 
-    const portW = 128, portH = 180;
-    const portX = x + 18, portY = y + 18;
+    const portW = 154, portH = 216;
+    const portX = x + 22, portY = y + 22;
 
     if (this.textures.exists(mission.npc)) {
       const img = this.add.image(portX + portW / 2, portY + portH / 2, mission.npc);
@@ -210,35 +209,35 @@ export default class MissionsScene extends Phaser.Scene {
       pfg.fillStyle(0x0a1828, 1); pfg.fillRoundedRect(portX, portY, portW, portH, 6);
       pfg.lineStyle(2, COLORS.primary, 0.35); pfg.strokeRoundedRect(portX, portY, portW, portH, 6);
       this.add.text(portX + portW / 2, portY + portH / 2, '?',
-        this.O('40px', '#1a3a4a')).setOrigin(0.5);
+        this.O('48px', '#1a3a4a')).setOrigin(0.5);
     }
 
-    this.add.text(portX + portW / 2, portY + portH + 8, mission.npcName,
-      this.F('11px', '#4a8898')).setOrigin(0.5, 0);
+    this.add.text(portX + portW / 2, portY + portH + 10, mission.npcName,
+      this.F('13px', '#4a8898')).setOrigin(0.5, 0);
 
     // Mission info: right of portrait
-    const textX = portX + portW + 14, textW = w - portW - 44;
+    const textX = portX + portW + 17, textW = w - portW - 53;
     const tColor = TYPE_COLOR[mission.type] || '#4dd0e1';
 
-    this.add.text(textX, y + 18, TYPE_LABEL[mission.type] || '', this.O('10px', tColor)).setOrigin(0, 0);
-    this.add.text(textX, y + 36, mission.title,
-      { ...this.O('16px', '#cce8f4'), wordWrap: { width: textW } }).setOrigin(0, 0);
-    this.add.text(textX, y + 66, mission.desc,
-      { ...this.F('12px', '#5a8090'), wordWrap: { width: textW } }).setOrigin(0, 0);
+    this.add.text(textX, y + 22, TYPE_LABEL[mission.type] || '', this.O('12px', tColor)).setOrigin(0, 0);
+    this.add.text(textX, y + 43, mission.title,
+      { ...this.O('19px', '#cce8f4'), wordWrap: { width: textW } }).setOrigin(0, 0);
+    this.add.text(textX, y + 79, mission.desc,
+      { ...this.F('14px', '#5a8090'), wordWrap: { width: textW } }).setOrigin(0, 0);
 
     // Objectives — below portrait
-    const objY = portY + portH + 36;
-    this.add.text(x + 18, objY, 'ЗАДАЧИ', this.O('11px', '#2a5a70')).setOrigin(0, 0);
+    const objY = portY + portH + 43;
+    this.add.text(x + 22, objY, 'ЗАДАЧИ', this.O('13px', '#2a5a70')).setOrigin(0, 0);
 
     mission.objectives.forEach((obj, i) => {
-      const oy   = objY + 22 + i * 34;
+      const oy   = objY + 26 + i * 41;
       const done = obj.current >= obj.total;
       const pct  = obj.total > 0 ? Math.min(1, obj.current / obj.total) : 0;
 
-      this.add.text(x + 18, oy, obj.text,
-        this.F('12px', done ? '#66bb6a' : '#8ab0bc')).setOrigin(0, 0);
+      this.add.text(x + 22, oy, obj.text,
+        this.F('14px', done ? '#66bb6a' : '#8ab0bc')).setOrigin(0, 0);
 
-      const barX = x + 18, barY = oy + 16, barW = w - 36, barH = 5;
+      const barX = x + 22, barY = oy + 19, barW = w - 44, barH = 6;
       const bbg = this.add.graphics();
       bbg.fillStyle(0x0a1828, 1); bbg.fillRoundedRect(barX, barY, barW, barH, 2);
       if (pct > 0) {
@@ -246,16 +245,16 @@ export default class MissionsScene extends Phaser.Scene {
         bbg.fillRoundedRect(barX, barY, Math.floor(barW * pct), barH, 2);
       }
       this.add.text(barX + barW, barY - 2, `${obj.current}/${obj.total}`,
-        this.F('10px', done ? '#66bb6a' : '#2a5060')).setOrigin(1, 0);
+        this.F('12px', done ? '#66bb6a' : '#2a5060')).setOrigin(1, 0);
     });
 
     // Rewards
-    const rewY = y + h - 76;
+    const rewY = y + h - 91;
     const divG = this.add.graphics();
     divG.lineStyle(1, 0x0e1e30, 1);
-    divG.strokeLineShape(new Phaser.Geom.Line(x + 14, rewY - 8, x + w - 14, rewY - 8));
+    divG.strokeLineShape(new Phaser.Geom.Line(x + 17, rewY - 10, x + w - 17, rewY - 10));
 
-    this.add.text(x + 18, rewY, 'НАГРАДА', this.O('11px', '#2a5a70')).setOrigin(0, 0);
+    this.add.text(x + 22, rewY, 'НАГРАДА', this.O('13px', '#2a5a70')).setOrigin(0, 0);
 
     const r = mission.rewards;
     const rewItems = [
@@ -265,15 +264,15 @@ export default class MissionsScene extends Phaser.Scene {
     if (r.stars > 0) rewItems.push({ label: `${r.stars} ★`, color: '#ffd54f' });
 
     rewItems.forEach((ri, i) => {
-      this.add.text(x + 18 + i * 140, rewY + 22, ri.label,
-        this.O('14px', ri.color)).setOrigin(0, 0);
+      this.add.text(x + 22 + i * 168, rewY + 26, ri.label,
+        this.O('16px', ri.color)).setOrigin(0, 0);
     });
 
     // Accept/Track button
     if (mission.status !== 'completed') {
       const btnLabel = mission.status === 'active' ? 'СЛЕДИТЬ' : 'ПРИНЯТЬ';
-      const bw = 140, bh = 34;
-      const bx = x + w - bw - 14, by2 = y + h - bh - 12;
+      const bw = 168, bh = 41;
+      const bx = x + w - bw - 17, by2 = y + h - bh - 14;
       const btnBg = this.add.graphics();
       btnBg.fillStyle(0x0a2030, 0.92); btnBg.fillRoundedRect(bx, by2, bw, bh, 5);
       btnBg.lineStyle(2, COLORS.primary, 0.6); btnBg.strokeRoundedRect(bx, by2, bw, bh, 5);
@@ -290,7 +289,7 @@ export default class MissionsScene extends Phaser.Scene {
       btn.on('pointerdown', () => {
         if (mission.status === 'available') { mission.status = 'active'; this.scene.restart(); }
       });
-      this.add.text(bx + bw / 2, by2 + bh / 2, btnLabel, this.O('12px', '#4dd0e1')).setOrigin(0.5);
+      this.add.text(bx + bw / 2, by2 + bh / 2, btnLabel, this.O('14px', '#4dd0e1')).setOrigin(0.5);
     }
   }
 }
