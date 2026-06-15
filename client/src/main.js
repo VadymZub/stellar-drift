@@ -49,21 +49,21 @@ const config = {
   ],
 };
 
-const game = new Phaser.Game(config);
+document.fonts.ready.then(() => {
+  const game = new Phaser.Game(config);
 
-// CSS-размер канваса = точно размер окна в CSS-пикселях (без DPR).
-// Canvas при этом рендерится в DPR-кратном разрешении → чёткость HiDPI сохраняется.
-function fitCanvas() {
-  const c = game.canvas;
-  if (!c) return;
-  c.style.width  = window.innerWidth  + 'px';
-  c.style.height = window.innerHeight + 'px';
-  c.style.display = 'block'; // убирает margin-bottom у inline canvas
-}
+  function fitCanvas() {
+    const c = game.canvas;
+    if (!c) return;
+    c.style.width  = window.innerWidth  + 'px';
+    c.style.height = window.innerHeight + 'px';
+    c.style.display = 'block';
+  }
 
-fitCanvas();
-
-window.addEventListener('resize', () => {
-  game.scale.resize(W(), H());
   fitCanvas();
+
+  window.addEventListener('resize', () => {
+    game.scale.resize(W(), H());
+    fitCanvas();
+  });
 });
