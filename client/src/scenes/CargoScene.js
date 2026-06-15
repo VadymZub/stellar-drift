@@ -11,8 +11,8 @@ export default class CargoScene extends Phaser.Scene {
   O(s, c) { return { fontFamily: 'Orbitron, sans-serif', fontSize: s, color: c, resolution: UI_RES }; }
   F(s, c) { return { fontFamily: 'Inter, sans-serif', fontSize: s, color: c, resolution: UI_RES }; }
 
-  _cargoMax() { const gs = this.gs; const b = [0,2,6,8][Math.min(gs.skillLevels?.cargo_expand||0, 3)]; return 8 + b + (gs.premium ? 8 : 0); }
-  _whMax()    { const gs = this.gs; const b = [0,2,6,8][Math.min(gs.skillLevels?.cargo_expand||0, 3)]; return 8 + b + (gs.premium ? 8 : 0); }
+  _cargoMax() { const gs = this.gs; const sl = gs.skillLevels?.cargo_expand || 0; return 8 + sl * (sl + 1) + (gs.premium ? 8 : 0); }
+  _whMax()    { const gs = this.gs; const sl = gs.skillLevels?.cargo_expand || 0; return 8 + sl * (sl + 1) + (gs.premium ? 8 : 0); }
 
   create() {
     this.gs = this.scene.get('GameScene');
