@@ -4,6 +4,7 @@ import { MOBS } from '../constants.js';
 import { SHIPS } from '../ships.js';
 import { SECTORS } from '../galaxy.js';
 import { PERK_DEFS } from '../perks.js';
+import { buildBitmapFont } from '../utils/buildBitmapFont.js';
 
 // Классы взрывов (px нативного кадра). Стек 28 кадров на класс — из design/slice_explosion24.py,
 // лежит в client/explosion24/<class>_sheet.png (игра берёт свежий стек оттуда).
@@ -35,6 +36,9 @@ export default class BootScene extends Phaser.Scene {
     }
     // Большой босс (R1-тип): 6 кадров 306×419
     this.load.spritesheet('bigboss', 'assets/mobs/bigboss_sheet.png', { frameWidth: 306, frameHeight: 419 });
+
+    // Иконки рангов (7 тиров)
+    for (let t = 1; t <= 7; t++) this.load.image(`rank_tier${t}`, `assets/ranks/rank_tier${t}.png`);
 
     // UI-стрелки движения
     this.load.image('arrow_waypoint', 'assets/ui/arrow_waypoint.png');
@@ -108,6 +112,11 @@ export default class BootScene extends Phaser.Scene {
 
   create() {
     i18n.setDict(this.cache.json.get('locale-ru'));
+
+    // Pre-rasterize bitmap font atlases at UI_RES× oversampling.
+    // Fonts are guaranteed loaded here (document.fonts.ready wraps Phaser init in main.js).
+    buildBitmapFont(this, 'bmf_orb12',  'Orbitron', 12, '500');
+    buildBitmapFont(this, 'bmf_inter12', 'Inter',   12, '600');
 
     // Процедурные текстуры, чтобы не тащить лишние ассеты в прототип:
     this.makeStarTexture('stars_far', 0.5, 90);

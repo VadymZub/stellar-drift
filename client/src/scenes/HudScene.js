@@ -21,15 +21,15 @@ export default class HudScene extends Phaser.Scene {
 
     // Панель игрока (лев-верх) — фиксированный вертикальный layout
     this.pName = this.add.text(20, 14, '', O('18px')).setDepth(101);
-    this.pShieldTxt = this.add.text(20, 48, '', F('12px', '#4dd0e1')).setDepth(101);
-    this.pHullTxt = this.add.text(20, 82, '', F('12px', '#66bb6a')).setDepth(101);
-    this.pSpeed = this.add.text(20, 116, '', F('12px', '#9fb3b8')).setDepth(101);
-    this.pCredits = this.add.text(20, 136, '', F('12px', '#ffb74d')).setDepth(101);
-    this.pStarGold = this.add.text(20, 156, '', F('12px', '#ffd54f')).setDepth(101);
+    this.pShieldTxt = this.add.bitmapText(20, 48,  'bmf_inter12', '', 12).setDepth(101).setTint(0x4dd0e1);
+    this.pHullTxt   = this.add.bitmapText(20, 82,  'bmf_inter12', '', 12).setDepth(101).setTint(0x66bb6a);
+    this.pSpeed     = this.add.text(20, 116, '', F('12px', '#9fb3b8')).setDepth(101);
+    this.pCredits   = this.add.bitmapText(20, 136, 'bmf_inter12', '', 12).setDepth(101).setTint(0xffb74d);
+    this.pStarGold  = this.add.text(20, 156, '', F('12px', '#ffd54f')).setDepth(101);
     // Уровень пилота + XP-бар (растёт только за PvE)
     this.pPilot = this.add.text(20, 182, '', O('13px', '#b39ddb')).setDepth(101);
     this.pRank = this.add.text(20, 218, '', O('14px', '#ffcc80')).setDepth(101); // Оранжевый/золотистый для ранга
-    this.pXpTxt = this.add.text(240, 184, '', F('10px', '#9fb3b8')).setOrigin(1, 0).setDepth(101);
+    this.pXpTxt = this.add.bitmapText(240, 184, 'bmf_inter12', '', 10).setOrigin(1, 0).setDepth(101).setTint(0x9fb3b8);
 
     // Панель цели (центр-верх)
     this.tName = this.add.text(0, 16, '', O('16px', '#ef5350')).setOrigin(0.5, 0).setDepth(101);
@@ -98,8 +98,8 @@ export default class HudScene extends Phaser.Scene {
       const cdGfx = this.add.graphics().setDepth(103);
       const hkStyle = { fontFamily: 'Inter, sans-serif', fontSize: '9px', color: '#4a6680', resolution: UI_RES };
       const hk = this.add.text(sx + 3, barY + 2, i < 9 ? `${i + 1}` : '0', hkStyle).setDepth(104);
-      const cdStyle = { fontFamily: 'Orbitron, sans-serif', fontSize: '12px', color: '#ffffff', resolution: UI_RES };
-      const cdTxt = this.add.text(sx + SW / 2, barY + SH / 2, '', cdStyle).setOrigin(0.5).setDepth(104);
+      const cdTxt = this.add.bitmapText(sx + SW / 2, barY + SH / 2, 'bmf_orb12', '', 12)
+        .setOrigin(0.5, 0.5).setDepth(104);
 
       return { sx, sy: barY, SW, SH, bg, cdGfx, hk, cdTxt, iconImg: null, _key: null };
     });
@@ -182,11 +182,11 @@ export default class HudScene extends Phaser.Scene {
       const bx = startX + i * (BTN_W + GAP) + BTN_W / 2;
       const btn = this.add.rectangle(bx, barY + BTN_H / 2, BTN_W, BTN_H, 0x081420, 0.95)
         .setDepth(106).setStrokeStyle(1, 0x1e3a50, 1).setInteractive({ useHandCursor: true });
-      const txt = this.add.text(bx, barY + BTN_H / 2, label, O('12px', '#3a8aaa'))
-        .setOrigin(0.5).setDepth(107);
+      const txt = this.add.bitmapText(bx, barY + BTN_H / 2, 'bmf_orb12', label, 12)
+        .setOrigin(0.5, 0.5).setDepth(107).setTint(0x3a8aaa);
 
-      btn.on('pointerover',  () => { if (!this.scene.isActive(key)) { btn.setFillStyle(0x0f2535); txt.setColor('#4dd0e1'); } });
-      btn.on('pointerout',   () => { if (!this.scene.isActive(key)) { btn.setFillStyle(0x081420); txt.setColor('#3a8aaa'); } });
+      btn.on('pointerover',  () => { if (!this.scene.isActive(key)) { btn.setFillStyle(0x0f2535); txt.setTint(0x4dd0e1); } });
+      btn.on('pointerout',   () => { if (!this.scene.isActive(key)) { btn.setFillStyle(0x081420); txt.setTint(0x3a8aaa); } });
       btn.on('pointerdown',  () => this.gs.toggleOverlay(key));
       this._navObjs.push(btn, txt);
       this._navBtnItems.push({ btn, txt, key });
@@ -195,10 +195,10 @@ export default class HudScene extends Phaser.Scene {
     const exitX = startX + ITEMS.length * (BTN_W + GAP) + GAP + EXIT_W / 2;
     const exitBtn = this.add.rectangle(exitX, barY + BTN_H / 2, EXIT_W, BTN_H, 0x1a0808, 0.95)
       .setDepth(106).setStrokeStyle(1, 0x883333, 0.9).setInteractive({ useHandCursor: true });
-    const exitTxt = this.add.text(exitX, barY + BTN_H / 2, 'ВЫХОД В КОСМОС', O('12px', '#aa4444'))
-      .setOrigin(0.5).setDepth(107);
-    exitBtn.on('pointerover',  () => { exitBtn.setFillStyle(0x2a1010); exitTxt.setColor('#ef5350'); });
-    exitBtn.on('pointerout',   () => { exitBtn.setFillStyle(0x1a0808); exitTxt.setColor('#aa4444'); });
+    const exitTxt = this.add.bitmapText(exitX, barY + BTN_H / 2, 'bmf_orb12', 'ВЫХОД В КОСМОС', 12)
+      .setOrigin(0.5, 0.5).setDepth(107).setTint(0xaa4444);
+    exitBtn.on('pointerover',  () => { exitBtn.setFillStyle(0x2a1010); exitTxt.setTint(0xef5350); });
+    exitBtn.on('pointerout',   () => { exitBtn.setFillStyle(0x1a0808); exitTxt.setTint(0xaa4444); });
     exitBtn.on('pointerdown',  () => {
       this.gs.atBase = false;
       ['GarageScene','ClanScene','CorpScene','MissionsScene','ShopScene','SkillScene','CargoScene'].forEach(k => {
@@ -301,7 +301,7 @@ export default class HudScene extends Phaser.Scene {
         const active = this.scene.isActive(key);
         btn.setFillStyle(active ? 0x0f3040 : 0x081420);
         btn.setStrokeStyle(1, active ? 0x4dd0e1 : 0x1e3a50, 1);
-        txt.setColor(active ? '#7ee8f0' : '#3a8aaa');
+        txt.setTint(active ? 0x7ee8f0 : 0x3a8aaa);
       }
     }
 
