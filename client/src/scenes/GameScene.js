@@ -2,7 +2,7 @@ import * as Phaser from 'https://cdn.jsdelivr.net/npm/phaser@4.1.0/dist/phaser.e
 import { COLORS, BASE_WORLD, PVP_WORLD_SCALE, PLAYER, MOBS, PROJECTILE, RESPAWN_MS, UI_RES, BOSS, DPR, HANDLING, ART_ANGLE_OFFSET } from '../constants.js';
 import { minimapRect, minimapToWorld } from '../systems/minimap.js';
 import { i18n } from '../i18n.js';
-import Player from '../entities/Player.js';   
+import Player from '../entities/Player.js';
 import Mob from '../entities/Mob.js';
 import Projectile from '../entities/Projectile.js';
 import Loot from '../entities/Loot.js';       
@@ -139,6 +139,7 @@ export default class GameScene extends Phaser.Scene {
     this._stealthOrigSpeed = 0;
 
     this.playerName  = this.playerName  || 'Player';
+    this.player.setNameplate(this.playerName, this.pilotRank);
     this.miningBases = [];
     this.homeBases   = [];
 

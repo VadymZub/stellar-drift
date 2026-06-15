@@ -1,8 +1,57 @@
 import * as Phaser from 'https://cdn.jsdelivr.net/npm/phaser@4.1.0/dist/phaser.esm.js';
-import { PLAYER, ART_ANGLE_OFFSET, HANDLING, BASE_SCAN_RADIUS } from '../constants.js';
+import { PLAYER, ART_ANGLE_OFFSET, HANDLING, BASE_SCAN_RADIUS, UI_RES } from '../constants.js';
 import { defaultLoadout, modMult } from '../items.js';
 import { perkBonus } from '../perks.js';
 import { SHIP_BY_KEY, shipLevelMods, SHIP_MAX_LEVEL } from '../ships.js';
+
+// Цвет тинта иконки по rank.id. Иконка = форма тира, тинт = суб-ранг внутри тира.
+// Каждый цвет выбран с максимальным визуальным контрастом к соседям по тиру.
+export const RANK_TINTS = {
+  // Tier 1 — звезда: белый / золото / глубокий оранжевый
+  1: 0xFFFFFF,  // Гранд-Адмирал   — brilliant white
+  2: 0xFFD700,  // Адмирал Флота   — gold
+  3: 0xFF6D00,  // Вице-Адмирал    — deep orange
+
+  // Tier 2 — ромб+крылья: платина / тёмное серебро (только 2, форма достаточна)
+  4: 0xF5F5F5,  // Контр-Адмирал   — platinum
+  5: 0x9E9E9E,  // Коммодор        — silver-grey
+
+  // Tier 3 — три бара: золото / серебро / бронза / ярко-cyan (4 чётко разных)
+  6: 0xFFD700,  // Капитан I       — gold
+  7: 0xE8E8E8,  // Капитан II      — bright silver
+  8: 0xCD7F32,  // Капитан III     — bronze
+  9: 0x00E5FF,  // Командор        — bright cyan
+
+  // Tier 4 — щит: mint / sky-blue / фиолетовый / лавандовый (4 разных оттенка)
+  10: 0x64FFDA, // Капитан-лейтенант — bright mint
+  11: 0x40C4FF, // Старший лейтенант — sky blue
+  12: 0x7C4DFF, // Лейтенант         — deep violet
+  13: 0xCE93D8, // Младший лейтенант — soft lavender
+
+  // Tier 5 — "=": ярко-зелёный / тёмный тил (зелёный vs тил — разные оттенки)
+  14: 0x69F0AE, // Мичман            — bright green
+  15: 0x26A69A, // Главный старшина  — teal
+
+  // Tier 6 — двойной шеврон: светло-янтарный / насыщенный оранжевый
+  16: 0xFFCC80, // Старшина I статьи — amber light
+  17: 0xFFA726, // Старшина II статьи — deep amber
+
+  // Tier 7 — одиночный шеврон: от светлого стального к тёмному (максимальный диапазон)
+  18: 0xCFD8DC, // Старший матрос    — light steel
+  19: 0x78909C, // Матрос            — steel
+  20: 0x37474F, // Кадет             — dark steel
+};
+
+// Номер тира по rank.id (7 тиров).
+export function rankTier(id) {
+  if (id <= 3)  return 1;
+  if (id <= 5)  return 2;
+  if (id <= 9)  return 3;
+  if (id <= 13) return 4;
+  if (id <= 15) return 5;
+  if (id <= 17) return 6;
+  return 7;
+}
 
 // Корабль игрока. cfg = PLAYER — общие константы движения/регена (одинаковы для всех корпусов).
 // Корабль-специфичные статы (корпус/щит/скорость/спрайт/множитель урона) живут в this.ship
@@ -21,6 +70,16 @@ export default class Player {
     this.hull = this.maxHull;
     this.shield = this.maxShield;
 
+    // Nameplate над кораблём: иконка тира (ADD blend) + ник со stroke.
+    this._npIcon = scene.add.image(0, 0, 'rank_tier1')
+      .setDisplaySize(22, 22)
+      .setDepth(51);
+    this._npText = scene.add.text(0, 0, '', {
+      fontFamily: 'Inter, sans-serif', fontSize: '12px',
+      color: '#e0e0e0', stroke: '#000000', strokeThickness: 3,
+      resolution: UI_RES,
+    }).setOrigin(0, 0.5).setDepth(51);
+
     this.heading = -Math.PI / 2;     // направление ДВИЖЕНИЯ
     this.facing = -Math.PI / 2;      // направление НОСА (в бою — на цель)
     this.waypoint = null;            // {x, y} или null
@@ -36,6 +95,15 @@ export default class Player {
 
   get x() { return this.sprite.x; }
   get y() { return this.sprite.y; }
+
+  // Вызвать из GameScene после того, как pilotRank определён.
+  setNameplate(name, rank) {
+    const id   = rank?.id ?? 20;
+    const tier = rankTier(id);
+    const tint = RANK_TINTS[id] ?? 0x888888;
+    this._npIcon.setTexture(`rank_tier${tier}`).setTint(tint);
+    this._npText.setText(name || 'PILOT');
+  }
 
   // Сменить активный корабль (из Гаража). Сохраняем долю корпуса, чтобы не «долечивать» сменой.
   applyShip(ship) {
@@ -172,6 +240,8 @@ export default class Player {
     this.boosting = false;
     this.waypoint = null;
     this.sprite.setVisible(false);
+    this._npIcon.setVisible(false);
+    this._npText.setVisible(false);
   }
 
   respawn(x, y) {
@@ -179,6 +249,8 @@ export default class Player {
     this.shield = this.maxShield;
     this.sprite.setPosition(x, y);
     this.sprite.setVisible(true);
+    this._npIcon.setVisible(true);
+    this._npText.setVisible(true);
     this.alive = true;
   }
 
@@ -213,5 +285,12 @@ export default class Player {
       }
       this.sprite.rotation = this.facing + (this.ship.artAngleOffset ?? ART_ANGLE_OFFSET);
     }
+
+    // Nameplate: над кораблём, центрировано
+    const npY    = this.y - this.sprite.displayHeight * 0.55 - 13;
+    const totalW = 22 + 4 + this._npText.width;
+    const npX    = this.x - totalW / 2;
+    this._npIcon.setPosition(npX + 11, npY);
+    this._npText.setPosition(npX + 22 + 4, npY);
   }
 }
