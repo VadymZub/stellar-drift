@@ -9,7 +9,7 @@
     html, body { margin: 0; padding: 0; height: 100%; background: #05070f; overflow: hidden; }
     #game { width: 100vw; height: 100vh; }
     /* Скрываем системный курсор над канвасом — рисуем свой прицел в игре */
-    canvas { display: block; cursor: crosshair; }
+    canvas { display: block; cursor: crosshair; image-rendering: pixelated; image-rendering: crisp-edges; }
     #loading {
       position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
       color: #4dd0e1; font-family: 'Orbitron', system-ui, sans-serif; letter-spacing: 2px;

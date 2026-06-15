@@ -1,5 +1,5 @@
 import * as Phaser from 'https://cdn.jsdelivr.net/npm/phaser@4.1.0/dist/phaser.esm.js';
-import { COLORS } from './constants.js';
+import { COLORS, DPR } from './constants.js';
 import BootScene from './scenes/BootScene.js';
 import LoginScene from './scenes/LoginScene.js';
 import BackgroundScene from './scenes/BackgroundScene.js';
@@ -16,11 +16,11 @@ import CorpScene from './scenes/CorpScene.js';
 import BaseMenuScene from './scenes/BaseMenuScene.js';
 import SkillScene from './scenes/SkillScene.js';
 
-// Canvas at CSS-pixel resolution (1:1 CSS scale, no browser bilinear downscale).
-// DPR-based overscaling caused non-integer CSS scaling (e.g. 0.8× at Windows 125%)
-// which blurred the entire canvas. Text sharpness is handled separately via resolution:UI_RES.
-const W = () => Math.floor(window.innerWidth);
-const H = () => Math.floor(window.innerHeight);
+// Canvas at physical pixel resolution. CSS canvas element uses image-rendering:pixelated
+// for nearest-neighbour CSS scaling — eliminates bilinear blur at non-integer DPR
+// (e.g. Windows 125% = 0.8× CSS downscale, NN has no blur artifact).
+const W = () => Math.floor(window.innerWidth  * DPR);
+const H = () => Math.floor(window.innerHeight * DPR);
 
 const config = {
   type: Phaser.AUTO,
@@ -57,8 +57,8 @@ document.fonts.ready.then(() => {
   function fitCanvas() {
     const c = game.canvas;
     if (!c) return;
-    c.style.width  = window.innerWidth  + 'px';
-    c.style.height = window.innerHeight + 'px';
+    c.style.width  = Math.floor(window.innerWidth)  + 'px';
+    c.style.height = Math.floor(window.innerHeight) + 'px';
     c.style.display = 'block';
   }
 

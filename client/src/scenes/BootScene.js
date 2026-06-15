@@ -10,6 +10,48 @@ import { buildBitmapFont } from '../utils/buildBitmapFont.js';
 // лежит в client/explosion24/<class>_sheet.png (игра берёт свежий стек оттуда).
 export const EXP_CLASSES = [['micro', 32], ['small', 64], ['medium', 128], ['large', 192], ['huge', 288], ['mega', 448]];
 
+// Replace a ship/mob texture with a Canvas 2D pre-render at targetMax pixels on longest side.
+// Current sprites come from resize_ships.py at displaySize×4 (designed for DPR=2+zoom=2).
+// For the actual game (no zoom), displaySize×2 is the sweet spot: clean 2× WebGL bilinear
+// downscale at any DPR, vs the current 4× which gives avoidable softness.
+// Canvas 2D drawImage with imageSmoothingQuality:'high' uses bicubic for best downscale quality.
+function _prepShipTex(scene, key, targetMax) {
+  const tex = scene.textures.get(key);
+  if (!tex) return;
+  const img = tex.getSourceImage();
+  if (!img) return;
+  const sw = img.naturalWidth  != null ? img.naturalWidth  : img.width;
+  const sh = img.naturalHeight != null ? img.naturalHeight : img.height;
+  if (!sw || !sh || Math.max(sw, sh) <= targetMax) return;
+
+  const scale = targetMax / Math.max(sw, sh);
+  const dw = Math.round(sw * scale);
+  const dh = Math.round(sh * scale);
+
+  // Step-halve until within 2× of target (quality equivalent to multi-pass Lanczos)
+  let src = img, cw = sw, ch = sh;
+  while (cw > dw * 2 || ch > dh * 2) {
+    const hw = Math.max(dw, Math.ceil(cw / 2));
+    const hh = Math.max(dh, Math.ceil(ch / 2));
+    const tmp = document.createElement('canvas');
+    tmp.width = hw; tmp.height = hh;
+    const c = tmp.getContext('2d');
+    c.imageSmoothingEnabled = true;
+    c.imageSmoothingQuality = 'high';
+    c.drawImage(src, 0, 0, hw, hh);
+    src = tmp; cw = hw; ch = hh;
+  }
+
+  scene.textures.remove(key);
+  const newTex = scene.textures.createCanvas(key, dw, dh);
+  const ctx = newTex.getContext();
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(src, 0, 0, dw, dh);
+  newTex.refresh();
+  newTex.setFilter(0); // FilterMode.LINEAR in Phaser 4
+}
+
 export default class BootScene extends Phaser.Scene {
   constructor() { super('BootScene'); }
 
@@ -136,10 +178,13 @@ export default class BootScene extends Phaser.Scene {
     // Большой босс: дыхание yoyo (6 кадров → 1→6→1), медленно и зловеще
     this.anims.create({ key: 'bigboss_idle', frames: this.anims.generateFrameNumbers('bigboss', { start: 0, end: 5 }), frameRate: 6, yoyo: true, repeat: -1 });
 
-    // Ship/mob textures are non-POT and displayed at ~0.2-0.4× their native size.
-    // The global mipmapFilter:'LINEAR_MIPMAP_LINEAR' generates trilinear mipmaps which
-    // cause quality artifacts on non-POT textures at these scales.
-    // FilterMode.LINEAR (=0 in Phaser 4) = bilinear from full-res, no mipmap sampling.
+    // Pre-render ship game sprites at displaySize×2 (optimal for clean 2× WebGL bilinear).
+    // garageKey images stay at original size — prerenderTex in GarageScene handles them.
+    for (const s of SHIPS) {
+      _prepShipTex(this, s.key, s.displaySize * 2);
+    }
+
+    // Set LINEAR filter on all ship/mob textures (no mipmap sampling for non-POT assets).
     const LINEAR = 0;
     for (const s of SHIPS) {
       if (this.textures.exists(s.key))
