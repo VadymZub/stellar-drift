@@ -587,16 +587,27 @@ export default class GarageScene extends Phaser.Scene {
     const rx = px + 380, rw = pw - 420;
     const gs = this.gs;
     const cargoMax = this._cargoMax();
-    const warehouseMax = this._whMax();
+    const whCount = (gs.warehouse || []).length, whMax = this._whMax();
     this.add.text(rx, py + 60, `ТРЮМ  ${gs.inventory.length}/${cargoMax}`, this.O('15px', '#ffe0b2'));
-    const invH = Math.floor((ph - 150) * 0.55);
-    const whY = py + 92 + invH + 12;
-    const whAY = whY + 28; // верх сетки склада
-    // Трюм — нижняя полоса только до метки «СКЛАД» (40 px), не заходит в секцию склада
-    this.renderInventory(rx, py + 92, rw, invH, whAY - (py + 92 + invH));
-    const warehouseCount = (gs.warehouse || []).length;
-    this.add.text(rx, whY, `СКЛАД  ${warehouseCount}/${warehouseMax}`, this.O('14px', '#b8e4c4'));
-    this.renderWarehouse(rx, whAY, rw, ph - 150 - invH - 40);
+
+    // Инвентарь на всю доступную высоту (склад убран — отдельное окно C)
+    const BTN_H = 34;
+    const invH = ph - 92 - BTN_H - 16;
+    this.renderInventory(rx, py + 92, rw, invH);
+
+    // Кнопка быстрого перехода в окно Трюм/Склад
+    const btnY = py + 92 + invH + 8;
+    const btnBg = this.add.rectangle(rx, btnY, rw, BTN_H, 0x0d1e2c, 0.95)
+      .setOrigin(0, 0).setStrokeStyle(1, 0x1e3a50, 0.7).setInteractive({ useHandCursor: true });
+    const whLabel = this.add.text(rx + rw / 2, btnY + BTN_H / 2,
+      `СКЛАД  ${whCount}/${whMax}   →   C`,
+      this.O('12px', '#4dd0e1')).setOrigin(0.5);
+    btnBg.on('pointerover', () => { btnBg.setFillStyle(0x142838); whLabel.setColor('#7ee8f0'); });
+    btnBg.on('pointerout',  () => { btnBg.setFillStyle(0x0d1e2c); whLabel.setColor('#4dd0e1'); });
+    btnBg.on('pointerdown', () => {
+      if (this.scene.isActive('CargoScene')) this.scene.bringToTop('CargoScene');
+      else this.scene.launch('CargoScene');
+    });
   }
 
   // Ряд слотов одного типа: подпись (занято/всего) + квадраты. Клик по занятому → снять.
