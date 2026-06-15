@@ -80,7 +80,7 @@ const SKILLS_DEF = [
     effects: ['+20% дальность скана', '+40% дальность скана', '+60% дальность скана'] },
   { key: 'cargo_expand',      branch: 'trading',     type: 'passive', nameRu: 'Расш. грузов',
     maxLevel: 3, requires: [['merchants_eye', 1]],
-    effects: ['+2 слота (трюм + склад)', '+4 слота (трюм + склад)', '+6 слотов (трюм + склад)'] },
+    effects: ['+2 слота → итого 10', '+4 слота → итого 14', '+2 слота → итого 16'] },
   { key: 'stealth_sprint',    branch: 'trading',     type: 'active',  nameRu: 'Скрытный рывок',
     maxLevel: 1, icon: '👻', requires: [['cargo_expand', 1]],
     effects: ['+35% скор + стелс 8c, КД 55c'] },
