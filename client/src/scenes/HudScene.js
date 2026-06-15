@@ -319,10 +319,21 @@ export default class HudScene extends Phaser.Scene {
       .setColor(cargoCount >= cargoMax ? '#ef5350' : '#4a6678');
 
     // ── Подсказка (выше action bar) ──
-    this.hint.setPosition(W / 2, H - 66);
+    this.hint.setPosition(W / 2, H - 66).setVisible(!atBase);
 
     // ── Action bar ──
-    this._updateActionBarHUD(this.time.now);
+    if (!atBase) {
+      this._updateActionBarHUD(this.time.now);
+    }
+    if (this._abSlots) {
+      this._abSlots.forEach(slot => {
+        slot.bg.setVisible(!atBase);
+        slot.cdGfx.setVisible(!atBase);
+        slot.hk.setVisible(!atBase);
+        slot.cdTxt.setVisible(!atBase);
+        if (slot.iconImg) slot.iconImg.setVisible(!atBase);
+      });
+    }
 
     // ── Лог (снизу вверх, с угасанием по возрасту) ──
     const baseY = H - 120;
