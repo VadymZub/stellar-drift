@@ -21,15 +21,15 @@ export default class HudScene extends Phaser.Scene {
 
     // Панель игрока (лев-верх) — фиксированный вертикальный layout
     this.pName = this.add.text(20, 14, '', O('18px')).setDepth(101);
-    this.pShieldTxt = this.add.bitmapText(20, 48,  'bmf_inter12', '', 12).setDepth(101).setTint(0x4dd0e1);
-    this.pHullTxt   = this.add.bitmapText(20, 82,  'bmf_inter12', '', 12).setDepth(101).setTint(0x66bb6a);
+    this.pShieldTxt = this.add.text(20, 48,  '', F('12px', '#4dd0e1')).setDepth(101);
+    this.pHullTxt   = this.add.text(20, 82,  '', F('12px', '#66bb6a')).setDepth(101);
     this.pSpeed     = this.add.text(20, 116, '', F('12px', '#9fb3b8')).setDepth(101);
-    this.pCredits   = this.add.bitmapText(20, 136, 'bmf_inter12', '', 12).setDepth(101).setTint(0xffb74d);
+    this.pCredits   = this.add.text(20, 136, '', F('12px', '#ffb74d')).setDepth(101);
     this.pStarGold  = this.add.text(20, 156, '', F('12px', '#ffd54f')).setDepth(101);
     // Уровень пилота + XP-бар (растёт только за PvE)
     this.pPilot = this.add.text(20, 182, '', O('13px', '#b39ddb')).setDepth(101);
     this.pRank = this.add.text(20, 218, '', O('14px', '#ffcc80')).setDepth(101); // Оранжевый/золотистый для ранга
-    this.pXpTxt = this.add.bitmapText(240, 184, 'bmf_inter12', '', 10).setOrigin(1, 0).setDepth(101).setTint(0x9fb3b8);
+    this.pXpTxt = this.add.text(240, 184, '', F('10px', '#9fb3b8')).setOrigin(1, 0).setDepth(101);
 
     // Панель цели (центр-верх)
     this.tName = this.add.text(0, 16, '', O('16px', '#ef5350')).setOrigin(0.5, 0).setDepth(101);
@@ -98,8 +98,8 @@ export default class HudScene extends Phaser.Scene {
       const cdGfx = this.add.graphics().setDepth(103);
       const hkStyle = { fontFamily: 'Inter, sans-serif', fontSize: '9px', color: '#4a6680', resolution: UI_RES };
       const hk = this.add.text(sx + 3, barY + 2, i < 9 ? `${i + 1}` : '0', hkStyle).setDepth(104);
-      const cdTxt = this.add.bitmapText(sx + SW / 2, barY + SH / 2, 'bmf_orb12', '', 12)
-        .setOrigin(0.5, 0.5).setDepth(104);
+      const cdStyle = { fontFamily: 'Orbitron, sans-serif', fontSize: '12px', color: '#ffffff', resolution: UI_RES };
+      const cdTxt = this.add.text(sx + SW / 2, barY + SH / 2, '', cdStyle).setOrigin(0.5).setDepth(104);
 
       return { sx, sy: barY, SW, SH, bg, cdGfx, hk, cdTxt, iconImg: null, _key: null };
     });
