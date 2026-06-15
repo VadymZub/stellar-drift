@@ -65,17 +65,21 @@ export default class CargoScene extends Phaser.Scene {
     const gs = this.gs;
     const SZ = 68, GAP = 6, COLS = 4;
     const container = this.add.container(ax, ay);
+    const displaySlots = Math.max(items.length, maxSlots);
 
-    for (let i = 0; i < maxSlots; i++) {
+    for (let i = 0; i < displaySlots; i++) {
       const col = i % COLS, row = Math.floor(i / COLS);
       const sx = col * (SZ + GAP), sy = row * (SZ + GAP);
       const item = items[i] || null;
+      const overflow = i >= maxSlots;
 
       if (!item) {
-        container.add(
-          this.add.rectangle(sx, sy, SZ, SZ, 0x0f2035, 0.9).setOrigin(0, 0)
-            .setStrokeStyle(1, 0x2a4870, 0.65)
-        );
+        if (!overflow) {
+          container.add(
+            this.add.rectangle(sx, sy, SZ, SZ, 0x0f2035, 0.9).setOrigin(0, 0)
+              .setStrokeStyle(1, 0x2a4870, 0.65)
+          );
+        }
         continue;
       }
 
@@ -138,6 +142,11 @@ export default class CargoScene extends Phaser.Scene {
         dg.fillStyle(rarHex, 1); dg.fillCircle(sx + SZ - 6, sy + 6, 4);
         container.add(dg);
       }
+      if (overflow) {
+        const dg = this.add.graphics();
+        dg.fillStyle(0xffa000, 0.85); dg.fillTriangle(sx, sy, sx + 14, sy, sx, sy + 14);
+        container.add(dg);
+      }
     }
 
     // ── Cover strips: clip overflow outside the visible grid area ─────────
@@ -151,7 +160,7 @@ export default class CargoScene extends Phaser.Scene {
     }
 
     // ── Wheel scroll + scrollbar ───────────────────────────────────────────
-    const totalH = Math.ceil(maxSlots / COLS) * (SZ + GAP);
+    const totalH = Math.ceil(displaySlots / COLS) * (SZ + GAP);
     if (totalH > ah) {
       const startY = ay, minY = ay - (totalH - ah);
       const SBW = 3, thumbH = Math.max(20, Math.round(ah * ah / totalH));
