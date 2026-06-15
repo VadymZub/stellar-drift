@@ -226,17 +226,18 @@ export default class GarageScene extends Phaser.Scene {
 
   // ════════════════ СКЛАД (в вкладке ОБОРУДОВАНИЕ) ════════════════
   renderWarehouse(x, y, w, h, clipBotH) {
-    const gs = this.gs;
-    const max = 10 + ((gs.skillLevels?.cargo_expand || 0) >= 1 ? 40 : 0);
-    this._renderSlotGrid(x, y, w, h, gs.warehouse || [], max, 'warehouse', clipBotH);
+    this._renderSlotGrid(x, y, w, h, this.gs.warehouse || [], this._whMax(), 'warehouse', clipBotH);
   }
 
   // Универсальная слот-сетка: 5 колонок × N рядов, clip-маска + колесо мыши для скролла.
   // type = 'inventory' (трюм, надеть/продать) | 'warehouse' (склад, → трюм)
+  _cargoMax() { const gs = this.gs; return 8 + (gs.skillLevels?.cargo_expand || 0) * 2 + (gs.premium ? 8 : 0); }
+  _whMax()    { const gs = this.gs; return 8 + (gs.skillLevels?.cargo_expand || 0) * 2 + (gs.premium ? 8 : 0); }
+
   // clipBotH: высота нижней полосы-заглушки (null = до низа панели, число = ровно столько)
   _renderSlotGrid(ax, ay, aw, ah, items, maxSlots, type, clipBotH) {
     const gs = this.gs;
-    const SZ = 68, GAP = 6, COLS = 5;
+    const SZ = 68, GAP = 6, COLS = 4;
     const container = this.add.container(ax, ay);
 
     for (let i = 0; i < maxSlots; i++) {
@@ -246,8 +247,8 @@ export default class GarageScene extends Phaser.Scene {
 
       if (!item) {
         container.add(
-          this.add.rectangle(sx, sy, SZ, SZ, 0x060c14, 0.45).setOrigin(0, 0)
-            .setStrokeStyle(1, 0x1a2838, 0.25)
+          this.add.rectangle(sx, sy, SZ, SZ, 0x0f2035, 0.9).setOrigin(0, 0)
+            .setStrokeStyle(1, 0x2a4870, 0.65)
         );
         continue;
       }
@@ -290,7 +291,7 @@ export default class GarageScene extends Phaser.Scene {
         box.on('pointerover', (p) => { box.setFillStyle(0x102018); this._showTooltip(p.x, p.y, item); });
         box.on('pointerout',  ()  => { box.setFillStyle(0x0c1a10); this._hideTooltip(); });
         box.on('pointerdown', ()  => {
-          const cargoMax = 5 + ((gs.skillLevels?.cargo_expand || 0) >= 1 ? 40 : 0);
+          const cargoMax = this._cargoMax();
           const inv = gs.inventory || [];
           if (inv.length >= cargoMax) return;
           const idx = (gs.warehouse || []).indexOf(item); if (idx < 0) return;
@@ -573,8 +574,8 @@ export default class GarageScene extends Phaser.Scene {
 
     const rx = px + 380, rw = pw - 420;
     const gs = this.gs;
-    const cargoMax = 5 + ((gs.skillLevels?.cargo_expand || 0) >= 1 ? 40 : 0);
-    const warehouseMax = 10 + ((gs.skillLevels?.cargo_expand || 0) >= 1 ? 40 : 0);
+    const cargoMax = this._cargoMax();
+    const warehouseMax = this._whMax();
     this.add.text(rx, py + 60, `ТРЮМ  ${gs.inventory.length}/${cargoMax}`, this.O('15px', '#ffe0b2'));
     const invH = Math.floor((ph - 150) * 0.55);
     const whY = py + 92 + invH + 12;
@@ -631,9 +632,7 @@ export default class GarageScene extends Phaser.Scene {
   }
 
   renderInventory(x, y, w, h, clipBotH) {
-    const gs = this.gs;
-    const max = 5 + ((gs.skillLevels?.cargo_expand || 0) >= 1 ? 40 : 0);
-    this._renderSlotGrid(x, y, w, h, gs.inventory || [], max, 'inventory', clipBotH);
+    this._renderSlotGrid(x, y, w, h, this.gs.inventory || [], this._cargoMax(), 'inventory', clipBotH);
   }
 
   // Модалка подтверждения продажи (без restart — отдельные объекты, чистятся по выбору)
@@ -716,6 +715,10 @@ export default class GarageScene extends Phaser.Scene {
   unequip(key, i) {
     const p = this.gs.player, arr = this.gs.equipped[key];
     if (!arr || !arr[i]) return;
+    if (this.gs.inventory.length >= this._cargoMax()) {
+      this.gs.log?.('Трюм заполнен');
+      return;
+    }
     this.gs.inventory.push(arr[i]);
     arr[i] = null;
     p.recomputeStats();

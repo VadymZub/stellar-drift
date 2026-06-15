@@ -58,6 +58,25 @@ export default class HudScene extends Phaser.Scene {
     // Base nav bar (dynamic — built/destroyed on atBase change)
     this._navObjs = null;
     this._lastAtBase = false;
+
+    // DEV: кнопка Premium (правый нижний угол)
+    if (this.gs.devMode) {
+      const W = this.scale.width, H = this.scale.height;
+      const BW = 110, BH = 26, BX = W - BW - 8, BY = H - BH - 8;
+      const devBg = this.add.rectangle(BX, BY, BW, BH, 0x1a0d00, 0.92)
+        .setOrigin(0, 0).setDepth(200).setInteractive({ useHandCursor: true })
+        .setStrokeStyle(1, 0x554422, 0.8);
+      this._devPremTxt = this.add.text(BX + BW / 2, BY + BH / 2, 'DEV  ⭐ premium',
+        F('10px', '#ffb74d')).setOrigin(0.5).setDepth(201);
+      devBg.on('pointerdown', () => {
+        this.gs.premium = !this.gs.premium;
+        this._devPremTxt.setText(this.gs.premium ? 'DEV  ⭐ PREMIUM ✓' : 'DEV  ⭐ premium');
+        this._devPremTxt.setColor(this.gs.premium ? '#ffd54f' : '#ffb74d');
+        devBg.setFillStyle(this.gs.premium ? 0x2a1a00 : 0x1a0d00, 0.92);
+      });
+      devBg.on('pointerover', () => devBg.setAlpha(0.75));
+      devBg.on('pointerout',  () => devBg.setAlpha(1));
+    }
   }
 
   _buildActionBarHUD() {

@@ -11,8 +11,8 @@ export default class CargoScene extends Phaser.Scene {
   O(s, c) { return { fontFamily: 'Orbitron, sans-serif', fontSize: s, color: c, resolution: UI_RES }; }
   F(s, c) { return { fontFamily: 'Inter, sans-serif', fontSize: s, color: c, resolution: UI_RES }; }
 
-  _cargoMax() { return 5  + ((this.gs.skillLevels?.cargo_expand || 0) >= 1 ? 40 : 0); }
-  _whMax()    { return 10 + ((this.gs.skillLevels?.cargo_expand || 0) >= 1 ? 40 : 0); }
+  _cargoMax() { const gs = this.gs; return 8 + (gs.skillLevels?.cargo_expand || 0) * 2 + (gs.premium ? 8 : 0); }
+  _whMax()    { const gs = this.gs; return 8 + (gs.skillLevels?.cargo_expand || 0) * 2 + (gs.premium ? 8 : 0); }
 
   create() {
     this.gs = this.scene.get('GameScene');
@@ -43,8 +43,8 @@ export default class CargoScene extends Phaser.Scene {
     this.panelBox = { px, py, pw, ph };
 
     if (atBase) {
-      // Минимум 364 px = ровно 5 колонок × 68 px + 4 зазора × 6 px
-      const colW = Math.max(364, Math.floor((pw - 36) / 2));
+      // Минимум 290 px = ровно 4 колонки × 68 px + 3 зазора × 6 px
+      const colW = Math.max(290, Math.floor((pw - 36) / 2));
       this._renderSlotGrid(px + 12, py + 72, colW, ph - 90, this.gs.inventory || [], cargoMax, 'cargo');
       this._renderSlotGrid(px + colW + 24, py + 72, colW, ph - 90, this.gs.warehouse || [], whMax, 'warehouse');
       // Column headers
@@ -63,7 +63,7 @@ export default class CargoScene extends Phaser.Scene {
   // Слот-сетка: type = 'cargo' | 'cargo_nosell' | 'warehouse'
   _renderSlotGrid(ax, ay, aw, ah, items, maxSlots, type, clipBotH) {
     const gs = this.gs;
-    const SZ = 68, GAP = 6, COLS = 5;
+    const SZ = 68, GAP = 6, COLS = 4;
     const container = this.add.container(ax, ay);
 
     for (let i = 0; i < maxSlots; i++) {
@@ -73,8 +73,8 @@ export default class CargoScene extends Phaser.Scene {
 
       if (!item) {
         container.add(
-          this.add.rectangle(sx, sy, SZ, SZ, 0x060c14, 0.45).setOrigin(0, 0)
-            .setStrokeStyle(1, 0x1a2838, 0.25)
+          this.add.rectangle(sx, sy, SZ, SZ, 0x0f2035, 0.9).setOrigin(0, 0)
+            .setStrokeStyle(1, 0x2a4870, 0.65)
         );
         continue;
       }

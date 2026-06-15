@@ -73,6 +73,8 @@ export default class GameScene extends Phaser.Scene {
     this.inventory = [];
     this.warehouse = this.warehouse ?? [];
     this.atBase    = this.atBase    ?? false;
+    this.premium   = this.premium   ?? false;
+    this.devMode   = DEV_MODE;
     this.credits  = this.credits  ?? (DEV_MODE ? 3000000 : 0);
     this.starGold = this.starGold ?? (DEV_MODE ? 20000   : 0);
 
