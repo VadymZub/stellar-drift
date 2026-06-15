@@ -163,7 +163,7 @@ export default class HudScene extends Phaser.Scene {
       { label: 'МИССИИ  O',  key: 'MissionsScene' },
       { label: 'МАГАЗИН  P', key: 'ShopScene'   },
       { label: 'СКИЛЛЫ  K',  key: 'SkillScene'  },
-      { label: 'ТРЮМ  C',    key: 'CargoScene'  },
+      { label: 'СКЛАД  C',   key: 'CargoScene'  },
     ];
 
     const totalW = ITEMS.length * BTN_W + (ITEMS.length - 1) * GAP + GAP + EXIT_W;

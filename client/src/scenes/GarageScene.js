@@ -34,9 +34,12 @@ export default class GarageScene extends Phaser.Scene {
     const g = this.add.graphics();
     g.fillStyle(0x080d18, 0.88); g.fillRoundedRect(px, py, pw, ph, 12);
     g.lineStyle(2, COLORS.primary, 0.75); g.strokeRoundedRect(px, py, pw, ph, 12);
+    // Окремий бордер поверх cover-смуг (cover strips depth=12, border depth=15)
+    const border = this.add.graphics().setDepth(15);
+    border.lineStyle(2, COLORS.primary, 0.75); border.strokeRoundedRect(px, py, pw, ph, 12);
 
-    this.add.text(px + 24, py + 16, i18n.t('garage.title'), this.O('22px', '#4dd0e1'));
-    this.add.text(px + pw - 20, py + 55, 'G / ESC', this.F('12px', '#7e9398')).setOrigin(1, 0);
+    this.add.text(px + 24, py + 16, i18n.t('garage.title'), this.O('22px', '#4dd0e1')).setDepth(14);
+    this.add.text(px + pw - 20, py + 55, 'G / ESC', this.F('12px', '#7e9398')).setOrigin(1, 0).setDepth(14);
 
     // ── Табы (3 вкладки) ──
     // Migrate old 4-tab state
@@ -58,8 +61,8 @@ export default class GarageScene extends Phaser.Scene {
   tabBtn(x, y, key, id) {
     const active = this.tab === id;
     const label = this.add.text(x, y, i18n.t(key), this.O('14px', active ? '#4dd0e1' : '#7e9398'))
-      .setInteractive({ useHandCursor: true });
-    if (active) this.add.rectangle(x, y + 22, label.width, 2, COLORS.primary).setOrigin(0, 0);
+      .setInteractive({ useHandCursor: true }).setDepth(14);
+    if (active) this.add.rectangle(x, y + 22, label.width, 2, COLORS.primary).setOrigin(0, 0).setDepth(14);
     label.on('pointerdown', () => { this.gs.garageTab = id; this.scene.restart(); });
   }
 
@@ -375,9 +378,9 @@ export default class GarageScene extends Phaser.Scene {
       const btn = this.add.rectangle(bx + sw / 2, sy + sh / 2, sw, sh,
         active ? 0x0a2035 : 0x060c18, active ? 0.95 : 0.7)
         .setStrokeStyle(1, active ? COLORS.primary : 0x1e3a50, active ? 1 : 0.6)
-        .setInteractive({ useHandCursor: true });
+        .setInteractive({ useHandCursor: true }).setDepth(14);
       this.add.text(bx + sw / 2, sy + sh / 2, label, this.O('12px', active ? '#4dd0e1' : '#446677'))
-        .setOrigin(0.5);
+        .setOrigin(0.5).setDepth(14);
       if (!active) btn.on('pointerdown', () => { this.gs.garageUpgSubTab = id; this.scene.restart(); });
     });
 
@@ -420,8 +423,8 @@ export default class GarageScene extends Phaser.Scene {
 
     // ── Правая колонка: кредит-апгрейд установленных модулей ──
     const rx = px + 400, rw = pw - 440;
-    this.add.text(rx, py + 98, i18n.t('garage.modules'), this.O('15px', '#ffe0b2'));
-    this.renderModuleUpgrades(rx, py + 126, rw, ph - 186);
+    this.add.text(rx, py + 98, i18n.t('garage.modules'), this.O('15px', '#ffe0b2')).setDepth(14);
+    this.renderModuleUpgrades(rx, py + 126, rw, ph - 176);
   }
 
   renderModuleUpgrades(x, y, w, h) {
@@ -430,48 +433,85 @@ export default class GarageScene extends Phaser.Scene {
     for (const k of ['weapon', 'shield', 'engine']) (p.slots[k] || []).forEach((it) => { if (it) mods.push(it); });
     if (!mods.length) { this.add.text(x, y, i18n.t('garage.no_modules'), this.F('14px', '#5e7378')); return; }
 
-    const rowH = 64, gap = 6, maxRows = Math.floor(h / (rowH + gap));
-    const bw = 150, bh = 24, bx = x + w - bw - 8;
-    mods.slice(0, maxRows).forEach((it, r) => {
-      const ry = y + r * (rowH + gap);
-      this.add.rectangle(x, ry, w, rowH, 0x10202b, 0.95).setOrigin(0, 0).setStrokeStyle(1, COLORS.primary, 0.2);
+    const rowH = 64, gap = 6, rowSpan = rowH + gap;
+    const bw = 150, bh = 24, bxAbs = x + w - bw - 8;
+    const { py, ph } = this.box;
+
+    // No container — absolute positions, setY on scroll
+    const allRows = mods.map((it, r) => {
+      const baseY = y + r * rowSpan;
+      const ri = []; // [obj, dy, isBtn]
+
+      ri.push([this.add.rectangle(x, baseY, w, rowH, 0x10202b, 0.95).setOrigin(0, 0).setStrokeStyle(1, COLORS.primary, 0.2), 0, false]);
+
       const cl = it.creditLvl || 0, sl = it.starLvl || 0, onStar = sl > 0;
       const pctNow = Math.round((modMult(it) - 1) * 1000) / 10;
       const lvlStr = onStar ? `⭐ ${sl}/5` : `${i18n.t('garage.credit_lvl')} ${cl}/5`;
-      this.add.text(x + 12, ry + 8, `${itemName(it)}   ·   ${lvlStr}   (+${pctNow}%)`, this.O('13px', '#ffe0b2'));
-      this.add.text(x + 12, ry + 32, this.upgradePreview(it), { ...this.F('11px', '#a5d6a7'), wordWrap: { width: bx - x - 24 } });
+      ri.push([this.add.text(x + 12, baseY + 8, `${itemName(it)}   ·   ${lvlStr}   (+${pctNow}%)`, this.O('13px', '#ffe0b2')), 8, false]);
+      ri.push([this.add.text(x + 12, baseY + 32, this.upgradePreview(it), { ...this.F('11px', '#a5d6a7'), wordWrap: { width: bxAbs - x - 24 } }), 32, false]);
 
-      // ── ⭐-кнопка (всегда пока sl<5). Если предмет уже на кредит-пути — старт со сбросом. ──
       const sCost = starUpgradeCost(it);
-      const sby = onStar ? ry + (rowH - bh) / 2 : ry + 34;   // только ⭐-путь → центрируем
+      const sbdy = onStar ? (rowH - bh) / 2 : 34;
       if (sCost == null) {
-        this.add.text(bx + bw / 2, sby + bh / 2, `⭐ ${i18n.t('garage.max')}`, this.F('11px', '#7e9398')).setOrigin(0.5);
+        ri.push([this.add.text(bxAbs + bw / 2, baseY + sbdy + bh / 2, `⭐ ${i18n.t('garage.max')}`, this.F('11px', '#7e9398')).setOrigin(0.5), sbdy + bh / 2, false]);
       } else {
         const can = (gs.starGold || 0) >= sCost;
-        const b = this.add.rectangle(bx, sby, bw, bh, can ? 0x3a2c12 : 0x1a2a30, 0.95).setOrigin(0, 0)
-          .setStrokeStyle(1, can ? COLORS.amber : 0x33484f, 0.85);
-        this.add.text(bx + bw / 2, sby + bh / 2, `⭐ ${i18n.t('garage.mod_upgrade')} ${sCost}`,
-          this.F('11px', can ? '#ffd54f' : '#5e7378')).setOrigin(0.5);
+        const b = this.add.rectangle(bxAbs, baseY + sbdy, bw, bh, can ? 0x3a2c12 : 0x1a2a30, 0.95).setOrigin(0, 0).setStrokeStyle(1, can ? COLORS.amber : 0x33484f, 0.85);
+        ri.push([b, sbdy, can]);
+        ri.push([this.add.text(bxAbs + bw / 2, baseY + sbdy + bh / 2, `⭐ ${i18n.t('garage.mod_upgrade')} ${sCost}`, this.F('11px', can ? '#ffd54f' : '#5e7378')).setOrigin(0.5), sbdy + bh / 2, false]);
         if (can) b.setInteractive({ useHandCursor: true }).on('pointerdown', () => this.tryStarUpgrade(it));
       }
 
-      // ── Кредит-кнопка — только пока НЕ на ⭐-пути ──
       if (!onStar) {
         const cCost = creditUpgradeCost(it);
-        const cby = ry + 6;
+        const cbdy = 6;
         if (cCost == null) {
-          this.add.text(bx + bw / 2, cby + bh / 2, `кред. ${i18n.t('garage.max')}`, this.F('11px', '#7e9398')).setOrigin(0.5);
+          ri.push([this.add.text(bxAbs + bw / 2, baseY + cbdy + bh / 2, `кред. ${i18n.t('garage.max')}`, this.F('11px', '#7e9398')).setOrigin(0.5), cbdy + bh / 2, false]);
         } else {
           const can = (gs.credits || 0) >= cCost;
-          const b = this.add.rectangle(bx, cby, bw, bh, can ? 0x14331c : 0x1a2a30, 0.95).setOrigin(0, 0)
-            .setStrokeStyle(1, can ? COLORS.emerald : 0x33484f, 0.8);
-          this.add.text(bx + bw / 2, cby + bh / 2, `${i18n.t('garage.mod_upgrade')} ${cCost.toLocaleString('ru')}`,
-            this.F('11px', can ? '#a5d6a7' : '#5e7378')).setOrigin(0.5);
+          const b = this.add.rectangle(bxAbs, baseY + cbdy, bw, bh, can ? 0x14331c : 0x1a2a30, 0.95).setOrigin(0, 0).setStrokeStyle(1, can ? COLORS.emerald : 0x33484f, 0.8);
+          ri.push([b, cbdy, can]);
+          ri.push([this.add.text(bxAbs + bw / 2, baseY + cbdy + bh / 2, `${i18n.t('garage.mod_upgrade')} ${cCost.toLocaleString('ru')}`, this.F('11px', can ? '#a5d6a7' : '#5e7378')).setOrigin(0.5), cbdy + bh / 2, false]);
           if (can) b.setInteractive({ useHandCursor: true }).on('pointerdown', () => this.upgradeModule(it));
         }
       }
+      return { ri, baseY };
     });
-    if (mods.length > maxRows) this.add.text(x, y + maxRows * (rowH + gap) + 2, `… +${mods.length - maxRows}`, this.F('12px', '#7e9398'));
+
+    const topH = y - py;
+    if (topH > 0) this.add.rectangle(x, py, w, topH, 0x080e1a).setOrigin(0, 0).setDepth(12);
+    const botH = py + ph - (y + h);
+    if (botH > 0) this.add.rectangle(x, y + h, w, botH, 0x080e1a).setOrigin(0, 0).setDepth(12);
+
+    const totalH = mods.length * rowSpan;
+    let scrollAmt = 0;
+
+    const applyScroll = (amt) => {
+      scrollAmt = amt;
+      allRows.forEach(({ ri, baseY }) => {
+        const newBase = baseY - scrollAmt;
+        const vis = newBase >= py && newBase + rowH <= py + ph;
+        ri.forEach(([obj, dy, isBtn]) => {
+          obj.setVisible(vis);
+          if (isBtn) vis ? obj.setInteractive({ useHandCursor: true }) : obj.disableInteractive();
+          if (vis) obj.setY(newBase + dy);
+        });
+      });
+    };
+    applyScroll(0);
+
+    if (totalH > h) {
+      const maxScroll = totalH - h;
+      const SBW = 3, thumbH = Math.max(20, Math.round(h * h / totalH));
+      const thumb = this.add.rectangle(x + w - SBW - 2, y, SBW, thumbH, 0x2a6080, 0.7).setOrigin(0, 0).setDepth(13);
+      this.input.on('wheel', (ptr, _o, _dx, dy) => {
+        if (ptr.x < x || ptr.x > x + w || ptr.y < y || ptr.y > y + h) return;
+        scrollAmt = Phaser.Math.Clamp(scrollAmt + dy * 0.2, 0, maxScroll);
+        applyScroll(scrollAmt);
+        const frac = maxScroll > 0 ? scrollAmt / maxScroll : 0;
+        thumb.setY(y + Math.round(frac * (h - thumbH)));
+      });
+    }
   }
 
   // Текущее эффективное значение главного стата модуля (с учётом modMult).
@@ -593,15 +633,17 @@ export default class GarageScene extends Phaser.Scene {
     // Инвентарь на всю доступную высоту (склад убран — отдельное окно C)
     const BTN_H = 34;
     const invH = ph - 92 - BTN_H - 16;
-    this.renderInventory(rx, py + 92, rw, invH);
+    // clipBotH=4: cover strip занимает только 4px снизу сетки, не закрывает кнопку под ней
+    this.renderInventory(rx, py + 92, rw, invH, 4);
 
     // Кнопка быстрого перехода в окно Трюм/Склад
     const btnY = py + 92 + invH + 8;
     const btnBg = this.add.rectangle(rx, btnY, rw, BTN_H, 0x0d1e2c, 0.95)
-      .setOrigin(0, 0).setStrokeStyle(1, 0x1e3a50, 0.7).setInteractive({ useHandCursor: true });
+      .setOrigin(0, 0).setStrokeStyle(1, 0x1e3a50, 0.7).setInteractive({ useHandCursor: true })
+      .setDepth(15);
     const whLabel = this.add.text(rx + rw / 2, btnY + BTN_H / 2,
       `СКЛАД  ${whCount}/${whMax}   →   C`,
-      this.O('12px', '#4dd0e1')).setOrigin(0.5);
+      this.O('12px', '#4dd0e1')).setOrigin(0.5).setDepth(15);
     btnBg.on('pointerover', () => { btnBg.setFillStyle(0x142838); whLabel.setColor('#7ee8f0'); });
     btnBg.on('pointerout',  () => { btnBg.setFillStyle(0x0d1e2c); whLabel.setColor('#4dd0e1'); });
     btnBg.on('pointerdown', () => {
@@ -791,33 +833,76 @@ export default class GarageScene extends Phaser.Scene {
     const itemH = 68;  // увеличен для отображения значения перка
 
     this.add.text(listX + listW / 2, contentY + 6, 'СЛОТЫ МОДУЛЕЙ',
-      this.O('13px', '#2a4a5a')).setOrigin(0.5, 0);
+      this.O('13px', '#2a4a5a')).setOrigin(0.5, 0).setDepth(14);
 
-    slots.forEach(({ item, label }, i) => {
-      const iy = contentY + 30 + i * (itemH + 6);
+    const listAreaY = contentY + 30;
+    const listAreaH = contentH - 38;
+    const { py: lpy, ph: lph } = this.box;
+
+    // No container — absolute positions, setY on scroll
+    const allSlots = slots.map(({ item, label }, i) => {
+      const baseY = listAreaY + i * (itemH + 6);
       const active = i === selIdx;
       const pDef = item.perk ? PERK_MAP[item.perk.key] : null;
       const rarColor = pDef ? RARITY_COLOR[pDef.rarity] : 0x334455;
+      const si = []; // [obj, dy, isBtn]
 
-      const card = this.add.rectangle(listX, iy, listW, itemH, active ? 0x0d2030 : 0x081018)
+      const card = this.add.rectangle(listX, baseY, listW, itemH, active ? 0x0d2030 : 0x081018)
         .setOrigin(0, 0).setStrokeStyle(active ? 2 : 1, active ? COLORS.primary : 0x1a2a3a, 0.9)
         .setInteractive({ useHandCursor: true });
       card.on('pointerdown', () => { gs.perksSlotIdx = i; this.scene.restart(); });
       card.on('pointerover', () => { if (!active) card.setFillStyle(0x0c1828); });
       card.on('pointerout',  () => { if (!active) card.setFillStyle(0x081018); });
+      si.push([card, 0, true]);
 
-      this.add.text(listX + 8, iy + 8, label, this.O('12px', active ? '#4dd0e1' : '#446677')).setOrigin(0, 0);
+      si.push([this.add.text(listX + 8, baseY + 8, label, this.O('12px', active ? '#4dd0e1' : '#446677')).setOrigin(0, 0), 8, false]);
       if (pDef) {
         const rarColorHex = `#${rarColor.toString(16).padStart(6, '0')}`;
-        const dot = this.add.graphics();
-        dot.fillStyle(rarColor, 1); dot.fillCircle(listX + 10, iy + 34, 4);
-        this.add.text(listX + 18, iy + 28, pDef.name, this.F('11px', rarColorHex)).setOrigin(0, 0);
-        // Значение перка — ключевой фикс несовпадения
-        this.add.text(listX + 8, iy + 46, pDef.desc(perkBonus(item.perk)), this.F('12px', '#2a6070')).setOrigin(0, 0);
+        const dot = this.add.graphics().setPosition(listX, baseY);
+        dot.fillStyle(rarColor, 1); dot.fillCircle(10, 34, 4);
+        si.push([dot, 0, false]);
+        si.push([this.add.text(listX + 18, baseY + 28, pDef.name, this.F('11px', rarColorHex)).setOrigin(0, 0), 28, false]);
+        si.push([this.add.text(listX + 8, baseY + 46, pDef.desc(perkBonus(item.perk)), this.F('12px', '#2a6070')).setOrigin(0, 0), 46, false]);
       } else {
-        this.add.text(listX + 8, iy + 32, 'нет перка', this.F('12px', '#223344')).setOrigin(0, 0);
+        si.push([this.add.text(listX + 8, baseY + 32, 'нет перка', this.F('12px', '#223344')).setOrigin(0, 0), 32, false]);
       }
+      return { si, baseY };
     });
+
+    const listTopH = listAreaY - lpy;
+    if (listTopH > 0) this.add.rectangle(listX, lpy, listW, listTopH, 0x080e1a).setOrigin(0, 0).setDepth(12);
+    const listBotH = lpy + lph - (listAreaY + listAreaH);
+    if (listBotH > 0) this.add.rectangle(listX, listAreaY + listAreaH, listW, listBotH, 0x080e1a).setOrigin(0, 0).setDepth(12);
+
+    const totalListH = slots.length * (itemH + 6);
+    let listScroll = 0;
+
+    const applyListScroll = (amt) => {
+      listScroll = amt;
+      allSlots.forEach(({ si, baseY }) => {
+        const newBase = baseY - listScroll;
+        const vis = newBase >= listAreaY && newBase + itemH <= listAreaY + listAreaH;
+        si.forEach(([obj, dy, isBtn]) => {
+          obj.setVisible(vis);
+          if (isBtn) vis ? obj.setInteractive({ useHandCursor: true }) : obj.disableInteractive();
+          if (vis) obj.setY(newBase + dy);
+        });
+      });
+    };
+    applyListScroll(0);
+
+    if (totalListH > listAreaH) {
+      const maxListScroll = totalListH - listAreaH;
+      const SBW = 3, thumbH = Math.max(20, Math.round(listAreaH * listAreaH / totalListH));
+      const thumb = this.add.rectangle(listX + listW - SBW - 2, listAreaY, SBW, thumbH, 0x2a6080, 0.7).setOrigin(0, 0).setDepth(13);
+      this.input.on('wheel', (ptr, _o, _dx, dy) => {
+        if (ptr.x < listX || ptr.x > listX + listW || ptr.y < listAreaY || ptr.y > listAreaY + listAreaH) return;
+        listScroll = Phaser.Math.Clamp(listScroll + Math.sign(dy) * (itemH + 6), 0, maxListScroll);
+        applyListScroll(listScroll);
+        const frac = maxListScroll > 0 ? listScroll / maxListScroll : 0;
+        thumb.setY(listAreaY + Math.round(frac * (listAreaH - thumbH)));
+      });
+    }
 
     // ── Right: perk detail ───────────────────────────────────────────────
     const detX = px + listW + 28;

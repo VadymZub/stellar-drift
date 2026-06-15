@@ -35,25 +35,40 @@ export default class CargoScene extends Phaser.Scene {
     panel.fillStyle(0x080e1a, 0.97); panel.fillRoundedRect(px, py, pw, ph, 12);
     panel.lineStyle(2, COLORS.primary, 0.7); panel.strokeRoundedRect(px, py, pw, ph, 12);
 
-    this.add.text(px + 22, py + 16, 'ТРЮМ', this.O('20px', '#4dd0e1'));
+    this.add.text(px + 22, py + 16, 'СКЛАД', this.O('20px', '#4dd0e1'));
     this.add.text(px + pw - 20, py + 20, 'C / ESC', this.F('11px', '#445566')).setOrigin(1, 0);
 
     const cargoMax = this._cargoMax(), whMax = this._whMax();
     const cargoCount = (this.gs.inventory || []).length;
     const capColor = cargoCount >= cargoMax ? '#ef5350' : '#4a6678';
-    this.add.text(px + 22, py + 46, `${cargoCount} / ${cargoMax} слотов`, this.F('12px', capColor));
+    this.add.text(px + 22, py + 46, `ТРЮМ ${cargoCount}/${cargoMax}  ·  СКЛАД ${(this.gs.warehouse||[]).length}/${whMax}`, this.F('12px', '#4a6678'));
 
     this.panelBox = { px, py, pw, ph };
 
     if (atBase) {
+      const BTN_H = 32;
+      const gridH = ph - 90 - BTN_H - 10;
       // Минимум 290 px = ровно 4 колонки × 68 px + 3 зазора × 6 px
       const colW = Math.max(290, Math.floor((pw - 36) / 2));
-      this._renderSlotGrid(px + 12, py + 72, colW, ph - 90, this.gs.inventory || [], cargoMax, 'cargo');
-      this._renderSlotGrid(px + colW + 24, py + 72, colW, ph - 90, this.gs.warehouse || [], whMax, 'warehouse');
+      this._renderSlotGrid(px + 12, py + 72, colW, gridH, this.gs.inventory || [], cargoMax, 'cargo');
+      this._renderSlotGrid(px + colW + 24, py + 72, colW, gridH, this.gs.warehouse || [], whMax, 'warehouse');
       // Column headers
       this.add.text(px + 12 + colW / 2, py + 58, 'ТРЮМ КОРАБЛЯ', this.O('12px', '#2a5a70')).setOrigin(0.5, 0);
       this.add.text(px + colW + 24 + colW / 2, py + 58, `СКЛАД  ${(this.gs.warehouse||[]).length}/${whMax}`,
         this.O('12px', '#2a5a30')).setOrigin(0.5, 0);
+      // Кнопка перехода в Гараж
+      const btnY = py + 72 + gridH + 8;
+      const btnBg = this.add.rectangle(px + 12, btnY, pw - 24, BTN_H, 0x0d1e2c, 0.95)
+        .setOrigin(0, 0).setStrokeStyle(1, 0x1e3a50, 0.7).setInteractive({ useHandCursor: true }).setDepth(15);
+      const btnLbl = this.add.text(px + pw / 2, btnY + BTN_H / 2, 'ГАРАЖ  →  G',
+        this.O('12px', '#4dd0e1')).setOrigin(0.5).setDepth(15);
+      btnBg.on('pointerover', () => { btnBg.setFillStyle(0x142838); btnLbl.setColor('#7ee8f0'); });
+      btnBg.on('pointerout',  () => { btnBg.setFillStyle(0x0d1e2c); btnLbl.setColor('#4dd0e1'); });
+      btnBg.on('pointerdown', () => {
+        this.scene.stop();
+        if (this.scene.isActive('GarageScene')) this.scene.bringToTop('GarageScene');
+        else this.scene.launch('GarageScene');
+      });
     } else {
       this._renderSlotGrid(px + 12, py + 72, pw - 24, ph - 90, this.gs.inventory || [], cargoMax, 'cargo_nosell');
       this.add.text(px + 12 + (pw - 24) / 2, py + 58, 'ТРЮМ КОРАБЛЯ', this.O('12px', '#2a5a70')).setOrigin(0.5, 0);
