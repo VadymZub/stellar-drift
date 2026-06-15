@@ -57,6 +57,7 @@ export default class HudScene extends Phaser.Scene {
 
     // Base nav bar (dynamic — built/destroyed on atBase change)
     this._navObjs = null;
+    this._navBtnItems = null;
     this._lastAtBase = false;
 
     // DEV: кнопка Premium (правый нижний угол)
@@ -170,6 +171,7 @@ export default class HudScene extends Phaser.Scene {
     const startX = Math.round((W - totalW) / 2);
     const barY   = 5;
     this._navObjs = [];
+    this._navBtnItems = [];
 
     const navBg = this.add.rectangle(W / 2, barY + BTN_H / 2 + 2, W, BTN_H + 10, 0x020508, 0.92).setDepth(105);
     this._navObjs.push(navBg);
@@ -181,10 +183,11 @@ export default class HudScene extends Phaser.Scene {
       const txt = this.add.text(bx, barY + BTN_H / 2, label, O('12px', '#3a8aaa'))
         .setOrigin(0.5).setDepth(107);
 
-      btn.on('pointerover',  () => { btn.setFillStyle(0x0f2535); txt.setColor('#4dd0e1'); });
-      btn.on('pointerout',   () => { btn.setFillStyle(0x081420); txt.setColor('#3a8aaa'); });
+      btn.on('pointerover',  () => { if (!this.scene.isActive(key)) { btn.setFillStyle(0x0f2535); txt.setColor('#4dd0e1'); } });
+      btn.on('pointerout',   () => { if (!this.scene.isActive(key)) { btn.setFillStyle(0x081420); txt.setColor('#3a8aaa'); } });
       btn.on('pointerdown',  () => this.gs.toggleOverlay(key));
       this._navObjs.push(btn, txt);
+      this._navBtnItems.push({ btn, txt, key });
     });
 
     const exitX = startX + ITEMS.length * (BTN_W + GAP) + GAP + EXIT_W / 2;
@@ -207,6 +210,7 @@ export default class HudScene extends Phaser.Scene {
     if (!this._navObjs) return;
     this._navObjs.forEach(o => o?.destroy());
     this._navObjs = null;
+    this._navBtnItems = null;
   }
 
   pushLog(text) {
@@ -282,6 +286,16 @@ export default class HudScene extends Phaser.Scene {
     // ── Миникарта (векторные блипы) ──
     this.drawMinimap();
 
+    // ── Активна підсвітка nav-кнопок ──
+    if (this._navBtnItems) {
+      for (const { btn, txt, key } of this._navBtnItems) {
+        const active = this.scene.isActive(key);
+        btn.setFillStyle(active ? 0x0f3040 : 0x081420);
+        btn.setStrokeStyle(1, active ? 0x4dd0e1 : 0x1e3a50, 1);
+        txt.setColor(active ? '#7ee8f0' : '#3a8aaa');
+      }
+    }
+
     // ── Base nav bar (показываем/скрываем при смене atBase) ──
     if (this.gs.atBase !== this._lastAtBase) {
       this._lastAtBase = this.gs.atBase;
@@ -322,6 +336,7 @@ export default class HudScene extends Phaser.Scene {
   // Всё геометрией (не камера) → резко при любом DPR. Позиции мира → миникарты через worldToMinimap.
   drawMinimap() {
     const g = this.miniGfx; g.clear();
+    if (this.gs.atBase) return;
     const gs = this.gs;
     const r = minimapRect(this);
     const ww = gs.worldWidth, wh = gs.worldHeight;
@@ -337,6 +352,36 @@ export default class HudScene extends Phaser.Scene {
       g.lineStyle(1, COLORS.safezone, 0.5);
       g.strokeCircle(base.x, base.y, gs.safeZoneRadius * base.s);
       g.fillStyle(COLORS.primary, 0.9); g.fillCircle(base.x, base.y, 3);
+    }
+
+    // Домашні бази — завжди видні (без обмеження scan radius)
+    if (gs.homeBases) {
+      const CORP_HUE = { helios: 0xffb74d, karax: 0xef5350, tides: 0x4dd0e1 };
+      for (const hb of gs.homeBases) {
+        const hp = worldToMinimap(hb.x, hb.y, r, ww, wh);
+        const isOwn = hb.corp === gs.playerCorp;
+        const c = isOwn ? 0xffffff : (CORP_HUE[hb.corp] || 0x888888);
+        g.lineStyle(2, c, isOwn ? 0.95 : 0.65);
+        g.strokeCircle(hp.x, hp.y, 5);
+        g.fillStyle(c, isOwn ? 1.0 : 0.75);
+        g.fillCircle(hp.x, hp.y, 2.5);
+      }
+    }
+
+    // Добувальні бази (тільки PvP, завжди видні)
+    if (sec.pvp && gs.miningBases) {
+      for (const mb of gs.miningBases) {
+        const mp = worldToMinimap(mb.x, mb.y, r, ww, wh);
+        const isOwn = mb.corp === gs.playerCorp;
+        const isNeutral = !mb.corp || mb.corp === 'neutral';
+        const c = isOwn ? 0x66ff88 : isNeutral ? 0x778899 : 0xff5555;
+        const a = mb.state === 'destroyed' ? 0.3 : 0.85;
+        const sz = 3;
+        g.lineStyle(1.5, c, a);
+        g.strokeRect(mp.x - sz, mp.y - sz, sz * 2, sz * 2);
+        g.fillStyle(c, a * 0.5);
+        g.fillRect(mp.x - sz + 1, mp.y - sz + 1, sz * 2 - 2, sz * 2 - 2);
+      }
     }
 
     // Скан-радиус: враги/лут видны только в радиусе сканирования

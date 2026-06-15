@@ -7,13 +7,6 @@ export default class ShopScene extends Phaser.Scene {
 
   create() {
     const W = this.scale.width, H = this.scale.height;
-    // Сплошной темный фон
-    this.add.rectangle(0, 0, W, H, 0x05070f, 1.0).setOrigin(0);
-
-    const bg = this.add.image(W / 2, H / 2, 'bg_shop');
-    bg.setScale(Math.max(W / bg.width, H / bg.height)).setAlpha(0.8).setTint(0x887766);
-    this.add.rectangle(0, 0, W, H, 0x000000, 0.2).setOrigin(0);
-
     const pw = Math.min(940, W - 40), ph = Math.min(640, H - 40);
     const px = (W - pw) / 2, py = (H - ph) / 2;
     

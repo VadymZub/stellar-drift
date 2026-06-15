@@ -147,11 +147,6 @@ export default class SkillScene extends Phaser.Scene {
     const py = 10;
     this._p = { px, py, pw, ph };
 
-    // Полностью непрозрачный фон
-    this.add.rectangle(0, 0, W, H, 0x05070f, 1.0).setOrigin(0);
-    const _bgSkill = this.add.image(W / 2, H / 2, 'bg_garage');
-    _bgSkill.setScale(Math.max(W / _bgSkill.width, H / _bgSkill.height)).setAlpha(0.7).setTint(0x667788);
-    this.add.rectangle(0, 0, W, H, 0x000000, 0.25).setOrigin(0);
     // Overlay для закрытия тултипа по клику на фон
     const overlay = this.add.rectangle(0, 0, W, H, 0x000000, 0).setOrigin(0).setInteractive();
     overlay.on('pointerdown', () => this._closeTooltip());

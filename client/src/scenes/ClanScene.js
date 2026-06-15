@@ -46,11 +46,6 @@ export default class ClanScene extends Phaser.Scene {
     const gs = this.gs;
     const W  = this.scale.width, H = this.scale.height;
 
-    const _corpBg = { helios: 'bg_corp_helios', karax: 'bg_corp_karaks', tides: 'bg_corp_tides' };
-    this.add.rectangle(0, 0, W, H, 0x05070f, 1.0).setOrigin(0);
-    const _bgClan = this.add.image(W / 2, H / 2, _corpBg[gs.playerCorp] || 'bg_corp_helios');
-    _bgClan.setScale(Math.max(W / _bgClan.width, H / _bgClan.height)).setAlpha(0.7).setTint(0x556677);
-    this.add.rectangle(0, 0, W, H, 0x000000, 0.28).setOrigin(0);
 
     // Ensure mock clan data exists on gs for prototype
     if (gs.clan === undefined) gs.clan = MOCK_CLAN;
