@@ -2,6 +2,8 @@ import * as Phaser from 'https://cdn.jsdelivr.net/npm/phaser@4.1.0/dist/phaser.e
 import { COLORS, UI_RES } from '../constants.js';
 import { i18n } from '../i18n.js';
 
+const DEV_MODE = true;
+
 export default class LoginScene extends Phaser.Scene {
   constructor() { super('LoginScene'); }
 
@@ -37,9 +39,13 @@ export default class LoginScene extends Phaser.Scene {
     startBtn.on('pointerout', () => startBtn.setFillStyle(0x00bcd4, 0.8));
     
     startBtn.on('pointerdown', () => {
-      this.scene.start('GameScene');
-      this.scene.launch('BackgroundScene');
-      this.scene.launch('HudScene');
+      if (DEV_MODE) {
+        this.scene.start('TestProfileScene');
+      } else {
+        this.scene.start('GameScene');
+        this.scene.launch('BackgroundScene');
+        this.scene.launch('HudScene');
+      }
     });
   }
 }
