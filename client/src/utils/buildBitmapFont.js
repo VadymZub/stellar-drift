@@ -21,7 +21,7 @@ function _build(scene, key, fontFamily, fontSize, weight) {
   const fontSpec = `${weight} ${atlasPx}px "${fontFamily}"`;
   const pad      = 2;
 
-  // Measure font metrics
+  // Measure font metrics using a temp canvas
   const tmp = document.createElement('canvas');
   tmp.width = 4; tmp.height = 4;
   const mCtx = tmp.getContext('2d');
@@ -45,44 +45,55 @@ function _build(scene, key, fontFamily, fontSize, weight) {
   }
   const atlasH = nextPow2(cy + rowH);
 
-  // Create Phaser canvas texture
+  // Clean up stale keys on hot-reload
   const texKey = `__bmf_tex_${key}`;
-  const tex    = scene.textures.createCanvas(texKey, MAX_W, atlasH);
-  const ctx    = tex.getContext();
+  if (scene.textures.exists(texKey))    scene.textures.remove(texKey);
+  if (scene.cache.bitmapFont.has(key))  scene.cache.bitmapFont.remove(key);
+
+  // Create Phaser CanvasTexture and draw glyphs (white — tinted per object at runtime)
+  const tex = scene.textures.createCanvas(texKey, MAX_W, atlasH);
+  const ctx = tex.getContext();
   ctx.clearRect(0, 0, MAX_W, atlasH);
   ctx.font         = fontSpec;
   ctx.fillStyle    = '#ffffff';
-  ctx.textBaseline = 'alphabetic';  // consistent baseline across all chars
+  ctx.textBaseline = 'alphabetic';
 
-  // Render each glyph and record its atlas position
   const charMap = {};
   for (const { ch, x, y, w, adv } of slots) {
     ctx.fillText(ch, x + pad, y + pad + asc);
+
+    // Phaser 4 reads UV coords directly from charData (v-axis is inverted: OpenGL convention)
     charMap[ch.codePointAt(0)] = {
       x, y,
-      width:    w,
-      height:   rowH,
+      width:   w,
+      height:  rowH,
+      centerX: Math.floor(w    / 2),
+      centerY: Math.floor(rowH / 2),
       xOffset:  0,
       yOffset:  0,
       xAdvance: adv + pad,
-      data:     {},
-      kerning:  {},
+      data:    {},
+      kerning: {},
+      u0:  x           / MAX_W,
+      v0:  1 - y            / atlasH,  // inverted v
+      u1: (x + w)      / MAX_W,
+      v1:  1 - (y + rowH)   / atlasH,  // inverted v
     };
   }
-  tex.refresh();
 
-  // Register with Phaser's bitmap font cache.
-  // atlasPx is the reference size — Phaser scales glyphs by (requestedSize / atlasPx),
-  // so requesting fontSize gives 1/UI_RES scale = UI_RES× supersampling.
+  tex.refresh(); // upload canvas → WebGL texture
+
+  // Register bitmap font — fromAtlas:false = standalone canvas texture (not from an atlas frame)
   scene.cache.bitmapFont.add(key, {
     data: {
       font:       fontFamily,
-      size:       atlasPx,
+      size:       atlasPx,   // reference px; Phaser scales glyphs by (requestedSize / atlasPx)
       lineHeight: rowH,
       chars:      charMap,
     },
-    texture: texKey,
-    frame:   null,
+    texture:   texKey,
+    frame:     null,
+    fromAtlas: false,
   });
 }
 
