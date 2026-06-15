@@ -25,8 +25,11 @@ export default class CargoScene extends Phaser.Scene {
 
     const atBase = !!this.gs.atBase;
     const pw = atBase ? Math.min(900, W - 40) : Math.min(580, W - 60);
-    const ph = Math.min(580, H - 80);
-    const px = (W - pw) / 2, py = (H - ph) / 2;
+    // ph: нужно 518px для сетки (28 слотов / 4 кол = 7 рядов × 74px) + 90px заголовок = 608.
+    // Ограничиваем снизу: панель не должна заходить за action bar (H - 62).
+    const ph = Math.min(640, H - 124);
+    const px = (W - pw) / 2;
+    const py = Math.min(Math.round((H - ph) / 2), H - ph - 62);
 
     const panel = this.add.graphics();
     panel.fillStyle(0x080e1a, 0.97); panel.fillRoundedRect(px, py, pw, ph, 12);
