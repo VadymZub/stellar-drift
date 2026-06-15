@@ -45,6 +45,10 @@ export default class CorpScene extends Phaser.Scene {
     const gs = this.scene.get('GameScene');
 
 
+    const _corpBgMap2 = { helios: 'bg_corp_helios', karax: 'bg_corp_karaks', tides: 'bg_corp_tides' };
+    const _bgCorp = this.add.image(W / 2, H / 2, _corpBgMap2[gs?.playerCorp] || 'bg_corp_helios');
+    _bgCorp.setScale(Math.max(W / _bgCorp.width, H / _bgCorp.height)).setAlpha(0.8);
+
     // Panel
     const pw = Math.min(920, W - 40);
     const ph = Math.min(660, H - 40);

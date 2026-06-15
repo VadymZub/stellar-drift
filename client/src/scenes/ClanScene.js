@@ -50,6 +50,10 @@ export default class ClanScene extends Phaser.Scene {
     // Ensure mock clan data exists on gs for prototype
     if (gs.clan === undefined) gs.clan = MOCK_CLAN;
 
+    const _corpBgMap = { helios: 'bg_corp_helios', karax: 'bg_corp_karaks', tides: 'bg_corp_tides' };
+    const _bgClan = this.add.image(W / 2, H / 2, _corpBgMap[gs.playerCorp] || 'bg_corp_helios');
+    _bgClan.setScale(Math.max(W / _bgClan.width, H / _bgClan.height)).setAlpha(0.8);
+
     if (!gs.clan) {
       this._renderNoClan(W, H);
     } else {

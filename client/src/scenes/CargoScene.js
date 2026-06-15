@@ -18,6 +18,9 @@ export default class CargoScene extends Phaser.Scene {
     this.gs = this.scene.get('GameScene');
     const W = this.scale.width, H = this.scale.height;
 
+    const _bg = this.add.image(W / 2, H / 2, 'bg_garage');
+    _bg.setScale(Math.max(W / _bg.width, H / _bg.height)).setAlpha(0.8);
+
     const atBase = !!this.gs.atBase;
     const pw = atBase ? Math.min(900, W - 40) : Math.min(580, W - 60);
     // ph: нужно 518px для сетки (28 слотов / 4 кол = 7 рядов × 74px) + 90px заголовок = 608.

@@ -140,15 +140,19 @@ export default class SkillScene extends Phaser.Scene {
     if (!gs.actionBar)      gs.actionBar      = Array(10).fill(null);
     if (!gs.respeckCount)   gs.respeckCount   = 0;
 
-    // Panel geometry — fullscreen
+    // Panel geometry — leave top 50px for base nav bar
+    const NAV_BTM = 50;
     const pw = W - 20;
-    const ph = H - 20;
+    const ph = H - NAV_BTM - 10;
     const px = 10;
-    const py = 10;
+    const py = NAV_BTM;
     this._p = { px, py, pw, ph };
 
-    // Overlay для закрытия тултипа по клику на фон
-    const overlay = this.add.rectangle(0, 0, W, H, 0x000000, 0).setOrigin(0).setInteractive();
+    const _bgSkill = this.add.image(W / 2, H / 2, 'bg_garage');
+    _bgSkill.setScale(Math.max(W / _bgSkill.width, H / _bgSkill.height)).setAlpha(0.8);
+
+    // Overlay для закрытия тултипа по клику на фон (не покрывает nav bar)
+    const overlay = this.add.rectangle(0, NAV_BTM, W, H - NAV_BTM, 0x000000, 0).setOrigin(0).setInteractive();
     overlay.on('pointerdown', () => this._closeTooltip());
 
     // Panel background

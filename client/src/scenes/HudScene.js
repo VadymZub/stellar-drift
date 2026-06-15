@@ -152,6 +152,7 @@ export default class HudScene extends Phaser.Scene {
 
   _showBaseNav() {
     if (this._navObjs) return;
+    if (this.scene.isActive('MapScene')) this.scene.stop('MapScene');
     const W = this.scale.width, H = this.scale.height;
     const BTN_W = 124, BTN_H = 36, GAP = 6;
     const EXIT_W = 160;

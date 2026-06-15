@@ -7,6 +7,9 @@ export default class ShopScene extends Phaser.Scene {
 
   create() {
     const W = this.scale.width, H = this.scale.height;
+    const _bgShop = this.add.image(W / 2, H / 2, 'bg_shop');
+    _bgShop.setScale(Math.max(W / _bgShop.width, H / _bgShop.height)).setAlpha(0.8);
+
     const pw = Math.min(940, W - 40), ph = Math.min(640, H - 40);
     const px = (W - pw) / 2, py = (H - ph) / 2;
     
