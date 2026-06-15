@@ -179,9 +179,13 @@ export default class BootScene extends Phaser.Scene {
     this.anims.create({ key: 'bigboss_idle', frames: this.anims.generateFrameNumbers('bigboss', { start: 0, end: 5 }), frameRate: 6, yoyo: true, repeat: -1 });
 
     // Pre-render ship game sprites at displaySize×2 (optimal for clean 2× WebGL bilinear).
-    // garageKey images stay at original size — prerenderTex in GarageScene handles them.
     for (const s of SHIPS) {
       _prepShipTex(this, s.key, s.displaySize * 2);
+    }
+    // Pre-process large garage hero images to 2× their display box (223px → 446px target)
+    // so prerenderTex in GarageScene always gets a ≤2× source for its final drawImage.
+    for (const key of ['drover_g', 'phantom_g', 'argosy_g', 'helion_g', 'drifter_g']) {
+      _prepShipTex(this, key, 446);
     }
 
     // Set LINEAR filter on all ship/mob textures (no mipmap sampling for non-POT assets).

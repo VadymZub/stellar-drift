@@ -144,7 +144,7 @@ export default class GarageScene extends Phaser.Scene {
     const locked = !owned && !purchaseState(ship, gs).ok;
 
     const cx = x + w / 2;
-    const _heroBox = { stiletto: 187, wisp: 156, anvil: 156 };
+    const _heroBox = { stiletto: 187, wisp: 156, anvil: 156, drover: 223, phantom: 223, argosy: 223, helion: 223, drifter: 223 };
     const im = this.shipImg(cx, y + 88, _heroBox[ship.key] ?? 203, ship);
     if (locked) im.setTint(0x55636b).setAlpha(0.7);
     this.add.text(cx, y + 176, i18n.t(ship.nameKey), this.O('20px', '#cfe9ee')).setOrigin(0.5, 0);
