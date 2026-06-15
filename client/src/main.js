@@ -1,5 +1,5 @@
 import * as Phaser from 'https://cdn.jsdelivr.net/npm/phaser@4.1.0/dist/phaser.esm.js';
-import { COLORS, DPR } from './constants.js';
+import { COLORS } from './constants.js';
 import BootScene from './scenes/BootScene.js';
 import LoginScene from './scenes/LoginScene.js';
 import BackgroundScene from './scenes/BackgroundScene.js';
@@ -16,9 +16,11 @@ import CorpScene from './scenes/CorpScene.js';
 import BaseMenuScene from './scenes/BaseMenuScene.js';
 import SkillScene from './scenes/SkillScene.js';
 
-// Физическое разрешение канваса (DPR для чёткости на HiDPI / Windows-масштаб).
-const W = () => Math.floor(window.innerWidth  * DPR);
-const H = () => Math.floor(window.innerHeight * DPR);
+// Canvas at CSS-pixel resolution (1:1 CSS scale, no browser bilinear downscale).
+// DPR-based overscaling caused non-integer CSS scaling (e.g. 0.8× at Windows 125%)
+// which blurred the entire canvas. Text sharpness is handled separately via resolution:UI_RES.
+const W = () => Math.floor(window.innerWidth);
+const H = () => Math.floor(window.innerHeight);
 
 const config = {
   type: Phaser.AUTO,
@@ -37,7 +39,7 @@ const config = {
     roundPixels: true,
     powerPreference: 'high-performance',
     pixelArt: false,
-    mipmapFilter: 'LINEAR_MIPMAP_LINEAR',
+    mipmapFilter: 'LINEAR',
   },
   physics: {
     default: 'arcade',

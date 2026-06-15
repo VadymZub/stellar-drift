@@ -4,6 +4,7 @@ import { i18n } from '../i18n.js';
 import { itemName, itemStats, itemSellPrice, SLOT_KEY, creditUpgradeCost, starUpgradeCost, modMult } from '../items.js';
 import { SHIPS, SHIP_BY_KEY, purchaseState, shipLevelCost, SHIP_MAX_LEVEL } from '../ships.js';
 import { PERK_MAP, RARITY_COLOR, RARITY_LABEL, rollPerk, perkBonus, creditUpgCost, starUpgCost, PERK_CREDIT_COST, PERK_STAR_COST, PERK_REROLL_BASE } from '../perks.js';
+import { prerenderTex } from '../utils/prerenderTex.js';
 
 // Гараж (хоткей G). Два таба:
 //  • КОРАБЛИ — витрина всего модельного ряда. Купленные активны, остальные серые,
@@ -122,7 +123,9 @@ export default class GarageScene extends Phaser.Scene {
     const key = ship.garageKey || ship.key;
     const src = this.textures.get(key).getSourceImage();
     const scale = box / Math.max(src.width, src.height);
-    return this.add.image(cx, cy, key).setDisplaySize(src.width * scale, src.height * scale);
+    const dw = Math.round(src.width  * scale);
+    const dh = Math.round(src.height * scale);
+    return this.add.image(cx, cy, prerenderTex(this, key, dw, dh)).setDisplaySize(dw, dh);
   }
 
   priceStr(ship) {

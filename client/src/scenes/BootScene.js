@@ -136,6 +136,22 @@ export default class BootScene extends Phaser.Scene {
     // Большой босс: дыхание yoyo (6 кадров → 1→6→1), медленно и зловеще
     this.anims.create({ key: 'bigboss_idle', frames: this.anims.generateFrameNumbers('bigboss', { start: 0, end: 5 }), frameRate: 6, yoyo: true, repeat: -1 });
 
+    // Ship/mob textures are non-POT and displayed at ~0.2-0.4× their native size.
+    // The global mipmapFilter:'LINEAR_MIPMAP_LINEAR' generates trilinear mipmaps which
+    // cause quality artifacts on non-POT textures at these scales.
+    // FilterMode.LINEAR (=0 in Phaser 4) = bilinear from full-res, no mipmap sampling.
+    const LINEAR = 0;
+    for (const s of SHIPS) {
+      if (this.textures.exists(s.key))
+        this.textures.get(s.key).setFilter(LINEAR);
+      if (s.garageKey && this.textures.exists(s.garageKey))
+        this.textures.get(s.garageKey).setFilter(LINEAR);
+    }
+    for (const m of Object.values(MOBS)) {
+      if (!m.anim && this.textures.exists(m.key))
+        this.textures.get(m.key).setFilter(LINEAR);
+    }
+
     const loading = document.getElementById('loading');
     if (loading) loading.remove();
 

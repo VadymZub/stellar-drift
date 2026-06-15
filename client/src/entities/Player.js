@@ -114,7 +114,9 @@ export default class Player {
     const src = this.scene.textures.get(ship.key).getSourceImage();
     const finalSize = ship.displaySize * (this.objScale || 1.0);
     const scale = finalSize / Math.max(src.width, src.height);
-    this.sprite.setDisplaySize(src.width * scale, src.height * scale);
+    const dw = Math.round(src.width  * scale);
+    const dh = Math.round(src.height * scale);
+    this.sprite.setDisplaySize(dw, dh);
     this.displaySize = finalSize;
     // Уровень корабля 1-10 (прокачка за кредиты) → бонусы корпуса.
     this.shipLevel = this.scene.shipLevels?.[ship.key] || 1;
