@@ -167,8 +167,8 @@ export const PERK_DEFS = [
 
   { key: 'perk_engine_boost', imgFile: 'Engine Boost.png', name: 'Afterburner',
     slot: 'engine', rarity: 'rare',
-    effect: 'Форсаж: +35% скорость на 4с, КД 30с',
-    desc: (b) => `Форсаж +${+(35 * (1 + b)).toFixed(1)}% скор. 4с` },
+    effect: '+20% скорость форсажа, -25% расход щита при форсаже',
+    desc: (b) => `+${+(20 * (1 + b)).toFixed(1)}% форсаж, -${+(25 * (1 + b)).toFixed(1)}% расход щита` },
 ];
 
 export const PERK_MAP = {};

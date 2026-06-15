@@ -219,15 +219,18 @@ export default class Player {
     }
 
     // ── Engine perk bonuses ────────────────────────────────────────────────
-    this.turnRateMult = 1.0;
-    this.hasAfterburnerPerk = false;
-    this.afterburnerMult = 1.35;
+    this.turnRateMult     = 1.0;
+    this.boostMult        = this.cfg.boostMult;
+    this.boostShieldRate  = 0.10;
     for (const e of E) {
       if (!e.perk) continue;
       const pb = perkBonus(e.perk);
       if (e.perk.key === 'perk_engine_thrust')  this.baseSpeed = Math.round(this.baseSpeed * (1 + 0.10 * (1 + pb)));
-      if (e.perk.key === 'perk_engine_agility') this.turnRateMult *= 1 + 0.15 * (1 + pb);
-      if (e.perk.key === 'perk_engine_boost')   { this.hasAfterburnerPerk = true; this.afterburnerMult = 1 + 0.35 * (1 + pb); }
+      if (e.perk.key === 'perk_engine_agility') this.turnRateMult   *= 1 + 0.15 * (1 + pb);
+      if (e.perk.key === 'perk_engine_boost')   {
+        this.boostMult       = this.cfg.boostMult * (1 + 0.20 * (1 + pb));
+        this.boostShieldRate = 0.10 * (1 - 0.25 * (1 + pb));
+      }
     }
 
     // ── Perk bonuses (shield slots) ────────────────────────────────────────
