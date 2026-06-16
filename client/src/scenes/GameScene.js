@@ -1415,6 +1415,46 @@ export default class GameScene extends Phaser.Scene {
     this.plasmateDeposits.forEach(d => d.update(now2));
     if (this.pendingGate && Phaser.Math.Distance.Between(this.player.x, this.player.y, this.pendingGate.x, this.pendingGate.y) < 60) { this.pendingGate = null; }
     this.argusCtrl?.update(dt);
+    this._updateCursor();
+  }
+
+  _updateCursor() {
+    if (this.atBase) { this.game.canvas.style.cursor = 'default'; return; }
+    const ptr = this.input.activePointer;
+    const wp  = this.cameras.main.getWorldPoint(ptr.x, ptr.y);
+    const HOVER_R = 55;
+    let cursor = 'default';
+
+    // Mobs
+    for (const m of this.mobs) {
+      if (!m.alive) continue;
+      if (Phaser.Math.Distance.Between(wp.x, wp.y, m.x, m.y) < HOVER_R) {
+        cursor = 'crosshair'; break;
+      }
+    }
+
+    // Loot boxes
+    if (cursor === 'default') {
+      for (const l of this.loot) {
+        if (!l.alive) continue;
+        if (Phaser.Math.Distance.Between(wp.x, wp.y, l.x, l.y) < HOVER_R) {
+          cursor = 'grab'; break;
+        }
+      }
+    }
+
+    // Plasmate crystals
+    if (cursor === 'default') {
+      for (const d of this.plasmateDeposits) {
+        if (!d.alive) continue;
+        if (Phaser.Math.Distance.Between(wp.x, wp.y, d.x, d.y) < HOVER_R) {
+          cursor = 'grab'; break;
+        }
+      }
+    }
+
+    if (this.game.canvas.style.cursor !== cursor)
+      this.game.canvas.style.cursor = cursor;
   }
   updateLoot(dt) {
     this.collectGfx.clear();
