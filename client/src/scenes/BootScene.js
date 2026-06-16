@@ -228,6 +228,10 @@ export default class BootScene extends Phaser.Scene {
     // Module icons: 1024px displayed at 48px in cargo slots — pre-process to 96px (2× display).
     for (const key of Object.keys(MOD_ICON_FILES)) _prepShipTex(this, key, 96);
 
+    // Perk images: displayed at 192px — pre-process to 384px (2× display) to normalize
+    // 1024×1024 and 1254×1254 sources to the same target size for consistent rendering.
+    for (const p of PERK_DEFS) _prepShipTex(this, p.key, 384);
+
     // Skill icons: 128×128 displayed at 48×48 — pre-process to 96px (2× display).
     for (const k of ['sharpshooter','heavy_caliber','penetrating_rounds','overcharge_shot',
                      'salvo','targeting_ai','berserker',
