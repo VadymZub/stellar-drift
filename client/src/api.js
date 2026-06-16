@@ -34,7 +34,13 @@ async function apiFetch(path, opts = {}) {
   }
 
   const body = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(body.detail || `HTTP ${res.status}`);
+  if (!res.ok) {
+    const d = body.detail;
+    const msg = Array.isArray(d)
+      ? d.map(e => e.msg?.replace(/^Value error, /, '') ?? e.message).join('; ')
+      : (d || `HTTP ${res.status}`);
+    throw new Error(msg);
+  }
   return body;
 }
 
