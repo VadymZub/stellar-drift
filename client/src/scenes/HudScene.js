@@ -411,10 +411,11 @@ export default class HudScene extends Phaser.Scene {
     g.lineStyle(1, 0x4de1aa, 0.3);
     g.strokeCircle(pCenter.x, pCenter.y, sr * mmScale);
 
-    // Плазмит — ромб-маркер, всегда виден (не ограничен скан-радиусом)
+    // Плазмит — ромб-маркер, только в радиусе сканирования
     if (gs.plasmateDeposits) {
       for (const d of gs.plasmateDeposits) {
         if (!d.alive) continue;
+        if (Phaser.Math.Distance.Between(px2, py2, d.x, d.y) > sr) continue;
         const p = worldToMinimap(d.x, d.y, r, ww, wh);
         const sz = 4;
         g.lineStyle(1.5, 0xcc88ff, 0.9);
