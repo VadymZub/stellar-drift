@@ -187,7 +187,10 @@ export default class HudScene extends Phaser.Scene {
 
       btn.on('pointerover',  () => { if (!this.scene.isActive(key)) { btn.setFillStyle(0x0f2535); txt.setTint(0x4dd0e1); } });
       btn.on('pointerout',   () => { if (!this.scene.isActive(key)) { btn.setFillStyle(0x081420); txt.setTint(0x3a8aaa); } });
-      btn.on('pointerdown',  () => this.gs.toggleOverlay(key));
+      btn.on('pointerdown',  () => {
+        if (this.scene.isActive(key)) this.gs._exitToSpace();
+        else this.gs.toggleOverlay(key);
+      });
       this._navObjs.push(btn, txt);
       this._navBtnItems.push({ btn, txt, key });
     });
@@ -199,12 +202,7 @@ export default class HudScene extends Phaser.Scene {
       .setOrigin(0.5, 0.5).setDepth(107).setTint(0xaa4444);
     exitBtn.on('pointerover',  () => { exitBtn.setFillStyle(0x2a1010); exitTxt.setTint(0xef5350); });
     exitBtn.on('pointerout',   () => { exitBtn.setFillStyle(0x1a0808); exitTxt.setTint(0xaa4444); });
-    exitBtn.on('pointerdown',  () => {
-      this.gs.atBase = false;
-      ['GarageScene','ClanScene','CorpScene','MissionsScene','ShopScene','SkillScene','CargoScene'].forEach(k => {
-        if (this.scene.isActive(k)) this.scene.stop(k);
-      });
-    });
+    exitBtn.on('pointerdown', () => this.gs._exitToSpace());
     this._navObjs.push(exitBtn, exitTxt);
   }
 
