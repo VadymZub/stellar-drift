@@ -321,6 +321,7 @@ export default class GarageScene extends Phaser.Scene {
               if (sets <= 0) return;
               removePlasmateFromInventory(inv, sets * PLASMATE_GOLD_RATE);
               gs.starGold = (gs.starGold || 0) + sets;
+              gs.log(i18n.t('log.plasmate_exchanged', { amount: sets * PLASMATE_GOLD_RATE, gold: sets }));
               this.scene.restart();
             });
           }

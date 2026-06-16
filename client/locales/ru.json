@@ -175,5 +175,6 @@
   "log.plasmate_limit": "Сбор невозможен, отдохни пилот",
   "log.plasmate_lost": "Потеряно {amount} ед. плазмита",
   "log.plasmate_cargo_full": "Трюм полон — плазмит не помещается",
+  "log.plasmate_exchanged": "Обмен плазмита: −{amount} → +{gold} ⭐",
   "cargo.exchange_plasmate": "⭐ Обменять 500 → 1 золото"
 }

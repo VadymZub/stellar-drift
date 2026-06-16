@@ -1,5 +1,6 @@
 import * as Phaser from 'https://cdn.jsdelivr.net/npm/phaser@4.1.0/dist/phaser.esm.js';
 import { COLORS, UI_RES } from '../constants.js';
+import { i18n } from '../i18n.js';
 import { itemName, itemStats, itemIconKey, PLASMATE_PER_SLOT, PLASMATE_GOLD_RATE, removePlasmateFromInventory, totalPlasmateInInventory } from '../items.js';
 import { prerenderTex } from '../utils/prerenderTex.js';
 import { PERK_MAP, RARITY_COLOR, perkBonus } from '../perks.js';
@@ -150,6 +151,7 @@ export default class CargoScene extends Phaser.Scene {
               if (sets <= 0) return;
               removePlasmateFromInventory(inv, sets * PLASMATE_GOLD_RATE);
               gs.starGold = (gs.starGold || 0) + sets;
+              gs.log(i18n.t('log.plasmate_exchanged', { amount: sets * PLASMATE_GOLD_RATE, gold: sets }));
             } else if (inCargo) {
               this._moveToWarehouse(item);
               return; // _moveToWarehouse calls restart
