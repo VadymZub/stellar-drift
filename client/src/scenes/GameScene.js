@@ -1114,14 +1114,11 @@ export default class GameScene extends Phaser.Scene {
     this.tweens.add({ targets: g, alpha: 0, duration: 160, ease: 'Expo.easeOut', onComplete: () => g.destroy() });
   }
   fireMobWeapon(mob, tx, ty) {
-    const pb = this.player?.sprite?.body;
-    const full = _leadTarget(mob.x, mob.y, tx, ty,
-      pb?.velocity?.x ?? 0, pb?.velocity?.y ?? 0,
-      PROJECTILE.speed);
-    // Partial lead (0.65): мобы прицеливаются не идеально — виляние помогает, но не обнуляет точность
-    const LEAD = 0.65;
-    const aim = { x: tx + (full.x - tx) * LEAD, y: ty + (full.y - ty) * LEAD };
-    this.projectiles.push(new Projectile(this, 'mob', mob.x, mob.y, aim.x, aim.y, this.player, mob.damage, 0.05, PROJECTILE.mobColor));
+    // Самонаводящийся болт: обычные мобы 90°/сек, боссы 180°/сек
+    const turnRate = mob.isBoss
+      ? (180 * Math.PI / 180)   // 3.14 рад/сек
+      : (90  * Math.PI / 180);  // 1.57 рад/сек
+    this.projectiles.push(new Projectile(this, 'mob', mob.x, mob.y, tx, ty, this.player, mob.damage, 0.05, PROJECTILE.mobColor, turnRate));
     this.muzzleFlash(mob.x, mob.y, 0xff8a7a);
   }
   muzzleFlash(x, y, color) {
