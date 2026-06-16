@@ -337,7 +337,7 @@ export default class HudScene extends Phaser.Scene {
     const baseY = H - 120;
     for (let i = this.logEntries.length - 1, row = 0; i >= 0; i--, row++) {
       const e = this.logEntries[i];
-      e.t.setY(baseY - row * 18);
+      e.t.setY(baseY - row * 18).setVisible(!atBase);
       const age = this.time.now - e.born;
       e.t.setAlpha(age > 6000 ? Math.max(0.25, 1 - (age - 6000) / 6000) : 1);
     }

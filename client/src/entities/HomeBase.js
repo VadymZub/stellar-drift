@@ -84,9 +84,13 @@ export default class HomeBase {
     const pvp = SECTORS[galaxy.current]?.pvp;
     const corpMatch = !pvp || gs.playerCorp === this.corp || gs.playerCorp === 'neutral';
     gs.nearBase = near && corpMatch;
-    this._healHint.setVisible(near && corpMatch);
-    this._enterBtn.setVisible(near && !gs.atBase && corpMatch);
-    this._enterLbl.setVisible(near && !gs.atBase && corpMatch);
+    const show = !gs.atBase;
+    this._sprite.setVisible(show);
+    this._label.setVisible(show);
+    this._zone.setVisible(show);
+    this._healHint.setVisible(show && near && corpMatch);
+    this._enterBtn.setVisible(show && near && corpMatch);
+    this._enterLbl.setVisible(show && near && corpMatch);
 
     if (near) {
       this._healTimer += dt;
