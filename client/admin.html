@@ -302,8 +302,8 @@
     <div class="stat-grid">
       <div class="stat-card">
         <div class="s-label">Online</div>
-        <div class="s-val" style="color:var(--emerald)">1</div>
-        <div class="s-sub">mock · live soon</div>
+        <div class="s-val" id="dash-online" style="color:var(--muted)">0</div>
+        <div class="s-sub" id="dash-online-sub">нет подключения</div>
       </div>
       <div class="stat-card">
         <div class="s-label">MAU</div>
@@ -428,8 +428,17 @@
   <!-- ── PLAYERS ────────────────────────────────────────────────── -->
   <section id="s-players" class="section">
     <h1>Player Admin</h1>
-    <p class="subtitle">Мок-список игроков · Действия логируются в Audit Log</p>
-    <div class="card" style="padding:0;overflow:hidden">
+    <p class="subtitle">Подключённый игрок (live) + мок-список · Действия логируются в Audit Log</p>
+
+    <!-- Live player card -->
+    <div class="card" id="live-player-card" style="display:none">
+      <div class="card-title">⚡ Live — подключённый игрок</div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:12px" id="live-player-grid"></div>
+    </div>
+    <div class="tip" id="live-player-offline">Игра не подключена. Запустите игру в соседней вкладке браузера.</div>
+
+    <div class="card" style="padding:0;overflow:hidden;margin-top:20px">
+      <div style="padding:12px 16px 0;font-size:10px;letter-spacing:1px;color:var(--muted);text-transform:uppercase">Мок-список</div>
       <table>
         <thead>
           <tr>
@@ -509,11 +518,13 @@ document.querySelectorAll('.nav-item').forEach(el =>
 
 // ══ BROADCASTCHANNEL — game ↔ admin ═════════════════════════════════
 let argusState = null;
+let gameState  = null;
 let ch = null;
 try {
   ch = new BroadcastChannel('stellar-drift-admin');
   ch.onmessage = ({ data }) => {
     if (data.type === 'ARGUS_UPDATE') onArgusUpdate(data);
+    if (data.type === 'GAME_STATE')   onGameState(data);
   };
 } catch(_) {
   document.getElementById('conn-text').textContent = 'BroadcastChannel недоступен';
@@ -558,11 +569,70 @@ function onArgusUpdate(data) {
   updateAuditCount();
 }
 
-// Detect connection loss after 5s without updates
+// ══ GAME STATE ══════════════════════════════════════════════════════
+const CORP_ICON = { helios: '🟡', karax: '🔴', tides: '🔵', neutral: '⚪' };
+
+function onGameState(data) {
+  gameState = data;
+  lastPing  = Date.now();
+
+  const isAlive = data.alive !== false;
+
+  // Dashboard: Online counter
+  const onlineEl  = document.getElementById('dash-online');
+  const onlineSubEl = document.getElementById('dash-online-sub');
+  if (isAlive) {
+    onlineEl.textContent = '1';
+    onlineEl.style.color = 'var(--emerald)';
+    onlineSubEl.textContent = `${data.playerName} · ${data.sector || '—'}`;
+  } else {
+    onlineEl.textContent = '0';
+    onlineEl.style.color = 'var(--muted)';
+    onlineSubEl.textContent = 'игра отключена';
+  }
+
+  // Players section: live card
+  const card    = document.getElementById('live-player-card');
+  const offline = document.getElementById('live-player-offline');
+  if (isAlive) {
+    card.style.display = 'block';
+    offline.style.display = 'none';
+    const corpIcon = CORP_ICON[data.corp] || '⚪';
+    document.getElementById('live-player-grid').innerHTML = `
+      <div class="stat-card"><div class="s-label">Игрок</div><div class="s-val" style="font-size:16px">${data.playerName}</div></div>
+      <div class="stat-card"><div class="s-label">Уровень</div><div class="s-val">${data.level}</div></div>
+      <div class="stat-card"><div class="s-label">Ранг</div><div class="s-val" style="font-size:13px;color:var(--text)">${data.rank}</div></div>
+      <div class="stat-card"><div class="s-label">Корпорация</div><div class="s-val" style="font-size:16px">${corpIcon} ${(data.corp||'').toUpperCase()}</div></div>
+      <div class="stat-card">
+        <div class="s-label">Корпус / Щит</div>
+        <div style="display:flex;flex-direction:column;gap:5px;margin-top:4px">
+          <div style="display:flex;align-items:center;gap:8px">
+            <div class="bar-wrap" style="flex:1"><div class="bar-fill bar-hull" style="width:${data.hullPct||0}%"></div></div>
+            <span style="font-size:11px;color:var(--text);width:34px">${data.hullPct||0}%</span>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px">
+            <div class="bar-wrap" style="flex:1"><div class="bar-fill bar-shield" style="width:${data.shieldPct||0}%"></div></div>
+            <span style="font-size:11px;color:var(--text);width:34px">${data.shieldPct||0}%</span>
+          </div>
+        </div>
+      </div>
+      <div class="stat-card"><div class="s-label">Сектор</div><div class="s-val" style="font-size:13px;color:var(--text)">${data.sector||'—'}</div><div class="s-sub">Мобов: ${data.mobs||0}</div></div>
+      <div class="stat-card"><div class="s-label">Кредиты</div><div class="s-val" style="font-size:15px">${(data.credits||0).toLocaleString()}</div></div>
+      <div class="stat-card"><div class="s-label">Золото ⭐</div><div class="s-val" style="font-size:15px;color:var(--amber)">${(data.starGold||0).toLocaleString()}</div></div>
+    `;
+  } else {
+    card.style.display = 'none';
+    offline.style.display = 'block';
+  }
+}
+
+// Detect connection loss after 15s without updates
 setInterval(() => {
   if (lastPing > 0 && Date.now() - lastPing > 15000) {
     document.getElementById('conn-dot').classList.remove('live');
     document.getElementById('conn-text').textContent = 'Нет сигнала · игра закрыта или не запущена';
+    // Mark game as offline
+    onGameState({ alive: false, playerName: gameState?.playerName ?? '' });
   }
 }, 2000);
 

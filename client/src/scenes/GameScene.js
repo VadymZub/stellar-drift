@@ -244,6 +244,12 @@ export default class GameScene extends Phaser.Scene {
     this.argusCtrl = new ArgusController(this);
     this._targetFx = null;
 
+    // Admin game-state broadcast (same channel as ArgusController)
+    this._adminCh = null;
+    this._adminBroadcastT = 0;
+    try { this._adminCh = new BroadcastChannel('stellar-drift-admin'); } catch (_) {}
+    this._adminBroadcastGameState();
+
     this.time.delayedCall(60, () => this.log(i18n.t('log.entered', { sector: SECTORS[galaxy.current].name })));
   }
 
@@ -1415,7 +1421,33 @@ export default class GameScene extends Phaser.Scene {
     this.plasmateDeposits.forEach(d => d.update(now2));
     if (this.pendingGate && Phaser.Math.Distance.Between(this.player.x, this.player.y, this.pendingGate.x, this.pendingGate.y) < 60) { this.pendingGate = null; }
     this.argusCtrl?.update(dt);
+
+    this._adminBroadcastT += dt;
+    if (this._adminBroadcastT >= 2) {
+      this._adminBroadcastT = 0;
+      this._adminBroadcastGameState();
+    }
+
     this._updateCursor();
+  }
+
+  _adminBroadcastGameState() {
+    if (!this._adminCh) return;
+    const p = this.player;
+    this._adminCh.postMessage({
+      type:       'GAME_STATE',
+      playerName: this.playerName ?? 'Player',
+      level:      this.pilotLevel ?? 1,
+      rank:       this.pilotRank?.name ?? '—',
+      corp:       this.playerCorp ?? 'neutral',
+      hullPct:    p?.alive ? Math.round(p.hull   / p.maxHull   * 100) : 0,
+      shieldPct:  p?.alive ? Math.round(p.shield / p.maxShield * 100) : 0,
+      sector:     galaxy.current,
+      credits:    this.credits   ?? 0,
+      starGold:   this.starGold  ?? 0,
+      mobs:       this.mobs.filter(m => m.alive).length,
+      alive:      p?.alive ?? false,
+    });
   }
 
   _updateCursor() {
@@ -1578,5 +1610,8 @@ export default class GameScene extends Phaser.Scene {
   shutdown() {
     this.argusCtrl?.destroy();
     this.argusCtrl = null;
+    this._adminCh?.postMessage({ type: 'GAME_STATE', alive: false, playerName: this.playerName ?? 'Player' });
+    this._adminCh?.close();
+    this._adminCh = null;
   }
 }
