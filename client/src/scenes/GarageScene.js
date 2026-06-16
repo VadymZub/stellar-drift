@@ -646,10 +646,7 @@ export default class GarageScene extends Phaser.Scene {
       this.O('12px', '#4dd0e1')).setOrigin(0.5).setDepth(15);
     btnBg.on('pointerover', () => { btnBg.setFillStyle(0x142838); whLabel.setColor('#7ee8f0'); });
     btnBg.on('pointerout',  () => { btnBg.setFillStyle(0x0d1e2c); whLabel.setColor('#4dd0e1'); });
-    btnBg.on('pointerdown', () => {
-      if (this.scene.isActive('CargoScene')) this.scene.bringToTop('CargoScene');
-      else this.scene.launch('CargoScene');
-    });
+    btnBg.on('pointerdown', () => this.gs.toggleOverlay('CargoScene'));
   }
 
   // Ряд слотов одного типа: подпись (занято/всего) + квадраты. Клик по занятому → снять.
