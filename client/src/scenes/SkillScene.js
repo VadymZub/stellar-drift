@@ -1,5 +1,6 @@
 import * as Phaser from 'https://cdn.jsdelivr.net/npm/phaser@4.1.0/dist/phaser.esm.js';
 import { COLORS, UI_RES } from '../constants.js';
+import { prerenderTex } from '../utils/prerenderTex.js';
 
 const TF  = { fontFamily: 'Orbitron, sans-serif',    resolution: UI_RES };
 const TFS = { fontFamily: 'Inter, sans-serif',        resolution: UI_RES };
@@ -430,7 +431,8 @@ export default class SkillScene extends Phaser.Scene {
     const iconCY  = cy - Math.floor(nodeH / 2) + 4 + Math.floor(iconSize / 2);
 
     if (hasIcon) {
-      const ico = this.add.image(cx, iconCY, iconKey)
+      const preKey = prerenderTex(this, iconKey, iconSize, iconSize);
+      const ico = this.add.image(cx, iconCY, preKey)
         .setDisplaySize(iconSize, iconSize)
         .setDepth(13)
         .setAlpha(state === 'locked' ? 0.22 : 1.0);
