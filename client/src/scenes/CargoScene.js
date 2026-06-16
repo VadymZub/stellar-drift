@@ -111,8 +111,13 @@ export default class CargoScene extends Phaser.Scene {
 
       // ── Plasmate stack — special rendering ─────────────────────────────
       if (item.type === 'plasmate') {
-        const canExchange = type === 'cargo' && item.amount >= PLASMATE_GOLD_RATE;
-        const boxH = canExchange ? BODY_H : SZ;
+        // cargo: exchange strip (at base, 500+) or warehouse strip; warehouse: return strip
+        const inCargo    = type === 'cargo';
+        const inWarehouse = type === 'warehouse';
+        const canExchange = inCargo && gs.atBase && item.amount >= PLASMATE_GOLD_RATE;
+        const hasStrip = inCargo || inWarehouse;
+        const boxH = hasStrip ? BODY_H : SZ;
+
         const box = this.add.rectangle(sx, sy, SZ, boxH, 0x0a1a2a, 0.95).setOrigin(0, 0)
           .setStrokeStyle(2, 0x44aacc, 0.8);
         const iconK = itemIconKey(item);
@@ -123,18 +128,40 @@ export default class CargoScene extends Phaser.Scene {
           `${item.amount}/${PLASMATE_PER_SLOT}`, this.F('10px', '#88eeff')).setOrigin(0.5);
         const els = [box, countTxt];
         if (iconImg) els.push(iconImg);
-        if (canExchange) {
-          const strip = this.add.rectangle(sx, sy + BODY_H, SZ, STRIP_H, 0x072030, 0.95).setOrigin(0, 0)
-            .setStrokeStyle(1, 0x2a7888, 0.6).setInteractive({ useHandCursor: true });
+
+        if (hasStrip) {
+          let stripLabel, stripColor, stripBg;
+          if (canExchange) {
+            stripLabel = '⭐ 500→1'; stripColor = '#ffcc44'; stripBg = 0x072030;
+          } else if (inCargo) {
+            stripLabel = '→ склад';  stripColor = '#4aa8cc'; stripBg = 0x071828;
+          } else {
+            stripLabel = '← трюм';  stripColor = '#4a9860'; stripBg = 0x0a1a0a;
+          }
+          const strip = this.add.rectangle(sx, sy + BODY_H, SZ, STRIP_H, stripBg, 0.95).setOrigin(0, 0)
+            .setStrokeStyle(1, 0x2a6888, 0.5).setInteractive({ useHandCursor: true });
           const stripT = this.add.text(sx + SZ / 2, sy + BODY_H + STRIP_H / 2,
-            '⭐ 500→1', this.F('9px', '#ffcc44')).setOrigin(0.5);
+            stripLabel, this.F('9px', stripColor)).setOrigin(0.5);
           strip.on('pointerdown', () => {
-            const inv = gs.inventory || [];
-            const total = totalPlasmateInInventory(inv);
-            const sets  = Math.floor(total / PLASMATE_GOLD_RATE);
-            if (sets <= 0) return;
-            removePlasmateFromInventory(inv, sets * PLASMATE_GOLD_RATE);
-            gs.starGold = (gs.starGold || 0) + sets;
+            if (canExchange) {
+              const inv = gs.inventory || [];
+              const total = totalPlasmateInInventory(inv);
+              const sets  = Math.floor(total / PLASMATE_GOLD_RATE);
+              if (sets <= 0) return;
+              removePlasmateFromInventory(inv, sets * PLASMATE_GOLD_RATE);
+              gs.starGold = (gs.starGold || 0) + sets;
+            } else if (inCargo) {
+              this._moveToWarehouse(item);
+              return; // _moveToWarehouse calls restart
+            } else {
+              // warehouse → cargo
+              const cargoMax = this._cargoMax();
+              const inv = gs.inventory || [];
+              if (inv.length >= cargoMax) return;
+              const idx = (gs.warehouse || []).indexOf(item); if (idx < 0) return;
+              gs.warehouse.splice(idx, 1);
+              inv.push(item);
+            }
             this.scene.restart();
           });
           els.push(strip, stripT);
@@ -277,7 +304,8 @@ export default class CargoScene extends Phaser.Scene {
     this._tooltipObjs = null;
   }
 
-  _moveToWarehouse(item) {
+  _moveToWarehouse(item, isClanWarehouse = false) {
+    if (isClanWarehouse && item.type === 'plasmate') return; // plasmate forbidden in clan warehouse
     const inv = this.gs.inventory;
     const idx = inv.indexOf(item);
     if (idx < 0) return;
