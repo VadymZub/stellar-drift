@@ -3,12 +3,24 @@ import { MOBS } from '../constants.js';
 import { galaxy } from '../galaxy.js';
 
 const CHANNEL     = 'stellar-drift-admin';
-const ORBIT_R     = 480;   // px — радиус орбиты вокруг игрока
-const HEAL_CD     = 180;   // секунд между авто-хилами (3 минуты)
-const HEAL_PCT    = 0.30;  // +30% корпуса и щита за хил
-const TOP_REWARD  = 5;     // сколько игроков получают награды
-const REWARD_GOLD = 100;   // золото за топ-5 урона
-const HONOR_GAIN  = 250000; // очки чести = 10 убийств игрока 50 ур.
+const HEAL_CD     = 180;    // секунд между авто-хилами (3 минуты)
+const HEAL_PCT    = 0.30;
+const TOP_REWARD  = 5;
+const REWARD_GOLD = 100;
+const HONOR_GAIN  = 250000;
+
+// Movement constants
+const ORBIT_R_TIGHT = 380;  // радиус орбиты в orbit-режиме (реактивный)
+const ORBIT_SPEED   = 1.25; // множитель скорости в orbit-режиме
+const OSC_CENTER    = 560;  // центр осцилляции (px от игрока)
+const OSC_AMP       = 200;  // амплитуда ±px (диапазон 360–760)
+const OSC_FREQ      = 0.22; // рад/сек (один полный цикл ≈ 28 сек)
+const OSC_ORBIT_K   = 0.3;  // медленный дрейф по орбите в oscillate-режиме
+const ORBIT_TRIGGER_HP  = 0.50; // HP% порог активации orbit-режима
+const ORBIT_TRIGGER_DPS = 0.12; // % от maxHull входящего урона за 3 сек → orbit
+const ORBIT_MIN_DUR = 8;    // минимальная длительность orbit-режима, сек
+const ORBIT_MAX_DUR = 12;
+const CHASE_DIST    = 1500; // px — дальность форсированного преследования
 
 export default class ArgusController {
   constructor(scene) {
@@ -16,8 +28,13 @@ export default class ArgusController {
     this.mob         = null;
     this._broadcastT = 0;
     this._healTimer  = 0;
-    this._orbitAngle = 0;
-    this._damageMap  = new Map(); // playerName → total damage dealt
+    this._moveTimer  = 0;   // общий таймер движения (для синуса)
+    this._orbitAngle = 0;   // текущий угол орбиты/осцилляции
+    this._movePhase  = 'approach'; // 'approach' | 'oscillate' | 'orbit'
+    this._orbitModeT = 0;   // сколько секунд в текущем orbit-режиме
+    this._orbitModeDur = 10;
+    this._damageMap  = new Map();
+    this._dmgHistory = [];  // [{ts, amount}] — для расчёта входящего DPS
     this._ch         = null;
     try {
       this._ch = new BroadcastChannel(CHANNEL);
@@ -27,10 +44,10 @@ export default class ArgusController {
 
   _onMsg(msg) {
     switch (msg.type) {
-      case 'ARGUS_SPAWN':         this._spawn(msg);         break;
-      case 'ARGUS_DESPAWN':       this._despawn();          break;
-      case 'ARGUS_HEAL':          this._heal(msg);          break;
-      case 'ARGUS_FORCE_ABILITY': this._forceAbility(msg);  break;
+      case 'ARGUS_SPAWN':         this._spawn(msg);        break;
+      case 'ARGUS_DESPAWN':       this._despawn();         break;
+      case 'ARGUS_HEAL':          this._heal(msg);         break;
+      case 'ARGUS_FORCE_ABILITY': this._forceAbility(msg); break;
     }
   }
 
@@ -48,18 +65,23 @@ export default class ArgusController {
 
     // Reset per-spawn state
     this._damageMap  = new Map();
+    this._dmgHistory = [];
     this._healTimer  = 0;
+    this._moveTimer  = 0;
     this._orbitAngle = 0;
+    this._movePhase  = 'approach';
+    this._orbitModeT = 0;
 
-    // Wrap takeDamage to track damage for the leaderboard
+    // Wrap takeDamage: track damage for leaderboard + incoming DPS for orbit trigger
     const origTD = this.mob.takeDamage.bind(this.mob);
     const ctrl   = this;
     this.mob.takeDamage = function(amount, pen, opts) {
-      const res  = origTD(amount, pen, opts);
-      const hit  = (res.hullHit || 0) + (res.shieldHit || 0);
+      const res = origTD(amount, pen, opts);
+      const hit = (res.hullHit || 0) + (res.shieldHit || 0);
       if (hit > 0) {
         const name = ctrl.scene.playerName ?? 'Player';
         ctrl._damageMap.set(name, (ctrl._damageMap.get(name) || 0) + hit);
+        ctrl._dmgHistory.push({ ts: Date.now(), amount: hit });
       }
       return res;
     };
@@ -113,10 +135,9 @@ export default class ArgusController {
 
   onSceneRestart() { this.mob = null; }
 
-  // ── Main update loop (called from GameScene.update AFTER mobs.forEach) ──
+  // ── Main update ──────────────────────────────────────────────────────
 
   update(dt) {
-    // Detect player kill
     if (this.mob && !this.mob.alive) {
       this._onArgusDied();
       this.mob = null;
@@ -134,47 +155,99 @@ export default class ArgusController {
     }
   }
 
-  // ── Movement: chase → orbit ─────────────────────────────────────────
+  // ── Movement state machine ───────────────────────────────────────────
+  //
+  //  approach  — прямое преследование (dist > CHASE_DIST или старт)
+  //  oscillate — боевое сближение: синус-дистанция + медленная орбита
+  //              Аргус то приближается, то отдаляется, постепенно кружа.
+  //  orbit     — реактивная орбита (активируется при низком HP или
+  //              высоком входящем DPS). Быстрый тесный круг вокруг игрока.
 
   _updateMovement(dt) {
     const m = this.mob;
     const p = this.scene.player;
     if (!m?.alive || !p?.alive) return;
 
+    // Override Mob.js AI — Argus is always aggressive
+    m.state = 'aggro';
+
     const dx   = p.x - m.x;
     const dy   = p.y - m.y;
     const dist = Math.sqrt(dx * dx + dy * dy) || 1;
 
-    // Always stay in aggro — override whatever Mob.js just set
-    m.state = 'aggro';
+    const baseSpeed = m.tpl.speed * (1 + 0.5 * (m.level - 1));
+    const spd       = m.phase >= 2 ? baseSpeed * 1.35 : baseSpeed;
 
-    // Speed scales with level, same formula as Mob.js; enrage boosts it
-    const baseSpeed  = m.tpl.speed * (1 + 0.5 * (m.level - 1));
-    const spd        = m.phase >= 2 ? baseSpeed * 1.35 : baseSpeed;
+    this._moveTimer += dt;
+
+    // ── State transitions ────────────────────────────────────────────
+
+    if (dist > CHASE_DIST) {
+      // Player fled far — chase directly
+      this._movePhase = 'approach';
+    } else if (this._movePhase === 'approach' && dist < 900) {
+      this._movePhase = 'oscillate';
+    } else if (this._movePhase === 'orbit') {
+      this._orbitModeT += dt;
+      if (this._orbitModeT >= this._orbitModeDur) {
+        this._movePhase = 'oscillate';
+        this._orbitModeT = 0;
+      }
+    } else {
+      // oscillate — check if orbit should trigger
+      const hullFrac  = m.hull / m.maxHull;
+      const recentDmg = this._getRecentDps();
+      const trigger   = hullFrac < ORBIT_TRIGGER_HP || recentDmg > m.maxHull * ORBIT_TRIGGER_DPS;
+      if (trigger) {
+        this._movePhase   = 'orbit';
+        this._orbitModeT  = 0;
+        // Vary orbit duration so it doesn't feel mechanical
+        this._orbitModeDur = ORBIT_MIN_DUR + Math.abs(Math.sin(this._moveTimer)) * (ORBIT_MAX_DUR - ORBIT_MIN_DUR);
+      }
+    }
+
+    // ── Velocity calculation ─────────────────────────────────────────
 
     let vx, vy;
-    if (dist > ORBIT_R * 1.4) {
-      // Far: fly straight at player
+
+    if (this._movePhase === 'approach') {
       vx = (dx / dist) * spd;
       vy = (dy / dist) * spd;
+
+    } else if (this._movePhase === 'orbit') {
+      // Tight, fast orbit — Argus circles rapidly under pressure
+      this._orbitAngle += (spd * ORBIT_SPEED / ORBIT_R_TIGHT) * dt;
+      const tx = p.x + Math.cos(this._orbitAngle) * ORBIT_R_TIGHT;
+      const ty = p.y + Math.sin(this._orbitAngle) * ORBIT_R_TIGHT;
+      const sx = tx - m.x, sy = ty - m.y, sd = Math.sqrt(sx*sx + sy*sy) || 1;
+      vx = (sx / sd) * spd * ORBIT_SPEED;
+      vy = (sy / sd) * spd * ORBIT_SPEED;
+
     } else {
-      // In range: orbit — advance angle proportional to arc speed
-      this._orbitAngle += (spd / ORBIT_R) * dt;
-      const tx = p.x + Math.cos(this._orbitAngle) * ORBIT_R;
-      const ty = p.y + Math.sin(this._orbitAngle) * ORBIT_R;
-      const sx = tx - m.x;
-      const sy = ty - m.y;
-      const sd = Math.sqrt(sx * sx + sy * sy) || 1;
-      vx = (sx / sd) * spd;
-      vy = (sy / sd) * spd;
+      // Oscillate: sine wave on distance + slow angular drift
+      // Target distance oscillates between OSC_CENTER ± OSC_AMP
+      const targetDist = OSC_CENTER + Math.sin(this._moveTimer * OSC_FREQ) * OSC_AMP;
+      this._orbitAngle += (spd * OSC_ORBIT_K / targetDist) * dt;
+      const tx = p.x + Math.cos(this._orbitAngle) * targetDist;
+      const ty = p.y + Math.sin(this._orbitAngle) * targetDist;
+      const sx = tx - m.x, sy = ty - m.y, sd = Math.sqrt(sx*sx + sy*sy) || 1;
+      vx = (sx / sd) * spd * 0.9;
+      vy = (sy / sd) * spd * 0.9;
     }
 
     m.sprite.body.setVelocity(vx, vy);
 
-    // Face player
+    // Always face the player
     const facing = Math.atan2(dy, dx);
     m.heading = facing;
     m.sprite.setRotation(facing + (m.tpl.artAngleOffset ?? 0));
+  }
+
+  // Returns total damage received in the last 3 seconds
+  _getRecentDps() {
+    const cutoff = Date.now() - 3000;
+    this._dmgHistory = this._dmgHistory.filter(d => d.ts > cutoff);
+    return this._dmgHistory.reduce((s, d) => s + d.amount, 0);
   }
 
   // ── Auto self-heal every HEAL_CD seconds ────────────────────────────
@@ -189,7 +262,6 @@ export default class ArgusController {
     m.hull   = Math.min(m.maxHull,   m.hull   + m.maxHull   * HEAL_PCT);
     m.shield = Math.min(m.maxShield, m.shield + m.maxShield * HEAL_PCT);
 
-    // Visual: briefly tint cyan then restore phase tint
     m.sprite?.setTint(0x4dd0e1);
     this.scene.time.delayedCall(900, () => {
       if (!m.alive) return;
@@ -197,7 +269,7 @@ export default class ArgusController {
       else m.sprite?.clearTint();
     });
 
-    this.scene.log(`⚕️ АРГУС: регенерация +${Math.round(HEAL_PCT*100)}% корпус, +${Math.round(HEAL_PCT*100)}% щит`);
+    this.scene.log(`⚕️ АРГУС: регенерация +${Math.round(HEAL_PCT * 100)}% корпус, +${Math.round(HEAL_PCT * 100)}% щит`);
     this._logAudit('ARGUS_SELF_HEAL', {
       hullPct:   Math.round(m.hull   / m.maxHull   * 100),
       shieldPct: Math.round(m.shield / m.maxShield * 100),
@@ -205,12 +277,10 @@ export default class ArgusController {
     this._broadcast();
   }
 
-  // ── Death → rewards ─────────────────────────────────────────────────
+  // ── Death → rewards ──────────────────────────────────────────────────
 
   _onArgusDied() {
     const gs = this.scene;
-
-    // Sort all participants by damage dealt
     const sorted = [...this._damageMap.entries()]
       .sort((a, b) => b[1] - a[1])
       .slice(0, TOP_REWARD)
@@ -219,17 +289,12 @@ export default class ArgusController {
     const inTop = sorted.some(p => p.name === (gs.playerName ?? 'Player'));
 
     if (inTop) {
-      // Gold reward
       gs.starGold = (gs.starGold || 0) + REWARD_GOLD;
       gs.log(`🏆 АРГУС ПОВЕРЖЕН! Топ-${TOP_REWARD} по урону: +${REWARD_GOLD} ⭐`);
-
-      // Corp rating bonus during season
       if (gs.seasonWon) {
         gs.corpRep = Math.min(1.0, (gs.corpRep || 0) + 0.10);
         gs.log('🏅 Сезонный бонус: +10% корпоративный рейтинг');
       }
-
-      // PvP honor equivalent to killing 10 level-50 players
       gs.pilotHonor = (gs.pilotHonor || 0) + HONOR_GAIN;
       gs.log('⚔️ PvP рейтинг: +эквивалент ×10 убийств Lvl50');
     } else {
@@ -254,13 +319,12 @@ export default class ArgusController {
       hullPct:   m?.alive ? Math.round(m.hull   / m.maxHull   * 100) : 0,
       shieldPct: m?.alive ? Math.round(m.shield / m.maxShield * 100) : 0,
       phase:     m?.phase  ?? 1,
+      movePhase: this._movePhase,
       sector:    galaxy.current,
       x:         m ? Math.round(m.x) : 0,
       y:         m ? Math.round(m.y) : 0,
     });
   }
-
-  // ── Audit log (localStorage) ─────────────────────────────────────────
 
   _logAudit(action, params) {
     try {

@@ -389,6 +389,7 @@
         </div>
         <div class="argus-meta">
           Фаза: <span id="argus-phase">1</span> &nbsp;·&nbsp;
+          Движение: <span id="argus-move">—</span> &nbsp;·&nbsp;
           Сектор: <span id="argus-sector">—</span> &nbsp;·&nbsp;
           Позиция: <span id="argus-pos">—</span>
         </div>
@@ -538,6 +539,8 @@ function onArgusUpdate(data) {
     document.getElementById('hull-pct-lbl').textContent   = data.hullPct   + '%';
     document.getElementById('shield-pct-lbl').textContent = data.shieldPct + '%';
     document.getElementById('argus-phase').textContent  = data.phase;
+    const moveLabels = { approach: '🎯 chase', oscillate: '〰 oscillate', orbit: '🌀 orbit' };
+    document.getElementById('argus-move').textContent   = moveLabels[data.movePhase] || data.movePhase || '—';
     document.getElementById('argus-sector').textContent = data.sector || '—';
     document.getElementById('argus-pos').textContent    = `(${data.x}, ${data.y})`;
 

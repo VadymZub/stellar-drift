@@ -21,11 +21,12 @@ const SHIELD_TIERS = {
 };
 
 // Двигатели — прирост скорости (px/сек). Ставятся в слоты двигателей (eSlots), со 2-го корабля.
+// Значения уменьшены в 3× относительно первоначальных (T4 max-star: ~39 вместо ~116).
 const ENGINE_TIERS = {
-  1: { min: 1,  speed: 30 },
-  2: { min: 11, speed: 45 },
-  3: { min: 21, speed: 60 },
-  4: { min: 31, speed: 80 },
+  1: { min: 1,  speed: 10 },
+  2: { min: 11, speed: 15 },
+  3: { min: 21, speed: 20 },
+  4: { min: 31, speed: 27 },
 };
 
 // Laser cannon — single legendary, no tiers.
