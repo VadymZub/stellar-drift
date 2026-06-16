@@ -41,8 +41,31 @@ function applyLootPreset(scene, preset) {
   ];
 }
 
+// Compute the intercept point for a projectile flying at `boltSpeed` toward a moving target.
+// Returns the aim position (or current target pos if no valid solution).
+function _leadTarget(sx, sy, tx, ty, tvx, tvy, boltSpeed) {
+  if (tvx === 0 && tvy === 0) return { x: tx, y: ty };
+  const dx = tx - sx, dy = ty - sy;
+  const a = tvx * tvx + tvy * tvy - boltSpeed * boltSpeed;
+  const b = 2 * (dx * tvx + dy * tvy);
+  const c = dx * dx + dy * dy;
+  let leadT = 0;
+  if (Math.abs(a) < 0.001) {
+    leadT = (b !== 0) ? -c / b : 0;
+  } else {
+    const disc = b * b - 4 * a * c;
+    if (disc >= 0) {
+      const t1 = (-b - Math.sqrt(disc)) / (2 * a);
+      const t2 = (-b + Math.sqrt(disc)) / (2 * a);
+      leadT = (t1 > 0) ? t1 : (t2 > 0 ? t2 : 0);
+    }
+  }
+  if (leadT <= 0) return { x: tx, y: ty };
+  return { x: tx + tvx * leadT, y: ty + tvy * leadT };
+}
+
 export default class GameScene extends Phaser.Scene {
-  constructor() { super('GameScene'); }       
+  constructor() { super('GameScene'); }
 
   create(data) {
     const tp  = window.TEST_PROFILE ?? null;
@@ -770,9 +793,10 @@ export default class GameScene extends Phaser.Scene {
 
   _doSalvo(now, cd) {
     this.skillCooldowns.salvo = now + cd;
-    const isLaser = this.player.weaponType === 'laser';
-    const shots = isLaser ? 3 : 5;
-    const delay = isLaser ? 80 : 100;
+    // mixed: laser timing (3×80ms), cannon-only: 5×100ms, laser-only: 3×80ms
+    const p = this.player;
+    const shots = p.hasLaser ? 3 : 5;
+    const delay = p.hasLaser ? 80 : 100;
     this.log('🚀 Залп!');
     for (let i = 0; i < shots; i++) {
       this.time.delayedCall(i * delay, () => {
@@ -895,26 +919,34 @@ export default class GameScene extends Phaser.Scene {
     const idx = alive.indexOf(this.target); this.target = alive[(idx + 1) % alive.length];
   }
   firePlayerWeapon() {
-    if (this.player.weaponType === 'laser') { this._fireLaser(); return; }
+    const p = this.player;
+    // Capture shared skill state once — OC/berserker consumed here, not inside sub-methods.
+    const isOC = this._overchargeActive;
+    if (isOC) this._overchargeActive = false;
+    let skillMult = isOC ? 2.0 : 1.0;
+    if (this._berserkerBuff && this.time.now < this._berserkerBuff.endTime) skillMult *= this._berserkerBuff.mult;
 
+    if (p.hasCannon) this._fireCannon(skillMult, isOC);
+    if (p.hasLaser)  this._fireLaser(skillMult, isOC);
+  }
+
+  _fireCannon(skillMult, isOC) {
     const t = this.target, p = this.player;
+    if (!t?.alive || !p.alive) return;
 
-    // Accuracy miss (targeting_ai: cannon base 90% → 100% at lv5)
-    if (Math.random() >= (p.weaponAccuracy ?? 0.90)) {
+    if (Math.random() >= (p.cannonAccuracy ?? 0.90)) {
       this.muzzleFlash(p.x, p.y, 0x8fe6ff);
       return;
     }
 
-    // Active skill multipliers
-    let skillMult = 1;
-    if (this._overchargeActive) { skillMult *= 2.0; this._overchargeActive = false; }
-    if (this._berserkerBuff && this.time.now < this._berserkerBuff.endTime) skillMult *= this._berserkerBuff.mult;
-
-    const isCrit  = p.critChance > 0 && Math.random() < p.critChance;
-    const dmg     = Math.round(p.weaponDamage * skillMult * (isCrit ? 2 : 1));
-    const isOC    = skillMult >= 2;
-    const color   = isOC ? 0xff8800 : isCrit ? 0xffee44 : PROJECTILE.playerColor;
-    this.projectiles.push(new Projectile(this, 'player', p.x, p.y, t.x, t.y, t, dmg, p.weaponPenetration, color));
+    const isCrit = p.critChance > 0 && Math.random() < p.critChance;
+    const dmg    = Math.round(p.cannonDamage * skillMult * (isCrit ? 2 : 1));
+    const color  = isOC ? 0xff8800 : isCrit ? 0xffee44 : PROJECTILE.playerColor;
+    // Predictive aim: lead the target based on its current velocity.
+    const aimPt = _leadTarget(p.x, p.y, t.x, t.y,
+      t.sprite?.body?.velocity?.x ?? 0, t.sprite?.body?.velocity?.y ?? 0,
+      PROJECTILE.speed);
+    this.projectiles.push(new Projectile(this, 'player', p.x, p.y, aimPt.x, aimPt.y, t, dmg, p.weaponPenetration, color));
     this.muzzleFlash(p.x, p.y, isOC ? 0xff8800 : isCrit ? 0xffee44 : 0x8fe6ff);
     if (isCrit || isOC) {
       const label = isOC ? '⚡ УДАР!' : 'КРИТ!';
@@ -927,16 +959,11 @@ export default class GameScene extends Phaser.Scene {
   }
 
   // Hitscan laser: instant hit, accuracy check, shield/hull multipliers, amber VFX beam.
-  _fireLaser() {
+  _fireLaser(skillMult = 1, isOC = false) {
     const t = this.target, p = this.player;
     if (!t?.alive || !p.alive) return;
 
-    const isOC = this._overchargeActive;
-    let skillMult = 1;
-    if (isOC) { skillMult *= 2.0; this._overchargeActive = false; }
-    if (this._berserkerBuff && this.time.now < this._berserkerBuff.endTime) skillMult *= this._berserkerBuff.mult;
-
-    const hit    = Math.random() < (p.weaponAccuracy ?? 0.80);
+    const hit    = Math.random() < (p.laserAccuracy ?? 0.80);
     const isCrit = hit && p.critChance > 0 && Math.random() < p.critChance;
 
     // Beam visual: OC=thick bright-yellow, crit=medium-yellow, normal=amber, miss=dim
@@ -947,8 +974,8 @@ export default class GameScene extends Phaser.Scene {
 
     if (!hit) return;
 
-    const dmg = Math.round(p.weaponDamage * skillMult * (isCrit ? 2 : 1));
-    const opts = { shieldMult: p.weaponShieldMult ?? 0.80, hullMult: p.weaponHullMult ?? 1.50 };
+    const dmg = Math.round(p.laserDamage * skillMult * (isCrit ? 2 : 1));
+    const opts = { shieldMult: p.weaponShieldMult ?? 0.80, hullMult: p.weaponHullMult ?? 1.50, ignoreMovEvasion: true };
     const res = t.takeDamage(dmg, p.weaponPenetration, opts);
 
     this.vfx?.play('laser_beam2', t.x, t.y, { scale: isOC ? 0.22 : 0.13, depth: 67 });
@@ -974,7 +1001,11 @@ export default class GameScene extends Phaser.Scene {
     this.tweens.add({ targets: g, alpha: 0, duration: 160, ease: 'Expo.easeOut', onComplete: () => g.destroy() });
   }
   fireMobWeapon(mob, tx, ty) {
-    this.projectiles.push(new Projectile(this, 'mob', mob.x, mob.y, tx, ty, this.player, mob.damage, 0.05, PROJECTILE.mobColor));
+    const pb = this.player?.sprite?.body;
+    const aim = _leadTarget(mob.x, mob.y, tx, ty,
+      pb?.velocity?.x ?? 0, pb?.velocity?.y ?? 0,
+      PROJECTILE.speed);
+    this.projectiles.push(new Projectile(this, 'mob', mob.x, mob.y, aim.x, aim.y, this.player, mob.damage, 0.05, PROJECTILE.mobColor));
     this.muzzleFlash(mob.x, mob.y, 0xff8a7a);
   }
   muzzleFlash(x, y, color) {
@@ -988,6 +1019,7 @@ export default class GameScene extends Phaser.Scene {
   onProjectileHit(proj, res) {
     if (proj.owner === 'player') {
       const m = proj.victim;
+      if (res.dodged) { this.showDodge(m.x, m.y); return; }
       const toHull = (res.hullHit || 0) > 0;
       this.hitFlash(m.x, m.y, toHull);
       if (toHull && this._onScreen(m.x, m.y)) this.vfx?.play('hull_hit', m.x, m.y, { scale: 0.15, depth: 67 });

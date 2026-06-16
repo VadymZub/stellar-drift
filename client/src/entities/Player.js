@@ -147,11 +147,20 @@ export default class Player {
     const S = (this.slots.shield || []).slice(0, ship.sSlots).filter(Boolean);
     const E = (this.slots.engine || []).slice(0, ship.eSlots || 0).filter(Boolean);
 
-    // modMult(x) — кредитный апгрейд модуля (+1.5%/ур, до +7.5%).
-    const sumDmg = W.reduce((a, w) => a + w.damage * modMult(w), 0);
-    // Admin fallback damage if no cannons equipped: 500 per shot
-    this.weaponDamage = Math.round((sumDmg || (isAdmin ? 500 : 0)) * this.shipDmgMod * m.damage);
-    this.weaponPenetration = W.length ? Math.max(...W.map((w) => w.penetration * modMult(w))) : (isAdmin ? 0.5 : 0);
+    // Split weapon slots by type: lasers fire hitscan, cannons fire projectiles.
+    const cannonW = W.filter(w => w.type !== 'laser');
+    const laserW  = W.filter(w => w.type === 'laser');
+    this.hasCannon = cannonW.length > 0 || isAdmin;
+    this.hasLaser  = laserW.length > 0;
+
+    const sumCannonDmg = cannonW.reduce((a, w) => a + w.damage * modMult(w), 0);
+    this.cannonDamage  = Math.round((sumCannonDmg || (isAdmin ? 500 : 0)) * this.shipDmgMod * m.damage);
+    this.weaponPenetration = cannonW.length ? Math.max(...cannonW.map(w => w.penetration * modMult(w))) : (isAdmin ? 0.5 : 0);
+
+    const sumLaserDmg = laserW.reduce((a, w) => a + w.damage * modMult(w), 0);
+    this.laserDamage  = Math.round(sumLaserDmg * this.shipDmgMod * m.damage);
+
+    this.weaponDamage = this.cannonDamage + this.laserDamage;
     this.weaponFireRate = isAdmin ? 2.0 : 1.0;
 
     const sumDur = S.reduce((a, s) => a + s.durability * modMult(s), 0);
@@ -168,7 +177,10 @@ export default class Player {
     const sl = k => ((this.scene.skillLevels || {})[k] || 0);
 
     // Combat
-    this.weaponDamage      = Math.round(this.weaponDamage * (1 + sl('heavy_caliber') * 0.06));
+    const hcMult = 1 + sl('heavy_caliber') * 0.06;
+    this.cannonDamage      = Math.round(this.cannonDamage * hcMult);
+    this.laserDamage       = Math.round(this.laserDamage  * hcMult);
+    this.weaponDamage      = this.cannonDamage + this.laserDamage;
     this.weaponPenetration = Math.min(0.95, this.weaponPenetration + sl('penetrating_rounds') * 0.10);
     this.critChance        = Math.min(0.65, sl('sharpshooter') * 0.04);
     // Engineering — maxHull вычисляется от базы корабля, а не от this.maxHull (иначе накопление)
@@ -186,41 +198,44 @@ export default class Player {
     this.repairCostMult       = Math.max(0.30, 1 - sl('merchants_eye') * 0.15);
     this.scene.scanRadius     = Math.round(BASE_SCAN_RADIUS * (1 + sl('scanner_boost') * 0.20));
 
-    // ── Perk bonuses (weapon slots) ────────────────────────────────────────
-    let perkDmgMult = 1;
-    for (const w of W) {
+    // ── Perk bonuses — cannon perks affect cannonDamage, laser perks affect laserDamage ──
+    let cannonPerkMult = 1;
+    for (const w of cannonW) {
       if (!w.perk) continue;
       const pb = perkBonus(w.perk);
-      if (w.perk.key === 'perk_steady_aim')    perkDmgMult        *= 1 + 0.10 * (1 + pb);
-      if (w.perk.key === 'perk_critical_edge') this.critChance     = Math.min(0.65, this.critChance + 0.12 * (1 + pb));
+      if (w.perk.key === 'perk_steady_aim')    cannonPerkMult        *= 1 + 0.10 * (1 + pb);
+      if (w.perk.key === 'perk_critical_edge') this.critChance        = Math.min(0.65, this.critChance + 0.12 * (1 + pb));
       if (w.perk.key === 'perk_hull_breaker')  this.weaponPenetration = Math.min(0.95, this.weaponPenetration + 0.18 * (1 + pb));
     }
-    this.weaponDamage = Math.round(this.weaponDamage * perkDmgMult);
+    this.cannonDamage = Math.round(this.cannonDamage * cannonPerkMult);
 
     // ── Weapon accuracy + laser properties ────────────────────────────────
-    const laserW = W.filter(w => w.type === 'laser');
-    this.weaponType         = laserW.length > 0 ? 'laser' : 'cannon';
-    this.weaponAccuracy     = 0.90;  // cannon base; targeting_ai brings to 100% at lv5
-    this.weaponShieldMult   = 1.0;
-    this.weaponHullMult     = 1.0;
+    this.weaponType       = this.hasLaser && this.hasCannon ? 'mixed' : this.hasLaser ? 'laser' : 'cannon';
     this.weaponFireRateMult = 1.0;
-    if (this.weaponType === 'laser') {
-      this.weaponAccuracy   = 0.80;  // laser base; targeting_ai brings to 97% at lv5
+    // Cannon accuracy: base 90%, targeting_ai +2%/lv → 100%
+    this.cannonAccuracy   = Math.min(1.00, 0.90 + sl('targeting_ai') * 0.02);
+    // Laser accuracy + multipliers
+    this.laserAccuracy    = 0.80;
+    this.weaponShieldMult = 1.0;
+    this.weaponHullMult   = 1.0;
+    if (this.hasLaser) {
       this.weaponShieldMult = 0.80;
       this.weaponHullMult   = 1.50;
+      let laserPerkMult = 1;
       for (const w of laserW) {
         if (!w.perk) continue;
         const pb = perkBonus(w.perk);
-        if (w.perk.key === 'perk_laser_precision') this.weaponAccuracy  = Math.min(1.0, this.weaponAccuracy + 0.15 * (1 + pb));
+        if (w.perk.key === 'perk_laser_precision') this.laserAccuracy  = Math.min(1.0, this.laserAccuracy + 0.15 * (1 + pb));
         if (w.perk.key === 'perk_laser_shredder')  this.weaponHullMult += 0.20 * (1 + pb);
-        if (w.perk.key === 'perk_laser_overload')  { this.weaponAccuracy = 1.0; this.weaponFireRateMult *= 1 + 0.15 * (1 + pb); }
+        if (w.perk.key === 'perk_laser_overload')  { this.laserAccuracy = 1.0; this.weaponFireRateMult *= 1 + 0.15 * (1 + pb); }
       }
+      this.laserDamage  = Math.round(this.laserDamage * laserPerkMult);
       // targeting_ai: +3.4%/level, laser cap 97%
-      this.weaponAccuracy = Math.min(0.97, this.weaponAccuracy + sl('targeting_ai') * 0.034);
-    } else {
-      // targeting_ai: +2%/level, cannon cap 100%
-      this.weaponAccuracy = Math.min(1.00, this.weaponAccuracy + sl('targeting_ai') * 0.02);
+      this.laserAccuracy = Math.min(0.97, this.laserAccuracy + sl('targeting_ai') * 0.034);
     }
+    this.weaponDamage    = this.cannonDamage + this.laserDamage;
+    // Legacy alias used in a few display spots
+    this.weaponAccuracy  = this.hasLaser && !this.hasCannon ? this.laserAccuracy : this.cannonAccuracy;
 
     // ── Engine perk bonuses ────────────────────────────────────────────────
     this.turnRateMult   = 1.0;
@@ -259,8 +274,14 @@ export default class Player {
   // ignoreEvasion: AoE-залпы боссов нельзя увернуться статом — спасает только уход из круга.
   takeDamage(amount, penetration = 0, ignoreEvasion = false) {
     if (!this.alive) return { shieldHit: 0, hullHit: 0, brokeShield: false };
-    if (!ignoreEvasion && this.evasion && Phaser.Math.FloatBetween(0, 1) < this.evasion) {
-      return { shieldHit: 0, hullHit: 0, brokeShield: false, dodged: true };
+    if (!ignoreEvasion) {
+      const body = this.sprite?.body;
+      const spd = body ? Math.sqrt(body.velocity.x * body.velocity.x + body.velocity.y * body.velocity.y) : 0;
+      const movEvasion = Math.min(0.20, spd / 1500);
+      const totalEvasion = Math.min(0.35, (this.evasion ?? 0) + movEvasion);
+      if (totalEvasion > 0 && Phaser.Math.FloatBetween(0, 1) < totalEvasion) {
+        return { shieldHit: 0, hullHit: 0, brokeShield: false, dodged: true };
+      }
     }
     amount = Math.round(amount * (this.damageResistMod ?? 1));
     this.lastDamageAt = this.scene.time.now;

@@ -73,6 +73,17 @@ export default class Mob {
     if (!this.alive) return { shieldHit: 0, hullHit: 0, killed: false };
     this.lastDamageAt = this.scene.time.now;
 
+    // Movement evasion: faster mobs dodge projectiles more often (max 20% at ~300px/s).
+    // Ignored by laser (hitscan) — opts.ignoreMovEvasion set by _fireLaser path.
+    if (!opts.ignoreMovEvasion) {
+      const body = this.sprite?.body;
+      if (body) {
+        const spd = Math.sqrt(body.velocity.x * body.velocity.x + body.velocity.y * body.velocity.y);
+        const movEvasion = Math.min(0.20, spd / 1500);
+        if (movEvasion > 0 && Math.random() < movEvasion) return { shieldHit: 0, hullHit: 0, killed: false, dodged: true };
+      }
+    }
+
     // Если атаковали нейтрального моба — он и его группа агрятся
     if (this.neutral) {
       this.neutral = false;

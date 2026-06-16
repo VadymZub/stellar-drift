@@ -428,9 +428,8 @@ export default class GarageScene extends Phaser.Scene {
     this.add.text(lx + lw / 2, py + 180, `${i18n.t('garage.ship_level')}: ${lvl} / ${SHIP_MAX_LEVEL}`, this.O('15px', '#ffb74d')).setOrigin(0.5, 0);
 
     // Текущие эффективные статы активного корабля
-    const effDps = p.weaponType === 'laser'
-      ? Math.round(p.weaponDamage * p.weaponFireRate * (p.weaponAccuracy ?? 0.70))
-      : Math.round(p.weaponDamage * p.weaponFireRate);
+    const effDps = (p.hasCannon ? Math.round(p.cannonDamage * p.weaponFireRate * (p.cannonAccuracy ?? 0.90)) : 0)
+                 + (p.hasLaser  ? Math.round(p.laserDamage  * p.weaponFireRate * (p.laserAccuracy  ?? 0.80)) : 0);
     const lines = [
       `${i18n.t('garage.hull')}:  ${p.maxHull}`,
       `${i18n.t('hud.shield')}:  ${p.maxShield}`,
@@ -644,9 +643,8 @@ export default class GarageScene extends Phaser.Scene {
     this.slotRow(lx, py + 240, i18n.t('garage.shield'), 'shield', COLORS.primary);
     this.slotRow(lx, py + 304, i18n.t('garage.engine'), 'engine', COLORS.emerald);
 
-    const dps = p.weaponType === 'laser'
-      ? Math.round(p.weaponDamage * p.weaponFireRate * (p.weaponAccuracy ?? 0.70))
-      : Math.round(p.weaponDamage * p.weaponFireRate);
+    const dps = (p.hasCannon ? Math.round(p.cannonDamage * p.weaponFireRate * (p.cannonAccuracy ?? 0.90)) : 0)
+              + (p.hasLaser  ? Math.round(p.laserDamage  * p.weaponFireRate * (p.laserAccuracy  ?? 0.80)) : 0);
     const lines = [
       `${i18n.t('garage.dps')}:  ${dps}`,
       `${i18n.t('hud.shield')}:  ${p.maxShield}  (+${p.shieldRegenPerSec}/${i18n.t('unit.sec')})`,
