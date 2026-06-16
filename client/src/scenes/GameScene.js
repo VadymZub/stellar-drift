@@ -1059,7 +1059,7 @@ export default class GameScene extends Phaser.Scene {
     const aimPt = _leadTarget(p.x, p.y, t.x, t.y,
       t.sprite?.body?.velocity?.x ?? 0, t.sprite?.body?.velocity?.y ?? 0,
       PROJECTILE.speed);
-    this.projectiles.push(new Projectile(this, 'player', p.x, p.y, aimPt.x, aimPt.y, t, dmg, p.weaponPenetration, color));
+    this.projectiles.push(new Projectile(this, 'player', p.x, p.y, aimPt.x, aimPt.y, t, dmg, p.weaponPenetration, color, 90 * Math.PI / 180));
     this.muzzleFlash(p.x, p.y, isOC ? 0xff8800 : isCrit ? 0xffee44 : 0x8fe6ff);
     if (isCrit || isOC) {
       const label = isOC ? '⚡ УДАР!' : 'КРИТ!';
