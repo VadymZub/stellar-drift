@@ -4,6 +4,12 @@ client/.claude/
 # Python cache
 __pycache__/
 *.pyc
+*.pyo
+
+# Server
+server/venv/
+server/stellar_drift.db
+server/.env
 
 # OS
 .DS_Store
