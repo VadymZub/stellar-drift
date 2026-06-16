@@ -792,13 +792,14 @@ export default class GameScene extends Phaser.Scene {
   _doStealthSprint(now, cd) {
     if (this._stealthEndTime > now) return;
     this.skillCooldowns.stealth_sprint = now + cd;
-    this._stealthEndTime = now + 8000;
+    const dur = Math.round(8000 * (this.player.stealthDurMult ?? 1));
+    this._stealthEndTime = now + dur;
     this._stealthOrigSpeed = this.player.shipBaseSpeed;
     this.player.shipBaseSpeed = Math.round(this.player.shipBaseSpeed * 1.30);
     this.player.recomputeStats();
     this.player.sprite.setAlpha(0.35);
-    this.log('👻 Стелс-рывок: +30% скорость, 8с');
-    this.time.delayedCall(8000, () => {
+    this.log(`👻 Стелс-рывок: +30% скорость, ${Math.round(dur / 1000)}с`);
+    this.time.delayedCall(dur, () => {
       if (!this.player?.alive) return;
       this.player.shipBaseSpeed = this._stealthOrigSpeed;
       this.player.recomputeStats();

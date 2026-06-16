@@ -165,10 +165,10 @@ export const PERK_DEFS = [
     effect: '+15% скорость поворота',
     desc: (b) => `+${+(15 * (1 + b)).toFixed(1)}% поворот` },
 
-  { key: 'perk_engine_boost', imgFile: 'Engine Boost.png', name: 'Afterburner',
+  { key: 'perk_engine_boost', imgFile: 'Engine Boost.png', name: 'Shadow Drive',
     slot: 'engine', rarity: 'rare',
-    effect: '+20% скорость форсажа, -25% расход щита при форсаже',
-    desc: (b) => `+${+(20 * (1 + b)).toFixed(1)}% форсаж, -${+(25 * (1 + b)).toFixed(1)}% расход щита` },
+    effect: '+50% длительность стелса',
+    desc: (b) => `+${+(50 * (1 + b)).toFixed(1)}% длит. стелса` },
 ];
 
 export const PERK_MAP = {};

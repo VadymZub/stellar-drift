@@ -103,10 +103,10 @@ export default class Movement {
     let desired = p.baseSpeed;
     if (p.boosting) {
       if (!inSafeZone) {
-        p.shield -= p.maxShield * (p.boostShieldRate ?? 0.10) * dt;
+        p.shield -= p.maxShield * 0.10 * dt;
         if (p.shield <= 0) { p.shield = 0; p.boosting = false; this.scene.log(i18n.t('log.boost_no_shield')); }
       }
-      if (p.boosting) desired *= (p.boostMult ?? p.cfg.boostMult);
+      if (p.boosting) desired *= p.cfg.boostMult;
     }
     
     if (!this.steerMode && dist < 120) {
