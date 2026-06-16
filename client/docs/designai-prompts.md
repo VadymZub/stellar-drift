@@ -78,3 +78,18 @@
 ### Heart of the Void (Сердце Бездны)
 > `Top-down space background 'Heart of the Void', a massive central black hole with a glowing violet and magenta accretion disk, intense gravitational warping effects, scattered purple nebulae, ancient derelict station fragments floating at the edges, dark and oppressive atmosphere, hyper-detailed cosmic horror style.`
 
+
+---
+
+## Плазмит (Plasmate Resource)
+
+*Ресурс плазмит — кристаллы на карте и иконки в трюме.*
+
+### Кристалл на карте (map sprite, `plasmate_deposit`)
+> `Top-down space game resource node. A single floating plasma crystal shard, jagged and translucent, cyan-purple gradient, strong additive inner glow, small scale (fits in 64×64 px), black background. Style: minimalist sci-fi, sharp edges, glowing energy core.`
+
+### Иконка в трюме (cargo icon, `plasmate_icon`)
+> `Sci-fi cargo container icon for a rare energy crystal resource. Hexagonal metal micro-canister with a glowing cyan-purple crystal shard visible through a transparent viewport window. Isometric 3/4 view, dark gunmetal casing with teal energy highlights, 512×512 PNG transparent background. Style: game UI item icon, detailed but readable at 48px.`
+
+### Лут-ящик (generic loot sprite, `lootbox`)
+> `Top-down floating loot container for a sci-fi space game. Compact sealed cargo pod, metallic grey-blue hull, orange hazard stripe across the center, small glowing yellow-green status indicator light. No text. 256×256 PNG transparent background. Style: readable top-down game sprite, slightly worn industrial look.`
