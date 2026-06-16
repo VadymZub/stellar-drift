@@ -193,6 +193,9 @@ export default class BootScene extends Phaser.Scene {
                        'npc_orion','npc_artemis','npc_terranov','npc_siren','npc_jakob','npc_hazard']) {
       _prepShipTex(this, key, 432);
     }
+    // Rank tier icons: 1024×1024 displayed at 22×22 — 46× downscale causes shimmer.
+    // Pre-process to 44px (2× display size) for stable bilinear and no subpixel flicker.
+    for (let t = 1; t <= 7; t++) _prepShipTex(this, `rank_tier${t}`, 44);
 
     // Set LINEAR filter on all ship/mob textures (no mipmap sampling for non-POT assets).
     const LINEAR = 0;
