@@ -305,53 +305,35 @@ export default class GameScene extends Phaser.Scene {
 
   spawnPlasmateDeposits() {
     const sec = SECTORS[galaxy.current];
-    // No plasmate in dungeons, boss maps, or arenas.
     if (sec.isDungeon) return;
     const isPvp = sec.pvp === true;
-    const cx = this.worldWidth / 2, cy = this.worldHeight / 2;
     const lvl = sec.lvlMin || 1;
 
-    let count, respawnMs;
-    if (isPvp) {
-      // 3–15 deposits scaling with sector tier (pvpTier 0–4 for lvlMin 11/21/31/41/48)
-      const pvpTier = Math.min(4, Math.floor(Math.max(0, lvl - 10) / 10));
-      const pvpBase = 3 + pvpTier * 3;
-      count = Phaser.Math.Between(pvpBase, Math.min(15, pvpBase + 2));
-      respawnMs = 15 * 60 * 1000;
-    } else {
-      // 1–5 deposits scaling: tier = floor(lvlMin/10) → 0..4
-      const tier = Math.min(4, Math.floor(lvl / 10));
-      count = Phaser.Math.Between(Math.max(1, tier), Math.min(5, tier + 1));
-      respawnMs = 10 * 60 * 1000;
-    }
+    // Each crystal = 1 unit. Count scales with sector tier.
+    // Home: 15–25 on tier-1, +8 per tier. PvP: 6× matching home tier (map is ~4× larger).
+    const tier = Math.min(4, Math.floor(lvl / 10));
+    const homeMin = 15 + tier * 8;
+    const homeMax = 25 + tier * 8;
+    const count = isPvp
+      ? Phaser.Math.Between(homeMin * 6, homeMax * 6)
+      : Phaser.Math.Between(homeMin, homeMax);
+    const respawnMs = isPvp ? 15 * 60 * 1000 : 10 * 60 * 1000;
 
+    const ww = this.worldWidth, wh = this.worldHeight;
     for (let i = 0; i < count; i++) {
-      const amount = isPvp
-        ? Phaser.Math.Between(100, 300)
-        : Phaser.Math.Between(20, 40);
-
+      // Scatter randomly across whole world (no cluster zones for individual crystals)
       let x, y, tries = 0;
       do {
-        const ang  = Phaser.Math.FloatBetween(0, Math.PI * 2);
-        const dist = Phaser.Math.FloatBetween(600, isPvp ? 2200 : 1500);
-        x = cx + Math.cos(ang) * dist;
-        y = cy + Math.sin(ang) * dist;
+        x = Phaser.Math.Between(200, ww - 200);
+        y = Phaser.Math.Between(200, wh - 200);
         tries++;
-      } while (tries < 25 && (
-        x < 120 || y < 120 || x > this.worldWidth - 120 || y > this.worldHeight - 120 ||
-        (isPvp && this.miningBases.some(b => Phaser.Math.Distance.Between(x, y, b.x, b.y) < 700))
+      } while (tries < 30 && (
+        isPvp && this.miningBases.some(b => Phaser.Math.Distance.Between(x, y, b.x, b.y) < 600)
       ));
-      x = Phaser.Math.Clamp(x, 120, this.worldWidth  - 120);
-      y = Phaser.Math.Clamp(y, 120, this.worldHeight - 120);
 
-      const pad = 350;
-      const zone = {
-        xMin: Phaser.Math.Clamp(x - pad, 120, this.worldWidth  - 120),
-        xMax: Phaser.Math.Clamp(x + pad, 120, this.worldWidth  - 120),
-        yMin: Phaser.Math.Clamp(y - pad, 120, this.worldHeight - 120),
-        yMax: Phaser.Math.Clamp(y + pad, 120, this.worldHeight - 120),
-      };
-      this.plasmateDeposits.push(new PlasmateDeposit(this, x, y, amount, zone, respawnMs));
+      // Respawn zone = whole world so crystal reappears anywhere on the map
+      const zone = { xMin: 200, xMax: ww - 200, yMin: 200, yMax: wh - 200 };
+      this.plasmateDeposits.push(new PlasmateDeposit(this, x, y, 1, zone, respawnMs));
     }
   }
 
