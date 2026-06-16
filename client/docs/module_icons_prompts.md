@@ -33,16 +33,16 @@
 ## Plasma Cannon
 
 ### T1 Plasma Cannon
-> `Sci-fi T1 single plasma cannon, one thick barrel, compact dark metallic housing, faint cyan glow at barrel tip, simple robust design, minimal details.`
+> `Sci-fi T1 single plasma cannon, one thick barrel, compact dark metallic housing, faint cyan glow at barrel tip, simple robust design, minimal details, transparent background, no background, isolated icon, bold clean silhouette, 3D render, isometric view, game inventory icon, 4k resolution, PNG with alpha channel.`
 
 ### T2 Plasma Cannon
-> `Sci-fi T2 dual plasma cannon, two side-by-side barrels, reinforced dark metallic housing with armor panels, bright cyan glowing barrel tips, more detailed than T1.`
+> `Sci-fi T2 dual plasma cannon, two side-by-side barrels, reinforced dark metallic housing with armor panels, bright cyan glowing barrel tips, more detailed than T1, transparent background, no background, isolated icon, bold clean silhouette, 3D render, isometric view, game inventory icon, 4k resolution, PNG with alpha channel.`
 
 ### T3 Plasma Cannon
-> `Sci-fi T3 triple plasma cannon, three barrels arranged linearly, bulkier armored housing with cyan glow between barrels and energy conduits, cyan arc discharge at barrel tips.`
+> `Sci-fi T3 triple plasma cannon, three barrels arranged linearly, bulkier armored housing with cyan glow between barrels and energy conduits, cyan arc discharge at barrel tips, transparent background, no background, isolated icon, bold clean silhouette, 3D render, isometric view, game inventory icon, 4k resolution, PNG with alpha channel.`
 
-### T4 Plasma Cannon *(переделан — gatling)*
-> `Sci-fi T4 rotary plasma gatling cannon, six thin barrels arranged in circular rotating cluster pointing forward, heavy cylindrical armored housing behind the barrel cluster, glowing purple plasma energy at all barrel tips, violet and cyan energy rings around the rotating barrel assembly, mechanical rotation joints visible, clearly directional weapon with muzzles facing viewer, dark metallic surface.`
+### T4 Plasma Cannon *(gatling)*
+> `Sci-fi T4 rotary plasma gatling cannon, six thin barrels arranged in circular rotating cluster pointing forward, heavy cylindrical armored housing behind the barrel cluster, glowing purple plasma energy at all barrel tips, violet and cyan energy rings around the rotating barrel assembly, mechanical rotation joints visible, clearly directional weapon with muzzles facing viewer, dark metallic surface, transparent background, no background, isolated icon, bold clean silhouette, 3D render, isometric view, game inventory icon, 4k resolution, PNG with alpha channel.`
 
 **Прогрессия:**
 | Тир | Форма | Цвет |
@@ -50,23 +50,23 @@
 | T1 | 1 ствол | cyan faint |
 | T2 | 2 ствола | cyan |
 | T3 | 3 ствола (линейно) | cyan + arcs |
-| T4 | 4 ствола (2×2) + coils | purple + cyan |
+| T4 | 6 стволов (gatling, круг) | purple + cyan |
 
 ---
 
 ## Shield Module
 
 ### T1 Shield Module
-> `Sci-fi T1 shield generator module, small rounded dark metallic base housing, single emitter dome on top, faint cyan energy bubble above, compact simple design, minimal glow.`
+> `Sci-fi T1 shield generator module, small rounded dark metallic base housing, single emitter dome on top, faint cyan energy bubble above, compact simple design, minimal glow, transparent background, no background, isolated icon, bold clean silhouette, 3D render, isometric view, game inventory icon, 4k resolution, PNG with alpha channel.`
 
 ### T2 Shield Module
-> `Sci-fi T2 shield generator module, medium rounded housing with reinforced frame, dome emitter with stronger cyan energy field, visible emitter ring, more detailed than T1.`
+> `Sci-fi T2 shield generator module, medium rounded housing with reinforced frame, dome emitter with stronger cyan energy field, visible emitter ring, more detailed than T1, transparent background, no background, isolated icon, bold clean silhouette, 3D render, isometric view, game inventory icon, 4k resolution, PNG with alpha channel.`
 
 ### T3 Shield Module
-> `Sci-fi T3 advanced shield generator, larger armored housing with side panels, projecting smooth cyan energy dome sphere, bright cyan glow, energy conduits on housing surface.`
+> `Sci-fi T3 advanced shield generator, larger armored housing with side panels, projecting smooth cyan energy dome sphere, bright cyan glow, energy conduits on housing surface, transparent background, no background, isolated icon, bold clean silhouette, 3D render, isometric view, game inventory icon, 4k resolution, PNG with alpha channel.`
 
-### T4 Shield Module *(переделан)*
-> `Sci-fi T4 heavy shield generator, thick rectangular armored housing with angular side plates, dual emitter rings on both sides, projecting hexagonal energy field dome with visible hex grid pattern, glowing purple and violet energy web with cyan electric arc discharge, dark metallic surface.`
+### T4 Shield Module
+> `Sci-fi T4 heavy shield generator, thick rectangular armored housing with angular side plates, dual emitter rings on both sides, projecting hexagonal energy field dome with visible hex grid pattern, glowing purple and violet energy web with cyan electric arc discharge, dark metallic surface, transparent background, no background, isolated icon, bold clean silhouette, 3D render, isometric view, game inventory icon, 4k resolution, PNG with alpha channel.`
 
 **Прогрессия:**
 | Тир | Форма | Цвет |
@@ -80,24 +80,26 @@
 
 ## Engine
 
+Все двигатели: **ракурс сзади-сбоку (isometric rear-side view)**, сопла направлены от зрителя, выхлоп хорошо виден.
+
 ### T1 Engine
-> `Sci-fi T1 basic ion thruster engine module, single round thruster nozzle, compact dark metallic housing, faint blue-cyan exhaust glow at nozzle opening, simple geometric form, minimal details.`
+> `Sci-fi T1 basic ion thruster engine module, isometric rear-side view, single round thruster nozzle facing away from viewer with faint blue-cyan exhaust plasma jet visibly streaming out of the nozzle, compact dark metallic housing, simple geometric form, minimal details, transparent background, no background, isolated icon, bold clean silhouette, 3D render, game inventory icon, 4k resolution, PNG with alpha channel.`
 
 ### T2 Engine
-> `Sci-fi T2 dual ion thruster engine module, two side-by-side cylindrical nozzles, reinforced dark metallic housing with cooling fins, moderate cyan exhaust glow from both nozzles, compact but more detailed than T1.`
+> `Sci-fi T2 dual ion thruster engine module, isometric rear-side view, two side-by-side cylindrical nozzles facing away from viewer with moderate cyan plasma exhaust jets visibly streaming from both nozzles, reinforced dark metallic housing with cooling fins, compact but more detailed than T1, transparent background, no background, isolated icon, bold clean silhouette, 3D render, game inventory icon, 4k resolution, PNG with alpha channel.`
 
 ### T3 Engine
-> `Sci-fi T3 advanced plasma thruster engine, triple nozzle cluster arranged in triangle formation, large armored housing with visible exhaust manifolds and heat vents, bright cyan plasma exhaust jets streaming from all three nozzles, energy conduits on housing surface.`
+> `Sci-fi T3 advanced plasma thruster engine, isometric rear-side view, triple nozzle cluster arranged in triangle formation facing away from viewer, bright cyan plasma exhaust jets visibly streaming from all three nozzles, large armored housing with visible exhaust manifolds and heat vents, energy conduits on housing surface, transparent background, no background, isolated icon, bold clean silhouette, 3D render, game inventory icon, 4k resolution, PNG with alpha channel.`
 
 ### T4 Engine
-> `Sci-fi T4 high-power fusion thruster engine, massive four-nozzle engine block with reactor core visible at center glowing violet purple, twin lateral booster pods with cyan plasma vents, energy arcs across nozzle array, heavy armored plating with glowing conduits, purple and cyan mixed exhaust plumes.`
+> `Sci-fi T4 high-power fusion thruster engine, isometric rear-side view, four massive nozzles facing away from viewer with powerful purple and cyan mixed exhaust plumes visibly streaming from all nozzles, reactor core glowing violet purple visible at center between nozzles, twin lateral booster pods with cyan plasma vents, energy arcs across nozzle array, heavy armored plating with glowing conduits, transparent background, no background, isolated icon, bold clean silhouette, 3D render, game inventory icon, 4k resolution, PNG with alpha channel.`
 
 **Прогрессия:**
 | Тир | Форма | Цвет |
 |---|---|---|
 | T1 | 1 сопло | cyan faint |
 | T2 | 2 сопла | cyan |
-| T3 | 3 сопла (треугольник) | cyan jets |
+| T3 | 3 сопла (треугольник) | bright cyan jets |
 | T4 | 4 сопла + reactor core | purple + cyan |
 
 ---

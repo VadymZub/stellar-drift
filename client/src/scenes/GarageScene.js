@@ -428,10 +428,13 @@ export default class GarageScene extends Phaser.Scene {
     this.add.text(lx + lw / 2, py + 180, `${i18n.t('garage.ship_level')}: ${lvl} / ${SHIP_MAX_LEVEL}`, this.O('15px', '#ffb74d')).setOrigin(0.5, 0);
 
     // Текущие эффективные статы активного корабля
+    const effDps = p.weaponType === 'laser'
+      ? Math.round(p.weaponDamage * p.weaponFireRate * (p.weaponAccuracy ?? 0.70))
+      : Math.round(p.weaponDamage * p.weaponFireRate);
     const lines = [
       `${i18n.t('garage.hull')}:  ${p.maxHull}`,
       `${i18n.t('hud.shield')}:  ${p.maxShield}`,
-      `${i18n.t('garage.dps')}:  ${Math.round(p.weaponDamage * p.weaponFireRate)}`,
+      `${i18n.t('garage.dps')}:  ${effDps}`,
       `${i18n.t('garage.speed')}:  ${Math.round(p.baseSpeed)}`,
     ];
     this.add.text(lx + 20, py + 220, lines.join('\n'), this.F('13px', '#9fb3b8')).setLineSpacing(8);
@@ -545,6 +548,7 @@ export default class GarageScene extends Phaser.Scene {
     const k = modMult(it);
     const f = (label, base) => `${label}: ${(base * k).toFixed(1)}`;
     if (it.type === 'cannon') return f(i18n.t('stat.damage'), it.damage);
+    if (it.type === 'laser')  return f(i18n.t('stat.damage'), it.damage);
     if (it.type === 'engine') return f(i18n.t('stat.speed'), it.speed);
     return f(i18n.t('stat.durability'), it.durability);
   }
@@ -640,7 +644,9 @@ export default class GarageScene extends Phaser.Scene {
     this.slotRow(lx, py + 240, i18n.t('garage.shield'), 'shield', COLORS.primary);
     this.slotRow(lx, py + 304, i18n.t('garage.engine'), 'engine', COLORS.emerald);
 
-    const dps = Math.round(p.weaponDamage * p.weaponFireRate);
+    const dps = p.weaponType === 'laser'
+      ? Math.round(p.weaponDamage * p.weaponFireRate * (p.weaponAccuracy ?? 0.70))
+      : Math.round(p.weaponDamage * p.weaponFireRate);
     const lines = [
       `${i18n.t('garage.dps')}:  ${dps}`,
       `${i18n.t('hud.shield')}:  ${p.maxShield}  (+${p.shieldRegenPerSec}/${i18n.t('unit.sec')})`,

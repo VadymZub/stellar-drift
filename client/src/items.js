@@ -126,6 +126,16 @@ export function starUpgradeCost(item) {
 const SELL_PRICE = { 1: 200, 2: 550, 3: 1300, 4: 3000 };
 export function itemSellPrice(item) { return SELL_PRICE[item.tier] || 100; }
 
+export function itemIconKey(item) {
+  if (!item) return null;
+  if (item.type === 'laser')  return 'mod_laser';
+  const t = Math.min(item.tier || 1, 4);
+  if (item.type === 'cannon') return `mod_plasma_t${t}`;
+  if (item.type === 'shield') return `mod_shield_t${t}`;
+  if (item.type === 'engine') return `mod_engine_t${t}`;
+  return null;
+}
+
 export function dropChance(mob) { return mob.isBoss ? 1 : 0.6; }
 
 // Дроп ⭐ Звёздного золота: шаблон моба задаёт {min,max,chance}. Боссы — гарантированно, элита — редко.

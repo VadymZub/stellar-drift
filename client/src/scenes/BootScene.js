@@ -10,6 +10,16 @@ import { buildBitmapFont } from '../utils/buildBitmapFont.js';
 // лежит в client/explosion24/<class>_sheet.png (игра берёт свежий стек оттуда).
 export const EXP_CLASSES = [['micro', 32], ['small', 64], ['medium', 128], ['large', 192], ['huge', 288], ['mega', 448]];
 
+const MOD_ICON_FILES = {
+  mod_plasma_t1: 'T1 Plasma Cannon.png', mod_plasma_t2: 'T2 Plasma Cannon.png',
+  mod_plasma_t3: 'T3 Plasma Cannon.png', mod_plasma_t4: 'T4 Plasma Cannon.png',
+  mod_shield_t1: 'T1 Shield Module.png', mod_shield_t2: 'T2 Shield Module.png',
+  mod_shield_t3: 'T3 Shield Module.png', mod_shield_t4: 'T4 Shield Module.png',
+  mod_engine_t1: 'T1 Engine.png',        mod_engine_t2: 'T2 Engine.png',
+  mod_engine_t3: 'T3 Engine.png',        mod_engine_t4: 'T4 Engine.png',
+  mod_laser:     'laser_cannon.png',
+};
+
 // Replace a ship/mob texture with a Canvas 2D pre-render at targetMax pixels on longest side.
 // Current sprites come from resize_ships.py at displaySize×4 (designed for DPR=2+zoom=2).
 // For the actual game (no zoom), displaySize×2 is the sweet spot: clean 2× WebGL bilinear
@@ -102,6 +112,10 @@ export default class BootScene extends Phaser.Scene {
     this.load.image('bg_corp_helios', 'assets/UI BACKGROUNDS/Corp_Hub_Helios.png');
     this.load.image('bg_corp_karaks', 'assets/UI BACKGROUNDS/Corp_Hub_Karaks.png');
     this.load.image('bg_corp_tides', 'assets/UI BACKGROUNDS/Corp_Hub_Tides.png');
+
+    // Module icons (plasma cannons, shields, engines, laser)
+    for (const [key, file] of Object.entries(MOD_ICON_FILES))
+      this.load.image(key, `assets/modules/${encodeURIComponent(file)}`);
 
     // Perk images (slot perks for weapon/shield modules)
     for (const p of PERK_DEFS) this.load.image(p.key, `assets/perks/${p.imgFile}`);
@@ -196,6 +210,9 @@ export default class BootScene extends Phaser.Scene {
     // Rank tier icons: 1024×1024 displayed at 22×22 — 46× downscale causes shimmer.
     // Pre-process to 44px (2× display size) for stable bilinear and no subpixel flicker.
     for (let t = 1; t <= 7; t++) _prepShipTex(this, `rank_tier${t}`, 44);
+
+    // Module icons: 1024px displayed at 48px in cargo slots — pre-process to 96px (2× display).
+    for (const key of Object.keys(MOD_ICON_FILES)) _prepShipTex(this, key, 96);
 
     // Skill icons: 128×128 displayed at 48×48 — pre-process to 96px (2× display).
     for (const k of ['sharpshooter','heavy_caliber','penetrating_rounds','overcharge_shot',
