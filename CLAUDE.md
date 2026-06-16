@@ -14,9 +14,11 @@ No build step. Phaser 4.1.0 loads from CDN as an ES module. ES modules require H
 **DEV hotkeys** (in-game, `DEV_MODE = true` in `GameScene.js`):
 - `0` — level up pilot
 - `9` — +1 000 000 credits + 500 ⭐
-- `8` — switch to Argus ship (max stats)
+- `8` — switch to Argus ship (max stats); engine speed uses T4 base 27 (matches item nerf)
 
 **Test profile launcher** (DEV_MODE): clicking START GAME on the login screen opens `TestProfileScene` — an HTML overlay to configure level, rank, corp, premium, loot preset, credits, and gold before launching the game. Sets `window.TEST_PROFILE`, consumed once by `GameScene.create()`.
+
+**Admin panel**: `http://localhost:8080/admin.html` — standalone page, same origin as game. Sections: Dashboard, Argus Control, Players (mock), Audit Log, Analytics.
 
 ## Architecture
 
@@ -75,6 +77,8 @@ State persists across `scene.restart()` (sector jumps) because it lives on the S
 
 - **`Projectile.js`** / **`Loot.js`**: Short-lived entities managed as arrays on `GameScene` (`this.projectiles`, `this.loot`).
 
+- **`ArgusController.js`** (`systems/`): Admin-spawned boss. Created in `GameScene.create()`, updated after `mobs.forEach` in `GameScene.update()`, destroyed in `GameScene.shutdown()`. Communicates via `BroadcastChannel('stellar-drift-admin')`. Commands: `ARGUS_SPAWN | ARGUS_DESPAWN | ARGUS_HEAL | ARGUS_FORCE_ABILITY`. Broadcasts `ARGUS_UPDATE` every 0.5 s. Wraps `mob.takeDamage` at spawn time to track per-player damage for the top-5 reward leaderboard. **Speed is flat (`m.tpl.speed`), not level-scaled** — only hull/shield/damage scale with level in Mob.js. Movement state machine: `approach` (dist > 1500 px) → `oscillate` (sine-wave distance 360–760 px + slow drift) → `orbit` (tight 380 px circle, triggers at hull < 50% or incoming DPS > 12% maxHull in 3 s). Self-heal every 180 s: +30% hull + shield.
+
 ### Ranking system
 
 `pilotRank` is always an **object from the `RANKS` array** (shape: `{ id, name, type, limit? | percent? }`), never a bare string. `getRank(playerRating, allRatings)` in `ranking.js` returns this object. Rating formula: `(xp/2_800_000 × 0.4) + (honor/1_000_000 × 0.6)`. Rank is positional within the `MOCK_CORP_RATINGS` pool.
@@ -82,6 +86,8 @@ State persists across `scene.restart()` (sector jumps) because it lives on the S
 ### Items and modules
 
 Modules have `type: 'cannon'|'shield'|'engine'` and `tier: 1–4`. Upgrade has two mutually exclusive paths: credits (+7.5% max) or stars (+45% max). Modules carry a `perk` object (rolled at drop). `rollCannon/rollShield/rollEngine(tier, mobLevel)` in `items.js` use `Phaser.Math.FloatBetween`.
+
+Engine base speeds (after ÷3 nerf): T1=10, T2=15, T3=20, T4=27 px/s. Max star upgrade (×1.45): T4 ≈ 39 px/s. `modMult(item) = 1 + 0.015×creditLvl + 0.09×starLvl`.
 
 ### Render depth conventions
 
