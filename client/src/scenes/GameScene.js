@@ -107,7 +107,7 @@ export default class GameScene extends Phaser.Scene {
         this.activeShip = 'argus';
         const maxCannon = { type: 'cannon', tier: 4, damage: 210, penetration: 0.20, fireRate: 1.0, starLvl: 5 };
         const maxShield = { type: 'shield', tier: 4, durability: 1500, regen: 100, evasion: 0.10, starLvl: 5 };
-        const maxEngine = { type: 'engine', tier: 4, speed: 80, starLvl: 5 };
+        const maxEngine = { type: 'engine', tier: 4, speed: 27, starLvl: 5 };
         this.equipped.weapon = Array(10).fill(null).map(() => ({...maxCannon}));
         this.equipped.shield = Array(10).fill(null).map(() => ({...maxShield}));
         this.equipped.engine = Array(10).fill(null).map(() => ({...maxEngine}));

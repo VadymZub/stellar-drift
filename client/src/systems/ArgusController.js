@@ -175,7 +175,8 @@ export default class ArgusController {
     const dy   = p.y - m.y;
     const dist = Math.sqrt(dx * dx + dy * dy) || 1;
 
-    const baseSpeed = m.tpl.speed * (1 + 0.5 * (m.level - 1));
+    // Speed is a flat stat in Mob.js (not level-scaled — only hull/shield/damage scale).
+    const baseSpeed = m.tpl.speed;
     const spd       = m.phase >= 2 ? baseSpeed * 1.35 : baseSpeed;
 
     this._moveTimer += dt;
