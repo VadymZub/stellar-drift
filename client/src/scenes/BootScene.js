@@ -197,6 +197,16 @@ export default class BootScene extends Phaser.Scene {
     // Pre-process to 44px (2× display size) for stable bilinear and no subpixel flicker.
     for (let t = 1; t <= 7; t++) _prepShipTex(this, `rank_tier${t}`, 44);
 
+    // Skill icons: 128×128 displayed at 48×48 — pre-process to 96px (2× display).
+    for (const k of ['sharpshooter','heavy_caliber','penetrating_rounds','overcharge_shot',
+                     'salvo','targeting_ai','berserker',
+                     'reinforced_hull','shield_optimizer','fast_regen','emergency_repair',
+                     'shield_burst','damage_resist','module_specialist',
+                     'loot_magnet','salvager','merchants_eye','scanner_boost',
+                     'cargo_expand','stealth_sprint']) {
+      _prepShipTex(this, `skill_${k}`, 96);
+    }
+
     // Set LINEAR filter on all ship/mob textures (no mipmap sampling for non-POT assets).
     const LINEAR = 0;
     for (const s of SHIPS) {
