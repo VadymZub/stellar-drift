@@ -804,6 +804,7 @@ export default class GameScene extends Phaser.Scene {
     this.input.keyboard.on('keydown-ESC', () => { this._exitToSpace(); });
     this.input.keyboard.on('keydown-F', () => {
       if (!this.player.alive) return;
+      if (this.atBase) { this._exitToSpace(); return; }
       const nearMining = this.miningBases.find(b => Phaser.Math.Distance.Between(this.player.x, this.player.y, b.x, b.y) < 360);
       if (nearMining) { nearMining.interact(this.playerName); return; }
       const nearHome = this.homeBases.find(b => Phaser.Math.Distance.Between(this.player.x, this.player.y, b.x, b.y) < 380);
