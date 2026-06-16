@@ -26,6 +26,7 @@ export const SHIPS = [
   { key: 'anvil',    nameKey: 'ship.anvil',    descKey: 'shipdesc.anvil',    tier: 'T2',       levelGate: 15, price: 120000, currency: 'credits', displaySize: 110, hullMax: 1300, shieldBase: 210, baseSpeed: 205, wSlots: 3, sSlots: 3, eSlots: 1, dmgMod: 1.15, garageKey: 'anvil_g',    artAngleOffset: -Math.PI / 2,
     engines: [{ x: -13, y: 52 }, { x: 13, y: 52 }] },
   { key: 'drover',   nameKey: 'ship.drover',   descKey: 'shipdesc.drover',   tier: 'T3',       levelGate: 25, price: 230000, currency: 'credits', displaySize: 147, hullMax: 1400, shieldBase: 230, baseSpeed: 205, wSlots: 5, sSlots: 5, eSlots: 2, dmgMod: 0.85, garageKey: 'drover_g',   artAngleOffset: -Math.PI / 2,
+    cargoBonus: 2,
     engines: [{ x: -12, y: 62 }, { x: 12, y: 62 }] },
   { key: 'aegis',    nameKey: 'ship.aegis',    descKey: 'shipdesc.aegis',    tier: 'T3',       levelGate: 25, price: 260000, currency: 'credits', displaySize: 155, hullMax: 2500, shieldBase: 450, baseSpeed: 200, wSlots: 4, sSlots: 5, eSlots: 2, dmgMod: 0.90, garageKey: 'aegis_g',    artAngleOffset: -Math.PI / 2,
     passives: { shieldBonus: 0.20, shieldPerAlly: 0.05 },
