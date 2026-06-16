@@ -664,14 +664,7 @@ export default class GameScene extends Phaser.Scene {
     this.input.keyboard.addCapture('TAB,ESC,G,M,J,F,CTRL');
     
     this.input.keyboard.on('keydown-TAB', (e) => { e.preventDefault(); this.cycleTarget(); });
-    this.input.keyboard.on('keydown-ESC', () => {
-      this.selectTarget(null);
-      this.isFiring = false;
-      this.atBase = false;
-      for (const o of ['GarageScene', 'CargoScene', 'MapScene', 'MissionsScene', 'ShopScene', 'CorpScene', 'BaseMenuScene', 'SkillScene', 'ClanScene']) {
-        if (this.scene.isActive(o)) this.scene.stop(o);
-      }
-    });
+    this.input.keyboard.on('keydown-ESC', () => { this._exitToSpace(); });
     this.input.keyboard.on('keydown-F', () => {
       if (!this.player.alive) return;
       const nearMining = this.miningBases.find(b => Phaser.Math.Distance.Between(this.player.x, this.player.y, b.x, b.y) < 360);
@@ -680,13 +673,16 @@ export default class GameScene extends Phaser.Scene {
       if (nearHome) nearHome.openInfo();
     });
     this.input.keyboard.on('keydown-C', () => {
-      this.player.waypoint = null; this.cancelCollect(); this.toggleOverlay('CargoScene');
+      this.player.waypoint = null; this.cancelCollect();
+      if (this.atBase && this.scene.isActive('CargoScene')) { this._exitToSpace(); return; }
+      this.toggleOverlay('CargoScene');
     });
     const _openBase = (sceneKey, hint) => {
       if (!this.atBase) {
         if (!this.nearBase) { this.log(`${hint} — подлетите к базе`); return; }
         this._enterNearestBase(sceneKey); return;
       }
+      if (this.scene.isActive(sceneKey)) { this._exitToSpace(); return; }
       this.player.waypoint = null; this.cancelCollect(); this.toggleOverlay(sceneKey);
     };
     this.input.keyboard.on('keydown-G', () => _openBase('GarageScene',   'Гараж'));
@@ -867,6 +863,14 @@ export default class GameScene extends Phaser.Scene {
     }
     // Обычные секторы — в пределах безопасной зоны у базы
     return this.inSafeZone(this.player.x, this.player.y);
+  }
+
+  _exitToSpace() {
+    this.selectTarget(null);
+    this.isFiring = false;
+    this.atBase = false;
+    for (const o of ['GarageScene','CargoScene','MapScene','MissionsScene','ShopScene','CorpScene','BaseMenuScene','SkillScene','ClanScene'])
+      if (this.scene.isActive(o)) this.scene.stop(o);
   }
 
   toggleOverlay(key, data) {
