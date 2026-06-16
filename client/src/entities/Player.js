@@ -324,10 +324,11 @@ export default class Player {
       this.sprite.rotation = this.facing + (this.ship.artAngleOffset ?? ART_ANGLE_OFFSET);
     }
 
-    // Nameplate: над кораблём, центрировано. Math.round — без субпиксельного мерцания.
-    const npY    = Math.round(this.y - this.sprite.displayHeight * 0.55 - 13);
+    // Nameplate: над кораблём, центрировано. Float-позиция = двигается 1:1 со спрайтом.
+    // Shimmer от 46× downscale решён через pre-render rank_tier в BootScene (44px).
+    const npY    = this.y - this.sprite.displayHeight * 0.55 - 13;
     const totalW = 22 + 4 + this._npText.width;
-    const npX    = Math.round(this.x - totalW / 2);
+    const npX    = this.x - totalW / 2;
     this._npIcon.setPosition(npX + 11, npY);
     this._npText.setPosition(npX + 22 + 4, npY);
   }
