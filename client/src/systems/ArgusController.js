@@ -96,8 +96,8 @@ export default class ArgusController {
       this._timer = 0;
       // Sync alive flag: if Phaser killed the mob (e.g. player killed it), clear ref
       if (this.mob && !this.mob.alive) {
+        this._logAudit('ARGUS_KILLED', { killedBy: this.scene.playerName ?? 'unknown' });
         this.mob = null;
-        this._logAudit('ARGUS_KILLED', {});
       }
       this._broadcast();
     }
