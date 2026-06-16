@@ -672,11 +672,6 @@ export default class GameScene extends Phaser.Scene {
       const nearHome = this.homeBases.find(b => Phaser.Math.Distance.Between(this.player.x, this.player.y, b.x, b.y) < 380);
       if (nearHome) nearHome.openInfo();
     });
-    this.input.keyboard.on('keydown-C', () => {
-      this.player.waypoint = null; this.cancelCollect();
-      if (this.atBase && this.scene.isActive('CargoScene')) { this._exitToSpace(); return; }
-      this.toggleOverlay('CargoScene');
-    });
     const _openBase = (sceneKey, hint) => {
       if (!this.atBase) {
         if (!this.nearBase) { this.log(`${hint} — подлетите к базе`); return; }
@@ -685,6 +680,7 @@ export default class GameScene extends Phaser.Scene {
       if (this.scene.isActive(sceneKey)) { this._exitToSpace(); return; }
       this.player.waypoint = null; this.cancelCollect(); this.toggleOverlay(sceneKey);
     };
+    this.input.keyboard.on('keydown-C', () => _openBase('CargoScene',    'Склад'));
     this.input.keyboard.on('keydown-G', () => _openBase('GarageScene',   'Гараж'));
     this.input.keyboard.on('keydown-M', () => { this.player.waypoint = null; this.cancelCollect(); this.toggleOverlay('MapScene'); });
     this.input.keyboard.on('keydown-K', () => _openBase('SkillScene',    'Скиллы'));

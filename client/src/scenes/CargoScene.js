@@ -73,7 +73,6 @@ export default class CargoScene extends Phaser.Scene {
     }
 
     this.input.keyboard.on('keydown-ESC', () => this.scene.stop());
-    this.input.keyboard.on('keydown-C',   () => this.scene.stop());
   }
 
   // Слот-сетка: type = 'cargo' | 'cargo_nosell' | 'warehouse'
