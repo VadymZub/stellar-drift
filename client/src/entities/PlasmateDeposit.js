@@ -2,11 +2,12 @@ import * as Phaser from 'https://cdn.jsdelivr.net/npm/phaser@4.1.0/dist/phaser.e
 
 // Collectible plasmate crystal cluster. Respawns at a new position within zone after 10 min.
 export default class PlasmateDeposit {
-  constructor(scene, x, y, amount, zone) {
-    this.scene  = scene;
-    this.amount = amount;
-    this.zone   = zone;   // { xMin, xMax, yMin, yMax } for respawn range
-    this.alive  = true;
+  constructor(scene, x, y, amount, zone, respawnMs = 10 * 60 * 1000) {
+    this.scene     = scene;
+    this.amount    = amount;
+    this.zone      = zone;   // { xMin, xMax, yMin, yMax } for respawn range
+    this.respawnMs = respawnMs;
+    this.alive     = true;
     this.isPlasmate = true;
     this.respawnAt  = 0;
     this._build(x, y);
@@ -27,7 +28,7 @@ export default class PlasmateDeposit {
     this.alive = false;
     this.sprite.setVisible(false);
     this.label.setVisible(false);
-    this.respawnAt = this.scene.time.now + 10 * 60 * 1000;
+    this.respawnAt = this.scene.time.now + this.respawnMs;
   }
 
   update(now) {

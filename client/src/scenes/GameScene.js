@@ -309,7 +309,21 @@ export default class GameScene extends Phaser.Scene {
     if (sec.isDungeon) return;
     const isPvp = sec.pvp === true;
     const cx = this.worldWidth / 2, cy = this.worldHeight / 2;
-    const count = isPvp ? Phaser.Math.Between(4, 6) : Phaser.Math.Between(3, 5);
+    const lvl = sec.lvlMin || 1;
+
+    let count, respawnMs;
+    if (isPvp) {
+      // 3–15 deposits scaling with sector tier (pvpTier 0–4 for lvlMin 11/21/31/41/48)
+      const pvpTier = Math.min(4, Math.floor(Math.max(0, lvl - 10) / 10));
+      const pvpBase = 3 + pvpTier * 3;
+      count = Phaser.Math.Between(pvpBase, Math.min(15, pvpBase + 2));
+      respawnMs = 15 * 60 * 1000;
+    } else {
+      // 1–5 deposits scaling: tier = floor(lvlMin/10) → 0..4
+      const tier = Math.min(4, Math.floor(lvl / 10));
+      count = Phaser.Math.Between(Math.max(1, tier), Math.min(5, tier + 1));
+      respawnMs = 10 * 60 * 1000;
+    }
 
     for (let i = 0; i < count; i++) {
       const amount = isPvp
@@ -337,7 +351,7 @@ export default class GameScene extends Phaser.Scene {
         yMin: Phaser.Math.Clamp(y - pad, 120, this.worldHeight - 120),
         yMax: Phaser.Math.Clamp(y + pad, 120, this.worldHeight - 120),
       };
-      this.plasmateDeposits.push(new PlasmateDeposit(this, x, y, amount, zone));
+      this.plasmateDeposits.push(new PlasmateDeposit(this, x, y, amount, zone, respawnMs));
     }
   }
 
@@ -840,7 +854,8 @@ export default class GameScene extends Phaser.Scene {
       this.input.keyboard.on('keydown-NINE', () => {
         this.credits  = (this.credits  || 0) + 1000000;
         this.starGold = (this.starGold || 0) + 500;
-        this.log('DEV: +1 000 000 кр, +500 ⭐');
+        addPlasmateToInventory(this.inventory, 500, this._cargoMax());
+        this.log('DEV: +1 000 000 кр, +500 ⭐, +500 плазмита');
       });
     }
   }

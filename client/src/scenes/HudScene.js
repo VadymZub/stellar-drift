@@ -411,6 +411,31 @@ export default class HudScene extends Phaser.Scene {
     g.lineStyle(1, 0x4de1aa, 0.3);
     g.strokeCircle(pCenter.x, pCenter.y, sr * mmScale);
 
+    // Плазмит — ромб-маркер, всегда виден (не ограничен скан-радиусом)
+    if (gs.plasmateDeposits) {
+      for (const d of gs.plasmateDeposits) {
+        if (!d.alive) continue;
+        const p = worldToMinimap(d.x, d.y, r, ww, wh);
+        const sz = 4;
+        g.lineStyle(1.5, 0xcc88ff, 0.9);
+        g.beginPath();
+        g.moveTo(p.x,      p.y - sz);
+        g.lineTo(p.x + sz, p.y);
+        g.lineTo(p.x,      p.y + sz);
+        g.lineTo(p.x - sz, p.y);
+        g.closePath();
+        g.strokePath();
+        g.fillStyle(0x88ccff, 0.55);
+        g.beginPath();
+        g.moveTo(p.x,      p.y - sz);
+        g.lineTo(p.x + sz, p.y);
+        g.lineTo(p.x,      p.y + sz);
+        g.lineTo(p.x - sz, p.y);
+        g.closePath();
+        g.fillPath();
+      }
+    }
+
     // Лут (янтарные точки) — только в радиусе скана
     g.fillStyle(COLORS.amber, 0.9);
     for (const l of gs.loot) {
