@@ -164,6 +164,9 @@ export default class BootScene extends Phaser.Scene {
 
     // VFX manifest — frame sizes read in create() to load sprite sheets
     this.load.json('vfx_manifest', 'assets/vfx/vfx_manifest.json');
+
+    this.load.spritesheet('plasmate_crystal', 'assets/vfx/plasmate_crystal.png',
+      { frameWidth: 256, frameHeight: 256 });
   }
 
   create() {
@@ -180,8 +183,14 @@ export default class BootScene extends Phaser.Scene {
     this.makeGlowTexture('glow', 18);      // мягкий круглый glow (шлейф, вспышки, additive)
     this.makeBoltTexture('bolt_sprite');   // вытянутая светящаяся капсула снаряда
     this.makeLootTexture('lootbox');
-    this.makePlasmateDepositTexture('plasmate_deposit');
     this.makePlasmateIconTexture('plasmate_icon');
+
+    this.anims.create({
+      key: 'plasmate_idle',
+      frames: this.anims.generateFrameNumbers('plasmate_crystal', { start: 0, end: 20 }),
+      frameRate: 12,
+      repeat: -1,
+    });
 
     // Анимации взрывов — все кадры листа (28), ~28 fps ≈ 1 сек на класс.
     for (const [name] of EXP_CLASSES) {
