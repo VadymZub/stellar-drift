@@ -31,8 +31,10 @@ export default class ArgusController {
     const level = Math.min(50, Math.max(1, msg.level ?? 50));
     const cx    = gs.worldWidth  / 2;
     const cy    = gs.worldHeight / 2;
-    this.mob = new Mob(gs, MOBS.argus_boss, level, cx, cy, {
-      behavior: 'guard', patrolRadius: 300, leash: Infinity,
+    // Spawn outside safe zone (radius 320px) so combat AI activates normally.
+    // Offset: 800px east of center.
+    this.mob = new Mob(gs, MOBS.argus_boss, level, cx + 800, cy, {
+      behavior: 'roam', patrolRadius: 600, leash: Infinity,
     });
     gs.mobs.push(this.mob);
     gs.log(`⚠ АРГУС вышел на орбиту — уровень ${level}`);
@@ -90,7 +92,7 @@ export default class ArgusController {
 
   update(dt) {
     this._timer += dt;
-    if (this._timer >= 1.0) {
+    if (this._timer >= 0.5) {
       this._timer = 0;
       // Sync alive flag: if Phaser killed the mob (e.g. player killed it), clear ref
       if (this.mob && !this.mob.alive) {

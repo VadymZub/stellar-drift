@@ -557,7 +557,7 @@ function onArgusUpdate(data) {
 
 // Detect connection loss after 5s without updates
 setInterval(() => {
-  if (lastPing > 0 && Date.now() - lastPing > 5000) {
+  if (lastPing > 0 && Date.now() - lastPing > 15000) {
     document.getElementById('conn-dot').classList.remove('live');
     document.getElementById('conn-text').textContent = 'Нет сигнала · игра закрыта или не запущена';
   }
