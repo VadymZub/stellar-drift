@@ -1,0 +1,818 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Stellar Drift — Admin Panel</title>
+<style>
+  :root {
+    --bg:       #05070f;
+    --panel:    #080f1e;
+    --border:   rgba(77,208,225,.18);
+    --cyan:     #4dd0e1;
+    --cyan2:    #26c6da;
+    --amber:    #ffb74d;
+    --danger:   #ef5350;
+    --emerald:  #66bb6a;
+    --muted:    #607d8b;
+    --text:     #cfd8dc;
+    --sidebar:  140px;
+  }
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    font-size: 13px;
+    display: flex;
+    min-height: 100vh;
+  }
+
+  /* ── SIDEBAR ─────────────────────────────────────────────────────── */
+  #sidebar {
+    width: var(--sidebar);
+    background: rgba(8,15,30,.95);
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    padding: 24px 0 12px;
+    position: fixed;
+    top: 0; bottom: 0; left: 0;
+    z-index: 10;
+  }
+  #sidebar .logo {
+    font-family: 'Courier New', monospace;
+    font-size: 10px;
+    color: var(--cyan);
+    letter-spacing: 2px;
+    text-align: center;
+    padding: 0 12px 24px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 8px;
+  }
+  #sidebar .logo span { display: block; font-size: 16px; letter-spacing: 4px; }
+  .nav-item {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    padding: 12px 8px;
+    cursor: pointer;
+    border-left: 3px solid transparent;
+    transition: all .15s;
+    color: var(--muted);
+    font-size: 10px;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+  }
+  .nav-item .icon { font-size: 20px; }
+  .nav-item:hover { background: rgba(77,208,225,.06); color: var(--text); }
+  .nav-item.active { border-left-color: var(--cyan); color: var(--cyan); background: rgba(77,208,225,.08); }
+  #sidebar .version {
+    margin-top: auto;
+    text-align: center;
+    font-size: 10px;
+    color: var(--muted);
+    padding: 12px;
+  }
+
+  /* ── MAIN ────────────────────────────────────────────────────────── */
+  #main {
+    margin-left: var(--sidebar);
+    flex: 1;
+    padding: 28px 32px;
+    max-width: 1100px;
+  }
+  .section { display: none; }
+  .section.active { display: block; }
+
+  /* ── COMMON COMPONENTS ───────────────────────────────────────────── */
+  h1 {
+    font-size: 18px;
+    font-weight: 600;
+    color: var(--cyan);
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    margin-bottom: 4px;
+  }
+  .subtitle { color: var(--muted); font-size: 11px; margin-bottom: 28px; }
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 20px 24px;
+    margin-bottom: 20px;
+  }
+  .card-title {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 2px;
+    color: var(--muted);
+    text-transform: uppercase;
+    margin-bottom: 16px;
+  }
+  .row { display: flex; gap: 16px; align-items: flex-end; flex-wrap: wrap; margin-bottom: 12px; }
+  .field { display: flex; flex-direction: column; gap: 5px; }
+  .field label { font-size: 10px; color: var(--muted); letter-spacing: 1px; text-transform: uppercase; }
+  input[type=number], input[type=text], select {
+    background: #080d1c;
+    border: 1px solid #1e3a4a;
+    color: var(--text);
+    font-family: inherit;
+    font-size: 12px;
+    padding: 7px 10px;
+    border-radius: 4px;
+    outline: none;
+    min-width: 100px;
+  }
+  input:focus, select:focus { border-color: var(--cyan); }
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 16px;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 1px;
+    transition: opacity .15s;
+  }
+  .btn:hover { opacity: .82; }
+  .btn:active { opacity: .65; }
+  .btn-primary  { background: var(--cyan);    color: #03070f; }
+  .btn-danger   { background: var(--danger);  color: #fff; }
+  .btn-amber    { background: var(--amber);   color: #03070f; }
+  .btn-emerald  { background: var(--emerald); color: #03070f; }
+  .btn-ghost {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--muted);
+  }
+  .btn-ghost:hover { border-color: var(--cyan); color: var(--cyan); }
+  .btn-sm { padding: 5px 10px; font-size: 11px; }
+
+  /* ── STATUS BADGE ────────────────────────────────────────────────── */
+  .badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 3px;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+  }
+  .badge-ok      { background: rgba(102,187,106,.15); color: var(--emerald); border: 1px solid rgba(102,187,106,.3); }
+  .badge-warn    { background: rgba(255,183,77,.15);  color: var(--amber);   border: 1px solid rgba(255,183,77,.3); }
+  .badge-danger  { background: rgba(239,83,80,.15);   color: var(--danger);  border: 1px solid rgba(239,83,80,.3); }
+  .badge-offline { background: rgba(96,125,139,.12);  color: var(--muted);   border: 1px solid rgba(96,125,139,.2); }
+
+  /* ── PROGRESS BAR ────────────────────────────────────────────────── */
+  .bar-wrap { background: #0c1624; border-radius: 3px; height: 10px; overflow: hidden; flex: 1; min-width: 120px; }
+  .bar-fill { height: 100%; border-radius: 3px; transition: width .4s ease; }
+  .bar-hull   { background: linear-gradient(90deg, #388e3c, #66bb6a); }
+  .bar-shield { background: linear-gradient(90deg, #0288d1, #4dd0e1); }
+
+  /* ── CONNECTION STATUS ───────────────────────────────────────────── */
+  #conn-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    margin-bottom: 20px;
+  }
+  #conn-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--muted);
+    transition: background .3s;
+  }
+  #conn-dot.live { background: var(--emerald); box-shadow: 0 0 6px var(--emerald); }
+
+  /* ── DASHBOARD TILES ─────────────────────────────────────────────── */
+  .tile-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 14px; }
+  .tile {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 20px 20px 16px;
+    cursor: pointer;
+    transition: border-color .15s, background .15s;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .tile:hover { border-color: var(--cyan); background: rgba(77,208,225,.05); }
+  .tile .t-icon { font-size: 28px; }
+  .tile .t-label { font-size: 11px; font-weight: 700; letter-spacing: 2px; color: var(--cyan); text-transform: uppercase; }
+  .tile .t-desc  { font-size: 11px; color: var(--muted); line-height: 1.4; }
+  .tile .t-link  { font-size: 10px; color: var(--cyan); margin-top: 4px; }
+
+  /* ── STAT CARDS (dashboard) ──────────────────────────────────────── */
+  .stat-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 12px; margin-bottom: 24px; }
+  .stat-card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 16px;
+  }
+  .stat-card .s-label { font-size: 10px; color: var(--muted); letter-spacing: 1px; text-transform: uppercase; margin-bottom: 6px; }
+  .stat-card .s-val   { font-size: 24px; font-weight: 700; color: var(--cyan); }
+  .stat-card .s-sub   { font-size: 10px; color: var(--muted); margin-top: 2px; }
+
+  /* ── ARGUS ───────────────────────────────────────────────────────── */
+  .argus-monitor {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
+    margin-bottom: 20px;
+  }
+  @media (max-width: 700px) { .argus-monitor { grid-template-columns: 1fr; } }
+  .argus-stat { display: flex; flex-direction: column; gap: 6px; }
+  .argus-stat .lbl { font-size: 10px; letter-spacing: 1px; color: var(--muted); text-transform: uppercase; display: flex; justify-content: space-between; }
+  .argus-meta { display: flex; flex-wrap: wrap; gap: 16px; font-size: 11px; color: var(--muted); margin-top: 8px; }
+  .argus-meta span { color: var(--text); }
+
+  /* ── PLAYERS TABLE ───────────────────────────────────────────────── */
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  thead tr { border-bottom: 1px solid var(--border); }
+  th { padding: 8px 12px; text-align: left; font-size: 10px; letter-spacing: 1px; color: var(--muted); text-transform: uppercase; font-weight: 600; }
+  td { padding: 10px 12px; border-bottom: 1px solid rgba(77,208,225,.06); }
+  tr:hover td { background: rgba(77,208,225,.03); }
+  .act-row { display: flex; gap: 6px; }
+
+  /* ── AUDIT LOG ───────────────────────────────────────────────────── */
+  #audit-list { display: flex; flex-direction: column; gap: 6px; max-height: 480px; overflow-y: auto; }
+  .audit-entry {
+    display: grid;
+    grid-template-columns: 155px 180px 1fr;
+    gap: 12px;
+    align-items: center;
+    padding: 8px 12px;
+    background: rgba(8,20,40,.5);
+    border-left: 3px solid transparent;
+    border-radius: 3px;
+    font-size: 11px;
+  }
+  .audit-entry.argus  { border-left-color: var(--danger); }
+  .audit-entry.test   { border-left-color: var(--cyan); }
+  .audit-entry.player { border-left-color: var(--amber); }
+  .audit-ts    { color: var(--muted); font-family: monospace; }
+  .audit-action{ font-weight: 700; letter-spacing: 1px; text-transform: uppercase; }
+  .audit-params{ color: var(--muted); word-break: break-all; }
+
+  /* ── ANALYTICS CHARTS ────────────────────────────────────────────── */
+  .chart-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+  @media (max-width: 750px) { .chart-grid { grid-template-columns: 1fr; } }
+  .chart-wrap canvas { display: block; width: 100%; border-radius: 4px; }
+  .chart-label { font-size: 10px; letter-spacing: 1px; color: var(--muted); text-transform: uppercase; margin-bottom: 10px; }
+  .retention-row { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
+  .retention-row .r-label { width: 36px; font-size: 11px; color: var(--muted); }
+  .retention-row .r-val { width: 40px; text-align: right; font-size: 12px; font-weight: 600; color: var(--text); }
+
+  /* ── SEPARATOR / MISC ────────────────────────────────────────────── */
+  hr { border: none; border-top: 1px solid var(--border); margin: 20px 0; }
+  .tip { font-size: 11px; color: var(--muted); background: rgba(77,208,225,.06); border-left: 2px solid var(--cyan); padding: 8px 12px; border-radius: 0 4px 4px 0; margin-bottom: 16px; }
+</style>
+</head>
+<body>
+
+<!-- ══ SIDEBAR ══════════════════════════════════════════════════ -->
+<nav id="sidebar">
+  <div class="logo"><span>★ SD</span>ADMIN</div>
+  <div class="nav-item active" data-sec="dashboard"><span class="icon">📊</span>Dashboard</div>
+  <div class="nav-item" data-sec="argus"><span class="icon">⚔️</span>Argus</div>
+  <div class="nav-item" data-sec="players"><span class="icon">👥</span>Players</div>
+  <div class="nav-item" data-sec="audit"><span class="icon">📋</span>Audit</div>
+  <div class="nav-item" data-sec="analytics"><span class="icon">📈</span>Analytics</div>
+  <div class="version">v0.1.0-dev</div>
+</nav>
+
+<!-- ══ MAIN ═════════════════════════════════════════════════════ -->
+<main id="main">
+
+  <!-- ── DASHBOARD ─────────────────────────────────────────────── -->
+  <section id="s-dashboard" class="section active">
+    <h1>Dashboard</h1>
+    <p class="subtitle">Stellar Drift Admin Panel · Dev Build · Только для разработчиков</p>
+
+    <div class="stat-grid">
+      <div class="stat-card">
+        <div class="s-label">Online</div>
+        <div class="s-val" style="color:var(--emerald)">1</div>
+        <div class="s-sub">mock · live soon</div>
+      </div>
+      <div class="stat-card">
+        <div class="s-label">MAU</div>
+        <div class="s-val">1 240</div>
+        <div class="s-sub">+8.3% WoW</div>
+      </div>
+      <div class="stat-card">
+        <div class="s-label">Revenue</div>
+        <div class="s-val">$3 820</div>
+        <div class="s-sub">этот месяц</div>
+      </div>
+      <div class="stat-card">
+        <div class="s-label">Аргус</div>
+        <div class="s-val" id="dash-argus-status" style="font-size:14px;color:var(--muted)">offline</div>
+        <div class="s-sub">boss controller</div>
+      </div>
+      <div class="stat-card">
+        <div class="s-label">Audit Events</div>
+        <div class="s-val" id="dash-audit-count">0</div>
+        <div class="s-sub">в localStorage</div>
+      </div>
+    </div>
+
+    <div class="tile-grid">
+      <div class="tile" onclick="nav('argus')">
+        <div class="t-icon">⚔️</div>
+        <div class="t-label">Argus Control</div>
+        <div class="t-desc">Управление боссом Аргус: спавн, HP, способности</div>
+        <div class="t-link">→ Войти</div>
+      </div>
+      <div class="tile" onclick="nav('players')">
+        <div class="t-icon">👥</div>
+        <div class="t-label">Players</div>
+        <div class="t-desc">Бан, мут, кик, возврат средств</div>
+        <div class="t-link">→ Войти</div>
+      </div>
+      <div class="tile" onclick="nav('audit')">
+        <div class="t-icon">📋</div>
+        <div class="t-label">Audit Log</div>
+        <div class="t-desc">История всех admin-действий</div>
+        <div class="t-link">→ Войти</div>
+      </div>
+      <div class="tile" onclick="nav('analytics')">
+        <div class="t-icon">📈</div>
+        <div class="t-label">Analytics</div>
+        <div class="t-desc">MAU, ретенция, выручка — моковые данные</div>
+        <div class="t-link">→ Войти</div>
+      </div>
+      <div class="tile" onclick="window.open('index.html','_blank')">
+        <div class="t-icon">🧪</div>
+        <div class="t-label">Test Mode</div>
+        <div class="t-desc">Запуск игры с заданным профилем</div>
+        <div class="t-link">→ Открыть клиент</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── ARGUS CONTROL ──────────────────────────────────────────── -->
+  <section id="s-argus" class="section">
+    <h1>Argus Control</h1>
+    <p class="subtitle">Управление боссом Аргус в реальном времени через BroadcastChannel</p>
+
+    <!-- Connection status -->
+    <div id="conn-status">
+      <div id="conn-dot"></div>
+      <span id="conn-text">Ожидание сигнала от игры…</span>
+    </div>
+
+    <!-- Live monitor -->
+    <div class="card">
+      <div class="card-title">⚡ Live Monitor</div>
+      <div id="argus-offline-msg" class="tip">Аргус не активен. Используйте форму ниже для спавна.</div>
+      <div id="argus-live" style="display:none">
+        <div class="argus-monitor">
+          <div class="argus-stat">
+            <div class="lbl">Hull <span id="hull-pct-lbl">0%</span></div>
+            <div class="bar-wrap"><div id="hull-bar" class="bar-fill bar-hull" style="width:0%"></div></div>
+          </div>
+          <div class="argus-stat">
+            <div class="lbl">Shield <span id="shield-pct-lbl">0%</span></div>
+            <div class="bar-wrap"><div id="shield-bar" class="bar-fill bar-shield" style="width:0%"></div></div>
+          </div>
+        </div>
+        <div class="argus-meta">
+          Фаза: <span id="argus-phase">1</span> &nbsp;·&nbsp;
+          Сектор: <span id="argus-sector">—</span> &nbsp;·&nbsp;
+          Позиция: <span id="argus-pos">—</span>
+        </div>
+        <hr>
+        <div class="row" style="margin-top:12px">
+          <button class="btn btn-emerald" onclick="argusHeal(100,100)">💚 Full Heal</button>
+          <button class="btn btn-amber"   onclick="argusForceAbility('aoe')">💥 AoE Attack</button>
+          <button class="btn btn-amber"   onclick="argusForceAbility('enrage')">🔴 Force Enrage</button>
+          <button class="btn btn-ghost"   onclick="argusHeal(null,100)">🔵 Full Shield</button>
+          <button class="btn btn-danger"  onclick="argusDespawn()">✖ Despawn</button>
+        </div>
+        <div class="row" style="align-items:center;gap:10px;margin-top:8px">
+          <span style="font-size:11px;color:var(--muted)">HP %:</span>
+          <input type="number" id="heal-hull" min="0" max="100" value="100" style="width:72px">
+          <span style="font-size:11px;color:var(--muted)">Shield %:</span>
+          <input type="number" id="heal-shield" min="0" max="100" value="100" style="width:72px">
+          <button class="btn btn-ghost btn-sm" onclick="argusHealCustom()">Применить</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Spawn form -->
+    <div class="card">
+      <div class="card-title">🚀 Spawn Argus</div>
+      <div class="tip">Аргус появится в центре текущего сектора игрока. Если Аргус уже активен — будет переспавнен.</div>
+      <div class="row">
+        <div class="field">
+          <label>Уровень (1–50)</label>
+          <input type="number" id="argus-level" min="1" max="50" value="50" style="width:90px">
+        </div>
+        <button class="btn btn-primary" onclick="argusSpawn()">⚔️ SPAWN ARGUS</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── PLAYERS ────────────────────────────────────────────────── -->
+  <section id="s-players" class="section">
+    <h1>Player Admin</h1>
+    <p class="subtitle">Мок-список игроков · Действия логируются в Audit Log</p>
+    <div class="card" style="padding:0;overflow:hidden">
+      <table>
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>Игрок</th>
+            <th>Corp</th>
+            <th>Уровень</th>
+            <th>Ранг</th>
+            <th>Статус</th>
+            <th>Действия</th>
+          </tr>
+        </thead>
+        <tbody id="players-tbody"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ── AUDIT LOG ──────────────────────────────────────────────── -->
+  <section id="s-audit" class="section">
+    <h1>Audit Log</h1>
+    <p class="subtitle">Все действия администратора · Хранится в localStorage · Последние 200 событий</p>
+    <div class="row" style="margin-bottom:16px">
+      <button class="btn btn-ghost btn-sm" onclick="loadAudit()">↺ Обновить</button>
+      <button class="btn btn-danger btn-sm" onclick="clearAudit()">🗑 Очистить</button>
+    </div>
+    <div class="card" style="padding:16px">
+      <div id="audit-list"></div>
+      <div id="audit-empty" style="color:var(--muted);font-size:12px;text-align:center;padding:24px 0;display:none">
+        Лог пуст. Действия появятся здесь автоматически.
+      </div>
+    </div>
+  </section>
+
+  <!-- ── ANALYTICS ──────────────────────────────────────────────── -->
+  <section id="s-analytics" class="section">
+    <h1>Analytics</h1>
+    <p class="subtitle">Моковые данные · Интеграция с реальным бекендом планируется</p>
+
+    <div class="chart-grid">
+      <div class="card">
+        <div class="chart-label">Daily Active Users — 14 дней</div>
+        <div class="chart-wrap"><canvas id="chart-dau" height="140"></canvas></div>
+      </div>
+      <div class="card">
+        <div class="chart-label">Revenue ($) — 14 дней</div>
+        <div class="chart-wrap"><canvas id="chart-rev" height="140"></canvas></div>
+      </div>
+    </div>
+
+    <div class="chart-grid">
+      <div class="card">
+        <div class="chart-label">Retention</div>
+        <div id="retention-rows"></div>
+      </div>
+      <div class="card">
+        <div class="chart-label">Corp Distribution</div>
+        <div class="chart-wrap"><canvas id="chart-corp" height="140"></canvas></div>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<script>
+// ══ NAVIGATION ══════════════════════════════════════════════════════
+function nav(sec) {
+  document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
+  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+  document.getElementById('s-' + sec)?.classList.add('active');
+  document.querySelector(`.nav-item[data-sec="${sec}"]`)?.classList.add('active');
+  if (sec === 'audit')     loadAudit();
+  if (sec === 'analytics') renderAnalytics();
+}
+document.querySelectorAll('.nav-item').forEach(el =>
+  el.addEventListener('click', () => nav(el.dataset.sec))
+);
+
+// ══ BROADCASTCHANNEL — game ↔ admin ═════════════════════════════════
+let argusState = null;
+let ch = null;
+try {
+  ch = new BroadcastChannel('stellar-drift-admin');
+  ch.onmessage = ({ data }) => {
+    if (data.type === 'ARGUS_UPDATE') onArgusUpdate(data);
+  };
+} catch(_) {
+  document.getElementById('conn-text').textContent = 'BroadcastChannel недоступен';
+}
+
+let lastPing = 0;
+function onArgusUpdate(data) {
+  lastPing = Date.now();
+  argusState = data;
+
+  const dot  = document.getElementById('conn-dot');
+  const text = document.getElementById('conn-text');
+  dot.classList.add('live');
+  text.textContent = 'Соединение активно · ' + new Date().toLocaleTimeString();
+
+  const live    = document.getElementById('argus-live');
+  const offline = document.getElementById('argus-offline-msg');
+  if (data.alive) {
+    live.style.display = 'block';
+    offline.style.display = 'none';
+    document.getElementById('hull-bar').style.width   = data.hullPct   + '%';
+    document.getElementById('shield-bar').style.width = data.shieldPct + '%';
+    document.getElementById('hull-pct-lbl').textContent   = data.hullPct   + '%';
+    document.getElementById('shield-pct-lbl').textContent = data.shieldPct + '%';
+    document.getElementById('argus-phase').textContent  = data.phase;
+    document.getElementById('argus-sector').textContent = data.sector || '—';
+    document.getElementById('argus-pos').textContent    = `(${data.x}, ${data.y})`;
+
+    // Dashboard status
+    const ds = document.getElementById('dash-argus-status');
+    ds.textContent = `P${data.phase} · ${data.hullPct}% HP`;
+    ds.style.color = data.hullPct > 50 ? 'var(--emerald)' : data.hullPct > 20 ? 'var(--amber)' : 'var(--danger)';
+  } else {
+    live.style.display = 'none';
+    offline.style.display = 'block';
+    document.getElementById('dash-argus-status').textContent = 'offline';
+    document.getElementById('dash-argus-status').style.color = 'var(--muted)';
+  }
+
+  updateAuditCount();
+}
+
+// Detect connection loss after 5s without updates
+setInterval(() => {
+  if (lastPing > 0 && Date.now() - lastPing > 5000) {
+    document.getElementById('conn-dot').classList.remove('live');
+    document.getElementById('conn-text').textContent = 'Нет сигнала · игра закрыта или не запущена';
+  }
+}, 2000);
+
+// ══ ARGUS COMMANDS ══════════════════════════════════════════════════
+function send(msg) {
+  if (!ch) return;
+  ch.postMessage(msg);
+  auditLocal(msg.type, msg);
+}
+function argusSpawn() {
+  const level = parseInt(document.getElementById('argus-level').value) || 50;
+  send({ type: 'ARGUS_SPAWN', level });
+}
+function argusDespawn()           { send({ type: 'ARGUS_DESPAWN' }); }
+function argusHeal(hp, sh)        { send({ type: 'ARGUS_HEAL', hullPct: hp, shieldPct: sh }); }
+function argusForceAbility(ab)    { send({ type: 'ARGUS_FORCE_ABILITY', ability: ab }); }
+function argusHealCustom() {
+  const hp = parseInt(document.getElementById('heal-hull').value);
+  const sh = parseInt(document.getElementById('heal-shield').value);
+  argusHeal(hp, sh);
+}
+
+// ══ PLAYERS MOCK DATA ════════════════════════════════════════════════
+const MOCK_PLAYERS = [
+  { id: 1, name: 'VadymZ',    corp: '🟡 HELIOS', level: 42, rank: 'Капитан-лейтенант', status: 'online' },
+  { id: 2, name: 'PilotX99',  corp: '🔴 KARAX',  level: 28, rank: 'Мичман',            status: 'online' },
+  { id: 3, name: 'StarViper', corp: '🔵 TIDES',  level: 37, rank: 'Командор',          status: 'offline' },
+  { id: 4, name: 'Nullpilot', corp: 'NEUTRAL',   level: 5,  rank: 'Матрос',            status: 'banned' },
+  { id: 5, name: 'IronFleet', corp: '🟡 HELIOS', level: 50, rank: 'Гранд-Адмирал',    status: 'online' },
+  { id: 6, name: 'GhostRun',  corp: '🔴 KARAX',  level: 19, rank: 'Старшина I статьи', status: 'offline' },
+];
+
+(function buildPlayersTable() {
+  const tbody = document.getElementById('players-tbody');
+  MOCK_PLAYERS.forEach(p => {
+    const statusBadge = {
+      online:  '<span class="badge badge-ok">online</span>',
+      offline: '<span class="badge badge-offline">offline</span>',
+      banned:  '<span class="badge badge-danger">banned</span>',
+    }[p.status] || '';
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td style="color:var(--muted)">${p.id}</td>
+      <td style="font-weight:600">${p.name}</td>
+      <td style="color:var(--muted)">${p.corp}</td>
+      <td>${p.level}</td>
+      <td style="color:var(--muted);font-size:11px">${p.rank}</td>
+      <td>${statusBadge}</td>
+      <td><div class="act-row">
+        <button class="btn btn-ghost btn-sm" onclick="playerAction('ban','${p.name}')">Бан</button>
+        <button class="btn btn-ghost btn-sm" onclick="playerAction('mute','${p.name}')">Мут</button>
+        <button class="btn btn-ghost btn-sm" onclick="playerAction('kick','${p.name}')">Кик</button>
+        <button class="btn btn-amber  btn-sm" onclick="playerAction('refund','${p.name}')">Возврат</button>
+      </div></td>
+    `;
+    tbody.appendChild(tr);
+  });
+})();
+
+function playerAction(action, name) {
+  auditLocal('PLAYER_' + action.toUpperCase(), { target: name });
+  updateAuditCount();
+  if (document.getElementById('s-audit').classList.contains('active')) loadAudit();
+  alert(`[MOCK] ${action.toUpperCase()} → ${name}\nЗаписано в Audit Log.`);
+}
+
+// ══ AUDIT LOG ════════════════════════════════════════════════════════
+function auditLocal(action, params) {
+  try {
+    const log = JSON.parse(localStorage.getItem('sd_audit') || '[]');
+    log.unshift({ ts: new Date().toISOString(), action, params: { ...params, _src: 'admin.html' } });
+    if (log.length > 200) log.length = 200;
+    localStorage.setItem('sd_audit', JSON.stringify(log));
+    updateAuditCount();
+  } catch(_) {}
+}
+
+function updateAuditCount() {
+  try {
+    const log = JSON.parse(localStorage.getItem('sd_audit') || '[]');
+    document.getElementById('dash-audit-count').textContent = log.length;
+  } catch(_) {}
+}
+
+function loadAudit() {
+  const list  = document.getElementById('audit-list');
+  const empty = document.getElementById('audit-empty');
+  try {
+    const log = JSON.parse(localStorage.getItem('sd_audit') || '[]');
+    if (!log.length) { list.innerHTML = ''; empty.style.display = 'block'; return; }
+    empty.style.display = 'none';
+    list.innerHTML = log.map(e => {
+      const cat = e.action.startsWith('ARGUS')  ? 'argus'
+                : e.action.startsWith('TEST')   ? 'test'
+                : e.action.startsWith('PLAYER') ? 'player' : '';
+      const ts  = new Date(e.ts).toLocaleString('ru');
+      const par = JSON.stringify(e.params || {});
+      return `<div class="audit-entry ${cat}">
+        <span class="audit-ts">${ts}</span>
+        <span class="audit-action" style="color:${cat==='argus'?'var(--danger)':cat==='player'?'var(--amber)':'var(--cyan)'}">${e.action}</span>
+        <span class="audit-params">${par}</span>
+      </div>`;
+    }).join('');
+    updateAuditCount();
+  } catch(_) { list.innerHTML = '<div style="color:var(--danger)">Ошибка чтения localStorage</div>'; }
+}
+
+function clearAudit() {
+  if (!confirm('Очистить весь Audit Log?')) return;
+  localStorage.removeItem('sd_audit');
+  loadAudit();
+  updateAuditCount();
+}
+
+updateAuditCount();
+
+// ══ ANALYTICS ════════════════════════════════════════════════════════
+function renderAnalytics() {
+  const DAU = [820, 880, 910, 860, 950, 1020, 980, 1050, 1100, 1080, 1120, 1180, 1210, 1240];
+  const REV = [210, 195, 280, 310, 290, 420, 380, 510, 470, 490, 540, 620, 580, 640];
+  const DAYS = (() => {
+    const d = [];
+    for (let i = 13; i >= 0; i--) {
+      const dt = new Date(); dt.setDate(dt.getDate() - i);
+      d.push((dt.getMonth()+1)+'/'+dt.getDate());
+    }
+    return d;
+  })();
+
+  drawBarChart('chart-dau', DAYS, DAU, 'var(--cyan)', 'var(--cyan2)');
+  drawBarChart('chart-rev', DAYS, REV, 'var(--amber)', '#e65100');
+
+  // Retention
+  const retData = [{ label:'D1', pct:62 },{ label:'D7', pct:28 },{ label:'D14', pct:18 },{ label:'D30', pct:11 }];
+  const retDiv = document.getElementById('retention-rows');
+  retDiv.innerHTML = retData.map(r => `
+    <div class="retention-row">
+      <span class="r-label">${r.label}</span>
+      <div class="bar-wrap" style="background:#0c1624">
+        <div class="bar-fill" style="background:var(--cyan);width:${r.pct}%;height:10px;border-radius:3px;transition:width .4s"></div>
+      </div>
+      <span class="r-val">${r.pct}%</span>
+    </div>`).join('');
+
+  // Corp donut
+  drawDonutChart('chart-corp', ['HELIOS','KARAX','TIDES','NEUTRAL'], [38, 29, 25, 8], ['#ffb74d','#ef5350','#4dd0e1','#607d8b']);
+}
+
+function drawBarChart(id, labels, data, colorTop, colorBot) {
+  const canvas = document.getElementById(id);
+  if (!canvas) return;
+  const dpr = window.devicePixelRatio || 1;
+  const W = canvas.offsetWidth || 400;
+  const H = 140;
+  canvas.width  = W * dpr;
+  canvas.height = H * dpr;
+  const ctx = canvas.getContext('2d');
+  ctx.scale(dpr, dpr);
+
+  const pad = { t: 10, b: 28, l: 8, r: 8 };
+  const chartW = W - pad.l - pad.r;
+  const chartH = H - pad.t - pad.b;
+  const max   = Math.max(...data) * 1.1;
+  const n     = data.length;
+  const bw    = chartW / n * 0.6;
+  const gap   = chartW / n;
+
+  ctx.clearRect(0, 0, W, H);
+
+  // Grid lines
+  ctx.strokeStyle = 'rgba(77,208,225,.08)';
+  ctx.lineWidth = 1;
+  for (let i = 1; i <= 4; i++) {
+    const y = pad.t + chartH - (i/4) * chartH;
+    ctx.beginPath(); ctx.moveTo(pad.l, y); ctx.lineTo(W - pad.r, y); ctx.stroke();
+  }
+
+  // Bars
+  data.forEach((v, i) => {
+    const bh  = (v / max) * chartH;
+    const x   = pad.l + i * gap + (gap - bw) / 2;
+    const y   = pad.t + chartH - bh;
+    const gr  = ctx.createLinearGradient(x, y, x, y + bh);
+    gr.addColorStop(0, colorTop);
+    gr.addColorStop(1, colorBot);
+    ctx.fillStyle = gr;
+    ctx.beginPath();
+    ctx.roundRect(x, y, bw, bh, 2);
+    ctx.fill();
+  });
+
+  // X labels (every 2nd)
+  ctx.fillStyle = 'rgba(96,125,139,.8)';
+  ctx.font = `${9 * dpr / dpr}px system-ui`;
+  ctx.textAlign = 'center';
+  labels.forEach((l, i) => {
+    if (i % 2 !== 0) return;
+    ctx.fillText(l, pad.l + i * gap + gap / 2, H - 6);
+  });
+}
+
+function drawDonutChart(id, labels, data, colors) {
+  const canvas = document.getElementById(id);
+  if (!canvas) return;
+  const dpr = window.devicePixelRatio || 1;
+  const W = canvas.offsetWidth || 300;
+  const H = 140;
+  canvas.width  = W * dpr;
+  canvas.height = H * dpr;
+  const ctx = canvas.getContext('2d');
+  ctx.scale(dpr, dpr);
+  ctx.clearRect(0, 0, W, H);
+
+  const total = data.reduce((a,b) => a+b, 0);
+  const cx = W * 0.35, cy = H / 2, r = Math.min(cx, cy) - 10, inner = r * 0.55;
+  let angle = -Math.PI / 2;
+
+  data.forEach((v, i) => {
+    const slice = (v / total) * Math.PI * 2;
+    ctx.beginPath();
+    ctx.moveTo(cx, cy);
+    ctx.arc(cx, cy, r, angle, angle + slice);
+    ctx.closePath();
+    ctx.fillStyle = colors[i];
+    ctx.fill();
+    angle += slice;
+  });
+
+  // Hole
+  ctx.beginPath(); ctx.arc(cx, cy, inner, 0, Math.PI * 2);
+  ctx.fillStyle = '#080f1e'; ctx.fill();
+
+  // Center label
+  ctx.fillStyle = 'rgba(96,125,139,.9)';
+  ctx.font = '9px system-ui'; ctx.textAlign = 'center';
+  ctx.fillText('PLAYERS', cx, cy - 4);
+  ctx.fillStyle = '#cfd8dc'; ctx.font = 'bold 14px system-ui';
+  ctx.fillText(total + '%', cx, cy + 10);
+
+  // Legend
+  const lx = W * 0.68, ly0 = cy - (labels.length * 16) / 2;
+  labels.forEach((l, i) => {
+    const ly = ly0 + i * 18;
+    ctx.fillStyle = colors[i];
+    ctx.fillRect(lx, ly, 10, 10);
+    ctx.fillStyle = 'rgba(96,125,139,.9)';
+    ctx.font = '10px system-ui'; ctx.textAlign = 'left';
+    ctx.fillText(`${l}  ${data[i]}%`, lx + 14, ly + 9);
+  });
+}
+
+// Initial audit count on load
+updateAuditCount();
+</script>
+</body>
+</html>

@@ -16,6 +16,7 @@ import { calculateRating, getRank } from '../ranking.js';
 import VFXManager from '../systems/VFXManager.js';
 import MiningBase from '../entities/MiningBase.js';
 import HomeBase from '../entities/HomeBase.js';
+import ArgusController from '../systems/ArgusController.js';
 
 const PICKUP_RADIUS = 95;
 const PICKUP_TIME = 2000;
@@ -203,6 +204,10 @@ export default class GameScene extends Phaser.Scene {
     this.engineFxList = [];
     this._engineFxShipKey = null;
     this._spawnEngineFx();
+
+    // Argus boss controller — BroadcastChannel listener for admin.html commands
+    this.argusCtrl?.destroy();
+    this.argusCtrl = new ArgusController(this);
     this._targetFx = null;
 
     this.time.delayedCall(60, () => this.log(i18n.t('log.entered', { sector: SECTORS[galaxy.current].name })));
@@ -1239,6 +1244,7 @@ export default class GameScene extends Phaser.Scene {
     this.projectiles.forEach((p) => p.update(dt));
     this.updateLoot(dt); this.updateGates(dt);
     if (this.pendingGate && Phaser.Math.Distance.Between(this.player.x, this.player.y, this.pendingGate.x, this.pendingGate.y) < 60) { this.pendingGate = null; }
+    this.argusCtrl?.update(dt);
   }
   updateLoot(dt) {
     this.collectGfx.clear();
@@ -1352,5 +1358,10 @@ export default class GameScene extends Phaser.Scene {
     
     this.physics.add.collider(this.player.sprite, this.walls);
     this.mobs.forEach(m => this.physics.add.collider(m.sprite, this.walls));
+  }
+
+  shutdown() {
+    this.argusCtrl?.destroy();
+    this.argusCtrl = null;
   }
 }
