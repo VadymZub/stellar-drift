@@ -73,8 +73,7 @@ export default class HomeBase {
     if (sceneKey && gs.toggleOverlay) gs.toggleOverlay(sceneKey);
   }
 
-  // Legacy: F key opens corp scene directly (kept for backwards compatibility)
-  openInfo() { this.enterBase(); }
+  openInfo() { this.enterBase('GarageScene'); }
 
   update(dt) {
     const gs = this.scene;
