@@ -411,29 +411,14 @@ export default class HudScene extends Phaser.Scene {
     g.lineStyle(1, 0x4de1aa, 0.3);
     g.strokeCircle(pCenter.x, pCenter.y, sr * mmScale);
 
-    // Плазмит — ромб-маркер, только в радиусе сканирования
+    // Плазмит — точки, только в радиусе сканирования
     if (gs.plasmateDeposits) {
+      g.fillStyle(0xaa66ff, 0.85);
       for (const d of gs.plasmateDeposits) {
         if (!d.alive) continue;
         if (Phaser.Math.Distance.Between(px2, py2, d.x, d.y) > sr) continue;
         const p = worldToMinimap(d.x, d.y, r, ww, wh);
-        const sz = 4;
-        g.lineStyle(1.5, 0xcc88ff, 0.9);
-        g.beginPath();
-        g.moveTo(p.x,      p.y - sz);
-        g.lineTo(p.x + sz, p.y);
-        g.lineTo(p.x,      p.y + sz);
-        g.lineTo(p.x - sz, p.y);
-        g.closePath();
-        g.strokePath();
-        g.fillStyle(0x88ccff, 0.55);
-        g.beginPath();
-        g.moveTo(p.x,      p.y - sz);
-        g.lineTo(p.x + sz, p.y);
-        g.lineTo(p.x,      p.y + sz);
-        g.lineTo(p.x - sz, p.y);
-        g.closePath();
-        g.fillPath();
+        g.fillCircle(p.x, p.y, 1.8);
       }
     }
 

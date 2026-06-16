@@ -308,32 +308,39 @@ export default class GameScene extends Phaser.Scene {
     if (sec.isDungeon) return;
     const isPvp = sec.pvp === true;
     const lvl = sec.lvlMin || 1;
-
-    // Each crystal = 1 unit. Count scales with sector tier.
-    // Home: 15–25 on tier-1, +8 per tier. PvP: 6× matching home tier (map is ~4× larger).
     const tier = Math.min(4, Math.floor(lvl / 10));
-    const homeMin = 15 + tier * 8;
-    const homeMax = 25 + tier * 8;
-    const count = isPvp
-      ? Phaser.Math.Between(homeMin * 6, homeMax * 6)
-      : Phaser.Math.Between(homeMin, homeMax);
-    const respawnMs = isPvp ? 15 * 60 * 1000 : 10 * 60 * 1000;
+
+    // [ countMin, countMax, amountMin, amountMax, respawnMin (ms) ]
+    const HOME_TIERS = [
+      [15, 25, 1, 1, 10 * 60000],
+      [15, 25, 1, 2, 10 * 60000],
+      [15, 25, 2, 3, 10 * 60000],
+      [15, 25, 2, 4, 10 * 60000],
+      [15, 25, 3, 5, 10 * 60000],
+    ];
+    const PVP_TIERS = [
+      [ 70,  90, 1, 2, 12 * 60000],
+      [ 80, 100, 2, 4, 12 * 60000],
+      [ 90, 110, 3, 6, 12 * 60000],
+      [100, 120, 4, 7, 14 * 60000],
+      [100, 120, 5, 8, 16 * 60000],
+    ];
+    const [cMin, cMax, aMin, aMax, respawnMs] = isPvp ? PVP_TIERS[tier] : HOME_TIERS[tier];
+    const count = Phaser.Math.Between(cMin, cMax);
 
     const ww = this.worldWidth, wh = this.worldHeight;
+    const zone = { xMin: 200, xMax: ww - 200, yMin: 200, yMax: wh - 200 };
     for (let i = 0; i < count; i++) {
-      // Scatter randomly across whole world (no cluster zones for individual crystals)
       let x, y, tries = 0;
       do {
         x = Phaser.Math.Between(200, ww - 200);
         y = Phaser.Math.Between(200, wh - 200);
         tries++;
-      } while (tries < 30 && (
+      } while (tries < 30 &&
         isPvp && this.miningBases.some(b => Phaser.Math.Distance.Between(x, y, b.x, b.y) < 600)
-      ));
-
-      // Respawn zone = whole world so crystal reappears anywhere on the map
-      const zone = { xMin: 200, xMax: ww - 200, yMin: 200, yMax: wh - 200 };
-      this.plasmateDeposits.push(new PlasmateDeposit(this, x, y, 1, zone, respawnMs));
+      );
+      const amount = Phaser.Math.Between(aMin, aMax);
+      this.plasmateDeposits.push(new PlasmateDeposit(this, x, y, amount, zone, respawnMs));
     }
   }
 
