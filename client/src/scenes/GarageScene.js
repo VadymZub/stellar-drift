@@ -1,7 +1,8 @@
 import * as Phaser from 'https://cdn.jsdelivr.net/npm/phaser@4.1.0/dist/phaser.esm.js';
 import { COLORS, UI_RES } from '../constants.js';
 import { i18n } from '../i18n.js';
-import { itemName, itemStats, itemSellPrice, itemIconKey, SLOT_KEY, creditUpgradeCost, starUpgradeCost, modMult } from '../items.js';
+import { itemName, itemStats, itemSellPrice, itemIconKey, SLOT_KEY, creditUpgradeCost, starUpgradeCost, modMult,
+         PLASMATE_GOLD_RATE, PLASMATE_PER_SLOT, totalPlasmateInInventory, removePlasmateFromInventory } from '../items.js';
 import { SHIPS, SHIP_BY_KEY, purchaseState, shipLevelCost, SHIP_MAX_LEVEL } from '../ships.js';
 import { PERK_MAP, RARITY_COLOR, RARITY_LABEL, rollPerk, perkBonus, creditUpgCost, starUpgCost, PERK_CREDIT_COST, PERK_STAR_COST, PERK_REROLL_BASE } from '../perks.js';
 import { prerenderTex } from '../utils/prerenderTex.js';
@@ -294,6 +295,46 @@ export default class GarageScene extends Phaser.Scene {
       const SELL_H = 16, BODY_H = SZ - SELL_H;
 
       if (type === 'inventory') {
+        // Plasmate: exchange for gold instead of equip/sell
+        if (item.type === 'plasmate') {
+          const box = this.add.rectangle(sx, sy, SZ, BODY_H, 0x0a1a2a, 0.95).setOrigin(0, 0)
+            .setStrokeStyle(2, 0x44aacc, 0.8);
+          const iconK = itemIconKey(item);
+          const iconImg = iconK
+            ? this.add.image(sx + SZ / 2, sy + BODY_H / 2 - 5, prerenderTex(this, iconK, 38, 38)).setDisplaySize(38, 38).setOrigin(0.5)
+            : null;
+          const countTxt = this.add.text(sx + SZ / 2, sy + BODY_H - 10,
+            `${item.amount}/${PLASMATE_PER_SLOT}`, this.F('10px', '#88eeff')).setOrigin(0.5);
+          const canExch = item.amount >= PLASMATE_GOLD_RATE;
+          const strip = this.add.rectangle(sx, sy + BODY_H, SZ, SELL_H,
+            canExch ? 0x072030 : 0x0d1018, 0.9).setOrigin(0, 0)
+            .setStrokeStyle(1, 0x2a6888, 0.5);
+          const stripT = this.add.text(sx + SZ / 2, sy + BODY_H + SELL_H / 2,
+            canExch ? '⭐ 500→1' : '— плазмит —',
+            this.F('9px', canExch ? '#ffcc44' : '#334455')).setOrigin(0.5);
+          if (canExch) {
+            strip.setInteractive({ useHandCursor: true });
+            strip.on('pointerdown', () => {
+              const inv = gs.inventory || [];
+              const total = totalPlasmateInInventory(inv);
+              const sets  = Math.floor(total / PLASMATE_GOLD_RATE);
+              if (sets <= 0) return;
+              removePlasmateFromInventory(inv, sets * PLASMATE_GOLD_RATE);
+              gs.starGold = (gs.starGold || 0) + sets;
+              this.scene.restart();
+            });
+          }
+          const els = [box, countTxt, strip, stripT];
+          if (iconImg) els.push(iconImg);
+          container.add(els);
+          if (overflow) {
+            const dg = this.add.graphics();
+            dg.fillStyle(0xffa000, 0.85); dg.fillTriangle(sx, sy, sx + 14, sy, sx, sy + 14);
+            container.add(dg);
+          }
+          continue;
+        }
+
         // Верхняя зона: equip
         const eq = this.add.rectangle(sx, sy, SZ, BODY_H, 0x0d1e2c, 0.95).setOrigin(0, 0)
           .setStrokeStyle(2, bdrHex, 0.75).setInteractive({ useHandCursor: true });

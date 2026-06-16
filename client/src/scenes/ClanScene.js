@@ -183,12 +183,15 @@ export default class ClanScene extends Phaser.Scene {
     // "Положить из трюма" button
     const bw = 200, bh = 32;
     const cargo = this.gs.inventory || [];
-    const btnColor = cargo.length ? '#66bb6a' : '#2a4a2a';
+    const transferable = cargo.filter(i => i.type !== 'plasmate');
+    const btnColor = transferable.length ? '#66bb6a' : '#2a4a2a';
     this._makeBtn(x + w / 2 - bw / 2, y + 30, bw, bh, 'Положить из трюма',
       btnColor, 0x0a1a0e, 0x162818, () => {
-        if (!cargo.length) return;
+        if (!transferable.length) return;
         if (vaultCount >= vaultMax) return;
-        const item = cargo.shift();
+        const idx = cargo.findIndex(i => i.type !== 'plasmate');
+        if (idx < 0) return;
+        const item = cargo.splice(idx, 1)[0];
         clan.vault = clan.vault || [];
         clan.vault.push(item);
         this.scene.restart();

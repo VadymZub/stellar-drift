@@ -114,7 +114,7 @@ export default class CargoScene extends Phaser.Scene {
         // cargo: exchange strip (at base, 500+) or warehouse strip; warehouse: return strip
         const inCargo    = type === 'cargo';
         const inWarehouse = type === 'warehouse';
-        const canExchange = inCargo && gs.atBase && item.amount >= PLASMATE_GOLD_RATE;
+        const canExchange = inCargo && item.amount >= PLASMATE_GOLD_RATE;
         const hasStrip = inCargo || inWarehouse;
         const boxH = hasStrip ? BODY_H : SZ;
 
