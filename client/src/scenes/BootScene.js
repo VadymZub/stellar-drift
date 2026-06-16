@@ -117,6 +117,10 @@ export default class BootScene extends Phaser.Scene {
     for (const [key, file] of Object.entries(MOD_ICON_FILES))
       this.load.image(key, `assets/modules/${encodeURIComponent(file)}`);
 
+    // Loot and plasmate sprites
+    this.load.image('lootbox',       'assets/modules/lootbox.png');
+    this.load.image('plasmate_icon', 'assets/modules/plasmate_icon.png');
+
     // Perk images (slot perks for weapon/shield modules)
     for (const p of PERK_DEFS) this.load.image(p.key, `assets/perks/${p.imgFile}`);
 
@@ -182,8 +186,7 @@ export default class BootScene extends Phaser.Scene {
     this.makeStarTexture('stars_near', 1.0, 50);
     this.makeGlowTexture('glow', 18);      // мягкий круглый glow (шлейф, вспышки, additive)
     this.makeBoltTexture('bolt_sprite');   // вытянутая светящаяся капсула снаряда
-    this.makeLootTexture('lootbox');
-    this.makePlasmateIconTexture('plasmate_icon');
+    // lootbox and plasmate_icon loaded from assets/modules/ in preload()
 
     this.anims.create({
       key: 'plasmate_idle',
@@ -234,6 +237,11 @@ export default class BootScene extends Phaser.Scene {
                      'cargo_expand','stealth_sprint']) {
       _prepShipTex(this, `skill_${k}`, 96);
     }
+
+    // Loot drop: 1024×1536 displayed at 34×34 — pre-process to 68px (2× display height).
+    _prepShipTex(this, 'lootbox',       68);
+    // Plasmate icon: 1024×1536 displayed at 48×48 in cargo — pre-process to 96px (2× display).
+    _prepShipTex(this, 'plasmate_icon', 96);
 
     // Set LINEAR filter on all ship/mob textures (no mipmap sampling for non-POT assets).
     const LINEAR = 0;
