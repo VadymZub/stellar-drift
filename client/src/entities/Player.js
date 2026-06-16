@@ -238,6 +238,16 @@ export default class Player {
       if (s.perk.key === 'perk_quick_recovery') this.shieldRegenDelaySec = Math.max(1, this.shieldRegenDelaySec * (1 - 0.30 * (1 + pb)));
     }
 
+    // ── Ship passives (e.g. Aegis) ─────────────────────────────────────────
+    const passives = ship.passives;
+    if (passives) {
+      if (passives.shieldBonus) this.maxShield = Math.round(this.maxShield * (1 + passives.shieldBonus));
+      if (passives.shieldPerAlly) {
+        const allies = this.scene.groupSize || 0;
+        if (allies > 0) this.maxShield = Math.round(this.maxShield * (1 + passives.shieldPerAlly * allies));
+      }
+    }
+
     if (this.shield > this.maxShield) this.shield = this.maxShield;
   }
 

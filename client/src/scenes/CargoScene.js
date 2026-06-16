@@ -1,6 +1,7 @@
 import * as Phaser from 'https://cdn.jsdelivr.net/npm/phaser@4.1.0/dist/phaser.esm.js';
 import { COLORS, UI_RES } from '../constants.js';
-import { itemName, itemStats } from '../items.js';
+import { itemName, itemStats, itemIconKey } from '../items.js';
+import { prerenderTex } from '../utils/prerenderTex.js';
 import { PERK_MAP, RARITY_COLOR, perkBonus } from '../perks.js';
 
 // Трюм (хоткей C). Доступен всегда — в космосе и на базе.
@@ -11,8 +12,13 @@ export default class CargoScene extends Phaser.Scene {
   O(s, c) { return { fontFamily: 'Orbitron, sans-serif', fontSize: s, color: c, resolution: UI_RES }; }
   F(s, c) { return { fontFamily: 'Inter, sans-serif', fontSize: s, color: c, resolution: UI_RES }; }
 
-  _cargoMax() { const gs = this.gs; const sl = gs.skillLevels?.cargo_expand || 0; return 8 + sl * (sl + 1) + (gs.premium ? 8 : 0); }
-  _whMax()    { const gs = this.gs; const sl = gs.skillLevels?.cargo_expand || 0; return 8 + sl * (sl + 1) + (gs.premium ? 8 : 0); }
+  _cargoMax() {
+    const gs = this.gs; const sl = gs.skillLevels?.cargo_expand || 0;
+    const drover = gs.activeShip === 'drover' ? 2 : 0;
+    const prem   = gs.premium ? (gs.activeShip === 'drover' ? 6 : 8) : 0;
+    return 8 + drover + sl * (sl + 1) + prem;
+  }
+  _whMax() { const gs = this.gs; const sl = gs.skillLevels?.cargo_expand || 0; return 8 + sl * (sl + 1) + (gs.premium ? 8 : 0); }
 
   create() {
     this.gs = this.scene.get('GameScene');
@@ -113,21 +119,21 @@ export default class CargoScene extends Phaser.Scene {
         const stripT = this.add.text(sx + SZ / 2, sy + BODY_H + STRIP_H / 2, '→ склад',
           this.F('9px', '#4aa8cc')).setOrigin(0.5);
         strip.on('pointerdown', () => this._moveToWarehouse(item));
-        const tier = this.add.text(sx + SZ / 2, sy + BODY_H / 2 - 7, `T${item.tier}`,
-          this.O('14px', '#ffe0b2')).setOrigin(0.5);
-        const typeL = this.add.text(sx + SZ / 2, sy + BODY_H / 2 + 9,
-          item.type.slice(0, 3).toUpperCase(), this.F('10px', '#445566')).setOrigin(0.5);
-        container.add([box, strip, stripT, tier, typeL]);
+        const iconK = itemIconKey(item);
+        const iconImg = iconK
+          ? this.add.image(sx + SZ / 2, sy + BODY_H / 2, prerenderTex(this, iconK, 48, 48)).setDisplaySize(48, 48).setOrigin(0.5)
+          : this.add.text(sx + SZ / 2, sy + BODY_H / 2, `T${item.tier}`, this.O('14px', '#ffe0b2')).setOrigin(0.5);
+        container.add([box, strip, stripT, iconImg]);
       } else if (type === 'cargo_nosell') {
         const box = this.add.rectangle(sx, sy, SZ, SZ, 0x0d1e2c, 0.9).setOrigin(0, 0)
           .setStrokeStyle(1, bdrHex, 0.6).setInteractive({ useHandCursor: true });
         box.on('pointerover', (p) => this._showTooltip(p.x, p.y, item));
         box.on('pointerout',  ()  => this._hideTooltip());
-        const tier = this.add.text(sx + SZ / 2, sy + SZ / 2 - 7, `T${item.tier}`,
-          this.O('14px', '#ffe0b2')).setOrigin(0.5);
-        const typeL = this.add.text(sx + SZ / 2, sy + SZ / 2 + 9,
-          item.type.slice(0, 3).toUpperCase(), this.F('10px', '#445566')).setOrigin(0.5);
-        container.add([box, tier, typeL]);
+        const iconK = itemIconKey(item);
+        const iconImg = iconK
+          ? this.add.image(sx + SZ / 2, sy + SZ / 2, prerenderTex(this, iconK, 48, 48)).setDisplaySize(48, 48).setOrigin(0.5)
+          : this.add.text(sx + SZ / 2, sy + SZ / 2, `T${item.tier}`, this.O('14px', '#ffe0b2')).setOrigin(0.5);
+        container.add([box, iconImg]);
       } else {
         const box = this.add.rectangle(sx, sy, SZ, BODY_H, 0x0c1a10, 0.9).setOrigin(0, 0)
           .setStrokeStyle(1, bdrHex, pDef ? 0.5 : 0.22).setInteractive({ useHandCursor: true });
@@ -145,11 +151,11 @@ export default class CargoScene extends Phaser.Scene {
           gs.warehouse.splice(idx, 1); inv.push(item);
           this.scene.restart();
         });
-        const tier = this.add.text(sx + SZ / 2, sy + BODY_H / 2 - 7, `T${item.tier}`,
-          this.O('14px', '#b8e4c4')).setOrigin(0.5);
-        const typeL = this.add.text(sx + SZ / 2, sy + BODY_H / 2 + 9,
-          item.type.slice(0, 3).toUpperCase(), this.F('10px', '#2a5a38')).setOrigin(0.5);
-        container.add([box, strip, stripT, tier, typeL]);
+        const iconK = itemIconKey(item);
+        const iconImg = iconK
+          ? this.add.image(sx + SZ / 2, sy + BODY_H / 2, prerenderTex(this, iconK, 48, 48)).setDisplaySize(48, 48).setOrigin(0.5)
+          : this.add.text(sx + SZ / 2, sy + BODY_H / 2, `T${item.tier}`, this.O('14px', '#b8e4c4')).setOrigin(0.5);
+        container.add([box, strip, stripT, iconImg]);
       }
 
       if (rarHex) {

@@ -1,7 +1,7 @@
 import * as Phaser from 'https://cdn.jsdelivr.net/npm/phaser@4.1.0/dist/phaser.esm.js';
 import { COLORS, UI_RES } from '../constants.js';
 import { i18n } from '../i18n.js';
-import { itemName, itemStats, itemSellPrice, SLOT_KEY, creditUpgradeCost, starUpgradeCost, modMult } from '../items.js';
+import { itemName, itemStats, itemSellPrice, itemIconKey, SLOT_KEY, creditUpgradeCost, starUpgradeCost, modMult } from '../items.js';
 import { SHIPS, SHIP_BY_KEY, purchaseState, shipLevelCost, SHIP_MAX_LEVEL } from '../ships.js';
 import { PERK_MAP, RARITY_COLOR, RARITY_LABEL, rollPerk, perkBonus, creditUpgCost, starUpgCost, PERK_CREDIT_COST, PERK_STAR_COST, PERK_REROLL_BASE } from '../perks.js';
 import { prerenderTex } from '../utils/prerenderTex.js';
@@ -234,8 +234,13 @@ export default class GarageScene extends Phaser.Scene {
 
   // Универсальная слот-сетка: 5 колонок × N рядов, clip-маска + колесо мыши для скролла.
   // type = 'inventory' (трюм, надеть/продать) | 'warehouse' (склад, → трюм)
-  _cargoMax() { const gs = this.gs; const sl = gs.skillLevels?.cargo_expand || 0; return 8 + sl * (sl + 1) + (gs.premium ? 8 : 0); }
-  _whMax()    { const gs = this.gs; const sl = gs.skillLevels?.cargo_expand || 0; return 8 + sl * (sl + 1) + (gs.premium ? 8 : 0); }
+  _cargoMax() {
+    const gs = this.gs; const sl = gs.skillLevels?.cargo_expand || 0;
+    const drover = gs.activeShip === 'drover' ? 2 : 0;
+    const prem   = gs.premium ? (gs.activeShip === 'drover' ? 6 : 8) : 0;
+    return 8 + drover + sl * (sl + 1) + prem;
+  }
+  _whMax() { const gs = this.gs; const sl = gs.skillLevels?.cargo_expand || 0; return 8 + sl * (sl + 1) + (gs.premium ? 8 : 0); }
 
   // clipBotH: высота нижней полосы-заглушки (null = до низа панели, число = ровно столько)
   _renderSlotGrid(ax, ay, aw, ah, items, maxSlots, type, clipBotH) {
@@ -288,11 +293,11 @@ export default class GarageScene extends Phaser.Scene {
           sl.on('pointerdown', () => this.showSellConfirm(item));
         }
 
-        const tier = this.add.text(sx + SZ / 2, sy + BODY_H / 2 - 7, `T${item.tier}`,
-          this.O('14px', '#ffe0b2')).setOrigin(0.5);
-        const typeL = this.add.text(sx + SZ / 2, sy + BODY_H / 2 + 9,
-          item.type.slice(0, 3).toUpperCase(), this.F('10px', '#445566')).setOrigin(0.5);
-        container.add([eq, sl, slT, tier, typeL]);
+        const iconK = itemIconKey(item);
+        const iconImg = iconK
+          ? this.add.image(sx + SZ / 2, sy + BODY_H / 2, prerenderTex(this, iconK, 48, 48)).setDisplaySize(48, 48).setOrigin(0.5)
+          : this.add.text(sx + SZ / 2, sy + BODY_H / 2, `T${item.tier}`, this.O('14px', '#ffe0b2')).setOrigin(0.5);
+        container.add([eq, sl, slT, iconImg]);
       } else {
         // Warehouse cell
         const box = this.add.rectangle(sx, sy, SZ, BODY_H, 0x0c1a10, 0.9).setOrigin(0, 0)
@@ -311,11 +316,11 @@ export default class GarageScene extends Phaser.Scene {
           .setStrokeStyle(1, 0x2a6840, 0.4);
         const moveTxt = this.add.text(sx + SZ / 2, sy + BODY_H + SELL_H / 2, '→ трюм',
           this.F('9px', '#4a9860')).setOrigin(0.5);
-        const tier = this.add.text(sx + SZ / 2, sy + BODY_H / 2 - 7, `T${item.tier}`,
-          this.O('14px', '#b8e4c4')).setOrigin(0.5);
-        const typeL = this.add.text(sx + SZ / 2, sy + BODY_H / 2 + 9,
-          item.type.slice(0, 3).toUpperCase(), this.F('10px', '#2a5a38')).setOrigin(0.5);
-        container.add([box, moveLbl, moveTxt, tier, typeL]);
+        const iconK = itemIconKey(item);
+        const iconImg = iconK
+          ? this.add.image(sx + SZ / 2, sy + BODY_H / 2, prerenderTex(this, iconK, 48, 48)).setDisplaySize(48, 48).setOrigin(0.5)
+          : this.add.text(sx + SZ / 2, sy + BODY_H / 2, `T${item.tier}`, this.O('14px', '#b8e4c4')).setOrigin(0.5);
+        container.add([box, moveLbl, moveTxt, iconImg]);
       }
 
       // Rarity dot (top-right corner)
@@ -681,7 +686,11 @@ export default class GarageScene extends Phaser.Scene {
       const box = this.add.rectangle(sx, rowY, sz, sz, it ? 0x12222e : 0x0c1118, 0.95).setOrigin(0, 0)
         .setStrokeStyle(it ? 2 : 1, borderCol, borderAlpha);
       if (it) {
-        this.add.text(sx + sz / 2, rowY + sz / 2 - 4, `T${it.tier}`, this.O('12px', '#e8f3f5')).setOrigin(0.5);
+        const iconK = itemIconKey(it);
+        if (iconK)
+          this.add.image(sx + sz / 2, rowY + sz / 2, prerenderTex(this, iconK, 28, 28)).setDisplaySize(28, 28).setOrigin(0.5);
+        else
+          this.add.text(sx + sz / 2, rowY + sz / 2, `T${it.tier}`, this.O('11px', '#e8f3f5')).setOrigin(0.5);
         // Small rarity dot at bottom-right if has perk
         if (pDef) {
           const dg = this.add.graphics();
