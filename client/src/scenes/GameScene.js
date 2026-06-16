@@ -18,6 +18,7 @@ import VFXManager from '../systems/VFXManager.js';
 import MiningBase from '../entities/MiningBase.js';
 import HomeBase from '../entities/HomeBase.js';
 import ArgusController from '../systems/ArgusController.js';
+import { getUsername } from '../api.js';
 
 const PICKUP_RADIUS = 95;
 const PICKUP_TIME = 2000;
@@ -202,7 +203,7 @@ export default class GameScene extends Phaser.Scene {
     this._stealthEndTime   = 0;
     this._stealthOrigSpeed = 0;
 
-    this.playerName  = this.playerName  || 'Player';
+    this.playerName  = this.playerName  || getUsername();
     this.player.setNameplate(this.playerName, this.pilotRank);
     this.miningBases = [];
     this.homeBases   = [];
