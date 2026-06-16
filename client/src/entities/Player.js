@@ -197,18 +197,17 @@ export default class Player {
     }
     this.weaponDamage = Math.round(this.weaponDamage * perkDmgMult);
 
-    // ── Laser weapon properties ────────────────────────────────────────────
+    // ── Weapon accuracy + laser properties ────────────────────────────────
     const laserW = W.filter(w => w.type === 'laser');
-    this.weaponType        = laserW.length > 0 ? 'laser' : 'cannon';
-    this.weaponAccuracy    = 1.0;
-    this.weaponShieldMult  = 1.0;
-    this.weaponHullMult    = 1.0;
+    this.weaponType         = laserW.length > 0 ? 'laser' : 'cannon';
+    this.weaponAccuracy     = 0.90;  // cannon base; targeting_ai brings to 100% at lv5
+    this.weaponShieldMult   = 1.0;
+    this.weaponHullMult     = 1.0;
     this.weaponFireRateMult = 1.0;
     if (this.weaponType === 'laser') {
-      this.weaponPenetration = 0;  // laser uses shieldMult/hullMult instead
-      this.weaponAccuracy    = 0.70;
-      this.weaponShieldMult  = 0.80;
-      this.weaponHullMult    = 1.50;
+      this.weaponAccuracy   = 0.80;  // laser base; targeting_ai brings to 97% at lv5
+      this.weaponShieldMult = 0.80;
+      this.weaponHullMult   = 1.50;
       for (const w of laserW) {
         if (!w.perk) continue;
         const pb = perkBonus(w.perk);
@@ -216,6 +215,11 @@ export default class Player {
         if (w.perk.key === 'perk_laser_shredder')  this.weaponHullMult += 0.20 * (1 + pb);
         if (w.perk.key === 'perk_laser_overload')  { this.weaponAccuracy = 1.0; this.weaponFireRateMult *= 1 + 0.15 * (1 + pb); }
       }
+      // targeting_ai: +3.4%/level, laser cap 97%
+      this.weaponAccuracy = Math.min(0.97, this.weaponAccuracy + sl('targeting_ai') * 0.034);
+    } else {
+      // targeting_ai: +2%/level, cannon cap 100%
+      this.weaponAccuracy = Math.min(1.00, this.weaponAccuracy + sl('targeting_ai') * 0.02);
     }
 
     // ── Engine perk bonuses ────────────────────────────────────────────────

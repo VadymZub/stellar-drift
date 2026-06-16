@@ -33,7 +33,7 @@ const ENGINE_TIERS = {
 // Dmg = Plasma T4 × 1.32 (10% above T4 + elite ammo).
 // Drops only from Apophis (bigboss). Occupies a weapon slot.
 // Special: -20% dmg to shields, +50% dmg to bare hull, 70% base accuracy.
-const LASER_DMG = 277;
+const LASER_DMG = 252; // T4 plasma (210) × 1.20 — 20% stronger than base T4
 
 const roll = () => Phaser.Math.FloatBetween(0.85, 1.15);
 

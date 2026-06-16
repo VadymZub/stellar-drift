@@ -117,7 +117,7 @@ export default class GameScene extends Phaser.Scene {
         this.log('DEV: Argus Activated');
       });
       this.input.keyboard.on('keydown-NINE', () => {
-        const laser = { type: 'laser', tier: 4, damage: 277, penetration: 0, fireRate: 1.0, starLvl: 5 };
+        const laser = { type: 'laser', tier: 4, damage: 252, penetration: 0, fireRate: 1.0, starLvl: 5 };
         this.equipped.weapon = Array(10).fill(null).map((_, i) => i === 0 ? { ...laser } : null);
         this.player.recomputeStats();
         this.player.hull = this.player.maxHull;
@@ -770,9 +770,12 @@ export default class GameScene extends Phaser.Scene {
 
   _doSalvo(now, cd) {
     this.skillCooldowns.salvo = now + cd;
+    const isLaser = this.player.weaponType === 'laser';
+    const shots = isLaser ? 3 : 5;
+    const delay = isLaser ? 80 : 100;
     this.log('🚀 Залп!');
-    for (let i = 0; i < 5; i++) {
-      this.time.delayedCall(i * 100, () => {
+    for (let i = 0; i < shots; i++) {
+      this.time.delayedCall(i * delay, () => {
         if (this.target?.alive && this.player.alive) this.firePlayerWeapon();
       });
     }
@@ -896,6 +899,12 @@ export default class GameScene extends Phaser.Scene {
 
     const t = this.target, p = this.player;
 
+    // Accuracy miss (targeting_ai: cannon base 90% → 100% at lv5)
+    if (Math.random() >= (p.weaponAccuracy ?? 0.90)) {
+      this.muzzleFlash(p.x, p.y, 0x8fe6ff);
+      return;
+    }
+
     // Active skill multipliers
     let skillMult = 1;
     if (this._overchargeActive) { skillMult *= 2.0; this._overchargeActive = false; }
@@ -922,32 +931,45 @@ export default class GameScene extends Phaser.Scene {
     const t = this.target, p = this.player;
     if (!t?.alive || !p.alive) return;
 
+    const isOC = this._overchargeActive;
     let skillMult = 1;
-    if (this._overchargeActive) { skillMult *= 2.0; this._overchargeActive = false; }
+    if (isOC) { skillMult *= 2.0; this._overchargeActive = false; }
     if (this._berserkerBuff && this.time.now < this._berserkerBuff.endTime) skillMult *= this._berserkerBuff.mult;
 
-    const hit = Math.random() < (p.weaponAccuracy ?? 0.70);
-    const beamAlpha = hit ? 1.0 : 0.25;
-    this._laserBeam(p.x, p.y, t.x, t.y, 0xffaa00, beamAlpha);
-    this.muzzleFlash(p.x, p.y, 0xffaa00);
+    const hit    = Math.random() < (p.weaponAccuracy ?? 0.80);
+    const isCrit = hit && p.critChance > 0 && Math.random() < p.critChance;
+
+    // Beam visual: OC=thick bright-yellow, crit=medium-yellow, normal=amber, miss=dim
+    const beamColor = isOC ? 0xffcc00 : isCrit ? 0xffff44 : 0xffaa00;
+    const beamWidth = isOC ? 12 : isCrit ? 6 : 3;
+    this._laserBeam(p.x, p.y, t.x, t.y, beamColor, hit ? 1.0 : 0.25, beamWidth);
+    this.muzzleFlash(p.x, p.y, beamColor);
 
     if (!hit) return;
 
-    const dmg = Math.round(p.weaponDamage * skillMult);
+    const dmg = Math.round(p.weaponDamage * skillMult * (isCrit ? 2 : 1));
     const opts = { shieldMult: p.weaponShieldMult ?? 0.80, hullMult: p.weaponHullMult ?? 1.50 };
     const res = t.takeDamage(dmg, p.weaponPenetration, opts);
 
-    this.vfx?.play('laser_beam2', t.x, t.y, { scale: 0.13, depth: 67 });
+    this.vfx?.play('laser_beam2', t.x, t.y, { scale: isOC ? 0.22 : 0.13, depth: 67 });
     const toHull = (res.hullHit || 0) > 0;
     this.hitFlash(t.x, t.y, toHull);
     if (toHull && this._onScreen(t.x, t.y)) this.vfx?.play('hull_hit', t.x, t.y, { scale: 0.15, depth: 67 });
     this.showDamage(t.x, t.y, res);
+    if (isOC || isCrit) {
+      const label = isOC ? '⚡ УДАР!' : 'КРИТ!';
+      const clr   = isOC ? '#ffcc00' : '#ffff44';
+      const txt = this.add.text(t.x, t.y - 40, label,
+        { fontFamily: 'Orbitron', fontSize: '14px', color: clr, fontStyle: 'bold', resolution: 2 })
+        .setOrigin(0.5).setDepth(71);
+      this.tweens.add({ targets: txt, y: t.y - 80, alpha: 0, duration: 600, ease: 'Quad.easeOut', onComplete: () => txt.destroy() });
+    }
     if (res.killed) this.onMobKilled(t);
   }
 
-  _laserBeam(x1, y1, x2, y2, color, alpha) {
+  _laserBeam(x1, y1, x2, y2, color, alpha, width = 3) {
     const g = this.add.graphics().setDepth(65);
-    g.lineStyle(3, color, alpha);
+    g.lineStyle(width, color, alpha);
     g.beginPath(); g.moveTo(x1, y1); g.lineTo(x2, y2); g.strokePath();
     this.tweens.add({ targets: g, alpha: 0, duration: 160, ease: 'Expo.easeOut', onComplete: () => g.destroy() });
   }
