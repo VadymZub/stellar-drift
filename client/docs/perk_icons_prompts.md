@@ -46,10 +46,10 @@
 
 > `Sci-fi perk icon, dark circular badge with teal-cyan glowing energy ring, center shows a curved sweeping arrow indicating a sharp turn or rotation, teal energy trail forming a spiral vortex, agile motion, blue-green neon glow.`
 
-### Engine Boost / Afterburner *(rare)*
-Символ: щит с молнией (пассивный форсаж — сохранение щита при ускорении).
+### Engine Boost / Shadow Drive *(rare)*
+Перк: **+50% длительность стелса**. Символ: призрачный силуэт корабля в дымке невидимости.
 
-> `Sci-fi perk icon, dark circular badge with electric blue-violet glowing energy ring, center shows a hexagonal energy shield with a lightning bolt striking through it, shield glowing blue protecting from energy drain, electric sparks, blue-white neon energy.`
+> `Sci-fi perk icon, dark circular badge with deep purple-violet glowing energy ring, center shows a ghostly transparent spaceship silhouette fading into dark violet mist and shadow, stealth invisibility effect, purple and dark blue energy haze, mysterious shadow aura, dark background.`
 
 ---
 
