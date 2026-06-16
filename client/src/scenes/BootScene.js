@@ -180,6 +180,8 @@ export default class BootScene extends Phaser.Scene {
     this.makeGlowTexture('glow', 18);      // мягкий круглый glow (шлейф, вспышки, additive)
     this.makeBoltTexture('bolt_sprite');   // вытянутая светящаяся капсула снаряда
     this.makeLootTexture('lootbox');
+    this.makePlasmateDepositTexture('plasmate_deposit');
+    this.makePlasmateIconTexture('plasmate_icon');
 
     // Анимации взрывов — все кадры листа (28), ~28 fps ≈ 1 сек на класс.
     for (const [name] of EXP_CLASSES) {
@@ -287,6 +289,50 @@ export default class BootScene extends Phaser.Scene {
     g.fillStyle(0xffffff, 0.85); g.fillRect(13, 11, 14, 5);
     g.lineStyle(3, 0x4dd0e1, 1); g.strokeRoundedRect(5, 5, 30, 30, 6);
     g.generateTexture(key, 40, 40);
+    g.destroy();
+  }
+
+  // Plasmate deposit — cyan-purple crystal cluster (map world sprite, additive blend)
+  makePlasmateDepositTexture(key) {
+    const S = 64, g = this.make.graphics({ x: 0, y: 0 }, false);
+    const cx = S / 2, cy = S / 2;
+    // Outer soft glow
+    for (let i = 4; i >= 1; i--) {
+      g.fillStyle(0x44aaff, 0.06 * i); g.fillCircle(cx, cy, 26 + i * 3);
+    }
+    // Crystal shards (3 jagged polygons)
+    const shards = [
+      [cx, cy - 20, cx + 10, cy - 4, cx + 4,  cy + 12, cx - 4,  cy + 6],
+      [cx - 6, cy - 14, cx + 6, cy - 18, cx + 14, cy + 4,  cx,    cy + 8, cx - 10, cy],
+      [cx - 14, cy - 4, cx - 4, cy - 16, cx + 4,  cy + 2,  cx - 6, cy + 14],
+    ];
+    const colors = [0x88eeff, 0xcc88ff, 0x44ccff];
+    shards.forEach((pts, idx) => {
+      g.fillStyle(colors[idx], 0.85);
+      g.fillTriangle(pts[0], pts[1], pts[2], pts[3], pts[4], pts[5]);
+      if (pts.length > 6) g.fillTriangle(pts[0], pts[1], pts[4], pts[5], pts[6], pts[7]);
+    });
+    // Bright core
+    g.fillStyle(0xffffff, 0.9); g.fillCircle(cx, cy, 5);
+    g.fillStyle(0xaaddff, 0.7); g.fillCircle(cx, cy, 9);
+    g.generateTexture(key, S, S);
+    g.destroy();
+  }
+
+  // Plasmate cargo icon — canister with glowing crystal viewport
+  makePlasmateIconTexture(key) {
+    const S = 48, g = this.make.graphics({ x: 0, y: 0 }, false);
+    // Dark metallic body
+    g.fillStyle(0x1a2a3a, 1); g.fillRoundedRect(6, 4, 36, 40, 5);
+    g.lineStyle(2, 0x4488aa, 1); g.strokeRoundedRect(6, 4, 36, 40, 5);
+    // Accent stripe
+    g.fillStyle(0xff8800, 0.7); g.fillRect(6, 15, 36, 4);
+    // Crystal viewport
+    for (let i = 3; i >= 1; i--) { g.fillStyle(0x44aaff, 0.12 * i); g.fillCircle(24, 30, 10 + i * 2); }
+    g.fillStyle(0x88eeff, 0.85); g.fillCircle(24, 30, 9);
+    g.fillStyle(0xcc99ff, 0.7);  g.fillTriangle(24, 24, 30, 34, 18, 34);
+    g.fillStyle(0xffffff, 0.9);  g.fillCircle(22, 27, 3);
+    g.generateTexture(key, S, S);
     g.destroy();
   }
 

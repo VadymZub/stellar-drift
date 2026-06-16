@@ -128,12 +128,54 @@ export function itemSellPrice(item) { return SELL_PRICE[item.tier] || 100; }
 
 export function itemIconKey(item) {
   if (!item) return null;
-  if (item.type === 'laser')  return 'mod_laser';
+  if (item.type === 'plasmate') return 'plasmate_icon';
+  if (item.type === 'laser')   return 'mod_laser';
   const t = Math.min(item.tier || 1, 4);
   if (item.type === 'cannon') return `mod_plasma_t${t}`;
   if (item.type === 'shield') return `mod_shield_t${t}`;
   if (item.type === 'engine') return `mod_engine_t${t}`;
   return null;
+}
+
+// ── Plasmate resource ─────────────────────────────────────────────────────────
+export const PLASMATE_PER_SLOT  = 500;   // units per cargo slot
+export const PLASMATE_DAILY_MAX = 7000;  // daily collection cap
+export const PLASMATE_GOLD_RATE = 500;   // units → 1 starGold
+
+// Add amount to inventory plasmate stacks; returns leftover that didn't fit.
+export function addPlasmateToInventory(inventory, amount, maxSlots) {
+  let rem = amount;
+  for (const it of inventory) {
+    if (it.type !== 'plasmate' || it.amount >= PLASMATE_PER_SLOT) continue;
+    const space = PLASMATE_PER_SLOT - it.amount;
+    const add   = Math.min(space, rem);
+    it.amount += add;
+    rem -= add;
+    if (rem <= 0) return 0;
+  }
+  while (rem > 0 && inventory.length < maxSlots) {
+    const add = Math.min(PLASMATE_PER_SLOT, rem);
+    inventory.push({ type: 'plasmate', amount: add });
+    rem -= add;
+  }
+  return rem;
+}
+
+export function totalPlasmateInInventory(inventory) {
+  return (inventory || []).filter(i => i.type === 'plasmate').reduce((s, i) => s + i.amount, 0);
+}
+
+// Remove up to `amount` plasmate from last-to-first slots; returns actually removed.
+export function removePlasmateFromInventory(inventory, amount) {
+  let rem = amount;
+  for (let i = inventory.length - 1; i >= 0 && rem > 0; i--) {
+    if (inventory[i].type !== 'plasmate') continue;
+    const take = Math.min(inventory[i].amount, rem);
+    inventory[i].amount -= take;
+    rem -= take;
+    if (inventory[i].amount <= 0) inventory.splice(i, 1);
+  }
+  return amount - rem;
 }
 
 export function dropChance(mob) { return mob.isBoss ? 1 : 0.6; }
@@ -161,6 +203,7 @@ export function rollLootForMob(mob) {
 
 // Имя предмета (через i18n).
 export function itemName(item) {
+  if (item.type === 'plasmate') return `${i18n.t('item.plasmate')} ×${item.amount}`;
   if (item.type === 'laser') return i18n.t('item.laser');
   const key = item.type === 'cannon' ? 'item.cannon' : item.type === 'shield' ? 'item.shield' : 'item.engine';
   return `${i18n.t(key)} T${item.tier}`;

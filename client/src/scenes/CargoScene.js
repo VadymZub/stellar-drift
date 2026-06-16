@@ -1,6 +1,6 @@
 import * as Phaser from 'https://cdn.jsdelivr.net/npm/phaser@4.1.0/dist/phaser.esm.js';
 import { COLORS, UI_RES } from '../constants.js';
-import { itemName, itemStats, itemIconKey } from '../items.js';
+import { itemName, itemStats, itemIconKey, PLASMATE_PER_SLOT, PLASMATE_GOLD_RATE, removePlasmateFromInventory, totalPlasmateInInventory } from '../items.js';
 import { prerenderTex } from '../utils/prerenderTex.js';
 import { PERK_MAP, RARITY_COLOR, perkBonus } from '../perks.js';
 
@@ -108,6 +108,45 @@ export default class CargoScene extends Phaser.Scene {
       const rarHex = pDef ? RARITY_COLOR[pDef.rarity] : null;
       const bdrHex = rarHex ?? (COLORS.primary & 0xffffff);
       const STRIP_H = 16, BODY_H = SZ - STRIP_H;
+
+      // ── Plasmate stack — special rendering ─────────────────────────────
+      if (item.type === 'plasmate') {
+        const canExchange = type === 'cargo' && item.amount >= PLASMATE_GOLD_RATE;
+        const boxH = canExchange ? BODY_H : SZ;
+        const box = this.add.rectangle(sx, sy, SZ, boxH, 0x0a1a2a, 0.95).setOrigin(0, 0)
+          .setStrokeStyle(2, 0x44aacc, 0.8);
+        const iconK = itemIconKey(item);
+        const iconImg = iconK
+          ? this.add.image(sx + SZ / 2, sy + boxH / 2 - 6, prerenderTex(this, iconK, 38, 38)).setDisplaySize(38, 38).setOrigin(0.5)
+          : null;
+        const countTxt = this.add.text(sx + SZ / 2, sy + boxH - 10,
+          `${item.amount}/${PLASMATE_PER_SLOT}`, this.F('10px', '#88eeff')).setOrigin(0.5);
+        const els = [box, countTxt];
+        if (iconImg) els.push(iconImg);
+        if (canExchange) {
+          const strip = this.add.rectangle(sx, sy + BODY_H, SZ, STRIP_H, 0x072030, 0.95).setOrigin(0, 0)
+            .setStrokeStyle(1, 0x2a7888, 0.6).setInteractive({ useHandCursor: true });
+          const stripT = this.add.text(sx + SZ / 2, sy + BODY_H + STRIP_H / 2,
+            '⭐ 500→1', this.F('9px', '#ffcc44')).setOrigin(0.5);
+          strip.on('pointerdown', () => {
+            const inv = gs.inventory || [];
+            const total = totalPlasmateInInventory(inv);
+            const sets  = Math.floor(total / PLASMATE_GOLD_RATE);
+            if (sets <= 0) return;
+            removePlasmateFromInventory(inv, sets * PLASMATE_GOLD_RATE);
+            gs.starGold = (gs.starGold || 0) + sets;
+            this.scene.restart();
+          });
+          els.push(strip, stripT);
+        }
+        container.add(els);
+        if (overflow) {
+          const dg = this.add.graphics();
+          dg.fillStyle(0xffa000, 0.85); dg.fillTriangle(sx, sy, sx + 14, sy, sx, sy + 14);
+          container.add(dg);
+        }
+        continue;
+      }
 
       if (type === 'cargo') {
         const box = this.add.rectangle(sx, sy, SZ, BODY_H, 0x0d1e2c, 0.95).setOrigin(0, 0)

@@ -24,10 +24,11 @@
   "inv.title": "СКЛАД",
   "inv.count": "Предметов",
   "inv.empty": "Склад пуст — подбери лут с врагов.",
-  "item.cannon": "Плазма-пушка",
-  "item.laser":  "Лазерная пушка",
-  "item.shield": "Дефлектор",
-  "item.engine": "Двигатель",
+  "item.cannon":   "Плазма-пушка",
+  "item.laser":    "Лазерная пушка",
+  "item.shield":   "Дефлектор",
+  "item.engine":   "Двигатель",
+  "item.plasmate": "Плазмит",
   "stat.damage": "урон",
   "stat.accuracy": "точность",
   "stat.penetration": "пробитие",
@@ -169,5 +170,10 @@
   "log.levelup": "ПОВЫШЕНИЕ! Уровень пилота {lvl}",
   "log.entered": "Сектор: {sector}",
   "log.jumping": "Прыжок в сектор: {sector}…",
-  "log.jump_locked": "Джапгейт закрыт: {reason}"
+  "log.jump_locked": "Джапгейт закрыт: {reason}",
+  "log.plasmate_collected": "Плазмит +{amount} · сегодня {total}/{max}",
+  "log.plasmate_limit": "Сбор невозможен, отдохни пилот",
+  "log.plasmate_lost": "Потеряно {amount} ед. плазмита",
+  "log.plasmate_cargo_full": "Трюм полон — плазмит не помещается",
+  "cargo.exchange_plasmate": "⭐ Обменять 500 → 1 золото"
 }

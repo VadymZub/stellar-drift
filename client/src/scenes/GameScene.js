@@ -8,7 +8,8 @@ import Projectile from '../entities/Projectile.js';
 import Loot from '../entities/Loot.js';       
 import Movement from '../systems/Movement.js';
 import { EXP_CLASSES } from './BootScene.js'; 
-import { rollLootForMob, dropChance, itemName, rollStarGold, starterCannon, starterShield, rollCannon, rollShield, rollEngine, rollLaser, rollApophisLoot } from '../items.js';
+import { rollLootForMob, dropChance, itemName, rollStarGold, starterCannon, starterShield, rollCannon, rollShield, rollEngine, rollLaser, rollApophisLoot, PLASMATE_PER_SLOT, PLASMATE_DAILY_MAX, addPlasmateToInventory, totalPlasmateInInventory, removePlasmateFromInventory } from '../items.js';
+import PlasmateDeposit from '../entities/PlasmateDeposit.js';
 import { levelInfo, xpToNext, MAX_LEVEL } from '../leveling.js';
 import { SHIP_BY_KEY } from '../ships.js';    
 import { SECTORS, galaxy, neighbors, edgeDir, sectorAccess } from '../galaxy.js';
@@ -112,9 +113,18 @@ export default class GameScene extends Phaser.Scene {
     this.mobs = [];
     this.projectiles = [];
     this.loot = [];
+    this.plasmateDeposits = [];
     this.inventory = [];
     if (tp?.lootPreset) applyLootPreset(this, tp.lootPreset);
     this.warehouse = this.warehouse ?? [];
+
+    // Daily plasmate collection limit (persists across sector jumps via ??).
+    const nowMs = Date.now();
+    if (!this.plasmateDayReset || nowMs >= this.plasmateDayReset) {
+      this.plasmateToday = 0;
+      const tomorrow = new Date(); tomorrow.setHours(24, 0, 0, 0);
+      this.plasmateDayReset = tomorrow.getTime();
+    }
     this.atBase    = this.atBase    ?? false;
     this.premium   = this.premium   ?? (tp ? tp.premium : false);
     this.devMode   = DEV_MODE;
@@ -213,6 +223,7 @@ export default class GameScene extends Phaser.Scene {
     this.spawnMobs();
     this.createJumpgates();
     this.createDungeonWalls();
+    this.spawnPlasmateDeposits();
     this.setupInput();
     this.keyJ = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.J);
     this.keyCtrl = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.CTRL);
@@ -290,6 +301,86 @@ export default class GameScene extends Phaser.Scene {
     // Тонкая ограничительная линия (опционально, для стиля)
     g.lineStyle(2, 0x4dd0e1, 0.05);
     g.strokeRect(0, 0, w, h);
+  }
+
+  spawnPlasmateDeposits() {
+    const sec = SECTORS[galaxy.current];
+    // No plasmate in dungeons, boss maps, or arenas.
+    if (sec.isDungeon) return;
+    const isPvp = sec.pvp === true;
+    const cx = this.worldWidth / 2, cy = this.worldHeight / 2;
+    const count = isPvp ? Phaser.Math.Between(4, 6) : Phaser.Math.Between(3, 5);
+
+    for (let i = 0; i < count; i++) {
+      const amount = isPvp
+        ? Phaser.Math.Between(100, 300)
+        : Phaser.Math.Between(20, 40);
+
+      let x, y, tries = 0;
+      do {
+        const ang  = Phaser.Math.FloatBetween(0, Math.PI * 2);
+        const dist = Phaser.Math.FloatBetween(600, isPvp ? 2200 : 1500);
+        x = cx + Math.cos(ang) * dist;
+        y = cy + Math.sin(ang) * dist;
+        tries++;
+      } while (tries < 25 && (
+        x < 120 || y < 120 || x > this.worldWidth - 120 || y > this.worldHeight - 120 ||
+        (isPvp && this.miningBases.some(b => Phaser.Math.Distance.Between(x, y, b.x, b.y) < 700))
+      ));
+      x = Phaser.Math.Clamp(x, 120, this.worldWidth  - 120);
+      y = Phaser.Math.Clamp(y, 120, this.worldHeight - 120);
+
+      const pad = 350;
+      const zone = {
+        xMin: Phaser.Math.Clamp(x - pad, 120, this.worldWidth  - 120),
+        xMax: Phaser.Math.Clamp(x + pad, 120, this.worldWidth  - 120),
+        yMin: Phaser.Math.Clamp(y - pad, 120, this.worldHeight - 120),
+        yMax: Phaser.Math.Clamp(y + pad, 120, this.worldHeight - 120),
+      };
+      this.plasmateDeposits.push(new PlasmateDeposit(this, x, y, amount, zone));
+    }
+  }
+
+  _collectPlasmateDeposit(deposit) {
+    // Daily limit check
+    if ((this.plasmateToday || 0) >= PLASMATE_DAILY_MAX) {
+      this.log(i18n.t('log.plasmate_limit'));
+      return;
+    }
+    const canCollect = PLASMATE_DAILY_MAX - (this.plasmateToday || 0);
+    const toCollect  = Math.min(deposit.amount, canCollect);
+
+    // Cargo capacity
+    const maxSlots = this._cargoMax();
+    const leftover = addPlasmateToInventory(this.inventory, toCollect, maxSlots);
+    const collected = toCollect - leftover;
+
+    if (collected <= 0) {
+      this.log(i18n.t('log.plasmate_cargo_full'));
+      return;
+    }
+    this.plasmateToday = (this.plasmateToday || 0) + collected;
+    // Track story_supply mission progress
+    if (!this.missionProgress) this.missionProgress = {};
+    if (!this.missionProgress.story_supply_collected) this.missionProgress.story_supply_collected = 0;
+    this.missionProgress.story_supply_collected = Math.min(500,
+      this.missionProgress.story_supply_collected + collected);
+    this.log(i18n.t('log.plasmate_collected', {
+      amount: collected,
+      total:  this.plasmateToday,
+      max:    PLASMATE_DAILY_MAX,
+    }));
+    deposit.collect();
+
+    if (leftover > 0) this.log(i18n.t('log.plasmate_cargo_full'));
+    if (this.plasmateToday >= PLASMATE_DAILY_MAX) this.log(i18n.t('log.plasmate_limit'));
+  }
+
+  _cargoMax() {
+    const sl = (this.skillLevels?.cargo_expand || 0);
+    const drover = this.activeShip === 'drover' ? 2 : 0;
+    const prem   = this.premium ? (this.activeShip === 'drover' ? 6 : 8) : 0;
+    return 8 + drover + sl * (sl + 1) + prem;
   }
 
   createBaseAndSafeZone() {
@@ -668,6 +759,14 @@ export default class GameScene extends Phaser.Scene {
         if (this.player.alive && !this.jumping) this.movement.setWaypoint(box.x, box.y - 85, false);
         return;
       }
+      const deposit = this.depositAt(wx, wy);
+      if (deposit) {
+        this.cancelCollect();
+        this.collectTarget = deposit;
+        this.collectTimer = 0;
+        if (this.player.alive && !this.jumping) this.movement.setWaypoint(deposit.x, deposit.y - 85, false);
+        return;
+      }
 
       const mob = this.mobAt(wx, wy);
 
@@ -874,6 +973,10 @@ export default class GameScene extends Phaser.Scene {
     for (const l of this.loot) { if (!l.alive) continue; const d = Phaser.Math.Distance.Between(wx, wy, l.x, l.y); if (d < 40 && d < bestD) { best = l; bestD = d; } }
     return best;
   }
+  depositAt(wx, wy) {
+    for (const d of this.plasmateDeposits) { if (d.alive && Phaser.Math.Distance.Between(wx, wy, d.x, d.y) < 50) return d; }
+    return null;
+  }
   baseAt(wx, wy) {
     let best = null, bestD = Infinity;
     for (const b of this.miningBases) { const d = Phaser.Math.Distance.Between(wx, wy, b.x, b.y); if (d < 120 && d < bestD) { best = b; bestD = d; } }
@@ -1069,6 +1172,13 @@ export default class GameScene extends Phaser.Scene {
     const deathX = this.player.x, deathY = this.player.y;
     this.explosion(deathX, deathY, 1.1);
     this.log(i18n.t('log.you_died'));
+    // Lose 5% of plasmate on death
+    const totalP = totalPlasmateInInventory(this.inventory);
+    if (totalP > 0) {
+      const loss = Math.max(1, Math.floor(totalP * 0.05));
+      removePlasmateFromInventory(this.inventory, loss);
+      this.log(i18n.t('log.plasmate_lost', { amount: loss }));
+    }
     this.target = null;
     this.time.delayedCall(2000, () => this._showRepairDialog(deathX, deathY));
   }
@@ -1297,6 +1407,8 @@ export default class GameScene extends Phaser.Scene {
     this.projectiles = this.projectiles.filter((p) => !p.dead);
     this.projectiles.forEach((p) => p.update(dt));
     this.updateLoot(dt); this.updateGates(dt);
+    const now2 = this.time.now;
+    this.plasmateDeposits.forEach(d => d.update(now2));
     if (this.pendingGate && Phaser.Math.Distance.Between(this.player.x, this.player.y, this.pendingGate.x, this.pendingGate.y) < 60) { this.pendingGate = null; }
     this.argusCtrl?.update(dt);
   }
@@ -1319,11 +1431,16 @@ export default class GameScene extends Phaser.Scene {
       this.collectGfx.strokeCircle(target.x, target.y, 45 * (1 - frac));
       
       if (frac >= 1) {
-        const item = target.item; 
-        this.inventory.push(item); 
-        this.log(i18n.t('log.loot_pickup', { item: itemName(item) }));
-        target.collect(); 
-        this.cancelCollect();
+        if (target.isPlasmate) {
+          this._collectPlasmateDeposit(target);
+          this.cancelCollect();
+        } else {
+          const item = target.item;
+          this.inventory.push(item);
+          this.log(i18n.t('log.loot_pickup', { item: itemName(item) }));
+          target.collect();
+          this.cancelCollect();
+        }
       }
     } else {
       // Пока летим или если отлетели — таймер сброшен, но цель НЕ теряем

@@ -1,6 +1,7 @@
 import * as Phaser from 'https://cdn.jsdelivr.net/npm/phaser@4.1.0/dist/phaser.esm.js';
 import { COLORS, UI_RES } from '../constants.js';
 import { prerenderTex } from '../utils/prerenderTex.js';
+import { totalPlasmateInInventory, removePlasmateFromInventory } from '../items.js';
 
 // MVP hardcoded missions — 3 daily + 2 story
 const MISSIONS = [
@@ -85,6 +86,11 @@ export default class MissionsScene extends Phaser.Scene {
   create() {
     this.gs = this.scene.get('GameScene');
     const gs = this.gs;
+    // Sync story_supply progress from persistent GameScene state
+    const supplyMission = MISSIONS.find(m => m.id === 'story_supply');
+    if (supplyMission && gs.missionProgress?.story_supply_collected != null) {
+      supplyMission.objectives[0].current = gs.missionProgress.story_supply_collected;
+    }
     const W  = this.scale.width, H = this.scale.height;
 
     const _bgMiss = this.add.image(W / 2, H / 2, 'bg_missions');
@@ -271,6 +277,62 @@ export default class MissionsScene extends Phaser.Scene {
       this.add.text(x + 22 + i * 168, rewY + 26, ri.label,
         this.O('16px', ri.color)).setOrigin(0, 0);
     });
+
+    // Deliver cargo button for story_supply
+    if (mission.id === 'story_supply' && mission.status === 'active') {
+      const obj0 = mission.objectives[0], obj1 = mission.objectives[1];
+      const gs = this.gs;
+      const plasmateCount = totalPlasmateInInventory(gs.inventory);
+      const canDeliver = obj0.current >= obj0.total && obj1.current < obj1.total
+                      && gs.atBase && plasmateCount >= 500;
+      const deliverY = y + h - 100;
+
+      if (obj0.current >= obj0.total && obj1.current < obj1.total) {
+        const bw = 224, bh = 41;
+        const bx = x + 22, by2 = deliverY;
+        const btnBg2 = this.add.graphics();
+        const bgColor = canDeliver ? 0x0a2818 : 0x0a1420;
+        const borderColor = canDeliver ? COLORS.emerald : 0x1a3040;
+        btnBg2.fillStyle(bgColor, 0.95); btnBg2.fillRoundedRect(bx, by2, bw, bh, 5);
+        btnBg2.lineStyle(2, borderColor, 0.8); btnBg2.strokeRoundedRect(bx, by2, bw, bh, 5);
+
+        const lblColor = canDeliver ? '#66bb6a' : '#2a5060';
+        this.add.text(bx + bw / 2, by2 + bh / 2, 'СДАТЬ ГРУЗ (−500 плазмита)',
+          this.O('13px', lblColor)).setOrigin(0.5);
+
+        if (canDeliver) {
+          const btn2 = this.add.rectangle(bx + bw / 2, by2 + bh / 2, bw, bh, 0, 0)
+            .setInteractive({ useHandCursor: true });
+          btn2.on('pointerover', () => {
+            btnBg2.clear();
+            btnBg2.fillStyle(0x143820, 0.98); btnBg2.fillRoundedRect(bx, by2, bw, bh, 5);
+            btnBg2.lineStyle(2, COLORS.emerald, 1); btnBg2.strokeRoundedRect(bx, by2, bw, bh, 5);
+          });
+          btn2.on('pointerout', () => {
+            btnBg2.clear();
+            btnBg2.fillStyle(bgColor, 0.95); btnBg2.fillRoundedRect(bx, by2, bw, bh, 5);
+            btnBg2.lineStyle(2, borderColor, 0.8); btnBg2.strokeRoundedRect(bx, by2, bw, bh, 5);
+          });
+          btn2.on('pointerdown', () => {
+            removePlasmateFromInventory(gs.inventory, 500);
+            obj1.current = 1;
+            mission.status = 'completed';
+            gs.credits += mission.rewards.credits;
+            gs.pilotXp += mission.rewards.xp;
+            if (mission.rewards.stars > 0) gs.starGold += mission.rewards.stars;
+            gs.log(`Миссия завершена: ${mission.title}`);
+            gs.log(`+${mission.rewards.credits} кр · +${mission.rewards.xp} XP · +${mission.rewards.stars} ★`);
+            this.scene.restart();
+          });
+        } else if (!gs.atBase) {
+          this.add.text(bx + bw + 12, by2 + bh / 2, 'только на базе',
+            this.F('12px', '#2a4050')).setOrigin(0, 0.5);
+        } else if (plasmateCount < 500) {
+          this.add.text(bx + bw + 12, by2 + bh / 2, `плазмит: ${plasmateCount}/500`,
+            this.F('12px', '#2a4050')).setOrigin(0, 0.5);
+        }
+      }
+    }
 
     // Accept/Track button
     if (mission.status !== 'completed') {
