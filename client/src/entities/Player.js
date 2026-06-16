@@ -277,8 +277,8 @@ export default class Player {
     if (!ignoreEvasion) {
       const body = this.sprite?.body;
       const spd = body ? Math.sqrt(body.velocity.x * body.velocity.x + body.velocity.y * body.velocity.y) : 0;
-      const movEvasion = Math.min(0.20, spd / 1500);
-      const totalEvasion = Math.min(0.35, (this.evasion ?? 0) + movEvasion);
+      const movEvasion = Math.min(0.12, spd / 1500);
+      const totalEvasion = Math.min(0.30, (this.evasion ?? 0) + movEvasion);
       if (totalEvasion > 0 && Phaser.Math.FloatBetween(0, 1) < totalEvasion) {
         return { shieldHit: 0, hullHit: 0, brokeShield: false, dodged: true };
       }

@@ -1115,9 +1115,12 @@ export default class GameScene extends Phaser.Scene {
   }
   fireMobWeapon(mob, tx, ty) {
     const pb = this.player?.sprite?.body;
-    const aim = _leadTarget(mob.x, mob.y, tx, ty,
+    const full = _leadTarget(mob.x, mob.y, tx, ty,
       pb?.velocity?.x ?? 0, pb?.velocity?.y ?? 0,
       PROJECTILE.speed);
+    // Partial lead (0.65): мобы прицеливаются не идеально — виляние помогает, но не обнуляет точность
+    const LEAD = 0.65;
+    const aim = { x: tx + (full.x - tx) * LEAD, y: ty + (full.y - ty) * LEAD };
     this.projectiles.push(new Projectile(this, 'mob', mob.x, mob.y, aim.x, aim.y, this.player, mob.damage, 0.05, PROJECTILE.mobColor));
     this.muzzleFlash(mob.x, mob.y, 0xff8a7a);
   }
