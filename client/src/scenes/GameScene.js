@@ -18,7 +18,7 @@ import VFXManager from '../systems/VFXManager.js';
 import MiningBase from '../entities/MiningBase.js';
 import HomeBase from '../entities/HomeBase.js';
 import ArgusController from '../systems/ArgusController.js';
-import { getUsername } from '../api.js';
+import { getUsername, getToken, apiPut, apiGet } from '../api.js';
 
 const PICKUP_RADIUS = 95;
 const PICKUP_TIME = 2000;
@@ -70,6 +70,12 @@ export default class GameScene extends Phaser.Scene {
   constructor() { super('GameScene'); }
 
   create(data) {
+    // Apply persisted player state on first session start (not on sector restarts)
+    if (window.PLAYER_STATE) {
+      this._applyLoadedState(window.PLAYER_STATE);
+      window.PLAYER_STATE = null;
+    }
+
     const tp  = window.TEST_PROFILE ?? null;
     const sec = SECTORS[galaxy.current];
     const isPvp = sec.pvp === true;
@@ -115,7 +121,7 @@ export default class GameScene extends Phaser.Scene {
     this.projectiles = [];
     this.loot = [];
     this.plasmateDeposits = [];
-    this.inventory = [];
+    this.inventory = this.inventory || [];
     if (tp?.lootPreset) applyLootPreset(this, tp.lootPreset);
     this.warehouse = this.warehouse ?? [];
 
@@ -1430,6 +1436,12 @@ export default class GameScene extends Phaser.Scene {
       this._adminBroadcastGameState();
     }
 
+    this._saveTimer = (this._saveTimer || 0) + dt;
+    if (this._saveTimer >= 60) {
+      this._saveTimer = 0;
+      this._saveState();
+    }
+
     this._updateCursor();
   }
 
@@ -1610,10 +1622,63 @@ export default class GameScene extends Phaser.Scene {
   }
 
   shutdown() {
+    this._saveState();
     this.argusCtrl?.destroy();
     this.argusCtrl = null;
     this._adminCh?.postMessage({ type: 'GAME_STATE', alive: false, playerName: this.playerName ?? 'Player' });
     this._adminCh?.close();
     this._adminCh = null;
+  }
+
+  // ── Persistence ───────────────────────────────────────────────────
+
+  _serializeState() {
+    return {
+      playerName:          this.playerName,
+      pilotXp:             this.pilotXp,
+      pilotHonor:          this.pilotHonor,
+      credits:             this.credits,
+      starGold:            this.starGold,
+      corpRep:             this.corpRep,
+      seasonWon:           this.seasonWon,
+      premium:             this.premium,
+      activeShip:          this.activeShip,
+      ownedShips:          [...(this.ownedShips || [])],
+      shipLevels:          this.shipLevels  || {},
+      equipped:            this.equipped    || {},
+      inventory:           this.inventory   || [],
+      warehouse:           this.warehouse   || [],
+      skillLevels:         this.skillLevels || {},
+      actionBar:           this.actionBar   || [],
+      respeckCount:        this.respeckCount        || 0,
+      skillAchievementSP:  this.skillAchievementSP  || 0,
+    };
+  }
+
+  _applyLoadedState(s) {
+    if (!s || !Object.keys(s).length) return;
+    if (s.playerName         != null) this.playerName         = s.playerName;
+    if (s.pilotXp            != null) this.pilotXp            = s.pilotXp;
+    if (s.pilotHonor         != null) this.pilotHonor         = s.pilotHonor;
+    if (s.credits            != null) this.credits            = s.credits;
+    if (s.starGold           != null) this.starGold           = s.starGold;
+    if (s.corpRep            != null) this.corpRep            = s.corpRep;
+    if (s.seasonWon          != null) this.seasonWon          = s.seasonWon;
+    if (s.premium            != null) this.premium            = s.premium;
+    if (s.activeShip         != null) this.activeShip         = s.activeShip;
+    if (s.ownedShips         != null) this.ownedShips         = new Set(s.ownedShips);
+    if (s.shipLevels         != null) this.shipLevels         = s.shipLevels;
+    if (s.equipped           != null) this.equipped           = s.equipped;
+    if (s.inventory          != null) this.inventory          = s.inventory;
+    if (s.warehouse          != null) this.warehouse          = s.warehouse;
+    if (s.skillLevels        != null) this.skillLevels        = s.skillLevels;
+    if (s.actionBar          != null) this.actionBar          = s.actionBar;
+    if (s.respeckCount       != null) this.respeckCount       = s.respeckCount;
+    if (s.skillAchievementSP != null) this.skillAchievementSP = s.skillAchievementSP;
+  }
+
+  _saveState() {
+    if (!getToken()) return;
+    apiPut('/player/state', this._serializeState()).catch(() => {});
   }
 }

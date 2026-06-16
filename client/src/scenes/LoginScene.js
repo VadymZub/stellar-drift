@@ -1,7 +1,7 @@
 import * as Phaser from 'https://cdn.jsdelivr.net/npm/phaser@4.1.0/dist/phaser.esm.js';
 import { COLORS, UI_RES } from '../constants.js';
 import { i18n } from '../i18n.js';
-import { apiPost, setSession, getToken, getUsername } from '../api.js';
+import { apiPost, apiGet, setSession, getToken, getUsername } from '../api.js';
 
 const DEV_MODE = true;
 
@@ -135,6 +135,15 @@ export default class LoginScene extends Phaser.Scene {
         const endpoint = mode === 'login' ? '/auth/login' : '/auth/register';
         const data = await apiPost(endpoint, { username, password });
         setSession(data.access_token, data.username);
+
+        // Preload player state so GameScene can apply it synchronously
+        try {
+          const r = await apiGet('/player/state');
+          window.PLAYER_STATE = r.state || {};
+        } catch (_) {
+          window.PLAYER_STATE = {};
+        }
+
         this._removeOverlay();
         this.scene.start('TestProfileScene');
       } catch (e) {
