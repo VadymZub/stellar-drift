@@ -783,7 +783,7 @@ export default class GameScene extends Phaser.Scene {
           const abStartX = Math.round((this.scale.width - (AB_N * AB_SW + (AB_N - 1) * AB_GAP)) / 2);
           const slotI = Math.floor((pointer.x - abStartX) / (AB_SW + AB_GAP));
           if (slotI >= 0 && slotI < AB_N) {
-            if (pointer.button !== 2) this._activateSkillSlot(slotI); // right-click handled by HudScene
+            if (pointer.button !== 2 && !this.scene.get('HudScene')?._barEditMode) this._activateSkillSlot(slotI);
             return;
           }
         }

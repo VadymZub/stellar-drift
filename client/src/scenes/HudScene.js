@@ -88,6 +88,9 @@ export default class HudScene extends Phaser.Scene {
     const startX = Math.round((W - (N * SW + (N - 1) * GAP)) / 2);
     const barY   = H - SH - 10;
 
+    this._barEditMode  = false;
+    this._barPickedIdx = null;
+
     this._abSlots = Array.from({ length: N }, (_, i) => {
       const sx = startX + i * (SW + GAP);
 
@@ -97,18 +100,39 @@ export default class HudScene extends Phaser.Scene {
       bg.lineStyle(1, 0x1e4060, 1);
       bg.strokeRoundedRect(sx, barY, SW, SH, 5);
 
-      // Invisible hit zone for right-click removal
+      // Hit zone handles right-click (remove) and edit-mode pick/swap
       const hitZone = this.add.rectangle(sx + SW / 2, barY + SH / 2, SW, SH)
         .setInteractive({ useHandCursor: false }).setDepth(106).setAlpha(0.001);
       hitZone.on('pointerdown', (p) => {
-        if (p.button !== 2) return; // right-click only
         const gs = this.gs;
-        const bar = gs.actionBar ? [...gs.actionBar] : Array(10).fill(null);
-        if (!bar[i]) return;
-        bar[i] = null;
-        gs.actionBar = bar;
-        gs._saveState?.();
-        this._rebuildActionBarIcons();
+        if (p.button === 2) {
+          // Right-click: remove (only outside edit mode)
+          if (this._barEditMode) return;
+          const bar = gs.actionBar ? [...gs.actionBar] : Array(10).fill(null);
+          if (!bar[i]) return;
+          bar[i] = null;
+          gs.actionBar = bar;
+          gs._saveState?.();
+          this._rebuildActionBarIcons();
+          return;
+        }
+        if (!this._barEditMode) return;
+        // Edit mode: pick / swap
+        if (this._barPickedIdx === null) {
+          this._barPickedIdx = i;
+          this._setBarPickHighlight(i, true);
+        } else if (this._barPickedIdx === i) {
+          this._setBarPickHighlight(i, false);
+          this._barPickedIdx = null;
+        } else {
+          const bar = [...(gs.actionBar || Array(10).fill(null))];
+          [bar[i], bar[this._barPickedIdx]] = [bar[this._barPickedIdx], bar[i]];
+          gs.actionBar = bar;
+          gs._saveState?.();
+          this._setBarPickHighlight(this._barPickedIdx, false);
+          this._barPickedIdx = null;
+          this._rebuildActionBarIcons();
+        }
       });
 
       const cdGfx = this.add.graphics().setDepth(103);
@@ -117,9 +141,48 @@ export default class HudScene extends Phaser.Scene {
       const cdStyle = { fontFamily: 'Orbitron, sans-serif', fontSize: '12px', color: '#ffffff', resolution: UI_RES };
       const cdTxt = this.add.text(sx + SW / 2, barY + SH / 2, '', cdStyle).setOrigin(0.5).setDepth(104);
 
-      return { sx, sy: barY, SW, SH, bg, cdGfx, hk, cdTxt, iconImg: null, _key: null };
+      return { sx, sy: barY, SW, SH, bg, cdGfx, hk, cdTxt, iconImg: null, _key: null, _pickGfx: null };
     });
+
+    // Edit mode toggle button — right of bar
+    const ebX = startX + N * (SW + GAP) + 6;
+    const ebW = 30, ebH = 30;
+    this._editBtn = this.add.rectangle(ebX, barY + (SH - ebH) / 2, ebW, ebH, 0x0a1828, 0.88)
+      .setOrigin(0, 0).setStrokeStyle(1, 0x2a4060).setInteractive({ useHandCursor: true }).setDepth(105);
+    this._editBtnTxt = this.add.text(ebX + ebW / 2, barY + SH / 2, '↔',
+      { fontFamily: 'Inter, sans-serif', fontSize: '17px', color: '#3a5a70', resolution: UI_RES })
+      .setOrigin(0.5).setDepth(106);
+    this._editBtn.on('pointerover', () => { if (!this._barEditMode) this._editBtn.setFillStyle(0x142030, 0.95); });
+    this._editBtn.on('pointerout',  () => { if (!this._barEditMode) this._editBtn.setFillStyle(0x0a1828, 0.88); });
+    this._editBtn.on('pointerdown', () => this._toggleBarEditMode());
+
     this._rebuildActionBarIcons();
+  }
+
+  _toggleBarEditMode() {
+    this._barEditMode = !this._barEditMode;
+    if (!this._barEditMode && this._barPickedIdx !== null) {
+      this._setBarPickHighlight(this._barPickedIdx, false);
+      this._barPickedIdx = null;
+    }
+    this._editBtn.setFillStyle(this._barEditMode ? 0x251000 : 0x0a1828, this._barEditMode ? 0.95 : 0.88);
+    this._editBtnTxt.setColor(this._barEditMode ? '#ffb74d' : '#3a5a70');
+    this._editBtn.setStrokeStyle(1, this._barEditMode ? 0xffb74d : 0x2a4060);
+  }
+
+  _setBarPickHighlight(idx, on) {
+    const slot = this._abSlots?.[idx];
+    if (!slot) return;
+    slot._pickGfx?.destroy();
+    slot._pickGfx = null;
+    if (on) {
+      slot._pickGfx = this.add.graphics().setDepth(108);
+      slot._pickGfx.lineStyle(2.5, 0xffb74d, 1);
+      slot._pickGfx.strokeRoundedRect(slot.sx, slot.sy, slot.SW, slot.SH, 5);
+      slot.iconImg?.setAlpha(0.45);
+    } else {
+      slot.iconImg?.setAlpha(1.0);
+    }
   }
 
   _rebuildActionBarIcons() {
@@ -129,6 +192,7 @@ export default class HudScene extends Phaser.Scene {
       const key = (gs.actionBar || [])[i] || null;
       slot._key = key;
       if (slot.iconImg) { slot.iconImg.destroy(); slot.iconImg = null; }
+      if (slot._pickGfx) { slot._pickGfx.destroy(); slot._pickGfx = null; }
       if (!key) return;
       const texKey = key.startsWith('use:') ? `consumable_${key.slice(4)}` : `skill_${key}`;
       if (!this.textures.exists(texKey)) return;
