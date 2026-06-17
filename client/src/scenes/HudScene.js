@@ -101,13 +101,13 @@ export default class HudScene extends Phaser.Scene {
       bg.lineStyle(1, 0x1e4060, 1);
       bg.strokeRoundedRect(sx, barY, SW, SH, 5);
 
-      // Hit zone handles right-click (remove) and edit-mode pick/swap
+      // Hit zone: ЛКМ = активация / ПКМ = удалить / режим ↔ = перестановка
       const hitZone = this.add.rectangle(sx + SW / 2, barY + SH / 2, SW, SH)
-        .setInteractive({ useHandCursor: false }).setDepth(106).setAlpha(0.001);
+        .setInteractive({ useHandCursor: true }).setDepth(106).setAlpha(0.001);
       hitZone.on('pointerdown', (p) => {
         const gs = this.gs;
         if (p.button === 2) {
-          // Right-click: remove (only outside edit mode)
+          // ПКМ: удалить слот (только вне режима редактирования)
           if (this._barEditMode) return;
           const bar = gs.actionBar ? [...gs.actionBar] : Array(10).fill(null);
           if (!bar[i]) return;
@@ -117,8 +117,12 @@ export default class HudScene extends Phaser.Scene {
           this._rebuildActionBarIcons();
           return;
         }
-        if (!this._barEditMode) return;
-        // Edit mode: pick / swap
+        if (!this._barEditMode) {
+          // ЛКМ: активировать скилл / расходник
+          if (!gs.atBase) gs._activateSkillSlot(i);
+          return;
+        }
+        // Режим ↔: перестановка слотов
         if (this._barPickedIdx === null) {
           this._barPickedIdx = i;
           this._setBarPickHighlight(i, true);

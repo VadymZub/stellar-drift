@@ -778,20 +778,6 @@ export default class GameScene extends Phaser.Scene {
       if (this.scene.isActive('GarageScene') || this.scene.isActive('CargoScene') || this.scene.isActive('MapScene') || this.scene.isActive('BaseMenuScene') || this.scene.isActive('CorpScene') || this.scene.isActive('SkillScene') || this.scene.isActive('ClanScene') || this.scene.isActive('MissionsScene') || this.scene.isActive('ShopScene')) return;
       if (this.atBase) return;
 
-      // Action bar click (physical canvas coords, SH=52 GAP=4 N=10)
-      {
-        const AB_SH = 52, AB_SW = 52, AB_GAP = 4, AB_N = 10;
-        const abBarY = this.scale.height - AB_SH - 10;
-        if (pointer.y >= abBarY) {
-          const abStartX = Math.round((this.scale.width - (AB_N * AB_SW + (AB_N - 1) * AB_GAP)) / 2);
-          const slotI = Math.floor((pointer.x - abStartX) / (AB_SW + AB_GAP));
-          if (slotI >= 0 && slotI < AB_N) {
-            if (pointer.button !== 2 && !this.scene.get('HudScene')?._barEditMode) this._activateSkillSlot(slotI);
-            return;
-          }
-        }
-      }
-
       const now = this.time.now;
       const isDouble = (now - lastClickTime < 350);
       lastClickTime = now;
