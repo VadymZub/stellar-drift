@@ -97,6 +97,20 @@ export default class HudScene extends Phaser.Scene {
       bg.lineStyle(1, 0x1e4060, 1);
       bg.strokeRoundedRect(sx, barY, SW, SH, 5);
 
+      // Invisible hit zone for right-click removal
+      const hitZone = this.add.rectangle(sx + SW / 2, barY + SH / 2, SW, SH)
+        .setInteractive({ useHandCursor: false }).setDepth(106).setAlpha(0.001);
+      hitZone.on('pointerdown', (p) => {
+        if (p.button !== 2) return; // right-click only
+        const gs = this.gs;
+        const bar = gs.actionBar ? [...gs.actionBar] : Array(10).fill(null);
+        if (!bar[i]) return;
+        bar[i] = null;
+        gs.actionBar = bar;
+        gs._saveState?.();
+        this._rebuildActionBarIcons();
+      });
+
       const cdGfx = this.add.graphics().setDepth(103);
       const hkStyle = { fontFamily: 'Inter, sans-serif', fontSize: '9px', color: '#4a6680', resolution: UI_RES };
       const hk = this.add.text(sx + 3, barY + 2, i < 9 ? `${i + 1}` : '0', hkStyle).setDepth(104);

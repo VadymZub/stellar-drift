@@ -128,13 +128,13 @@ export function itemSellPrice(item) { return SELL_PRICE[item.tier] || 100; }
 
 // ── Consumables & Materials ───────────────────────────────────────────────────
 export const CONSUMABLES = {
-  repair_pack:     { category: 'consumable', maxPerSlot: 20, canBuy: true,  price: 3500 },
-  speed_boost:     { category: 'consumable', maxPerSlot: 20, canBuy: true,  price: 2800 },
-  scanner_pulse:   { category: 'consumable', maxPerSlot: 20, canBuy: true,  price: 1800 },
-  emergency_warp:  { category: 'consumable', maxPerSlot: 10, canBuy: true,  price: 5000 },
-  biomech_core:    { category: 'material',   maxPerSlot: 5,  canBuy: false, price: 0    },
-  quantum_crystal: { category: 'material',   maxPerSlot: 5,  canBuy: false, price: 0    },
-  plasma_coil:     { category: 'material',   maxPerSlot: 5,  canBuy: false, price: 0    },
+  repair_pack:     { category: 'consumable', maxPerSlot: 100, canBuy: true,  price: 3500, sell: 350  },
+  speed_boost:     { category: 'consumable', maxPerSlot: 100, canBuy: true,  price: 2800, sell: 280  },
+  scanner_pulse:   { category: 'consumable', maxPerSlot: 100, canBuy: true,  price: 1800, sell: 180  },
+  emergency_warp:  { category: 'consumable', maxPerSlot:  50, canBuy: true,  price: 5000, sell: 500  },
+  biomech_core:    { category: 'material',   maxPerSlot:   5, canBuy: false, price: 0,    sell: 0    },
+  quantum_crystal: { category: 'material',   maxPerSlot:   5, canBuy: false, price: 0,    sell: 0    },
+  plasma_coil:     { category: 'material',   maxPerSlot:   5, canBuy: false, price: 0,    sell: 0    },
 };
 
 export function addConsumableToInventory(inventory, type, amount, maxSlots) {
@@ -275,6 +275,7 @@ export function itemName(item) {
 
 // Строка статов для UI. Эффективные значения учитывают кредитный апгрейд (modMult).
 export function itemStats(item) {
+  if (!item || item.type === 'plasmate' || CONSUMABLES[item.type]) return null;
   const k = modMult(item);
   const up = (item.creditLvl || 0) > 0 ? `   ·   ↑${item.creditLvl}` : '';
   if (item.type === 'laser') {

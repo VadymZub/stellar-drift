@@ -195,54 +195,63 @@ export default class CargoScene extends Phaser.Scene {
       if (CONSUMABLES[item.type]) {
         const def = CONSUMABLES[item.type];
         const isConsumable = def.category === 'consumable';
-        const inCargo = type === 'cargo' || type === 'cargo_nosell';
-        const inWarehouse = type === 'warehouse';
 
-        let stripLabel = null, stripColor, stripBg, stripAction;
-        if (isConsumable && inCargo) {
+        // Build strip list depending on context
+        // Each entry: { label, color, bg, h, action }
+        const S = 14; // mini-strip height (two-strip mode)
+        const strips = [];
+
+        if (type === 'cargo' && isConsumable) {
+          // At base: → склад  +  💰 продать
+          strips.push({ label: '→ склад',  color: '#4aa8cc', bg: 0x071828, h: S,
+            action: () => this._moveToWarehouse(item) });
+          strips.push({ label: `💰 продать ×${item.amount}`, color: '#81c784', bg: 0x071808, h: S,
+            action: () => this._sellConsumable(item) });
+        } else if (type === 'cargo' && !isConsumable) {
+          strips.push({ label: '→ склад', color: '#4aa8cc', bg: 0x071828, h: STRIP_H,
+            action: () => this._moveToWarehouse(item) });
+        } else if (type === 'cargo_nosell' && isConsumable) {
           const barKey = `use:${item.type}`;
-          const alreadyInBar = (gs.actionBar || []).includes(barKey);
-          stripLabel  = alreadyInBar ? '✓ в панели' : '→ панель';
-          stripColor  = alreadyInBar ? '#4a9860' : '#4dd0e1';
-          stripBg     = 0x051520;
-          stripAction = () => this._addConsumableToBar(item.type);
-        } else if (!isConsumable && type === 'cargo') {
-          stripLabel  = '→ склад'; stripColor = '#4aa8cc'; stripBg = 0x071828;
-          stripAction = () => this._moveToWarehouse(item);
-        } else if (inWarehouse) {
-          stripLabel  = '← трюм'; stripColor = '#4a9860'; stripBg = 0x0a1a0a;
-          stripAction = () => {
-            const inv = gs.inventory || [];
-            const hasStack = inv.some(i => i.type === item.type && i.amount < def.maxPerSlot);
-            if (!hasStack && inv.length >= this._cargoMax()) return;
-            const idx = (gs.warehouse || []).indexOf(item); if (idx < 0) return;
-            gs.warehouse.splice(idx, 1);
-            addConsumableToInventory(inv, item.type, item.amount, this._cargoMax());
-            this.scene.restart();
-          };
+          const inBar = (gs.actionBar || []).includes(barKey);
+          strips.push({ label: inBar ? '✓ в панели' : '→ панель',
+            color: inBar ? '#4a9860' : '#4dd0e1', bg: 0x051520, h: STRIP_H,
+            action: () => this._addConsumableToBar(item.type) });
+        } else if (type === 'warehouse') {
+          strips.push({ label: '← трюм', color: '#4a9860', bg: 0x0a1a0a, h: STRIP_H,
+            action: () => {
+              const inv = gs.inventory || [];
+              const hasStack = inv.some(i => i.type === item.type && i.amount < def.maxPerSlot);
+              if (!hasStack && inv.length >= this._cargoMax()) return;
+              const idx = (gs.warehouse || []).indexOf(item); if (idx < 0) return;
+              gs.warehouse.splice(idx, 1);
+              addConsumableToInventory(inv, item.type, item.amount, this._cargoMax());
+              this.scene.restart();
+            } });
         }
 
-        const hasStrip = !!stripLabel;
-        const boxH = hasStrip ? BODY_H : SZ;
+        const stripsTotalH = strips.reduce((s, r) => s + r.h, 0);
+        const boxH = SZ - stripsTotalH;
         const borderColor = isConsumable ? 0x44aacc : 0xccaa44;
         const box = this.add.rectangle(sx, sy, SZ, boxH, 0x0a1a2a, 0.95).setOrigin(0, 0)
           .setStrokeStyle(2, borderColor, 0.8);
         const iconK = itemIconKey(item);
         const iconImg = iconK
-          ? this.add.image(sx + SZ / 2, sy + boxH / 2 - 6, prerenderTex(this, iconK, 38, 38)).setDisplaySize(38, 38).setOrigin(0.5)
+          ? this.add.image(sx + SZ / 2, sy + boxH / 2 - 6, prerenderTex(this, iconK, 34, 34)).setDisplaySize(34, 34).setOrigin(0.5)
           : null;
         const countTxt = this.add.text(sx + SZ / 2, sy + boxH - 10,
           `${item.amount}/${def.maxPerSlot}`, this.F('10px', isConsumable ? '#88eeff' : '#ffcc88')).setOrigin(0.5);
         const els = [box, countTxt];
         if (iconImg) els.push(iconImg);
 
-        if (hasStrip) {
-          const strip = this.add.rectangle(sx, sy + BODY_H, SZ, STRIP_H, stripBg, 0.95).setOrigin(0, 0)
+        let stripY = sy + boxH;
+        for (const s of strips) {
+          const strip = this.add.rectangle(sx, stripY, SZ, s.h, s.bg, 0.95).setOrigin(0, 0)
             .setStrokeStyle(1, 0x2a6888, 0.5).setInteractive({ useHandCursor: true });
-          const stripT = this.add.text(sx + SZ / 2, sy + BODY_H + STRIP_H / 2, stripLabel,
-            this.F('9px', stripColor)).setOrigin(0.5);
-          strip.on('pointerdown', stripAction);
+          const stripT = this.add.text(sx + SZ / 2, stripY + s.h / 2, s.label,
+            this.F('9px', s.color)).setOrigin(0.5);
+          strip.on('pointerdown', s.action);
           els.push(strip, stripT);
+          stripY += s.h;
         }
         container.add(els);
         continue;
@@ -377,8 +386,25 @@ export default class CargoScene extends Phaser.Scene {
     this._tooltipObjs = null;
   }
 
+  _sellConsumable(item) {
+    const def = CONSUMABLES[item.type];
+    if (!def?.sell) return;
+    const gs = this.gs;
+    const total = def.sell * item.amount;
+    const name = i18n.t(`item.${item.type}`);
+    if (!window.confirm(`Продать ${name} ×${item.amount} за ${total.toLocaleString()} кр?`)) return;
+    const inv = gs.inventory || [];
+    const idx = inv.indexOf(item);
+    if (idx < 0) return;
+    inv.splice(idx, 1);
+    gs.credits = (gs.credits || 0) + total;
+    gs.log?.(`Продано: ${name} ×${item.amount} +${total} кр.`);
+    gs._saveState?.();
+    this.scene.restart();
+  }
+
   _moveToWarehouse(item, isClanWarehouse = false) {
-    if (isClanWarehouse && item.type === 'plasmate') return; // plasmate forbidden in clan warehouse
+    if (isClanWarehouse && (item.type === 'plasmate' || CONSUMABLES[item.type])) return;
     const inv = this.gs.inventory;
     const idx = inv.indexOf(item);
     if (idx < 0) return;
