@@ -307,6 +307,9 @@ export default class ArgusController {
       topDamage:   sorted,
       rewardGiven: inTop,
     });
+
+    // Immediate save — rewards must not be lost on disconnect
+    gs._saveState?.();
   }
 
   // ── BroadcastChannel ────────────────────────────────────────────────

@@ -228,6 +228,14 @@ export default class GameScene extends Phaser.Scene {
 
     this.createBoostFx();
     this.spawnMobs();
+
+    // Restore floor loot from previous session (same sector only)
+    if (this._pendingLoot?.length && this._pendingLootSector === galaxy.current) {
+      this._pendingLoot.forEach(l => this.loot.push(new Loot(this, l.x, l.y, l.item)));
+    }
+    this._pendingLoot = null;
+    this._pendingLootSector = null;
+
     this.createJumpgates();
     this.createDungeonWalls();
     this.spawnPlasmateDeposits();
@@ -1535,6 +1543,7 @@ export default class GameScene extends Phaser.Scene {
             this.log(i18n.t('log.loot_pickup', { item: itemName(item) }));
             target.collect();
             this.cancelCollect();
+            this._saveState();
           }
         }
       }
@@ -1658,6 +1667,11 @@ export default class GameScene extends Phaser.Scene {
       actionBar:           this.actionBar   || [],
       respeckCount:        this.respeckCount        || 0,
       skillAchievementSP:  this.skillAchievementSP  || 0,
+      // Floor loot — сохраняем с привязкой к сектору; восстанавливаем только в том же секторе
+      lootSector: galaxy.current,
+      lootFloor:  (this.loot || [])
+        .filter(l => l.alive)
+        .map(l => ({ x: Math.round(l.x), y: Math.round(l.y), item: l.item })),
     };
   }
 
@@ -1681,6 +1695,11 @@ export default class GameScene extends Phaser.Scene {
     if (s.actionBar          != null) this.actionBar          = s.actionBar;
     if (s.respeckCount       != null) this.respeckCount       = s.respeckCount;
     if (s.skillAchievementSP != null) this.skillAchievementSP = s.skillAchievementSP;
+    // Лут на полу — сохраняем для восстановления в create()
+    if (s.lootFloor?.length && s.lootSector != null) {
+      this._pendingLoot       = s.lootFloor;
+      this._pendingLootSector = s.lootSector;
+    }
   }
 
   _saveState() {
