@@ -15,41 +15,47 @@
 
 ---
 
-## Laser Cannon Perks (amber / orange glow)
+## Laser Cannon Perks
 
-### Laser Precision *(uncommon)*
-Символ: прицел с лазерным лучом внутри.
+| Перк | Rarity | Color | Метафора |
+|---|---|---|---|
+| **Laser Precision** | uncommon | 🟣 violet | thin laser beam locked on a precision crosshair |
+| **Laser Shredder** | 🟡 rare | amber | laser beam slicing through a cracked armor plate |
+| **Laser Overload** | 🔴 jackpot | red-orange | overcharged glowing crystal erupting with energy arcs |
 
-> `Sci-fi perk icon, dark circular badge with bright amber-orange glowing energy ring, center shows a precision targeting crosshair with a thin orange laser beam cutting through it, warm amber neon glow, orange sparks, dark background inside circle.`
+```
+sci-fi UI badge icon for spaceship laser perk "Laser Precision", thin laser beam locked on a precision targeting crosshair, simple silhouette design with single dominant element, painterly stylized game UI icon, AAA mobile MMO inventory perk badge, vibrant violet color theme, centered composition with circular border ring, isolated on pure black transparent background, no characters, no text, no letters, no words, easy-to-read silhouette at small size --ar 1:1 --stylize 650
+```
 
-### Laser Shredder *(rare)*
-Символ: лазерный луч, пробивающий бронеплиту.
+```
+sci-fi UI badge icon for spaceship laser perk "Laser Shredder", laser beam slicing through a cracked metallic armor plate, simple silhouette design with single dominant element, painterly stylized game UI icon, AAA mobile MMO inventory perk badge, amber orange color theme, centered composition with circular border ring, isolated on pure black transparent background, no characters, no text, no letters, no words, easy-to-read silhouette at small size --ar 1:1 --stylize 650
+```
 
-> `Sci-fi perk icon, dark circular badge with intense orange glowing energy ring, center shows an orange laser beam slicing through a cracked metallic armor plate, molten edges glowing orange, shards flying, hot orange and yellow glow.`
-
-### Laser Overload *(jackpot)*
-Символ: перегретый лазерный кристалл, взрывная энергия.
-
-> `Sci-fi perk icon, dark circular badge with blazing red-orange glowing energy ring, center shows an overcharged glowing laser crystal radiating explosive amber and crimson energy bolts, intense overload glow, electric arcs, dramatic bright flare, jackpot power feeling.`
+```
+sci-fi UI badge icon for spaceship laser perk "Laser Overload", overcharged glowing energy crystal erupting with electric arcs and explosive burst, simple silhouette design with single dominant element, painterly stylized game UI icon, AAA mobile MMO inventory perk badge, blazing red-orange color theme, centered composition with circular border ring, isolated on pure black transparent background, no characters, no text, no letters, no words, easy-to-read silhouette at small size --ar 1:1 --stylize 650
+```
 
 ---
 
-## Engine Perks (cyan / blue glow)
+## Engine Perks
 
-### Engine Thrust *(common)*
-Символ: реактивное сопло с синим выхлопом.
+| Перк | Rarity | Color | Метафора |
+|---|---|---|---|
+| **Engine Thrust** | 🟢 common | cyan | rocket thruster nozzle with plasma exhaust jets |
+| **Engine Agility** | 🟣 uncommon | teal | curved sweeping arrow forming a spiral vortex |
+| **Engine Boost / Shadow Drive** | 🟡 rare | violet | ghostly ship silhouette fading into shadow mist |
 
-> `Sci-fi perk icon, dark circular badge with bright cyan-blue glowing energy ring, center shows a rocket thruster nozzle with powerful cyan plasma exhaust jets streaming downward, speed motion lines, blue neon glow, clean energy feel.`
+```
+sci-fi UI badge icon for spaceship engine perk "Engine Thrust", rocket thruster nozzle with powerful plasma exhaust jets streaming outward, simple silhouette design with single dominant element, painterly stylized game UI icon, AAA mobile MMO inventory perk badge, vibrant cyan color theme, centered composition with circular border ring, isolated on pure black transparent background, no characters, no text, no letters, no words, easy-to-read silhouette at small size --ar 1:1 --stylize 650
+```
 
-### Engine Agility *(uncommon)*
-Символ: изогнутая стрелка разворота, вихрь.
+```
+sci-fi UI badge icon for spaceship engine perk "Engine Agility", curved sweeping arrow forming a tight spiral vortex indicating sharp maneuver, simple silhouette design with single dominant element, painterly stylized game UI icon, AAA mobile MMO inventory perk badge, vibrant teal cyan color theme, centered composition with circular border ring, isolated on pure black transparent background, no characters, no text, no letters, no words, easy-to-read silhouette at small size --ar 1:1 --stylize 650
+```
 
-> `Sci-fi perk icon, dark circular badge with teal-cyan glowing energy ring, center shows a curved sweeping arrow indicating a sharp turn or rotation, teal energy trail forming a spiral vortex, agile motion, blue-green neon glow.`
-
-### Engine Boost / Shadow Drive *(rare)*
-Перк: **+50% длительность стелса**. Символ: призрачный силуэт корабля в дымке невидимости.
-
-> `Sci-fi perk icon, dark circular badge with deep purple-violet glowing energy ring, center shows a ghostly transparent spaceship silhouette fading into dark violet mist and shadow, stealth invisibility effect, purple and dark blue energy haze, mysterious shadow aura, dark background.`
+```
+sci-fi UI badge icon for spaceship engine perk "Shadow Drive", ghostly transparent spaceship silhouette fading into dark violet shadow mist, simple silhouette design with single dominant element, painterly stylized game UI icon, AAA mobile MMO inventory perk badge, deep purple violet color theme, centered composition with circular border ring, isolated on pure black transparent background, no characters, no text, no letters, no words, easy-to-read silhouette at small size --ar 1:1 --stylize 650
+```
 
 ---
 
@@ -63,3 +69,52 @@
   - `Engine Agility.png`
   - `Engine Boost.png`
 - **Папка:** `client/assets/perks/`
+
+
+old {
+## 🟣 PERK ICONS — 10 cannon + 10 shield = 20 — aspect 1:1
+
+> 32×32 px display иконки оверлеем на модуль-карточке. Source 128×128. Простые силуэтные badge-стиля иконки с tier-цветом (🟢 common / 🟣 uncommon / 🟡 rare).
+
+### Шаблон промта (заменяй описание под конкретный перк)
+
+```
+sci-fi UI badge icon for spaceship weapon perk "{PERK_NAME}", {PERK_VISUAL_METAPHOR}, simple silhouette design with single dominant element, painterly stylized game UI icon, AAA mobile MMO inventory perk badge, {PERK_COLOR} color theme, centered composition with circular border ring, isolated on pure black transparent background, no characters, no text, no letters, no words, easy-to-read silhouette at small size --ar 1:1 --stylize 650
+```
+
+### H1-H10. Cannon perks — визуальные метафоры
+
+| Перк | Color | Метафора |
+|---|---|---|
+| **Phase-shifter** | 🟣 violet | shimmering shield piercing arrow |
+| **Hull-breaker** | 🟡 amber | cracked armor plate with crosshair |
+| **Anti-armor** | 🟢 green | bullet piercing through hexagonal shield grid |
+| **Marksman** | 🟢 green | crosshair with single arrow target |
+| **Steady Aim** | 🟢 green | tripod with center bullseye |
+| **Vengeance** | 🟡 amber | flame engulfing a sword silhouette |
+| **Cooperative** | 🟢 green | three interlocking arrows pointing inward |
+| **Splinter** | 🟣 violet | fragmenting bullet branching into multiple paths |
+| **Plasma Bleed** | 🟣 violet | dripping flame symbol |
+| **Critical Edge** | 🟡 amber | star with crosshair inside |
+
+Пример для Phase-shifter:
+```
+sci-fi UI badge icon for spaceship weapon perk "Phase-shifter", shimmering arrow piercing through translucent shield silhouette, simple silhouette design, painterly stylized game UI icon, AAA mobile MMO inventory perk badge, vibrant violet color theme, centered composition with circular border ring, isolated on pure black transparent background, no characters, no text, no letters --ar 1:1 --stylize 650
+```
+
+### H11-H20. Shield perks — визуальные метафоры
+
+| Перк | Color | Метафора |
+|---|---|---|
+| **Hardened** | 🟢 green | armored shield with thick crosshatch pattern |
+| **Quick Recovery** | 🟢 green | shield with circular regen arrows |
+| **Reactive** | 🟣 violet | shield with deflecting arrows around it |
+| **Resonance** | 🟣 violet | shield with returning energy waves |
+| **Energy Shunt** | 🟢 green | shield converting incoming arrow to fuel cell |
+| **Pack Aura** | 🟢 green | shield emanating concentric protective rings |
+| **Last Stand** | 🟡 amber | shield with flame around edges (defiance) |
+| **Adaptive** | 🟣 violet | shield with morphing chevron pattern |
+| **Splinter Resistance** | 🟣 violet | shield deflecting multiple fragments |
+| **Stealth Sync** | 🟡 amber | shield with vanishing/fading effect |
+
+Используй тот же шаблон.}
