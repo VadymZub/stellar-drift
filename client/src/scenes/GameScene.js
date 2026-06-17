@@ -1347,11 +1347,15 @@ export default class GameScene extends Phaser.Scene {
       ['pirate_05', 'pirate_06', 'pirate_05'],
     ];
     const keys = WAVES[waveIdx] ?? WAVES[0];
+    const sec = SECTORS[galaxy.current];
+    const Lmin = sec?.lvlMin ?? 1;
+    const Lmax = Math.min(50, sec?.lvlMax ?? 10);
     for (let i = 0; i < keys.length; i++) {
       const angle = (Math.PI * 2 / keys.length) * i;
       const spawnX = tx + Math.cos(angle) * 380;
       const spawnY = ty + Math.sin(angle) * 380;
-      const mob = new Mob(this, MOBS[keys[i]], this.pilotLevel ?? 1, spawnX, spawnY, {});
+      const mobLvl = Phaser.Math.Between(Lmin, Lmax);
+      const mob = new Mob(this, MOBS[keys[i]], mobLvl, spawnX, spawnY, {});
       mob.noRespawn    = true;
       mob.escortTarget = this.escortTransport; // target transport, not player
       this.mobs.push(mob);
@@ -1377,19 +1381,22 @@ export default class GameScene extends Phaser.Scene {
       this.engineFxList.push(this.vfx.playLoop('engine_particle', this.player.x, this.player.y, { scale: 0.12, depth: 52 }));
     }
   }
-  onPlayerKilled() {
+  onPlayerKilled(killedByPlayer = false) {
     if (this.playerRespawning) return;
     this.playerRespawning = true;
     this.jumping = false;
     const deathX = this.player.x, deathY = this.player.y;
     this.explosion(deathX, deathY, 1.1);
     this.log(i18n.t('log.you_died'));
-    // Lose 5% of plasmate on death
-    const totalP = totalPlasmateInInventory(this.inventory);
-    if (totalP > 0) {
-      const loss = Math.max(1, Math.floor(totalP * 0.05));
-      removePlasmateFromInventory(this.inventory, loss);
-      this.log(i18n.t('log.plasmate_lost', { amount: loss }));
+    // PvP death: drop 5% plasmate as loot box; mob death: plasmate is safe
+    if (killedByPlayer) {
+      const totalP = totalPlasmateInInventory(this.inventory);
+      if (totalP > 0) {
+        const drop = Math.max(1, Math.floor(totalP * 0.05));
+        removePlasmateFromInventory(this.inventory, drop);
+        this.loot.push(new Loot(this, deathX, deathY, { type: 'plasmate', amount: drop }, 'boss'));
+        this.log(i18n.t('log.plasmate_dropped', { amount: drop }));
+      }
     }
     this.target = null;
     this.time.delayedCall(2000, () => this._showRepairDialog(deathX, deathY));
