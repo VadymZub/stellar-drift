@@ -769,6 +769,7 @@ export default class GameScene extends Phaser.Scene {
 
       const box = this.lootAt(wx, wy);
       if (box) {
+        if (this.inventory.length >= this._cargoMax()) { this.log(i18n.t('log.cargo_full')); return; }
         this.cancelCollect();
         this.collectTarget = box;
         this.collectTimer = 0;
@@ -1525,11 +1526,16 @@ export default class GameScene extends Phaser.Scene {
           this._collectPlasmateDeposit(target);
           this.cancelCollect();
         } else {
-          const item = target.item;
-          this.inventory.push(item);
-          this.log(i18n.t('log.loot_pickup', { item: itemName(item) }));
-          target.collect();
-          this.cancelCollect();
+          if (this.inventory.length >= this._cargoMax()) {
+            this.log(i18n.t('log.cargo_full'));
+            this.cancelCollect();
+          } else {
+            const item = target.item;
+            this.inventory.push(item);
+            this.log(i18n.t('log.loot_pickup', { item: itemName(item) }));
+            target.collect();
+            this.cancelCollect();
+          }
         }
       }
     } else {
