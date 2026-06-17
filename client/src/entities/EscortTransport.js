@@ -188,7 +188,6 @@ export default class EscortTransport {
       return { dodged: false, hullHit: 0, shieldHit: 0 };
     this.hull = Math.max(0, this.hull - amount);
     this._refreshBar();
-    if (this.sprite) this.scene.tweens.add({ targets: this.sprite, alpha: 0.3, yoyo: true, duration: 80 });
     if (this.hull <= 0) this._onDestroyed();
     return { dodged: false, hullHit: amount, shieldHit: 0 };
   }
