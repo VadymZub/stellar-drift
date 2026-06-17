@@ -1813,6 +1813,11 @@ export default class GameScene extends Phaser.Scene {
         loot._magnetPull = true;
         loot._origDisplayW = loot.sprite.displayWidth;
         loot._origDisplayH = loot.sprite.displayHeight;
+      } else if (dist > radius * 2) {
+        // Player flew too far — break the connection
+        loot._magnetPull = false;
+        loot.sprite.setDisplaySize(loot._origDisplayW ?? loot.sprite.displayWidth, loot._origDisplayH ?? loot.sprite.displayHeight);
+        continue;
       }
 
       if (dist < 8) {
@@ -1875,6 +1880,11 @@ export default class GameScene extends Phaser.Scene {
           dep._magnetPull = true;
           dep._origDisplayW = dep.sprite.displayWidth;
           dep._origDisplayH = dep.sprite.displayHeight;
+        } else if (ddist > radius * 2) {
+          // Player flew too far — break the connection
+          dep._magnetPull = false;
+          dep.sprite.setDisplaySize(dep._origDisplayW ?? 40, dep._origDisplayH ?? 40);
+          continue;
         }
 
         if (ddist < 8) {
