@@ -767,6 +767,21 @@ export default class GameScene extends Phaser.Scene {
         return;
       }
 
+      // Mob check first — takes priority over loot when overlapping
+      const mob = this.mobAt(wx, wy);
+      if (isDouble && mob) {
+        this.selectTarget(mob); this.isFiring = true;
+        this.log("ATTACK: " + i18n.t(mob.tpl.nameKey));
+        return;
+      }
+      if (mob) { this.cancelCollect(); this.selectTarget(mob); return; }
+
+      // Double-click empty space → check for base attack
+      if (isDouble) {
+        const base = this.baseAt(wx, wy);
+        if (base?.canBeAttacked) { this.selectTarget(base); this.isFiring = true; return; }
+      }
+
       const box = this.lootAt(wx, wy);
       if (box) {
         if (this.inventory.length >= this._cargoMax()) { this.log(i18n.t('log.cargo_full')); return; }
@@ -785,22 +800,7 @@ export default class GameScene extends Phaser.Scene {
         return;
       }
 
-      const mob = this.mobAt(wx, wy);
-
-      // Double-click mob → attack
-      if (isDouble && mob) {
-        this.selectTarget(mob); this.isFiring = true;
-        this.log("ATTACK: " + i18n.t(mob.tpl.nameKey));
-        return;
-      }
-      // Double-click empty space → check for base attack
-      if (isDouble && !mob) {
-        const base = this.baseAt(wx, wy);
-        if (base?.canBeAttacked) { this.selectTarget(base); this.isFiring = true; return; }
-      }
-      // Single-click mob → select
-      if (mob) { this.cancelCollect(); this.selectTarget(mob); return; }
-      // Empty space → move  (menu opens via in-world button or F key only)
+      // Empty space → move
       if (this.player.alive && !this.jumping) { this.cancelCollect(); this.steering = true; this.movement.setWaypoint(wx, wy, false); this.pingAt(wx, wy); }
     });
 
