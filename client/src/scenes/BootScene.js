@@ -83,54 +83,6 @@ function _removeWhiteBg(scene, key, threshold = 240) {
   tex.refresh();
 }
 
-// Normalize perk badge size: find bounding box of non-transparent pixels and scale
-// the badge to fill ~92% of the canvas (4% margin each side). Skipped when the badge
-// already fills ≥90% of both dimensions (avoids shrinking perks that already fill the frame).
-function _normalizePerkBadge(scene, key) {
-  const tex = scene.textures.get(key);
-  if (!tex) return;
-  const ctx = tex.getContext?.();
-  if (!ctx) return;
-  const src = tex.getSourceImage();
-  const w = src.naturalWidth != null ? src.naturalWidth : src.width;
-  const h = src.naturalHeight != null ? src.naturalHeight : src.height;
-  if (!w || !h) return;
-
-  const d = ctx.getImageData(0, 0, w, h).data;
-  let x0 = w, x1 = 0, y0 = h, y1 = 0;
-  for (let y = 0; y < h; y++) {
-    for (let x = 0; x < w; x++) {
-      if (d[(y * w + x) * 4 + 3] > 8) {
-        if (x < x0) x0 = x;
-        if (x > x1) x1 = x;
-        if (y < y0) y0 = y;
-        if (y > y1) y1 = y;
-      }
-    }
-  }
-  if (x0 >= x1 || y0 >= y1) return;
-
-  const bw = x1 - x0 + 1, bh = y1 - y0 + 1;
-  // Skip if badge already fills 90%+ of canvas — no normalization needed
-  if (bw / w >= 0.90 && bh / h >= 0.90) return;
-
-  // Scale badge to fill canvas with 4% margin on each side (92% content area)
-  const margin = Math.round(w * 0.04);
-  const target = w - margin * 2;
-  const scale = target / Math.max(bw, bh);
-  const dw = Math.round(bw * scale), dh = Math.round(bh * scale);
-  const dx = Math.round((w - dw) / 2), dy = Math.round((h - dh) / 2);
-
-  const tmp = document.createElement('canvas');
-  tmp.width = bw; tmp.height = bh;
-  tmp.getContext('2d').putImageData(ctx.getImageData(x0, y0, bw, bh), 0, 0);
-
-  ctx.clearRect(0, 0, w, h);
-  ctx.imageSmoothingEnabled = true;
-  ctx.imageSmoothingQuality = 'high';
-  ctx.drawImage(tmp, dx, dy, dw, dh);
-  tex.refresh();
-}
 
 export default class BootScene extends Phaser.Scene {
   constructor() { super('BootScene'); }
@@ -302,12 +254,9 @@ export default class BootScene extends Phaser.Scene {
     // Perk images: displayed at 192px — pre-process to 384px (2× display) to normalize
     // 1024×1024 and 1254×1254 sources to the same target size for consistent rendering.
     // White background removal + badge normalization: removes white margins and scales
-    // every badge to fill ~92% of the 384px canvas, so all perks appear the same
-    // visual size regardless of how much padding the source artist left around the badge.
     for (const p of PERK_DEFS) {
       _prepShipTex(this, p.key, 384);
       _removeWhiteBg(this, p.key);
-      _normalizePerkBadge(this, p.key);
     }
 
     // Skill icons: 128×128 displayed at 48×48 — pre-process to 96px (2× display).

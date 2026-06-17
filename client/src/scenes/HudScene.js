@@ -471,12 +471,25 @@ export default class HudScene extends Phaser.Scene {
       }
     }
 
-    // Escort transport dot
+    // Escort transport — amber diamond (visually distinct from cyan gate circles)
     const et = gs.escortTransport;
     if (et?.alive) {
       const ep = worldToMinimap(et.x, et.y, r, ww, wh);
-      g.lineStyle(1.5, 0x4dd0e1, 0.85); g.strokeCircle(ep.x, ep.y, 5);
-      g.fillStyle(0x80deea, 0.9); g.fillCircle(ep.x, ep.y, 2.5);
+      const ds = 5.5;
+      g.fillStyle(0xffb74d, 0.92);
+      g.beginPath();
+      g.moveTo(ep.x,      ep.y - ds);
+      g.lineTo(ep.x + ds, ep.y);
+      g.lineTo(ep.x,      ep.y + ds);
+      g.lineTo(ep.x - ds, ep.y);
+      g.closePath(); g.fillPath();
+      g.lineStyle(1.5, 0xffe082, 0.85);
+      g.beginPath();
+      g.moveTo(ep.x,      ep.y - ds);
+      g.lineTo(ep.x + ds, ep.y);
+      g.lineTo(ep.x,      ep.y + ds);
+      g.lineTo(ep.x - ds, ep.y);
+      g.closePath(); g.strokePath();
     }
 
     // Waypoint (если задан курс)

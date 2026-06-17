@@ -207,7 +207,8 @@ export default class GameScene extends Phaser.Scene {
 
     // Derive corp from active prestige ship first, then any owned prestige ship, else neutral.
     // This means Helios pilots build Helios bases regardless of which ship they fly now.
-    this.playerCorp = this.player?.ship?.corp ||
+    this.playerCorp = this.playerCorp ||
+      this.player?.ship?.corp ||
       Object.values(SHIP_BY_KEY).find(s => s.prestige && this.ownedShips.has(s.key))?.corp ||
       'neutral';
     if (tp?.corp) this.playerCorp = tp.corp;
@@ -1894,6 +1895,7 @@ export default class GameScene extends Phaser.Scene {
       }
     }
     if (s.lootBySector       != null) this._lootBySector      = s.lootBySector;
+    if (s.playerCorp         != null) this.playerCorp         = s.playerCorp;
     if (s.missionState       != null) this.missionState       = s.missionState;
     if (s.missionDailyReset  != null) this.missionDailyReset  = s.missionDailyReset;
     if (s.plasmateToday      != null) this.plasmateToday      = s.plasmateToday;
