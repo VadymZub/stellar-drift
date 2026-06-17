@@ -969,12 +969,19 @@ export default class GarageScene extends Phaser.Scene {
         });
       });
     };
-    applyListScroll(0);
+    // Restore scroll so the selected item is visible after scene.restart()
+    const maxListScroll = Math.max(0, totalListH - listAreaH);
+    const selItemTop = selIdx * (itemH + 6);
+    const initialScroll = totalListH > listAreaH
+      ? Phaser.Math.Clamp(selItemTop - Math.floor(listAreaH / 2), 0, maxListScroll)
+      : 0;
+    applyListScroll(initialScroll);
 
     if (totalListH > listAreaH) {
-      const maxListScroll = totalListH - listAreaH;
       const SBW = 3, thumbH = Math.max(20, Math.round(listAreaH * listAreaH / totalListH));
       const thumb = this.add.rectangle(listX + listW - SBW - 2, listAreaY, SBW, thumbH, 0x2a6080, 0.7).setOrigin(0, 0).setDepth(13);
+      const frac0 = maxListScroll > 0 ? initialScroll / maxListScroll : 0;
+      thumb.setY(listAreaY + Math.round(frac0 * (listAreaH - thumbH)));
       this.input.on('wheel', (ptr, _o, _dx, dy) => {
         if (ptr.x < listX || ptr.x > listX + listW || ptr.y < listAreaY || ptr.y > listAreaY + listAreaH) return;
         listScroll = Phaser.Math.Clamp(listScroll + Math.sign(dy) * (itemH + 6), 0, maxListScroll);
