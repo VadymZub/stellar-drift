@@ -184,3 +184,8 @@ export const ART_ANGLE_OFFSET = Math.PI / 2;
 export const BASE_SCAN_RADIUS = 900;
 
 export const RESPAWN_MS = 8000; // моб возвращается в систему через 8 сек после смерти
+
+// Honor awarded for killing a level-50 player in PvP.
+// Scales linearly: honorForLevel(lvl) = Math.round(lvl * HONOR_PER_LVL50 / 50)
+// Argus = 10× this value.  Apophysis boss = 1× this value.
+export const HONOR_PER_LVL50 = 25000;

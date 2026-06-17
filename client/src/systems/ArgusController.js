@@ -1,13 +1,13 @@
 import Mob from '../entities/Mob.js';
-import { MOBS } from '../constants.js';
+import { MOBS, HONOR_PER_LVL50 } from '../constants.js';
 import { galaxy } from '../galaxy.js';
 
 const CHANNEL     = 'stellar-drift-admin';
 const HEAL_CD     = 180;    // секунд между авто-хилами (3 минуты)
 const HEAL_PCT    = 0.30;
-const TOP_REWARD  = 5;
+const TOP_REWARD  = 8;      // топ-8 по урону получают награду
 const REWARD_GOLD = 100;
-const HONOR_GAIN  = 250000;
+const HONOR_GAIN  = HONOR_PER_LVL50 * 10; // = 10 убийств игрока 50 уровня
 
 // Movement constants
 const ORBIT_R_TIGHT = 380;  // радиус орбиты в orbit-режиме (реактивный)
@@ -293,13 +293,12 @@ export default class ArgusController {
       gs.starGold = (gs.starGold || 0) + REWARD_GOLD;
       gs.log(`🏆 АРГУС ПОВЕРЖЕН! Топ-${TOP_REWARD} по урону: +${REWARD_GOLD} ⭐`);
       if (gs.seasonWon) {
-        gs.corpRep = Math.min(1.0, (gs.corpRep || 0) + 0.10);
+        gs.gainCorpRep?.(0.10);
         gs.log('🏅 Сезонный бонус: +10% корпоративный рейтинг');
       }
-      gs.pilotHonor = (gs.pilotHonor || 0) + HONOR_GAIN;
-      gs.log('⚔️ PvP рейтинг: +эквивалент ×10 убийств Lvl50');
+      gs.gainHonor?.(HONOR_GAIN);
     } else {
-      gs.log('АРГУС ПОВЕРЖЕН — ты не вошёл в топ-5 по урону');
+      gs.log(`АРГУС ПОВЕРЖЕН — ты не вошёл в топ-${TOP_REWARD} по урону`);
     }
 
     this._logAudit('ARGUS_KILLED', {

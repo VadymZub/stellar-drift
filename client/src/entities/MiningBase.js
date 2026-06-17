@@ -136,6 +136,7 @@ export default class MiningBase {
     this._buildTimer = 0;
     this._refreshVisuals();
     this._persist();
+    gs.gainCorpRep?.(0.05);
     gs.log(`База куплена (${this.corp}) — строится 15 мин`);
   }
 
@@ -199,10 +200,13 @@ export default class MiningBase {
           this._earnTimer -= 1;
           const share   = 1 / this.owners.length;
           const goldSec = goldPerSecByTier(this.pvpTier);
+          const gs = this.scene;
+          const myOwner = this.owners.find(o => o.name === gs.playerName);
           for (const o of this.owners) {
             o.points += BASE_CONFIG.pointsPerSec * share;
             o.gold   += goldSec * share;
           }
+          if (myOwner) gs.gainCorpRep?.(0.0002);
           this._persist();
           this._refreshOwnerLabel();
         }

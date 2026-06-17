@@ -1,5 +1,5 @@
 import * as Phaser from 'https://cdn.jsdelivr.net/npm/phaser@4.1.0/dist/phaser.esm.js';
-import { COLORS, BASE_WORLD, PVP_WORLD_SCALE, PLAYER, MOBS, PROJECTILE, RESPAWN_MS, UI_RES, BOSS, DPR, HANDLING, ART_ANGLE_OFFSET, RANKS, BASE_SCAN_RADIUS } from '../constants.js';
+import { COLORS, BASE_WORLD, PVP_WORLD_SCALE, PLAYER, MOBS, PROJECTILE, RESPAWN_MS, UI_RES, BOSS, DPR, HANDLING, ART_ANGLE_OFFSET, RANKS, BASE_SCAN_RADIUS, HONOR_PER_LVL50 } from '../constants.js';
 import { minimapRect, minimapToWorld } from '../systems/minimap.js';
 import { i18n } from '../i18n.js';
 import Player from '../entities/Player.js';
@@ -1121,6 +1121,19 @@ export default class GameScene extends Phaser.Scene {
       }
     }
   }
+
+  gainHonor(amount) {
+    if (amount <= 0) return;
+    this.pilotHonor = (this.pilotHonor || 0) + amount;
+    // Small corp rep bonus proportional to honor earned
+    this.gainCorpRep(amount * 0.0000004);
+    this.log(`⚔️ +${amount} честь`);
+  }
+
+  gainCorpRep(amount) {
+    if (amount <= 0) return;
+    this.corpRep = Math.min(1.0, (this.corpRep || 0) + amount);
+  }
   mobAt(wx, wy) {
     let best = null, bestD = Infinity;
     for (const m of this.mobs) { if (!m.alive) continue; const d = Phaser.Math.Distance.Between(wx, wy, m.x, m.y); if (d < m.tpl.displaySize * 0.8 && d < bestD) { best = m; bestD = d; } }
@@ -1332,6 +1345,16 @@ export default class GameScene extends Phaser.Scene {
       this.advanceMission('story_signal', 1);
       this.advanceMission('story_signal', 2);
     }
+    // Honor hooks
+    const sec = SECTORS[galaxy.current];
+    if (mob.tpl.key === 'bigboss') {
+      // Apophysis: each participant earns honor equal to 1× level-50 player kill
+      this.gainHonor(HONOR_PER_LVL50);
+    }
+    if ((sec?.pvp || sec?.isDungeon) && mob.isPlayerMob) {
+      // Future PvP: honor scales with victim level
+      this.gainHonor(Math.round(mob.level * HONOR_PER_LVL50 / 50));
+    }
   }
 
   // ── Mission system ───────────────────────────────────────────────────────
@@ -1376,6 +1399,7 @@ export default class GameScene extends Phaser.Scene {
     this.credits = (this.credits || 0) + m.rewards.credits;
     this.gainXp(m.rewards.xp);
     if (m.rewards.stars > 0) this.starGold = (this.starGold || 0) + m.rewards.stars;
+    this.gainCorpRep(0.01);
     this.log(`Миссия завершена: ${m.title}`);
     this.log(`+${m.rewards.credits} кр · +${m.rewards.xp} XP${m.rewards.stars > 0 ? ` · +${m.rewards.stars} ★` : ''}`);
   }
