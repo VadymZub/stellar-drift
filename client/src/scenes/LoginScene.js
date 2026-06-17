@@ -145,7 +145,10 @@ export default class LoginScene extends Phaser.Scene {
         }
 
         this._removeOverlay();
-        this.scene.start('TestProfileScene');
+        // Go directly to game — TestProfileScene is only for DEV skip
+        this.scene.start('GameScene');
+        this.scene.launch('BackgroundScene');
+        this.scene.launch('HudScene');
       } catch (e) {
         errMsg.textContent = e.message || 'Ошибка сервера';
       } finally {
