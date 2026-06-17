@@ -227,11 +227,22 @@ export default class HudScene extends Phaser.Scene {
       const key   = bar[i] || null;
 
       if (key?.startsWith('use:')) {
-        // Consumable slot — show remaining quantity below icon, no cooldown overlay
-        slot.cdGfx.clear();
+        const cdEnd = gs.skillCooldowns[key] || 0;
+        const rem   = Math.max(0, cdEnd - time);
         const total = countConsumableInInventory(gs.inventory || [], key.slice(4));
-        slot.cdTxt.setText(total > 0 ? `${total}` : '');
-        if (slot.iconImg) slot.iconImg.setAlpha(total > 0 ? 1.0 : 0.3);
+        slot.cdGfx.clear();
+        if (rem > 0) {
+          const prog = rem / 60000;
+          slot.cdGfx.fillStyle(0x000000, 0.68);
+          slot.cdGfx.fillRoundedRect(slot.sx, slot.sy, slot.SW, Math.ceil(slot.SH * prog), 5);
+          slot.cdTxt.setPosition(slot.sx + slot.SW / 2, slot.sy + slot.SH / 2).setOrigin(0.5, 0.5)
+            .setText(`${Math.ceil(rem / 1000)}`);
+          if (slot.iconImg) slot.iconImg.setAlpha(0.3);
+        } else {
+          slot.cdTxt.setPosition(slot.sx + slot.SW / 2, slot.sy + slot.SH - 2).setOrigin(0.5, 1)
+            .setText(total > 0 ? `${total}` : '');
+          if (slot.iconImg) slot.iconImg.setAlpha(total > 0 ? 1.0 : 0.3);
+        }
         continue;
       }
 

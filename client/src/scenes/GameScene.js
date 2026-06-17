@@ -1,5 +1,5 @@
 import * as Phaser from 'https://cdn.jsdelivr.net/npm/phaser@4.1.0/dist/phaser.esm.js';
-import { COLORS, BASE_WORLD, PVP_WORLD_SCALE, PLAYER, MOBS, PROJECTILE, RESPAWN_MS, UI_RES, BOSS, DPR, HANDLING, ART_ANGLE_OFFSET, RANKS } from '../constants.js';
+import { COLORS, BASE_WORLD, PVP_WORLD_SCALE, PLAYER, MOBS, PROJECTILE, RESPAWN_MS, UI_RES, BOSS, DPR, HANDLING, ART_ANGLE_OFFSET, RANKS, BASE_SCAN_RADIUS } from '../constants.js';
 import { minimapRect, minimapToWorld } from '../systems/minimap.js';
 import { i18n } from '../i18n.js';
 import Player from '../entities/Player.js';
@@ -8,7 +8,7 @@ import Projectile from '../entities/Projectile.js';
 import Loot from '../entities/Loot.js';       
 import Movement from '../systems/Movement.js';
 import { EXP_CLASSES } from './BootScene.js'; 
-import { rollLootForMob, dropChance, itemName, rollStarGold, starterCannon, starterShield, rollCannon, rollShield, rollEngine, rollLaser, rollApophisLoot, PLASMATE_PER_SLOT, PLASMATE_DAILY_MAX, addPlasmateToInventory, totalPlasmateInInventory, removePlasmateFromInventory, CONSUMABLES, addConsumableToInventory, rollConsumableDrop } from '../items.js';
+import { rollLootForMob, dropChance, itemName, rollStarGold, starterCannon, starterShield, rollCannon, rollShield, rollEngine, rollLaser, rollApophisLoot, PLASMATE_PER_SLOT, PLASMATE_DAILY_MAX, addPlasmateToInventory, totalPlasmateInInventory, removePlasmateFromInventory, CONSUMABLES, addConsumableToInventory, countConsumableInInventory, removeConsumableFromInventory, rollConsumableDrop } from '../items.js';
 import PlasmateDeposit from '../entities/PlasmateDeposit.js';
 import { levelInfo, xpToNext, MAX_LEVEL } from '../leveling.js';
 import { SHIP_BY_KEY } from '../ships.js';    
@@ -239,6 +239,9 @@ export default class GameScene extends Phaser.Scene {
     this._berserkerBuff    = null;   // { endTime, mult } | null
     this._stealthEndTime   = 0;
     this._stealthOrigSpeed = 0;
+    this._speedBoostOrig   = null;
+    this._speedBoostTimer  = null;
+    this._scanPulseTimer   = null;
 
     this.playerName  = this.playerName  || getUsername();
     this.player.setNameplate(this.playerName, this.pilotRank);
@@ -913,6 +916,7 @@ export default class GameScene extends Phaser.Scene {
   // ── Active skill system ────────────────────────────────────────────────
 
   _skillCooldownMs(key) {
+    if (key.startsWith('use:')) return 60000;
     const lv  = Math.max(1, (this.skillLevels || {})[key] || 1);
     const mod = this.player?.activeCooldownMod ?? 1;
     const base = { overcharge_shot: 25000, salvo: 55000, emergency_repair: 120000,
@@ -932,6 +936,7 @@ export default class GameScene extends Phaser.Scene {
   _activateSkillSlot(i) {
     const key = (this.actionBar || [])[i];
     if (!key || !this.player?.alive) return;
+    if (key.startsWith('use:')) { this._useConsumable(key.slice(4), this.time.now); return; }
     const lv = (this.skillLevels || {})[key] || 0;
     if (lv === 0) return;
     const now = this.time.now;
@@ -946,6 +951,65 @@ export default class GameScene extends Phaser.Scene {
       case 'stealth_sprint':   this._doStealthSprint(now, cd);   break;
       case 'berserker':        this._doBerserker(lv, now, cd);   break;
     }
+  }
+
+  _useConsumable(type, now) {
+    const barKey = `use:${type}`;
+    const cdEnd = this.skillCooldowns[barKey] || 0;
+    if (now < cdEnd) { this.log(`⏳ КД: ${Math.ceil((cdEnd - now) / 1000)}с`); return; }
+
+    const inv = this.inventory || [];
+    if (countConsumableInInventory(inv, type) <= 0) { this.log('❌ Расходник закончился'); return; }
+
+    this.skillCooldowns[barKey] = now + 60000;
+    removeConsumableFromInventory(inv, type, 1);
+
+    switch (type) {
+      case 'repair_pack': {
+        const heal = Math.round(this.player.maxHull * 0.30);
+        this.player.hull = Math.min(this.player.maxHull, this.player.hull + heal);
+        this.log(`🔧 Ремкомплект: +${heal} HP`);
+        this.hitFlash(this.player.x, this.player.y, true);
+        break;
+      }
+      case 'speed_boost': {
+        this._speedBoostOrig = this.player.shipBaseSpeed;
+        this.player.shipBaseSpeed = Math.round(this._speedBoostOrig * 1.50);
+        this.player.recomputeStats();
+        this.log('⚡ Ускоритель: +50% скорость, 15с');
+        this.muzzleFlash(this.player.x, this.player.y, 0xffee44);
+        this._speedBoostTimer = this.time.delayedCall(15000, () => {
+          if (!this.player?.alive) return;
+          this.player.shipBaseSpeed = this._speedBoostOrig;
+          this._speedBoostOrig  = null;
+          this._speedBoostTimer = null;
+          this.player.recomputeStats();
+          this.log('⚡ Ускорение завершено');
+        });
+        break;
+      }
+      case 'scanner_pulse': {
+        const baseR = Math.round(BASE_SCAN_RADIUS * (1 + (this.skillLevels?.scanner_boost || 0) * 0.20));
+        this.scanRadius = baseR * 2;
+        this.log('📡 Сканер-импульс: радиус ×2, 20с');
+        this.muzzleFlash(this.player.x, this.player.y, 0x44ddff);
+        this._scanPulseTimer = this.time.delayedCall(20000, () => {
+          this.scanRadius = baseR;
+          this._scanPulseTimer = null;
+          this.log('📡 Сканер нормализован');
+        });
+        break;
+      }
+      case 'emergency_warp': {
+        const cx = this.worldWidth / 2, cy = this.worldHeight / 2;
+        this.player.sprite.setPosition(cx, cy);
+        if (this.player.sprite.body) this.player.sprite.body.reset(cx, cy);
+        this.muzzleFlash(cx, cy, 0x8888ff);
+        this.log('🌀 Аварийный прыжок: телепорт на базу');
+        break;
+      }
+    }
+    this._saveState?.();
   }
 
   _doOverchargeShot(now, cd) {
