@@ -1,7 +1,7 @@
 import * as Phaser from 'https://cdn.jsdelivr.net/npm/phaser@4.1.0/dist/phaser.esm.js';
 import { COLORS, UI_RES } from '../constants.js';
 import { i18n } from '../i18n.js';
-import { apiPost, apiGet, setSession, getToken, getUsername } from '../api.js';
+import { apiPost, apiGet, setSession, clearSession, getToken, getUsername } from '../api.js';
 
 const DEV_MODE = true;
 
@@ -100,6 +100,8 @@ export default class LoginScene extends Phaser.Scene {
       devLink.addEventListener('mouseenter', () => devLink.style.color = '#4dd0e1');
       devLink.addEventListener('mouseleave', () => devLink.style.color = '#607d8b');
       devLink.addEventListener('click', () => {
+        clearSession();            // drop any real user token from same tab
+        window.PLAYER_STATE = null; // don't carry over real user's saved state
         this._removeOverlay();
         this.scene.start('TestProfileScene');
       });
