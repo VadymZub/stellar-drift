@@ -197,21 +197,17 @@ export default class CargoScene extends Phaser.Scene {
         const isConsumable = def.category === 'consumable';
 
         // Strip specs: { label, color, bg, h, action }
-        const SA = 12; // at-base mini-strip (3 strips × 12 = 36, body = 32)
         const strips = [];
 
         if (type === 'cargo' && isConsumable) {
-          // At base: three actions — warehouse, action bar, sell
+          // At base: two actions — warehouse, action bar
           const barKey = `use:${item.type}`;
           const inBar = (gs.actionBar || []).includes(barKey);
-          strips.push({ label: '→ склад',  color: '#4aa8cc', bg: 0x071828, h: SA,
+          strips.push({ label: '→ склад',  color: '#4aa8cc', bg: 0x071828, h: STRIP_H,
             action: () => this._moveToWarehouse(item) });
           strips.push({ label: inBar ? '✓ панель' : '→ панель',
-            color: inBar ? '#4a9860' : '#4dd0e1', bg: 0x051520, h: SA,
+            color: inBar ? '#4a9860' : '#4dd0e1', bg: 0x051520, h: STRIP_H,
             action: () => this._addConsumableToBar(item.type) });
-          strips.push({ label: `💰 ×${item.amount} → ${(def.sell * item.amount).toLocaleString()} кр.`,
-            color: '#81c784', bg: 0x071808, h: SA,
-            action: () => this._showSellConfirm(gs, item, sx, sy, def) });
         } else if (type === 'cargo' && !isConsumable) {
           strips.push({ label: '→ склад', color: '#4aa8cc', bg: 0x071828, h: STRIP_H,
             action: () => this._moveToWarehouse(item) });

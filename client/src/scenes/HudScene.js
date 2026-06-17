@@ -6,6 +6,7 @@ import { minimapRect, worldToMinimap } from '../systems/minimap.js';
 import { SECTORS, galaxy } from '../galaxy.js';
 import { getActiveMissionSectorTargets } from '../data/missions.js';
 import { countConsumableInInventory } from '../items.js';
+import { prerenderTex } from '../utils/prerenderTex.js';
 
 // Оверлей-сцена HUD. Читает статы из GameScene, слушает события лога.
 export default class HudScene extends Phaser.Scene {
@@ -193,11 +194,25 @@ export default class HudScene extends Phaser.Scene {
       slot._key = key;
       if (slot.iconImg) { slot.iconImg.destroy(); slot.iconImg = null; }
       if (slot._pickGfx) { slot._pickGfx.destroy(); slot._pickGfx = null; }
+
+      const isConsumable = !!key?.startsWith('use:');
+      if (isConsumable) {
+        // Shift icon up, leave room for count text at bottom
+        slot.cdTxt.setPosition(slot.sx + slot.SW / 2, slot.sy + slot.SH - 2).setOrigin(0.5, 1);
+        try { slot.cdTxt.setFontSize('10px'); } catch (_) {}
+      } else {
+        slot.cdTxt.setPosition(slot.sx + slot.SW / 2, slot.sy + slot.SH / 2).setOrigin(0.5, 0.5);
+        try { slot.cdTxt.setFontSize('12px'); } catch (_) {}
+      }
+
       if (!key) return;
-      const texKey = key.startsWith('use:') ? `consumable_${key.slice(4)}` : `skill_${key}`;
+      const texKey = isConsumable ? `consumable_${key.slice(4)}` : `skill_${key}`;
       if (!this.textures.exists(texKey)) return;
-      slot.iconImg = this.add.image(slot.sx + slot.SW / 2, slot.sy + slot.SH / 2, texKey)
-        .setDisplaySize(slot.SW - 4, slot.SH - 4).setDepth(102);
+      const iconSz  = isConsumable ? 40 : slot.SW - 4;
+      const iconY   = isConsumable ? slot.sy + slot.SH / 2 - 5 : slot.sy + slot.SH / 2;
+      slot.iconImg = this.add.image(slot.sx + slot.SW / 2, iconY,
+          prerenderTex(this, texKey, iconSz, iconSz))
+        .setDisplaySize(iconSz, iconSz).setDepth(102);
     });
   }
 
@@ -212,7 +227,7 @@ export default class HudScene extends Phaser.Scene {
       const key   = bar[i] || null;
 
       if (key?.startsWith('use:')) {
-        // Consumable slot — show remaining quantity, no cooldown overlay
+        // Consumable slot — show remaining quantity below icon, no cooldown overlay
         slot.cdGfx.clear();
         const total = countConsumableInInventory(gs.inventory || [], key.slice(4));
         slot.cdTxt.setText(total > 0 ? `${total}` : '');
