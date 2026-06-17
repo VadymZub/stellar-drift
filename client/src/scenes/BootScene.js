@@ -119,6 +119,11 @@ export default class BootScene extends Phaser.Scene {
     this.load.image('arrow_waypoint', 'assets/ui/arrow_waypoint.png');
     this.load.image('arrow_cruise', 'assets/ui/arrow_cruise.png');
     this.load.image('arrow_boost', 'assets/ui/arrow_boost.png');
+    // Иконки валют / ресурсов
+    this.load.image('icon_credits',  'assets/ui/icon_credits.png');
+    this.load.image('icon_gold',     'assets/ui/icon_gold.png');
+    this.load.image('icon_honor',    'assets/ui/icon_honor.png');
+    this.load.image('icon_corp_rep', 'assets/ui/icon_corp_rep.png');
     // Стрелка-активатор форсажа: анимация «переливания» (бегущий блик), 10 кадров 282×98.
     this.load.spritesheet('arrow_cruise_anim', 'assets/ui/arrow_cruise_anim.png', { frameWidth: 282, frameHeight: 98 });
 
