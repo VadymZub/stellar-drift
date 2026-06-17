@@ -30,6 +30,7 @@ export default class Loot {
 
   update(now) {
     if (!this.alive) return;
+    if (this._magnetPull) return; // magnet controls position
     this.sprite.y = this.baseY + Math.sin(now * 0.004) * 4;
     this.sprite.rotation = Math.sin(now * 0.002) * 0.2;
 

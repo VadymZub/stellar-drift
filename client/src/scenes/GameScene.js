@@ -248,6 +248,7 @@ export default class GameScene extends Phaser.Scene {
     this.collectTarget = null;
     this.collectTimer = 0;
     this.collectGfx = this.add.graphics().setDepth(58);
+    this.magnetEnabled = this.magnetEnabled ?? true;
 
     this.aoeZones = [];
     this.aoeGfx = this.add.graphics().setDepth(36);
@@ -1619,6 +1620,7 @@ export default class GameScene extends Phaser.Scene {
     this.projectiles = this.projectiles.filter((p) => !p.dead);
     this.projectiles.forEach((p) => p.update(dt));
     this.updateLoot(dt); this.updateGates(dt);
+    this._updateMagnet(dt);
     const now2 = this.time.now;
     this.plasmateDeposits.forEach(d => d.update(now2));
     if (this.pendingGate && Phaser.Math.Distance.Between(this.player.x, this.player.y, this.pendingGate.x, this.pendingGate.y) < 60) { this.pendingGate = null; }
@@ -1746,6 +1748,120 @@ export default class GameScene extends Phaser.Scene {
 
     this.loot = this.loot.filter((l) => l.alive);
   }
+
+  _updateMagnet(dt) {
+    if (!this.magnetEnabled) return;
+    if (!this.player?.alive || this.atBase || this.jumping) return;
+
+    // Release all when cargo full — items keep floating, magnet re-activates when space frees
+    if (this.inventory.length >= this._cargoMax()) {
+      for (const l of this.loot) {
+        if (l._magnetPull) {
+          l._magnetPull = false;
+          l.sprite.setDisplaySize(l._origDisplayW ?? l.sprite.displayWidth, l._origDisplayH ?? l.sprite.displayHeight);
+        }
+      }
+      return;
+    }
+
+    const MAGNET_BASE = 180;
+    const radius = MAGNET_BASE * (this.player.lootPickupRadiusMult ?? 1.0);
+    const px = this.player.x, py = this.player.y;
+
+    for (const loot of this.loot) {
+      if (!loot.alive) continue;
+      if (loot === this.collectTarget) continue; // manual collect takes priority
+
+      const dx = px - loot.sprite.x, dy = py - loot.sprite.y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+
+      if (!loot._magnetPull) {
+        if (dist >= radius) continue;
+        loot._magnetPull = true;
+        loot._origDisplayW = loot.sprite.displayWidth;
+        loot._origDisplayH = loot.sprite.displayHeight;
+      }
+
+      if (dist < 8) {
+        // Arrived — collect
+        this.inventory.push(loot.item);
+        this.log(i18n.t('log.loot_pickup', { item: itemName(loot.item) }));
+        loot.collect();
+        this.advanceMission('daily_salvage', 0);
+        this._saveState();
+        continue;
+      }
+
+      // Accelerating pull: 150 px/s at radius edge → 600 px/s near center
+      const t = Math.max(0, 1 - dist / radius);
+      const speed = (150 + 450 * t) * dt;
+      loot.sprite.x += (dx / dist) * speed;
+      loot.sprite.y += (dy / dist) * speed;
+      // Keep baseX/Y in sync so Loot.update() bobbing doesn't fight the magnet
+      loot.baseX = loot.sprite.x;
+      loot.baseY = loot.sprite.y;
+
+      // Shrink sprite as it nears the ship
+      const SHRINK_DIST = 50;
+      if (dist < SHRINK_DIST) {
+        const scale = dist / SHRINK_DIST;
+        loot.sprite.setDisplaySize(loot._origDisplayW * scale, loot._origDisplayH * scale);
+      }
+    }
+
+    // ── Plasmate auto-collect (premium + loot_magnet skill affects radius) ──
+    if (this.premium) {
+      const limitReached = (this.plasmateToday || 0) >= PLASMATE_DAILY_MAX;
+      const plasmateCargoFull = totalPlasmateInInventory(this.inventory) >= this._cargoMax() * PLASMATE_PER_SLOT;
+
+      for (const dep of this.plasmateDeposits) {
+        if (!dep.alive) continue;
+        if (dep === this.collectTarget) continue;
+
+        // Release if blocked by limit or cargo
+        if (limitReached || plasmateCargoFull) {
+          if (dep._magnetPull) {
+            dep._magnetPull = false;
+            dep.sprite.setDisplaySize(dep._origDisplayW ?? 40, dep._origDisplayH ?? 40);
+          }
+          continue;
+        }
+        // Respect per-deposit cooldown (set after failed collection)
+        if (dep._magnetCooldownUntil && this.time.now < dep._magnetCooldownUntil) continue;
+
+        const ddx = px - dep.sprite.x, ddy = py - dep.sprite.y;
+        const ddist = Math.sqrt(ddx * ddx + ddy * ddy);
+
+        if (!dep._magnetPull) {
+          if (ddist >= radius) continue;
+          dep._magnetPull = true;
+          dep._origDisplayW = dep.sprite.displayWidth;
+          dep._origDisplayH = dep.sprite.displayHeight;
+        }
+
+        if (ddist < 8) {
+          dep._magnetPull = false;
+          dep.sprite.setDisplaySize(dep._origDisplayW ?? 40, dep._origDisplayH ?? 40);
+          const wasAlive = dep.alive;
+          this._collectPlasmateDeposit(dep);
+          if (dep.alive) dep._magnetCooldownUntil = this.time.now + 3000; // failed — cooldown
+          continue;
+        }
+
+        const pt = Math.max(0, 1 - ddist / radius);
+        const pspeed = (150 + 450 * pt) * dt;
+        dep.sprite.x += (ddx / ddist) * pspeed;
+        dep.sprite.y += (ddy / ddist) * pspeed;
+
+        const SHRINK_DIST = 50;
+        if (ddist < SHRINK_DIST) {
+          const pscale = ddist / SHRINK_DIST;
+          dep.sprite.setDisplaySize(dep._origDisplayW * pscale, dep._origDisplayH * pscale);
+        }
+      }
+    }
+  }
+
   createBoostFx() {
     this.boostEmitter = this.add.particles(0, 0, 'glow', {
       lifespan: 400, speed: { min: 50, max: 150 }, scale: { start: 0.4, end: 0 }, alpha: { start: 0.6, end: 0 },
