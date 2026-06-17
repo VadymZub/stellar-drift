@@ -27,16 +27,11 @@ export default class HudScene extends Phaser.Scene {
     this.pShieldTxt = this.add.text(20, 48,  '', F('12px', '#4dd0e1')).setDepth(101);
     this.pHullTxt   = this.add.text(20, 82,  '', F('12px', '#66bb6a')).setDepth(101);
     this.pSpeed     = this.add.text(20, 116, '', F('12px', '#9fb3b8')).setDepth(101);
-    // Строки ресурсов: иконка (18×18) + текст
-    const IC = 18; // icon size
-    this._icoCredits  = this.add.image(20, 144, 'icon_credits' ).setDisplaySize(IC, IC).setOrigin(0, 0.5).setDepth(101);
-    this._icoGold     = this.add.image(20, 164, 'icon_gold'    ).setDisplaySize(IC, IC).setOrigin(0, 0.5).setDepth(101);
-    this._icoHonor    = this.add.image(20, 184, 'icon_honor'   ).setDisplaySize(IC, IC).setOrigin(0, 0.5).setDepth(101);
-    this._icoCorpRep  = this.add.image(20, 204, 'icon_corp_rep').setDisplaySize(IC, IC).setOrigin(0, 0.5).setDepth(101);
-    this.pCredits     = this.add.text(42, 136, '', F('12px', '#ffb74d')).setDepth(101);
-    this.pStarGold    = this.add.text(42, 156, '', F('12px', '#ffd54f')).setDepth(101);
-    this.pHonor       = this.add.text(42, 176, '', F('12px', '#ef9a9a')).setDepth(101);
-    this.pCorpRep     = this.add.text(42, 196, '', F('12px', '#80cbc4')).setDepth(101);
+    // Строки ресурсов: эмодзи + число
+    this.pCredits  = this.add.text(20, 136, '', F('13px', '#ffb74d')).setDepth(101);
+    this.pStarGold = this.add.text(20, 156, '', F('13px', '#ffd54f')).setDepth(101);
+    this.pHonor    = this.add.text(20, 176, '', F('13px', '#ef9a9a')).setDepth(101);
+    this.pCorpRep  = this.add.text(20, 196, '', F('13px', '#80cbc4')).setDepth(101);
     // Уровень пилота + XP-бар (растёт только за PvE)
     this.pPilot = this.add.text(20, 220, '', O('13px', '#b39ddb')).setDepth(101);
     this.pRank  = this.add.text(20, 256, '', O('14px', '#ffcc80')).setDepth(101);
@@ -379,11 +374,10 @@ export default class HudScene extends Phaser.Scene {
       const boostTag = p.boosting ? `  ⚡${i18n.t('hud.boost')}` : '';
       this.pSpeed.setText(`${i18n.t('hud.speed')}  ${Math.round(p.speed)}${boostTag}`)
         .setColor(p.boosting ? '#ffb74d' : '#9fb3b8').setVisible(true);
-      this.pCredits.setText(`${(this.gs.credits || 0).toLocaleString()}`).setVisible(true);
-      this.pStarGold.setText(`${this.gs.starGold || 0}`).setVisible(true);
-      this.pHonor.setText(`${(this.gs.pilotHonor || 0).toLocaleString()}`).setVisible(true);
-      this.pCorpRep.setText(`${Math.round((this.gs.corpRep || 0) * 100)}%`).setVisible(true);
-      [this._icoCredits, this._icoGold, this._icoHonor, this._icoCorpRep].forEach(o => o?.setVisible(true));
+      this.pCredits.setText(`💰 ${(this.gs.credits || 0).toLocaleString()}`).setVisible(true);
+      this.pStarGold.setText(`⭐ ${this.gs.starGold || 0}`).setVisible(true);
+      this.pHonor.setText(`⚔️ ${(this.gs.pilotHonor || 0).toLocaleString()}`).setVisible(true);
+      this.pCorpRep.setText(`🛡 ${Math.round((this.gs.corpRep || 0) * 100)}%`).setVisible(true);
 
       // ── Уровень пилота + XP-бар ──
       const info = levelInfo(this.gs.pilotXp || 0);
@@ -429,7 +423,6 @@ export default class HudScene extends Phaser.Scene {
       [this.pName, this.pShieldTxt, this.pHullTxt, this.pSpeed, this.pCredits,
        this.pStarGold, this.pHonor, this.pCorpRep, this.pPilot, this.pXpTxt, this.pRank,
        this.tName, this.tHullTxt, this.safeTxt].forEach(o => o.setVisible(false));
-      [this._icoCredits, this._icoGold, this._icoHonor, this._icoCorpRep].forEach(o => o?.setVisible(false));
       g.clear();
     }
 
