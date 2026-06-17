@@ -4,6 +4,7 @@ import { i18n } from '../i18n.js';
 import { levelInfo, MAX_LEVEL } from '../leveling.js';
 import { minimapRect, worldToMinimap } from '../systems/minimap.js';
 import { SECTORS, galaxy } from '../galaxy.js';
+import { getActiveMissionSectorTargets } from '../data/missions.js';
 
 // Оверлей-сцена HUD. Читает статы из GameScene, слушает события лога.
 export default class HudScene extends Phaser.Scene {
@@ -441,12 +442,41 @@ export default class HudScene extends Phaser.Scene {
     }
 
     // Джапгейты (порталы) — cyan-кольца, чтобы видеть, куда лететь для прыжка
+    const missionTargets = getActiveMissionSectorTargets(gs.missionState, gs.playerCorp ?? 'helios');
     if (gs.gates) {
       for (const ga of gs.gates) {
         const p = worldToMinimap(ga.x, ga.y, r, ww, wh);
+        const isMissionGate = missionTargets.has(ga.target);
+        if (isMissionGate) {
+          // Amber outer ring for mission target gate
+          g.lineStyle(2, COLORS.amber, 0.7); g.strokeCircle(p.x, p.y, 8);
+        }
         g.lineStyle(2, COLORS.primary, 0.95); g.strokeCircle(p.x, p.y, 4.5);
         g.fillStyle(0x9fe6ff, 0.9); g.fillCircle(p.x, p.y, 1.8);
+        if (isMissionGate) {
+          // Amber star above gate marker
+          g.fillStyle(COLORS.amber, 0.95);
+          const sx = p.x, sy = p.y - 12, sr = 4;
+          for (let i = 0; i < 5; i++) {
+            const aOuter = (i * 4 * Math.PI / 5) - Math.PI / 2;
+            const aInner = aOuter + 2 * Math.PI / 10;
+            const ox = sx + Math.cos(aOuter) * sr, oy = sy + Math.sin(aOuter) * sr;
+            const ix = sx + Math.cos(aInner) * sr * 0.45, iy = sy + Math.sin(aInner) * sr * 0.45;
+            if (i === 0) g.beginPath(), g.moveTo(ox, oy);
+            else g.lineTo(ox, oy);
+            g.lineTo(ix, iy);
+          }
+          g.closePath(); g.fillPath();
+        }
       }
+    }
+
+    // Escort transport dot
+    const et = gs.escortTransport;
+    if (et?.alive) {
+      const ep = worldToMinimap(et.x, et.y, r, ww, wh);
+      g.lineStyle(1.5, 0x4dd0e1, 0.85); g.strokeCircle(ep.x, ep.y, 5);
+      g.fillStyle(0x80deea, 0.9); g.fillCircle(ep.x, ep.y, 2.5);
     }
 
     // Waypoint (если задан курс)

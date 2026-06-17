@@ -782,6 +782,7 @@ export default class SkillScene extends Phaser.Scene {
         ptr.event.stopPropagation();
         gs.starGold    = (gs.starGold    || 0) - paidCost;
         gs.respeckCount = (gs.respeckCount || 0) + 1;
+        gs._saveState?.();
         this._doRespeck(); closeModal();
       });
     }

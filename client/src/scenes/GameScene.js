@@ -19,6 +19,8 @@ import MiningBase from '../entities/MiningBase.js';
 import HomeBase from '../entities/HomeBase.js';
 import ArgusController from '../systems/ArgusController.js';
 import { getUsername, getToken, apiPut, apiGet } from '../api.js';
+import { MISSIONS, getMissionSectorTarget } from '../data/missions.js';
+import EscortTransport, { ESCORT_SPEED, ESCORT_WAVE_AT } from '../entities/EscortTransport.js';
 
 const PICKUP_RADIUS = 95;
 const PICKUP_TIME = 2000;
@@ -66,6 +68,16 @@ function _leadTarget(sx, sy, tx, ty, tvx, tvy, boltSpeed) {
   return { x: tx + tvx * leadT, y: ty + tvy * leadT };
 }
 
+// Highest corp home sector accessible by level (used on arena reconnect redirect)
+function _bestHomeSector(corp, level) {
+  const prefix = corp === 'neutral' ? 'helios' : corp;
+  for (let n = 5; n >= 1; n--) {
+    const key = `${prefix}_${n}`;
+    if (SECTORS[key] && SECTORS[key].lvlMin <= level) return key;
+  }
+  return `${prefix}_1`;
+}
+
 export default class GameScene extends Phaser.Scene {
   constructor() { super('GameScene'); }
 
@@ -104,8 +116,13 @@ export default class GameScene extends Phaser.Scene {
     }
 
     const cx = this.worldWidth / 2, cy = this.worldHeight / 2;
-    const startX = data?.startX ?? cx;
-    const startY = data?.startY ?? (cy - 40);
+    let startX = data?.startX ?? cx;
+    let startY = data?.startY ?? (cy - 40);
+    if (this._reconnectPvpCorp) {
+      const pos = this.homeBasePositions?.[this._reconnectPvpCorp];
+      if (pos) { startX = pos.x; startY = pos.y + 80; }
+      this._reconnectPvpCorp = null;
+    }
     this.player = new Player(this, startX, startY, this.objScale);
     this.movement = new Movement(this, this.player);
 
@@ -170,6 +187,7 @@ export default class GameScene extends Phaser.Scene {
     this.pilotXp    = this.pilotXp    || (tp ? xpForLevel(tp.level) : 1829100);
     this.pilotHonor = this.pilotHonor ?? (DEV_MODE ? 420500 : 0);
     this.pilotLevel = levelInfo(this.pilotXp).level;
+    this.initMissionState();
 
     const playerRating = calculateRating(this.pilotXp, this.pilotHonor);
     const ratings = MOCK_CORP_RATINGS.includes(playerRating)
@@ -388,11 +406,7 @@ export default class GameScene extends Phaser.Scene {
       return;
     }
     this.plasmateToday = (this.plasmateToday || 0) + collected;
-    // Track story_supply mission progress
-    if (!this.missionProgress) this.missionProgress = {};
-    if (!this.missionProgress.story_supply_collected) this.missionProgress.story_supply_collected = 0;
-    this.missionProgress.story_supply_collected = Math.min(500,
-      this.missionProgress.story_supply_collected + collected);
+    this.advanceMission('story_supply', 0, collected);
     this.log(i18n.t('log.plasmate_collected', {
       amount: collected,
       total:  this.plasmateToday,
@@ -722,7 +736,10 @@ export default class GameScene extends Phaser.Scene {
     
     const fromKey = galaxy.current;
     galaxy.current = key;
-    
+
+    // Mission: sector arrival hooks
+    if (key === 'R-1-boss') this.advanceMission('story_signal', 0);
+
     // Координаты появления в новом секторе
     const nextPvp = SECTORS[key].pvp === true;
     const nextW = BASE_WORLD.width * (nextPvp ? PVP_WORLD_SCALE : 1.0);
@@ -993,6 +1010,16 @@ export default class GameScene extends Phaser.Scene {
       this.pilotLevel++;
       this.log(i18n.t('log.levelup', { lvl: this.pilotLevel }));
     }
+    // Unlock missions that require the new level
+    if (this.missionState) {
+      for (const m of MISSIONS) {
+        const st = this.missionState[m.id];
+        if (st?.status === 'locked' && (m.minLevel ?? 1) <= this.pilotLevel) {
+          st.status = m.defaultStatus;
+          this.log(`Миссия разблокирована: ${m.title}`);
+        }
+      }
+    }
   }
   mobAt(wx, wy) {
     let best = null, bestD = Infinity;
@@ -1134,12 +1161,12 @@ export default class GameScene extends Phaser.Scene {
     g.beginPath(); g.moveTo(x1, y1); g.lineTo(x2, y2); g.strokePath();
     this.tweens.add({ targets: g, alpha: 0, duration: 160, ease: 'Expo.easeOut', onComplete: () => g.destroy() });
   }
-  fireMobWeapon(mob, tx, ty) {
+  fireMobWeapon(mob, tx, ty, victim = this.player) {
     // Самонаводящийся болт: обычные мобы 90°/сек, боссы 180°/сек
     const turnRate = mob.isBoss
-      ? (180 * Math.PI / 180)   // 3.14 рад/сек
-      : (90  * Math.PI / 180);  // 1.57 рад/сек
-    this.projectiles.push(new Projectile(this, 'mob', mob.x, mob.y, tx, ty, this.player, mob.damage, 0.05, PROJECTILE.mobColor, turnRate));
+      ? (180 * Math.PI / 180)
+      : (90  * Math.PI / 180);
+    this.projectiles.push(new Projectile(this, 'mob', mob.x, mob.y, tx, ty, victim, mob.damage, 0.05, PROJECTILE.mobColor, turnRate));
     this.muzzleFlash(mob.x, mob.y, 0xff8a7a);
   }
   muzzleFlash(x, y, color) {
@@ -1160,13 +1187,17 @@ export default class GameScene extends Phaser.Scene {
       this.showDamage(m.x, m.y, res);
       if (res.killed) this.onMobKilled(m);
     } else {
-      if (res.dodged) { this.showDodge(this.player.x, this.player.y); return; }
-      const toHull = (res.hullHit || 0) > 0;
-      this.hitFlash(this.player.x, this.player.y, toHull);
-      if (toHull) this.vfx?.play('hull_hit', this.player.x, this.player.y, { scale: 0.15, depth: 67 });
-      this.showDamage(this.player.x, this.player.y, res);
-      if (res.brokeShield) this.log(i18n.t('log.shield_down'));
-      if (!this.player.alive) this.onPlayerKilled();
+      const hx = proj.victim?.x ?? this.player.x;
+      const hy = proj.victim?.y ?? this.player.y;
+      if (res?.dodged) { this.showDodge(hx, hy); return; }
+      const toHull = (res?.hullHit || 0) > 0;
+      this.hitFlash(hx, hy, toHull);
+      if (toHull) this.vfx?.play('hull_hit', hx, hy, { scale: 0.15, depth: 67 });
+      this.showDamage(hx, hy, res);
+      if (proj.victim === this.player) {
+        if (res.brokeShield) this.log(i18n.t('log.shield_down'));
+        if (!this.player.alive) this.onPlayerKilled();
+      }
     }
   }
   onMobKilled(mob) {
@@ -1184,8 +1215,140 @@ export default class GameScene extends Phaser.Scene {
       const lootItem = mob.tpl.key === 'bigboss' ? rollApophisLoot() : rollLootForMob(mob);
       this.loot.push(new Loot(this, mob.x, mob.y, lootItem));
     }
-    this.time.delayedCall(RESPAWN_MS, () => { if (!mob.alive) { mob.respawn(); this.log(i18n.t('log.respawn', { name, lvl })); } });
+    if (!mob.noRespawn) {
+      this.time.delayedCall(RESPAWN_MS, () => { if (!mob.alive) { mob.respawn(); this.log(i18n.t('log.respawn', { name, lvl })); } });
+    }
+    // Mission hooks
+    if (mob.tpl.key.startsWith('pirate')) this.advanceMission('daily_patrol', 0);
+    if (mob.isBoss && galaxy.current === 'R-1-boss') {
+      this.advanceMission('story_signal', 1);
+      this.advanceMission('story_signal', 2);
+    }
   }
+
+  // ── Mission system ───────────────────────────────────────────────────────
+  initMissionState() {
+    if (!this.missionState) this.missionState = {};
+    for (const m of MISSIONS) {
+      if (!this.missionState[m.id]) {
+        const locked = (m.minLevel ?? 1) > (this.pilotLevel ?? 1);
+        this.missionState[m.id] = {
+          status: locked ? 'locked' : m.defaultStatus,
+          objectives: m.objectives.map(() => ({ current: 0 })),
+        };
+      }
+    }
+    // Migrate old story_supply progress from previous session format
+    if (this.missionProgress?.story_supply_collected != null) {
+      const ss = this.missionState['story_supply'];
+      if (ss) ss.objectives[0].current = this.missionProgress.story_supply_collected;
+      delete this.missionProgress.story_supply_collected;
+    }
+    // Daily reset at midnight
+    const nowMs = Date.now();
+    if (!this.missionDailyReset || nowMs >= this.missionDailyReset) {
+      const tomorrow = new Date(); tomorrow.setHours(24, 0, 0, 0);
+      this.missionDailyReset = tomorrow.getTime();
+      for (const m of MISSIONS) {
+        if (m.type !== 'daily') continue;
+        const locked = (m.minLevel ?? 1) > (this.pilotLevel ?? 1);
+        this.missionState[m.id] = {
+          status: locked ? 'locked' : m.defaultStatus,
+          objectives: m.objectives.map(() => ({ current: 0 })),
+        };
+      }
+    }
+  }
+
+  completeMission(id) {
+    const m = MISSIONS.find(m => m.id === id);
+    const state = this.missionState?.[id];
+    if (!m || !state || state.status === 'completed') return;
+    state.status = 'completed';
+    this.credits = (this.credits || 0) + m.rewards.credits;
+    this.gainXp(m.rewards.xp);
+    if (m.rewards.stars > 0) this.starGold = (this.starGold || 0) + m.rewards.stars;
+    this.log(`Миссия завершена: ${m.title}`);
+    this.log(`+${m.rewards.credits} кр · +${m.rewards.xp} XP${m.rewards.stars > 0 ? ` · +${m.rewards.stars} ★` : ''}`);
+  }
+
+  advanceMission(id, objIdx, amount = 1) {
+    const m = MISSIONS.find(m => m.id === id);
+    const state = this.missionState?.[id];
+    if (!m || !state || state.status !== 'active') return;
+    const objDef = m.objectives[objIdx];
+    const objState = state.objectives[objIdx];
+    if (!objDef || !objState || objState.current >= objDef.total) return;
+    objState.current = Math.min(objDef.total, objState.current + amount);
+    const allDone = m.objectives.every((o, i) => state.objectives[i].current >= o.total);
+    if (allDone) this.completeMission(id);
+  }
+  // ── Escort transport ─────────────────────────────────────────────────────
+  _shouldSpawnEscort() {
+    const escortM = MISSIONS.find(m => m.id === 'daily_escort');
+    const escortTarget = getMissionSectorTarget(escortM, this.playerCorp ?? 'helios')?.key;
+    if (!escortTarget || galaxy.current !== escortTarget) return false;
+    const st = this.missionState?.['daily_escort'];
+    return st?.status === 'active' && (st.objectives[1]?.current ?? 0) < 1;
+  }
+
+  _spawnEscortTransport() {
+    if (this.escortTransport) return;
+    const corpSector1 = { helios: 'helios_1', karax: 'karax_1', tides: 'tides_1' };
+    const sector1Key  = corpSector1[this.playerCorp] ?? 'helios_1';
+    const entranceGate = this.gates?.find(g => g.target === sector1Key);
+    if (!entranceGate) return;
+
+    const cx = this.worldWidth / 2, cy = this.worldHeight / 2;
+    const dx = cx - entranceGate.x, dy = cy - entranceGate.y;
+    const d  = Math.sqrt(dx * dx + dy * dy) || 1;
+    const spawnX = entranceGate.x + (dx / d) * 250;
+    const spawnY = entranceGate.y + (dy / d) * 250;
+    const destX  = cx + (dx / d) * (-150);
+    const destY  = cy + (dy / d) * (-150);
+
+    // Hull scales to journey: wave 1 (20%→50% window) should kill unprotected transport.
+    // wave1 = [pirate_03, pirate_04]; DPS = damage × fireRate for each
+    const wave1Dps = [MOBS.pirate_03, MOBS.pirate_04]
+      .reduce((s, m) => s + m.damage * m.fireRate, 0);
+    const journeyDist = Phaser.Math.Distance.Between(spawnX, spawnY, destX, destY);
+    const hull = Math.max(200,
+      Math.round(wave1Dps * (ESCORT_WAVE_AT[1] - ESCORT_WAVE_AT[0]) * (journeyDist / ESCORT_SPEED) * 1.1)
+    );
+    this.escortTransport = new EscortTransport(this, spawnX, spawnY, destX, destY, hull);
+    this._escortMobs = [];
+    // Ensure obj0 ("arrived in sector") is marked whether player jumped or was already here
+    this.advanceMission('daily_escort', 0);
+    this.log('Транспорт ждёт сопровождения — подлети к нему, чтобы начать.');
+  }
+
+  _spawnEscortWave(tx, ty, waveIdx) {
+    const WAVES = [
+      ['pirate_03', 'pirate_04'],
+      ['pirate_04', 'pirate_05', 'pirate_04'],
+      ['pirate_05', 'pirate_06', 'pirate_05'],
+    ];
+    const keys = WAVES[waveIdx] ?? WAVES[0];
+    for (let i = 0; i < keys.length; i++) {
+      const angle = (Math.PI * 2 / keys.length) * i;
+      const spawnX = tx + Math.cos(angle) * 380;
+      const spawnY = ty + Math.sin(angle) * 380;
+      const mob = new Mob(this, MOBS[keys[i]], this.pilotLevel ?? 1, spawnX, spawnY, {});
+      mob.noRespawn    = true;
+      mob.escortTarget = this.escortTransport; // target transport, not player
+      this.mobs.push(mob);
+      this._escortMobs.push(mob);
+    }
+    this.log(`Корсары атакуют транспорт — волна ${waveIdx + 1}!`);
+  }
+
+  _updateEscort(dt) {
+    if (!this.escortTransport) return;
+    const et = this.escortTransport;
+    et.update(dt);
+    if (!et.alive) { this.escortTransport = null; this._escortMobs = null; return; }
+  }
+
   _spawnEngineFx() {
     for (const fx of this.engineFxList) this.vfx.stopLoop(fx);
     this.engineFxList = [];
@@ -1426,9 +1589,11 @@ export default class GameScene extends Phaser.Scene {
       this.movement.setWaypoint(wpt.x, wpt.y, false);
     }
     if (!this.jumping) this.movement.update(dt, inSafe);
-    this.mobs.forEach((m) => { 
-      m.update(dt, this.player, inSafe, (mob, tx, ty) => this.fireMobWeapon(mob, tx, ty)); 
-      if (m.requestAoe) { this.spawnBossAoe(m, this.player.x, this.player.y); m.requestAoe = false; } 
+    this.mobs.forEach((m) => {
+      const tgt = (m.escortTarget?.alive) ? m.escortTarget : this.player;
+      const victim = (m.escortTarget?.alive) ? this.escortTransport : this.player;
+      m.update(dt, tgt, tgt === this.player && inSafe, (mob, tx, ty) => this.fireMobWeapon(mob, tx, ty, victim));
+      if (m.requestAoe) { this.spawnBossAoe(m, this.player.x, this.player.y); m.requestAoe = false; }
     });
     this.updateAoe();
     
@@ -1442,6 +1607,12 @@ export default class GameScene extends Phaser.Scene {
     this.plasmateDeposits.forEach(d => d.update(now2));
     if (this.pendingGate && Phaser.Math.Distance.Between(this.player.x, this.player.y, this.pendingGate.x, this.pendingGate.y) < 60) { this.pendingGate = null; }
     this.argusCtrl?.update(dt);
+    this._updateEscort(dt);
+
+    // Spawn transport if we just arrived in the escort target sector
+    if (!this.escortTransport && this._shouldSpawnEscort()) {
+      this._spawnEscortTransport();
+    }
 
     this._adminBroadcastT += dt;
     if (this._adminBroadcastT >= 2) {
@@ -1547,6 +1718,7 @@ export default class GameScene extends Phaser.Scene {
             this.log(i18n.t('log.loot_pickup', { item: itemName(item) }));
             target.collect();
             this.cancelCollect();
+            this.advanceMission('daily_salvage', 0);
             this._saveState();
           }
         }
@@ -1643,6 +1815,9 @@ export default class GameScene extends Phaser.Scene {
   shutdown() {
     this._prevSector = galaxy.current;
     this._saveState();
+    this.escortTransport?.destroy();
+    this.escortTransport = null;
+    this._escortMobs = null;
     this.argusCtrl?.destroy();
     this.argusCtrl = null;
     this._adminCh?.postMessage({ type: 'GAME_STATE', alive: false, playerName: this.playerName ?? 'Player' });
@@ -1672,7 +1847,13 @@ export default class GameScene extends Phaser.Scene {
       actionBar:           this.actionBar   || [],
       respeckCount:        this.respeckCount        || 0,
       skillAchievementSP:  this.skillAchievementSP  || 0,
+      currentSector:       galaxy.current,
+      playerCorp:          this.playerCorp          || 'neutral',
       lootBySector:        this._serializeLoot(),
+      missionState:        this.missionState        || {},
+      missionDailyReset:   this.missionDailyReset   || 0,
+      plasmateToday:       this.plasmateToday        || 0,
+      plasmateDayReset:    this.plasmateDayReset      || 0,
     };
   }
 
@@ -1696,7 +1877,27 @@ export default class GameScene extends Phaser.Scene {
     if (s.actionBar          != null) this.actionBar          = s.actionBar;
     if (s.respeckCount       != null) this.respeckCount       = s.respeckCount;
     if (s.skillAchievementSP != null) this.skillAchievementSP = s.skillAchievementSP;
-    if (s.lootBySector != null) this._lootBySector = s.lootBySector;
+    if (s.currentSector != null && SECTORS[s.currentSector]) {
+      const restoredSec = SECTORS[s.currentSector];
+      if (s.currentSector === 'R-1-boss') {
+        // Арена без базы: редирект на максимально доступный домашний сектор
+        const corp  = s.playerCorp || 'helios';
+        const level = levelInfo(s.pilotXp || 0).level;
+        galaxy.current = _bestHomeSector(corp, level);
+      } else if (restoredSec.pvp) {
+        // PvP: остаёмся в секторе, спавним у базы корпорации
+        galaxy.current = s.currentSector;
+        this._reconnectPvpCorp = s.playerCorp || 'helios';
+      } else {
+        // Обычный сектор или данж — возвращаем как есть (данж: лут сохранён)
+        galaxy.current = s.currentSector;
+      }
+    }
+    if (s.lootBySector       != null) this._lootBySector      = s.lootBySector;
+    if (s.missionState       != null) this.missionState       = s.missionState;
+    if (s.missionDailyReset  != null) this.missionDailyReset  = s.missionDailyReset;
+    if (s.plasmateToday      != null) this.plasmateToday      = s.plasmateToday;
+    if (s.plasmateDayReset   != null) this.plasmateDayReset   = s.plasmateDayReset;
   }
 
   _saveState() {

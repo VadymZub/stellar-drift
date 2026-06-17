@@ -152,6 +152,7 @@ export default class CargoScene extends Phaser.Scene {
               removePlasmateFromInventory(inv, sets * PLASMATE_GOLD_RATE);
               gs.starGold = (gs.starGold || 0) + sets;
               gs.log(i18n.t('log.plasmate_exchanged', { amount: sets * PLASMATE_GOLD_RATE, gold: sets }));
+              gs._saveState?.();
             } else if (inCargo) {
               this._moveToWarehouse(item);
               return; // _moveToWarehouse calls restart

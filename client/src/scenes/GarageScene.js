@@ -235,6 +235,7 @@ export default class GarageScene extends Phaser.Scene {
     if (ship.currency === 'star') gs.starGold -= ship.price; else gs.credits -= ship.price;
     gs.ownedShips.add(ship.key);
     gs.log(i18n.t('garage.bought', { ship: i18n.t(ship.nameKey) }));
+    gs._saveState?.();
     this.selectShip(ship);          // купил → сразу активируем
   }
 
@@ -606,6 +607,7 @@ export default class GarageScene extends Phaser.Scene {
     p.recomputeStats();
     if (p.shield > p.maxShield) p.shield = p.maxShield;
     gs.log(i18n.t('garage.ship_upgraded', { lvl: lvl + 1 }));
+    gs._saveState?.();
     this.scene.restart();
   }
 
@@ -617,6 +619,7 @@ export default class GarageScene extends Phaser.Scene {
     item.creditLvl = (item.creditLvl || 0) + 1;
     gs.player.recomputeStats();
     gs.log(i18n.t('garage.mod_upgraded', { item: itemName(item), lvl: item.creditLvl }));
+    gs._saveState?.();
     this.scene.restart();
   }
 
@@ -635,6 +638,7 @@ export default class GarageScene extends Phaser.Scene {
     item.starLvl = (item.starLvl || 0) + 1;
     gs.player.recomputeStats();
     gs.log(i18n.t('garage.mod_star_upgraded', { item: itemName(item), lvl: item.starLvl }));
+    gs._saveState?.();
     this.scene.restart();
   }
 
@@ -871,7 +875,7 @@ export default class GarageScene extends Phaser.Scene {
     const gs = this.gs;
 
     // Retroactively assign perks to equipped items that lack them
-    for (const slot of ['weapon', 'shield']) {
+    for (const slot of ['weapon', 'shield', 'engine']) {
       for (const item of (gs.equipped[slot] || [])) {
         if (item && !item.perk) item.perk = rollPerk(item.type);
       }
@@ -883,6 +887,9 @@ export default class GarageScene extends Phaser.Scene {
       if (item) slots.push({ item, label: itemName(item) });
     }
     for (const item of (gs.equipped.shield || [])) {
+      if (item) slots.push({ item, label: itemName(item) });
+    }
+    for (const item of (gs.equipped.engine || [])) {
       if (item) slots.push({ item, label: itemName(item) });
     }
 
@@ -1078,6 +1085,7 @@ export default class GarageScene extends Phaser.Scene {
         cbg.on('pointerdown', () => {
           gs.credits  = (gs.credits || 0) - cCost;
           item.perk.creditLvl = nextCLvl - 1 + 1; // = nextCLvl
+          gs._saveState?.();
           this.scene.restart();
         });
       }
@@ -1111,6 +1119,7 @@ export default class GarageScene extends Phaser.Scene {
         sbg.on('pointerdown', () => {
           gs.starGold    = (gs.starGold || 0) - sCost;
           item.perk.starLvl = nextSLvl - 1 + 1;
+          gs._saveState?.();
           this.scene.restart();
         });
       }
@@ -1147,8 +1156,8 @@ export default class GarageScene extends Phaser.Scene {
       rbg.on('pointerdown', () => {
         gs.starGold = (gs.starGold || 0) - rerollCost;
         gs.perkRerollCounts[rerollKey] = rerollN + 1;
-        const slotType = item.type === 'cannon' ? 'cannon' : 'shield';
-        item.perk = rollPerk(slotType);
+        item.perk = rollPerk(item.type);
+        gs._saveState?.();
         this.scene.restart();
       });
     }

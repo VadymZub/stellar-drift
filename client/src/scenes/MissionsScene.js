@@ -2,80 +2,12 @@ import * as Phaser from 'https://cdn.jsdelivr.net/npm/phaser@4.1.0/dist/phaser.e
 import { COLORS, UI_RES } from '../constants.js';
 import { prerenderTex } from '../utils/prerenderTex.js';
 import { totalPlasmateInInventory, removePlasmateFromInventory } from '../items.js';
+import { MISSIONS } from '../data/missions.js';
 
-// MVP hardcoded missions — 3 daily + 2 story
-const MISSIONS = [
-  {
-    id: 'daily_patrol',
-    type: 'daily',
-    title: 'Патрульный обход',
-    npc: 'npc_corvus',
-    npcName: 'Бригадир Корвус',
-    desc: 'Сектор снова неспокоен. Уничтожьте пиратские корабли Корсаров, прежде чем они доберутся до базы.',
-    objectives: [{ text: 'Уничтожить Корсаров', current: 2, total: 5 }],
-    rewards: { xp: 500, credits: 1200, stars: 0 },
-    status: 'active',
-  },
-  {
-    id: 'daily_salvage',
-    type: 'daily',
-    title: 'Сбор обломков',
-    npc: 'npc_jakob',
-    npcName: 'Старый Якоб',
-    desc: 'Недавний бой оставил много интересного. Мне нужны компоненты — не жалей топлива.',
-    objectives: [{ text: 'Подобрать контейнеры с лутом', current: 0, total: 10 }],
-    rewards: { xp: 350, credits: 900, stars: 0 },
-    status: 'available',
-  },
-  {
-    id: 'daily_escort',
-    type: 'daily',
-    title: 'Сопровождение груза',
-    npc: 'npc_morgan',
-    npcName: 'Капитан Морган',
-    desc: 'Мой транспорт полон редких руд. Нужен эскорт через нейтральный сектор. Заплачу щедро.',
-    objectives: [
-      { text: 'Прибыть в сектор Karax-2', current: 0, total: 1 },
-      { text: 'Защитить транспорт', current: 0, total: 1 },
-    ],
-    rewards: { xp: 600, credits: 1800, stars: 2 },
-    status: 'available',
-  },
-  {
-    id: 'story_signal',
-    type: 'story',
-    title: 'Эхо Древних',
-    npc: 'npc_ancient',
-    npcName: 'Голос Древних',
-    desc: 'Из глубины сектора R-1 поступает аномальный сигнал. Источник неизвестен. Приказываю разведать.',
-    objectives: [
-      { text: 'Достичь сектора R-1', current: 0, total: 1 },
-      { text: 'Уничтожить Стража данжа', current: 0, total: 1 },
-      { text: 'Активировать маяк-ретранслятор', current: 0, total: 1 },
-    ],
-    rewards: { xp: 2500, credits: 5000, stars: 15 },
-    status: 'available',
-  },
-  {
-    id: 'story_supply',
-    type: 'story',
-    title: 'Цена союза',
-    npc: 'npc_terranov',
-    npcName: 'Магнат Терранов',
-    desc: 'Корпорация Helios нуждается в ресурсах для проекта «Ковчег». Вы — лучший вариант для деликатной работы.',
-    objectives: [
-      { text: 'Собрать 500 единиц плазмита', current: 120, total: 500 },
-      { text: 'Доставить на Станцию «Ковчег»', current: 0, total: 1 },
-    ],
-    rewards: { xp: 4000, credits: 12000, stars: 30 },
-    status: 'active',
-  },
-];
-
-const TYPE_LABEL  = { daily: 'ЕЖЕДНЕВНАЯ', story: 'СЮЖЕТ' };
-const TYPE_COLOR  = { daily: '#4dd0e1', story: '#ffb74d' };
-const STATUS_COLOR = { active: '#66bb6a', available: '#4a6678', completed: '#2a5a30' };
-const STATUS_LABEL = { active: 'АКТИВНА', available: 'ДОСТУПНА', completed: 'ВЫПОЛНЕНА' };
+const TYPE_LABEL   = { daily: 'ЕЖЕДНЕВНАЯ', story: 'СЮЖЕТ' };
+const TYPE_COLOR   = { daily: '#4dd0e1', story: '#ffb74d' };
+const STATUS_COLOR = { active: '#66bb6a', available: '#4a6678', completed: '#2a5a30', locked: '#4a3030', failed: '#ef5350' };
+const STATUS_LABEL = { active: 'АКТИВНА', available: 'ДОСТУПНА', completed: 'ВЫПОЛНЕНА', locked: 'ЗАБЛОКИРОВАНА', failed: 'ПРОВАЛЕНА' };
 
 export default class MissionsScene extends Phaser.Scene {
   constructor() { super('MissionsScene'); }
@@ -86,11 +18,7 @@ export default class MissionsScene extends Phaser.Scene {
   create() {
     this.gs = this.scene.get('GameScene');
     const gs = this.gs;
-    // Sync story_supply progress from persistent GameScene state
-    const supplyMission = MISSIONS.find(m => m.id === 'story_supply');
-    if (supplyMission && gs.missionProgress?.story_supply_collected != null) {
-      supplyMission.objectives[0].current = gs.missionProgress.story_supply_collected;
-    }
+
     const W  = this.scale.width, H = this.scale.height;
 
     const _bgMiss = this.add.image(W / 2, H / 2, 'bg_missions');
@@ -130,7 +58,7 @@ export default class MissionsScene extends Phaser.Scene {
         this.O('12px', sel ? '#4dd0e1' : '#2a4a5a')).setOrigin(0.5);
     });
 
-    const filtered = this._filteredMissions(gs.missionsFilter);
+    const filtered = this._filteredMissions(gs);
     if (gs.selectedMissionIdx === undefined || gs.selectedMissionIdx >= filtered.length)
       gs.selectedMissionIdx = 0;
     const selIdx     = gs.selectedMissionIdx;
@@ -142,16 +70,27 @@ export default class MissionsScene extends Phaser.Scene {
     const contentH  = ph - 108;
 
     this._renderList(px + 8, contentY, listW, contentH, filtered, selIdx, gs);
-    this._renderDetail(px + listW + 16, contentY, detW, contentH, selMission);
+    this._renderDetail(px + listW + 16, contentY, detW, contentH, selMission, gs);
 
     this.input.keyboard.on('keydown-ESC', () => this.scene.stop());
     this.input.keyboard.on('keydown-O',   () => this.scene.stop());
   }
 
-  _filteredMissions(filter) {
-    if (filter === 'active')    return MISSIONS.filter(m => m.status === 'active');
-    if (filter === 'completed') return MISSIONS.filter(m => m.status === 'completed');
-    return MISSIONS;
+  _missionStatus(gs, id) {
+    return gs.missionState?.[id]?.status ?? 'available';
+  }
+
+  _filteredMissions(gs) {
+    const filter = gs.missionsFilter ?? 'all';
+    const lvl = gs.pilotLevel ?? 1;
+    return MISSIONS.filter(m => {
+      const s = this._missionStatus(gs, m.id);
+      if (filter === 'active')    return s === 'active';
+      if (filter === 'completed') return s === 'completed';
+      // 'all': show everything except locked missions above current level
+      if (s === 'locked') return false;
+      return true;
+    });
   }
 
   // ── Left mission list ────────────────────────────────────────────────────
@@ -165,6 +104,7 @@ export default class MissionsScene extends Phaser.Scene {
     missions.forEach((m, i) => {
       const ry  = y + i * (rowH + gap);
       const sel = i === selIdx;
+      const status = this._missionStatus(gs, m.id);
 
       const bg  = this.add.graphics();
       bg.fillStyle(sel ? 0x0e2436 : 0x080e1a, sel ? 1 : 0.9);
@@ -182,15 +122,15 @@ export default class MissionsScene extends Phaser.Scene {
       this.add.text(x + 10, ry + 8,  TYPE_LABEL[m.type] || m.type, this.O('11px', tColor)).setOrigin(0, 0);
       this.add.text(x + 10, ry + 29, m.title, this.O('14px', sel ? '#cce8f4' : '#8ab0bc')).setOrigin(0, 0);
 
-      const sColor = STATUS_COLOR[m.status] || '#4a6678';
-      this.add.text(x + 10, ry + 55, STATUS_LABEL[m.status] || m.status, this.F('12px', sColor)).setOrigin(0, 0);
+      const sColor = STATUS_COLOR[status] || '#4a6678';
+      this.add.text(x + 10, ry + 55, STATUS_LABEL[status] || status, this.F('12px', sColor)).setOrigin(0, 0);
       this.add.text(x + w - 10, ry + 55, `${m.rewards.xp} XP  ${m.rewards.credits}cr`,
         this.F('12px', '#2a5060')).setOrigin(1, 0);
     });
   }
 
   // ── Right mission detail ─────────────────────────────────────────────────
-  _renderDetail(x, y, w, h, mission) {
+  _renderDetail(x, y, w, h, mission, gs) {
     const bg = this.add.graphics();
     bg.fillStyle(0x070d1a, 0.9); bg.fillRoundedRect(x, y, w, h, 8);
     bg.lineStyle(1, 0x0e1e30, 0.8); bg.strokeRoundedRect(x, y, w, h, 8);
@@ -200,6 +140,9 @@ export default class MissionsScene extends Phaser.Scene {
         this.F('17px', '#1a2a3a')).setOrigin(0.5);
       return;
     }
+
+    const status = this._missionStatus(gs, mission.id);
+    const mState = gs.missionState?.[mission.id];
 
     const portW = 154, portH = 216;
     const portX = x + 22, portY = y + 22;
@@ -232,19 +175,24 @@ export default class MissionsScene extends Phaser.Scene {
     this.add.text(textX, y + 22, TYPE_LABEL[mission.type] || '', this.O('12px', tColor)).setOrigin(0, 0);
     this.add.text(textX, y + 43, mission.title,
       { ...this.O('19px', '#cce8f4'), wordWrap: { width: textW } }).setOrigin(0, 0);
-    this.add.text(textX, y + 79, mission.desc,
+    const corp = gs.playerCorp ?? 'helios';
+    const desc = mission.descByCorp?.[corp] ?? mission.desc;
+    this.add.text(textX, y + 79, desc,
       { ...this.F('14px', '#5a8090'), wordWrap: { width: textW } }).setOrigin(0, 0);
 
     // Objectives — below portrait
     const objY = portY + portH + 43;
     this.add.text(x + 22, objY, 'ЗАДАЧИ', this.O('13px', '#2a5a70')).setOrigin(0, 0);
 
+    const playerCorp = gs.playerCorp ?? 'helios';
     mission.objectives.forEach((obj, i) => {
       const oy   = objY + 26 + i * 41;
-      const done = obj.current >= obj.total;
-      const pct  = obj.total > 0 ? Math.min(1, obj.current / obj.total) : 0;
+      const cur  = mState?.objectives[i]?.current ?? 0;
+      const done = cur >= obj.total;
+      const pct  = obj.total > 0 ? Math.min(1, cur / obj.total) : 0;
+      const objText = obj.textByCorp?.[playerCorp] ?? obj.text;
 
-      this.add.text(x + 22, oy, obj.text,
+      this.add.text(x + 22, oy, objText,
         this.F('14px', done ? '#66bb6a' : '#8ab0bc')).setOrigin(0, 0);
 
       const barX = x + 22, barY = oy + 19, barW = w - 44, barH = 6;
@@ -254,7 +202,7 @@ export default class MissionsScene extends Phaser.Scene {
         bbg.fillStyle(done ? COLORS.emerald : COLORS.primary, 0.8);
         bbg.fillRoundedRect(barX, barY, Math.floor(barW * pct), barH, 2);
       }
-      this.add.text(barX + barW, barY - 2, `${obj.current}/${obj.total}`,
+      this.add.text(barX + barW, barY - 2, `${cur}/${obj.total}`,
         this.F('12px', done ? '#66bb6a' : '#2a5060')).setOrigin(1, 0);
     });
 
@@ -279,19 +227,22 @@ export default class MissionsScene extends Phaser.Scene {
     });
 
     // Deliver cargo button for story_supply
-    if (mission.id === 'story_supply' && mission.status === 'active') {
-      const obj0 = mission.objectives[0], obj1 = mission.objectives[1];
-      const gs = this.gs;
-      const plasmateCount = totalPlasmateInInventory(gs.inventory);
-      const canDeliver = obj0.current >= obj0.total && obj1.current < obj1.total
-                      && gs.atBase && plasmateCount >= 500;
-      const deliverY = y + h - 100;
+    if (mission.id === 'story_supply' && status === 'active') {
+      const obj0State = mState?.objectives[0];
+      const obj1State = mState?.objectives[1];
+      const obj0Def   = mission.objectives[0];
+      const obj1Def   = mission.objectives[1];
+      const obj0Done  = (obj0State?.current ?? 0) >= obj0Def.total;
+      const obj1Done  = (obj1State?.current ?? 0) >= obj1Def.total;
 
-      if (obj0.current >= obj0.total && obj1.current < obj1.total) {
-        const bw = 224, bh = 41;
-        const bx = x + 22, by2 = deliverY;
+      if (obj0Done && !obj1Done) {
+        const plasmateCount = totalPlasmateInInventory(gs.inventory);
+        const canDeliver = gs.atBase && plasmateCount >= 500;
+        const bw = 264, bh = 41;
+        const bx = x + 22, by2 = rewY - 60;
+
         const btnBg2 = this.add.graphics();
-        const bgColor = canDeliver ? 0x0a2818 : 0x0a1420;
+        const bgColor    = canDeliver ? 0x0a2818 : 0x0a1420;
         const borderColor = canDeliver ? COLORS.emerald : 0x1a3040;
         btnBg2.fillStyle(bgColor, 0.95); btnBg2.fillRoundedRect(bx, by2, bw, bh, 5);
         btnBg2.lineStyle(2, borderColor, 0.8); btnBg2.strokeRoundedRect(bx, by2, bw, bh, 5);
@@ -315,47 +266,57 @@ export default class MissionsScene extends Phaser.Scene {
           });
           btn2.on('pointerdown', () => {
             removePlasmateFromInventory(gs.inventory, 500);
-            obj1.current = 1;
-            mission.status = 'completed';
-            gs.credits += mission.rewards.credits;
-            gs.pilotXp += mission.rewards.xp;
-            if (mission.rewards.stars > 0) gs.starGold += mission.rewards.stars;
-            gs.log(`Миссия завершена: ${mission.title}`);
-            gs.log(`+${mission.rewards.credits} кр · +${mission.rewards.xp} XP · +${mission.rewards.stars} ★`);
+            gs.advanceMission('story_supply', 1);
             this.scene.restart();
           });
         } else if (!gs.atBase) {
           this.add.text(bx + bw + 12, by2 + bh / 2, 'только на базе',
             this.F('12px', '#2a4050')).setOrigin(0, 0.5);
-        } else if (plasmateCount < 500) {
-          this.add.text(bx + bw + 12, by2 + bh / 2, `плазмит: ${plasmateCount}/500`,
+        } else if (totalPlasmateInInventory(gs.inventory) < 500) {
+          this.add.text(bx + bw + 12, by2 + bh / 2,
+            `плазмит: ${totalPlasmateInInventory(gs.inventory)}/500`,
             this.F('12px', '#2a4050')).setOrigin(0, 0.5);
         }
       }
     }
 
-    // Accept/Track button
-    if (mission.status !== 'completed') {
-      const btnLabel = mission.status === 'active' ? 'СЛЕДИТЬ' : 'ПРИНЯТЬ';
+    // Accept / Track button
+    if (status !== 'completed') {
+      const playerLvl = gs.pilotLevel ?? 1;
+      const reqLvl = mission.minLevel ?? 1;
+      const lvlLocked = playerLvl < reqLvl;
+      const isFailed  = status === 'failed';
+      const disabled  = lvlLocked || isFailed || status === 'locked';
+      const btnLabel  = lvlLocked ? `🔒 ур. ${reqLvl}`
+        : isFailed ? 'ПРОВАЛЕНА (завтра)'
+        : (status === 'active' ? 'СЛЕДИТЬ' : 'ПРИНЯТЬ');
       const bw = 168, bh = 41;
       const bx = x + w - bw - 17, by2 = y + h - bh - 14;
       const btnBg = this.add.graphics();
-      btnBg.fillStyle(0x0a2030, 0.92); btnBg.fillRoundedRect(bx, by2, bw, bh, 5);
-      btnBg.lineStyle(2, COLORS.primary, 0.6); btnBg.strokeRoundedRect(bx, by2, bw, bh, 5);
-      const btn = this.add.rectangle(bx + bw / 2, by2 + bh / 2, bw, bh, 0, 0)
-        .setInteractive({ useHandCursor: true });
-      btn.on('pointerover', () => {
-        btnBg.clear();
-        btnBg.fillStyle(0x102840, 0.95); btnBg.fillRoundedRect(bx, by2, bw, bh, 5);
-      });
-      btn.on('pointerout', () => {
-        btnBg.clear();
-        btnBg.fillStyle(0x0a2030, 0.92); btnBg.fillRoundedRect(bx, by2, bw, bh, 5);
-      });
-      btn.on('pointerdown', () => {
-        if (mission.status === 'available') { mission.status = 'active'; this.scene.restart(); }
-      });
-      this.add.text(bx + bw / 2, by2 + bh / 2, btnLabel, this.O('14px', '#4dd0e1')).setOrigin(0.5);
+      const bgCol = disabled ? 0x1a0f0f : 0x0a2030;
+      const brCol = disabled ? 0x5a2a2a : COLORS.primary;
+      const txtCol = isFailed ? '#ef5350' : lvlLocked ? '#7a4040' : '#4dd0e1';
+      btnBg.fillStyle(bgCol, 0.92); btnBg.fillRoundedRect(bx, by2, bw, bh, 5);
+      btnBg.lineStyle(2, brCol, 0.6); btnBg.strokeRoundedRect(bx, by2, bw, bh, 5);
+      if (!disabled) {
+        const btn = this.add.rectangle(bx + bw / 2, by2 + bh / 2, bw, bh, 0, 0)
+          .setInteractive({ useHandCursor: true });
+        btn.on('pointerover', () => {
+          btnBg.clear();
+          btnBg.fillStyle(0x102840, 0.95); btnBg.fillRoundedRect(bx, by2, bw, bh, 5);
+        });
+        btn.on('pointerout', () => {
+          btnBg.clear();
+          btnBg.fillStyle(bgCol, 0.92); btnBg.fillRoundedRect(bx, by2, bw, bh, 5);
+        });
+        btn.on('pointerdown', () => {
+          if (status === 'available') {
+            if (gs.missionState?.[mission.id]) gs.missionState[mission.id].status = 'active';
+            this.scene.restart();
+          }
+        });
+      }
+      this.add.text(bx + bw / 2, by2 + bh / 2, btnLabel, this.O('14px', txtCol)).setOrigin(0.5);
     }
   }
 }

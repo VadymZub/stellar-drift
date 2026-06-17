@@ -62,6 +62,76 @@ function _prepShipTex(scene, key, targetMax) {
   newTex.setFilter(0); // FilterMode.LINEAR in Phaser 4
 }
 
+// Remove near-white background pixels from a canvas texture (for badge-style perk images
+// that ship with a white background instead of transparent). Threshold=240 keeps metallic
+// greys (~200) while removing the pure white margin outside the circular badge.
+function _removeWhiteBg(scene, key, threshold = 240) {
+  const tex = scene.textures.get(key);
+  if (!tex) return;
+  const ctx = tex.getContext?.();
+  if (!ctx) return;
+  const src = tex.getSourceImage();
+  const w = src.naturalWidth != null ? src.naturalWidth : src.width;
+  const h = src.naturalHeight != null ? src.naturalHeight : src.height;
+  if (!w || !h) return;
+  const imgData = ctx.getImageData(0, 0, w, h);
+  const d = imgData.data;
+  for (let i = 0; i < d.length; i += 4) {
+    if (d[i] > threshold && d[i + 1] > threshold && d[i + 2] > threshold) d[i + 3] = 0;
+  }
+  ctx.putImageData(imgData, 0, 0);
+  tex.refresh();
+}
+
+// Normalize perk badge size: find bounding box of non-transparent pixels and scale
+// the badge to fill ~92% of the canvas (4% margin each side). Skipped when the badge
+// already fills ≥90% of both dimensions (avoids shrinking perks that already fill the frame).
+function _normalizePerkBadge(scene, key) {
+  const tex = scene.textures.get(key);
+  if (!tex) return;
+  const ctx = tex.getContext?.();
+  if (!ctx) return;
+  const src = tex.getSourceImage();
+  const w = src.naturalWidth != null ? src.naturalWidth : src.width;
+  const h = src.naturalHeight != null ? src.naturalHeight : src.height;
+  if (!w || !h) return;
+
+  const d = ctx.getImageData(0, 0, w, h).data;
+  let x0 = w, x1 = 0, y0 = h, y1 = 0;
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      if (d[(y * w + x) * 4 + 3] > 8) {
+        if (x < x0) x0 = x;
+        if (x > x1) x1 = x;
+        if (y < y0) y0 = y;
+        if (y > y1) y1 = y;
+      }
+    }
+  }
+  if (x0 >= x1 || y0 >= y1) return;
+
+  const bw = x1 - x0 + 1, bh = y1 - y0 + 1;
+  // Skip if badge already fills 90%+ of canvas — no normalization needed
+  if (bw / w >= 0.90 && bh / h >= 0.90) return;
+
+  // Scale badge to fill canvas with 4% margin on each side (92% content area)
+  const margin = Math.round(w * 0.04);
+  const target = w - margin * 2;
+  const scale = target / Math.max(bw, bh);
+  const dw = Math.round(bw * scale), dh = Math.round(bh * scale);
+  const dx = Math.round((w - dw) / 2), dy = Math.round((h - dh) / 2);
+
+  const tmp = document.createElement('canvas');
+  tmp.width = bw; tmp.height = bh;
+  tmp.getContext('2d').putImageData(ctx.getImageData(x0, y0, bw, bh), 0, 0);
+
+  ctx.clearRect(0, 0, w, h);
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(tmp, dx, dy, dw, dh);
+  tex.refresh();
+}
+
 export default class BootScene extends Phaser.Scene {
   constructor() { super('BootScene'); }
 
@@ -86,6 +156,7 @@ export default class BootScene extends Phaser.Scene {
       if (m.anim) continue;
       this.load.image(m.key, `assets/mobs/${m.key}.png`);
     }
+    this.load.image('npc_transport', 'assets/mobs/transport.png');
     // Большой босс (R1-тип): 6 кадров 306×419
     this.load.spritesheet('bigboss', 'assets/mobs/bigboss_sheet.png', { frameWidth: 306, frameHeight: 419 });
 
@@ -230,7 +301,14 @@ export default class BootScene extends Phaser.Scene {
 
     // Perk images: displayed at 192px — pre-process to 384px (2× display) to normalize
     // 1024×1024 and 1254×1254 sources to the same target size for consistent rendering.
-    for (const p of PERK_DEFS) _prepShipTex(this, p.key, 384);
+    // White background removal + badge normalization: removes white margins and scales
+    // every badge to fill ~92% of the 384px canvas, so all perks appear the same
+    // visual size regardless of how much padding the source artist left around the badge.
+    for (const p of PERK_DEFS) {
+      _prepShipTex(this, p.key, 384);
+      _removeWhiteBg(this, p.key);
+      _normalizePerkBadge(this, p.key);
+    }
 
     // Skill icons: 128×128 displayed at 48×48 — pre-process to 96px (2× display).
     for (const k of ['sharpshooter','heavy_caliber','penetrating_rounds','overcharge_shot',
@@ -241,6 +319,9 @@ export default class BootScene extends Phaser.Scene {
                      'cargo_expand','stealth_sprint']) {
       _prepShipTex(this, `skill_${k}`, 96);
     }
+
+    // NPC transport: displayed at 96×120 — pre-process to 240px.
+    _prepShipTex(this, 'npc_transport', 240);
 
     // Loot drop: 1024×1536 displayed at 34×34 — pre-process to 68px (2× display height).
     _prepShipTex(this, 'lootbox',       68);

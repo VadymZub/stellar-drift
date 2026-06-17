@@ -2,6 +2,7 @@ import * as Phaser from 'https://cdn.jsdelivr.net/npm/phaser@4.1.0/dist/phaser.e
 import { COLORS, UI_RES } from '../constants.js';
 import { i18n } from '../i18n.js';
 import { SECTORS, EDGES, galaxy, neighbors, sectorAccess } from '../galaxy.js';
+import { getActiveMissionSectorTargets } from '../data/missions.js';
 
 // Корпорация сектора: 'karax' | 'tides' | null (гелиос/pvp/данжи гелиоса — нейтральные)
 function sectorCorp(key) {
@@ -103,10 +104,12 @@ export default class MapScene extends Phaser.Scene {
       }
     }
 
+    const missionTargets = getActiveMissionSectorTargets(this.gs.missionState, this.gs.playerCorp ?? 'helios');
+
     // Узлы
     for (const key of Object.keys(SECTORS)) {
       const s = SECTORS[key], p = pos(s);
-      this.node(p.x, p.y, nodeW, nodeH, key, s, cur, nb, lvl, playerCorp);
+      this.node(p.x, p.y, nodeW, nodeH, key, s, cur, nb, lvl, playerCorp, missionTargets);
     }
 
     // Перетаскивание
@@ -140,7 +143,7 @@ export default class MapScene extends Phaser.Scene {
     }
   }
 
-  node(cx, cy, w, h, key, s, cur, nb, lvl, playerCorp) {
+  node(cx, cy, w, h, key, s, cur, nb, lvl, playerCorp, missionTargets) {
     const isCur      = key === cur;
     const acc        = sectorAccess(key, lvl, this.gs.activeShip);
     const isNeighbor = nb.includes(key);
@@ -177,9 +180,23 @@ export default class MapScene extends Phaser.Scene {
       border = 0x2a4a54; fill = 0x0e1a22; badge = i18n.t('map.sector'); badgeColor = '#7e9398';
     }
 
+    const isMissionTarget = missionTargets?.has(key) && !isCur;
+
     const x = cx - w / 2, y = cy - h / 2;
+
+    // Mission target: outer amber glow ring
+    if (isMissionTarget) {
+      const glow = this.add.graphics();
+      glow.lineStyle(3, 0xffb74d, 0.55);
+      glow.strokeRect(x - 5, y - 5, w + 10, h + 10);
+      glow.lineStyle(1, 0xffb74d, 0.2);
+      glow.strokeRect(x - 9, y - 9, w + 18, h + 18);
+      this.mapContainer.add(glow);
+    }
+
     const r = this.add.rectangle(x, y, w, h, fill, 0.97).setOrigin(0, 0)
-      .setStrokeStyle(isCur || canJump ? 3 : 1.5, border, 0.95)
+      .setStrokeStyle(isCur || canJump ? 3 : isMissionTarget ? 2.5 : 1.5,
+                      isMissionTarget ? 0xffb74d : border, 0.95)
       .setAlpha(nodeAlpha);
 
     const textCol = acc.ok ? '#cfe9ee' : '#8a7274';
@@ -188,8 +205,18 @@ export default class MapScene extends Phaser.Scene {
       .setOrigin(0.5, 0).setAlpha(nodeAlpha);
     const tLvl   = this.add.text(cx, y + h - 32, `ур. ${s.lvlMin}–${s.lvlMax}`,
       this.F('11px', '#9fb3b8')).setOrigin(0.5, 0).setAlpha(nodeAlpha);
-    const tBadge = this.add.text(cx, y + h - 17, badge,
-      this.F('11px', badgeColor)).setOrigin(0.5, 0).setAlpha(nodeAlpha);
+
+    // Mission target overrides badge
+    const tBadge = this.add.text(cx, y + h - 17,
+      isMissionTarget ? '★ ЦЕЛЬ МИССИИ' : badge,
+      this.F('11px', isMissionTarget ? '#ffb74d' : badgeColor)).setOrigin(0.5, 0).setAlpha(nodeAlpha);
+
+    // Mission star icon top-right corner
+    if (isMissionTarget) {
+      const tStar = this.add.text(x + w - 6, y + 4, '★',
+        this.O('14px', '#ffb74d')).setOrigin(1, 0).setAlpha(0.9);
+      this.mapContainer.add(tStar);
+    }
 
     this.mapContainer.add([r, tName, tLvl, tBadge]);
 
