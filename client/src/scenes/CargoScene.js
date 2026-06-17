@@ -196,17 +196,22 @@ export default class CargoScene extends Phaser.Scene {
         const def = CONSUMABLES[item.type];
         const isConsumable = def.category === 'consumable';
 
-        // Build strip list depending on context
-        // Each entry: { label, color, bg, h, action }
-        const S = 14; // mini-strip height (two-strip mode)
+        // Strip specs: { label, color, bg, h, action }
+        const SA = 12; // at-base mini-strip (3 strips × 12 = 36, body = 32)
         const strips = [];
 
         if (type === 'cargo' && isConsumable) {
-          // At base: → склад  +  💰 продать
-          strips.push({ label: '→ склад',  color: '#4aa8cc', bg: 0x071828, h: S,
+          // At base: three actions — warehouse, action bar, sell
+          const barKey = `use:${item.type}`;
+          const inBar = (gs.actionBar || []).includes(barKey);
+          strips.push({ label: '→ склад',  color: '#4aa8cc', bg: 0x071828, h: SA,
             action: () => this._moveToWarehouse(item) });
-          strips.push({ label: `💰 продать ×${item.amount}`, color: '#81c784', bg: 0x071808, h: S,
-            action: () => this._sellConsumable(item) });
+          strips.push({ label: inBar ? '✓ панель' : '→ панель',
+            color: inBar ? '#4a9860' : '#4dd0e1', bg: 0x051520, h: SA,
+            action: () => this._addConsumableToBar(item.type) });
+          strips.push({ label: `💰 ×${item.amount} → ${(def.sell * item.amount).toLocaleString()} кр.`,
+            color: '#81c784', bg: 0x071808, h: SA,
+            action: () => this._showSellConfirm(gs, item, sx, sy, def) });
         } else if (type === 'cargo' && !isConsumable) {
           strips.push({ label: '→ склад', color: '#4aa8cc', bg: 0x071828, h: STRIP_H,
             action: () => this._moveToWarehouse(item) });
@@ -231,15 +236,16 @@ export default class CargoScene extends Phaser.Scene {
 
         const stripsTotalH = strips.reduce((s, r) => s + r.h, 0);
         const boxH = SZ - stripsTotalH;
+        const iconSz = boxH >= 36 ? 34 : 24;
         const borderColor = isConsumable ? 0x44aacc : 0xccaa44;
         const box = this.add.rectangle(sx, sy, SZ, boxH, 0x0a1a2a, 0.95).setOrigin(0, 0)
           .setStrokeStyle(2, borderColor, 0.8);
         const iconK = itemIconKey(item);
         const iconImg = iconK
-          ? this.add.image(sx + SZ / 2, sy + boxH / 2 - 6, prerenderTex(this, iconK, 34, 34)).setDisplaySize(34, 34).setOrigin(0.5)
+          ? this.add.image(sx + SZ / 2, sy + boxH / 2 - 5, prerenderTex(this, iconK, iconSz, iconSz)).setDisplaySize(iconSz, iconSz).setOrigin(0.5)
           : null;
-        const countTxt = this.add.text(sx + SZ / 2, sy + boxH - 10,
-          `${item.amount}/${def.maxPerSlot}`, this.F('10px', isConsumable ? '#88eeff' : '#ffcc88')).setOrigin(0.5);
+        const countTxt = this.add.text(sx + SZ / 2, sy + boxH - 8,
+          `${item.amount}/${def.maxPerSlot}`, this.F('9px', isConsumable ? '#88eeff' : '#ffcc88')).setOrigin(0.5);
         const els = [box, countTxt];
         if (iconImg) els.push(iconImg);
 
@@ -386,21 +392,56 @@ export default class CargoScene extends Phaser.Scene {
     this._tooltipObjs = null;
   }
 
-  _sellConsumable(item) {
-    const def = CONSUMABLES[item.type];
-    if (!def?.sell) return;
-    const gs = this.gs;
+  _showSellConfirm(gs, item, slotSx, slotSy, def) {
+    this._hideSellConfirm();
+    const name  = i18n.t(`item.${item.type}`);
     const total = def.sell * item.amount;
-    const name = i18n.t(`item.${item.type}`);
-    if (!window.confirm(`Продать ${name} ×${item.amount} за ${total.toLocaleString()} кр?`)) return;
-    const inv = gs.inventory || [];
-    const idx = inv.indexOf(item);
-    if (idx < 0) return;
-    inv.splice(idx, 1);
-    gs.credits = (gs.credits || 0) + total;
-    gs.log?.(`Продано: ${name} ×${item.amount} +${total} кр.`);
-    gs._saveState?.();
-    this.scene.restart();
+    const OW = 170, OH = 66;
+    const ox = Math.max(4, slotSx - Math.floor((OW - SZ) / 2));
+    const oy = Math.max(4, slotSy - OH - 6);
+
+    const bg = this.add.rectangle(ox, oy, OW, OH, 0x060c14, 0.98).setOrigin(0, 0)
+      .setStrokeStyle(1.5, 0x883830, 0.9).setDepth(200);
+    const lbl = this.add.text(ox + OW / 2, oy + 8,
+      `Продать: ${name}\n×${item.amount}  →  +${total.toLocaleString()} кр.`,
+      { fontFamily: 'Inter, sans-serif', fontSize: '10px', color: '#ffc0a0',
+        resolution: UI_RES, align: 'center' }).setOrigin(0.5, 0).setDepth(201);
+
+    const BW = 68, BH = 20, bY = oy + OH - BH - 6;
+    const btnYes = this.add.rectangle(ox + 10, bY, BW, BH, 0x0a2010).setOrigin(0, 0)
+      .setStrokeStyle(1, 0x3a8040, 0.9).setInteractive({ useHandCursor: true }).setDepth(200);
+    const btnYesTxt = this.add.text(ox + 10 + BW / 2, bY + BH / 2, 'Продать',
+      { fontFamily: 'Orbitron, sans-serif', fontSize: '9px', color: '#4dc060',
+        resolution: UI_RES }).setOrigin(0.5).setDepth(201);
+
+    const btnNo = this.add.rectangle(ox + OW - BW - 10, bY, BW, BH, 0x200808).setOrigin(0, 0)
+      .setStrokeStyle(1, 0x884040, 0.9).setInteractive({ useHandCursor: true }).setDepth(200);
+    const btnNoTxt = this.add.text(ox + OW - BW / 2 - 10, bY + BH / 2, 'Отмена',
+      { fontFamily: 'Orbitron, sans-serif', fontSize: '9px', color: '#c06060',
+        resolution: UI_RES }).setOrigin(0.5).setDepth(201);
+
+    this._sellConfirmObjs = [bg, lbl, btnYes, btnYesTxt, btnNo, btnNoTxt];
+
+    btnYes.on('pointerover', () => btnYes.setFillStyle(0x164030));
+    btnYes.on('pointerout',  () => btnYes.setFillStyle(0x0a2010));
+    btnNo.on('pointerover',  () => btnNo.setFillStyle(0x3a1010));
+    btnNo.on('pointerout',   () => btnNo.setFillStyle(0x200808));
+
+    btnYes.on('pointerdown', () => {
+      const inv = gs.inventory || [];
+      const idx = inv.indexOf(item); if (idx < 0) return;
+      inv.splice(idx, 1);
+      gs.credits = (gs.credits || 0) + total;
+      gs.log?.(`Продано: ${name} ×${item.amount} +${total.toLocaleString()} кр.`);
+      gs._saveState?.();
+      this.scene.restart();
+    });
+    btnNo.on('pointerdown', () => this._hideSellConfirm());
+  }
+
+  _hideSellConfirm() {
+    this._sellConfirmObjs?.forEach(o => o?.destroy());
+    this._sellConfirmObjs = null;
   }
 
   _moveToWarehouse(item, isClanWarehouse = false) {

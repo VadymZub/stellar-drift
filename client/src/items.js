@@ -128,10 +128,10 @@ export function itemSellPrice(item) { return SELL_PRICE[item.tier] || 100; }
 
 // ── Consumables & Materials ───────────────────────────────────────────────────
 export const CONSUMABLES = {
-  repair_pack:     { category: 'consumable', maxPerSlot: 100, canBuy: true,  price: 3500, sell: 350  },
-  speed_boost:     { category: 'consumable', maxPerSlot: 100, canBuy: true,  price: 2800, sell: 280  },
-  scanner_pulse:   { category: 'consumable', maxPerSlot: 100, canBuy: true,  price: 1800, sell: 180  },
-  emergency_warp:  { category: 'consumable', maxPerSlot:  50, canBuy: true,  price: 5000, sell: 500  },
+  repair_pack:     { category: 'consumable', maxPerSlot: 100, canBuy: true,  price: 3500, sell: 100 },
+  speed_boost:     { category: 'consumable', maxPerSlot: 100, canBuy: true,  price: 2800, sell: 100 },
+  scanner_pulse:   { category: 'consumable', maxPerSlot: 100, canBuy: true,  price: 1800, sell: 100 },
+  emergency_warp:  { category: 'consumable', maxPerSlot:  50, canBuy: true,  price: 5000, sell: 100 },
   biomech_core:    { category: 'material',   maxPerSlot:   5, canBuy: false, price: 0,    sell: 0    },
   quantum_crystal: { category: 'material',   maxPerSlot:   5, canBuy: false, price: 0,    sell: 0    },
   plasma_coil:     { category: 'material',   maxPerSlot:   5, canBuy: false, price: 0,    sell: 0    },
