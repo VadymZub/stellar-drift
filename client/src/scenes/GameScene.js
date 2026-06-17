@@ -189,12 +189,23 @@ export default class GameScene extends Phaser.Scene {
     this.pilotLevel = levelInfo(this.pilotXp).level;
     this.initMissionState();
 
-    const playerRating = calculateRating(this.pilotXp, this.pilotHonor);
-    const ratings = MOCK_CORP_RATINGS.includes(playerRating)
-      ? MOCK_CORP_RATINGS
-      : [...MOCK_CORP_RATINGS, playerRating].sort((a, b) => b - a);
-    this.pilotRank = getRank(playerRating, ratings);
-    if (tp?.rankOverride) this.pilotRank = RANKS.find(r => r.name === tp.rankOverride) ?? this.pilotRank;
+    // Persist test-profile rank override across sector jumps (window.TEST_PROFILE is cleared after first create)
+    if (tp?.rankOverride) this._testRankOverride = tp.rankOverride;
+
+    if (this._testRankOverride) {
+      // Test profile: fixed rank from the test profile window, stable until game restarts from login
+      this.pilotRank = RANKS.find(r => r.name === this._testRankOverride) ?? this.pilotRank ?? RANKS[RANKS.length - 1];
+    } else {
+      // Real profile: recompute only when XP/honor actually changed, not on every sector jump
+      const playerRating = calculateRating(this.pilotXp, this.pilotHonor);
+      if (this.pilotRank == null || this._rankRating !== playerRating) {
+        const ratings = MOCK_CORP_RATINGS.includes(playerRating)
+          ? MOCK_CORP_RATINGS
+          : [...MOCK_CORP_RATINGS, playerRating].sort((a, b) => b - a);
+        this.pilotRank = getRank(playerRating, ratings);
+        this._rankRating = playerRating;
+      }
+    }
 
     this.corpRep = this.corpRep ?? 1;
     this.seasonWon = this.seasonWon ?? true;
@@ -1214,7 +1225,10 @@ export default class GameScene extends Phaser.Scene {
     const sg = rollStarGold(mob); if (sg > 0) { this.starGold = (this.starGold || 0) + sg; this.log(i18n.t('log.stargold', { amount: sg })); }
     if (Phaser.Math.FloatBetween(0, 1) < dropChance(mob)) {
       const lootItem = mob.tpl.key === 'bigboss' ? rollApophisLoot() : rollLootForMob(mob);
-      this.loot.push(new Loot(this, mob.x, mob.y, lootItem));
+      const isLegendary = mob.tpl.key === 'bigboss' || mob.tpl.key === 'argus'
+        || (mob.isBoss && SECTORS[galaxy.current]?.isDungeon);
+      const lootTier = isLegendary ? 'legendary' : (mob.isBoss || mob.tpl.elite) ? 'boss' : 'common';
+      this.loot.push(new Loot(this, mob.x, mob.y, lootItem, lootTier));
     }
     if (!mob.noRespawn) {
       this.time.delayedCall(RESPAWN_MS, () => { if (!mob.alive) { mob.respawn(); this.log(i18n.t('log.respawn', { name, lvl })); } });
@@ -1308,13 +1322,14 @@ export default class GameScene extends Phaser.Scene {
     const destX  = cx + (dx / d) * (-150);
     const destY  = cy + (dy / d) * (-150);
 
-    // Hull scales to journey: wave 1 (20%→50% window) should kill unprotected transport.
-    // wave1 = [pirate_03, pirate_04]; DPS = damage × fireRate for each
+    // Hull scales to journey AND pilot level: wave 1 (20%→50% window) should kill an
+    // unprotected transport. Mob damage scales as base × (1 + 0.5 × (level − 1)).
+    const levelScale = 1 + 0.5 * ((this.pilotLevel ?? 1) - 1);
     const wave1Dps = [MOBS.pirate_03, MOBS.pirate_04]
-      .reduce((s, m) => s + m.damage * m.fireRate, 0);
+      .reduce((s, m) => s + m.damage * m.fireRate * levelScale, 0);
     const journeyDist = Phaser.Math.Distance.Between(spawnX, spawnY, destX, destY);
-    const hull = Math.max(200,
-      Math.round(wave1Dps * (ESCORT_WAVE_AT[1] - ESCORT_WAVE_AT[0]) * (journeyDist / ESCORT_SPEED) * 1.1)
+    const hull = Math.max(800,
+      Math.round(wave1Dps * (ESCORT_WAVE_AT[1] - ESCORT_WAVE_AT[0]) * (journeyDist / ESCORT_SPEED) * 1.1 * 2.25)
     );
     this.escortTransport = new EscortTransport(this, spawnX, spawnY, destX, destY, hull);
     this._escortMobs = [];
