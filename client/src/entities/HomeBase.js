@@ -82,7 +82,7 @@ export default class HomeBase {
 
     const pvp = SECTORS[galaxy.current]?.pvp;
     const corpMatch = !pvp || gs.playerCorp === this.corp || gs.playerCorp === 'neutral';
-    gs.nearBase = near && corpMatch;
+    if (near && corpMatch) gs.nearBase = true; // reset to false done in GameScene before forEach
     const show = !gs.atBase;
     this._sprite.setVisible(show);
     this._label.setVisible(show);

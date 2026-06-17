@@ -1616,6 +1616,7 @@ export default class GameScene extends Phaser.Scene {
     
 
     this.miningBases.forEach(b => b.update(dt));
+    this.nearBase = false; // reset before home bases accumulate — any base can set it to true
     this.homeBases.forEach(b => b.update(dt));
     this.projectiles = this.projectiles.filter((p) => !p.dead);
     this.projectiles.forEach((p) => p.update(dt));
