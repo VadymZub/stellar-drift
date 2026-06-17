@@ -107,8 +107,8 @@ export default class HudScene extends Phaser.Scene {
       hitZone.on('pointerdown', (p) => {
         const gs = this.gs;
         if (p.button === 2) {
-          // ПКМ: удалить слот (только вне режима редактирования)
-          if (this._barEditMode) return;
+          // ПКМ: удалить слот только в режиме редактирования
+          if (!this._barEditMode) return;
           const bar = gs.actionBar ? [...gs.actionBar] : Array(10).fill(null);
           if (!bar[i]) return;
           bar[i] = null;
@@ -231,41 +231,52 @@ export default class HudScene extends Phaser.Scene {
       const key   = bar[i] || null;
 
       if (key?.startsWith('use:')) {
-        const cdEnd = gs.skillCooldowns[key] || 0;
-        const rem   = Math.max(0, cdEnd - time);
-        const total = countConsumableInInventory(gs.inventory || [], key.slice(4));
+        const buffEnd = (gs._consBuffEndTimes || {})[key] || 0;
+        const buffRem = Math.max(0, buffEnd - time);
+        const cdEnd   = gs.skillCooldowns[key] || 0;
+        const cdMs    = gs._skillCooldownMs(key);
+        const cdRem   = Math.max(0, cdEnd - time);
+        const total   = countConsumableInInventory(gs.inventory || [], key.slice(4));
         slot.cdGfx.clear();
-        if (rem > 0) {
-          const prog = rem / 60000;
+        if (buffRem > 0) {
+          slot.cdTxt.setPosition(slot.sx + slot.SW / 2, slot.sy + slot.SH / 2).setOrigin(0.5, 0.5)
+            .setColor('#4de8a0').setText(`${Math.ceil(buffRem / 1000)}`);
+          if (slot.iconImg) slot.iconImg.setAlpha(1.0);
+        } else if (cdRem > 0) {
+          const prog = cdRem / cdMs;
           slot.cdGfx.fillStyle(0x000000, 0.68);
           slot.cdGfx.fillRoundedRect(slot.sx, slot.sy, slot.SW, Math.ceil(slot.SH * prog), 5);
           slot.cdTxt.setPosition(slot.sx + slot.SW / 2, slot.sy + slot.SH / 2).setOrigin(0.5, 0.5)
-            .setText(`${Math.ceil(rem / 1000)}`);
+            .setColor('#ffffff').setText(`${Math.ceil(cdRem / 1000)}`);
           if (slot.iconImg) slot.iconImg.setAlpha(0.3);
         } else {
           slot.cdTxt.setPosition(slot.sx + slot.SW / 2, slot.sy + slot.SH - 2).setOrigin(0.5, 1)
-            .setText(total > 0 ? `${total}` : '');
+            .setColor('#ffffff').setText(total > 0 ? `${total}` : '');
           if (slot.iconImg) slot.iconImg.setAlpha(total > 0 ? 1.0 : 0.3);
         }
         continue;
       }
 
-      const cdEnd = key ? (gs.skillCooldowns[key] || 0) : 0;
-      const cdMs  = key ? gs._skillCooldownMs(key) : 1;
-      const rem   = Math.max(0, cdEnd - time);
+      const buffEnd = (gs._consBuffEndTimes || {})[key] || 0;
+      const buffRem = Math.max(0, buffEnd - time);
+      const cdEnd   = key ? (gs.skillCooldowns[key] || 0) : 0;
+      const cdMs    = key ? gs._skillCooldownMs(key) : 1;
+      const cdRem   = Math.max(0, cdEnd - time);
+      const lv      = gs.skillLevels?.[key] || 0;
 
       slot.cdGfx.clear();
-      if (key && rem > 0) {
-        const prog = rem / cdMs;
+      if (key && buffRem > 0) {
+        slot.cdTxt.setColor('#4de8a0').setText(`${Math.ceil(buffRem / 1000)}`);
+        if (slot.iconImg) slot.iconImg.setAlpha(1.0);
+      } else if (key && cdRem > 0) {
+        const prog = cdRem / cdMs;
         slot.cdGfx.fillStyle(0x000000, 0.68);
         slot.cdGfx.fillRoundedRect(slot.sx, slot.sy, slot.SW, Math.ceil(slot.SH * prog), 5);
-        slot.cdTxt.setText(Math.ceil(rem / 1000));
+        slot.cdTxt.setColor('#ffffff').setText(`${Math.ceil(cdRem / 1000)}`);
+        if (slot.iconImg) slot.iconImg.setAlpha(lv === 0 ? 0.25 : 0.45);
       } else {
-        slot.cdTxt.setText('');
-      }
-      if (slot.iconImg) {
-        const lv = gs.skillLevels?.[key] || 0;
-        slot.iconImg.setAlpha(lv === 0 ? 0.25 : rem > 0 ? 0.45 : 1.0);
+        slot.cdTxt.setColor('#ffffff').setText('');
+        if (slot.iconImg) slot.iconImg.setAlpha(lv === 0 ? 0.25 : 1.0);
       }
     }
   }

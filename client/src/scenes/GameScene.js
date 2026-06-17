@@ -235,6 +235,7 @@ export default class GameScene extends Phaser.Scene {
 
     // Active skill runtime state (reset per session)
     this.skillCooldowns    = {};
+    this._consBuffEndTimes = {};   // key → timestamp when buff/effect expires
     this._overchargeActive = false;
     this._berserkerBuff    = null;   // { endTime, mult } | null
     this._stealthEndTime   = 0;
@@ -902,7 +903,8 @@ export default class GameScene extends Phaser.Scene {
   // ── Active skill system ────────────────────────────────────────────────
 
   _skillCooldownMs(key) {
-    if (key.startsWith('use:')) return 60000;
+    const CONS_CD = { repair_pack: 90000, speed_boost: 120000, scanner_pulse: 180000, emergency_warp: 600000 };
+    if (key.startsWith('use:')) return CONS_CD[key.slice(4)] ?? 60000;
     const lv  = Math.max(1, (this.skillLevels || {})[key] || 1);
     const mod = this.player?.activeCooldownMod ?? 1;
     const base = { overcharge_shot: 25000, salvo: 55000, emergency_repair: 120000,
@@ -940,18 +942,20 @@ export default class GameScene extends Phaser.Scene {
   }
 
   _useConsumable(type, now) {
-    const barKey = `use:${type}`;
-    const cdEnd = this.skillCooldowns[barKey] || 0;
-    if (now < cdEnd) { this.log(`⏳ КД: ${Math.ceil((cdEnd - now) / 1000)}с`); return; }
+    const barKey  = `use:${type}`;
+    const cdEnd   = this.skillCooldowns[barKey] || 0;
+    const buffEnd = (this._consBuffEndTimes || {})[barKey] || 0;
+    if (now < cdEnd)   { this.log(`⏳ КД: ${Math.ceil((cdEnd - now) / 1000)}с`); return; }
+    if (now < buffEnd) { this.log(`⏳ Действует: ${Math.ceil((buffEnd - now) / 1000)}с`); return; }
 
     const inv = this.inventory || [];
     if (countConsumableInInventory(inv, type) <= 0) { this.log('❌ Расходник закончился'); return; }
 
-    this.skillCooldowns[barKey] = now + 60000;
     removeConsumableFromInventory(inv, type, 1);
 
     switch (type) {
       case 'repair_pack': {
+        this.skillCooldowns[barKey] = now + this._skillCooldownMs(barKey);
         const heal = Math.round(this.player.maxHull * 0.30);
         this.player.hull = Math.min(this.player.maxHull, this.player.hull + heal);
         this.log(`🔧 Ремкомплект: +${heal} HP`);
@@ -959,39 +963,58 @@ export default class GameScene extends Phaser.Scene {
         break;
       }
       case 'speed_boost': {
+        const BUFF_DUR = 15000, CD_MS = this._skillCooldownMs(barKey);
+        this._consBuffEndTimes[barKey] = now + BUFF_DUR;
         this._speedBoostOrig = this.player.shipBaseSpeed;
         this.player.shipBaseSpeed = Math.round(this._speedBoostOrig * 1.50);
         this.player.recomputeStats();
         this.log('⚡ Ускоритель: +50% скорость, 15с');
         this.muzzleFlash(this.player.x, this.player.y, 0xffee44);
-        this._speedBoostTimer = this.time.delayedCall(15000, () => {
-          if (!this.player?.alive) return;
-          this.player.shipBaseSpeed = this._speedBoostOrig;
+        this._speedBoostTimer = this.time.delayedCall(BUFF_DUR, () => {
+          if (this.player?.alive) {
+            this.player.shipBaseSpeed = this._speedBoostOrig;
+            this.player.recomputeStats();
+          }
           this._speedBoostOrig  = null;
           this._speedBoostTimer = null;
-          this.player.recomputeStats();
+          this._consBuffEndTimes[barKey] = 0;
+          this.skillCooldowns[barKey] = this.time.now + CD_MS;
           this.log('⚡ Ускорение завершено');
         });
         break;
       }
       case 'scanner_pulse': {
+        const BUFF_DUR = 20000, CD_MS = this._skillCooldownMs(barKey);
+        this._consBuffEndTimes[barKey] = now + BUFF_DUR;
         const baseR = Math.round(BASE_SCAN_RADIUS * (1 + (this.skillLevels?.scanner_boost || 0) * 0.20));
         this.scanRadius = baseR * 2;
         this.log('📡 Сканер-импульс: радиус ×2, 20с');
         this.muzzleFlash(this.player.x, this.player.y, 0x44ddff);
-        this._scanPulseTimer = this.time.delayedCall(20000, () => {
+        this._scanPulseTimer = this.time.delayedCall(BUFF_DUR, () => {
           this.scanRadius = baseR;
           this._scanPulseTimer = null;
+          this._consBuffEndTimes[barKey] = 0;
+          this.skillCooldowns[barKey] = this.time.now + CD_MS;
           this.log('📡 Сканер нормализован');
         });
         break;
       }
       case 'emergency_warp': {
-        const cx = this.worldWidth / 2, cy = this.worldHeight / 2;
+        const sec = SECTORS[galaxy.current];
+        if (sec.isDungeon) { this.log('🚫 Варп недоступен здесь'); addConsumableToInventory(inv, type, 1, this._cargoMax()); return; }
+        this.skillCooldowns[barKey] = now + this._skillCooldownMs(barKey);
+        let cx, cy;
+        if (sec.pvp) {
+          const homeBase = this.homeBases?.find(hb => hb.corp === this.playerCorp);
+          cx = homeBase?.x ?? this.worldWidth / 2;
+          cy = homeBase?.y ?? this.worldHeight / 2;
+        } else {
+          cx = this.worldWidth / 2; cy = this.worldHeight / 2;
+        }
         this.player.sprite.setPosition(cx, cy);
         if (this.player.sprite.body) this.player.sprite.body.reset(cx, cy);
         this.muzzleFlash(cx, cy, 0x8888ff);
-        this.log('🌀 Аварийный прыжок: телепорт на базу');
+        this.log(sec.pvp ? '🌀 Варп: телепорт к родной базе' : '🌀 Аварийный прыжок: телепорт на базу');
         break;
       }
     }
@@ -1037,20 +1060,23 @@ export default class GameScene extends Phaser.Scene {
 
   _doStealthSprint(now, cd) {
     if (this._stealthEndTime > now) return;
-    this.skillCooldowns.stealth_sprint = now + cd;
     const dur = Math.round(8000 * (this.player.stealthDurMult ?? 1));
     this._stealthEndTime = now + dur;
+    this._consBuffEndTimes.stealth_sprint = now + dur;
     this._stealthOrigSpeed = this.player.shipBaseSpeed;
     this.player.shipBaseSpeed = Math.round(this.player.shipBaseSpeed * 1.30);
     this.player.recomputeStats();
     this.player.sprite.setAlpha(0.35);
     this.log(`👻 Стелс-рывок: +30% скорость, ${Math.round(dur / 1000)}с`);
     this.time.delayedCall(dur, () => {
-      if (!this.player?.alive) return;
-      this.player.shipBaseSpeed = this._stealthOrigSpeed;
-      this.player.recomputeStats();
-      this.player.sprite.setAlpha(1.0);
+      if (this.player?.alive) {
+        this.player.shipBaseSpeed = this._stealthOrigSpeed;
+        this.player.recomputeStats();
+        this.player.sprite.setAlpha(1.0);
+      }
       this._stealthEndTime = 0;
+      this._consBuffEndTimes.stealth_sprint = 0;
+      this.skillCooldowns.stealth_sprint = this.time.now + cd;
       this.log('👻 Стелс завершён');
     });
   }
@@ -1063,10 +1089,17 @@ export default class GameScene extends Phaser.Scene {
     if (this.player.hull / this.player.maxHull > thresh) {
       this.log(`💀 Берсерк: нужно HP < ${thresh * 100}%`); return;
     }
-    this.skillCooldowns.berserker = now + cd;
-    this._berserkerBuff = { endTime: now + 15000, mult: 1 + boost };
+    const BUFF_DUR = 15000;
+    this._berserkerBuff = { endTime: now + BUFF_DUR, mult: 1 + boost };
+    this._consBuffEndTimes.berserker = now + BUFF_DUR;
     this.log(`💀 Берсерк: +${Math.round(boost * 100)}% урон, 15с`);
     this.hitFlash(this.player.x, this.player.y, true);
+    this.time.delayedCall(BUFF_DUR, () => {
+      this._berserkerBuff = null;
+      this._consBuffEndTimes.berserker = 0;
+      this.skillCooldowns.berserker = this.time.now + cd;
+      this.log('💀 Берсерк завершён');
+    });
   }
 
   gainXp(amount) {
