@@ -144,6 +144,10 @@ export default class BootScene extends Phaser.Scene {
     this.load.image('lootbox',       'assets/modules/lootbox.png');
     this.load.image('plasmate_icon', 'assets/modules/plasmate_icon.png');
 
+    // Consumables & materials icons
+    for (const type of ['repair_pack','speed_boost','scanner_pulse','emergency_warp','biomech_core','quantum_crystal','plasma_coil'])
+      this.load.image(`consumable_${type}`, `assets/consumables/${type}.png`);
+
     // Perk images (slot perks for weapon/shield modules)
     for (const p of PERK_DEFS) this.load.image(p.key, `assets/perks/${p.imgFile}`);
 

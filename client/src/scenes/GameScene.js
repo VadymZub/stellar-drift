@@ -8,7 +8,7 @@ import Projectile from '../entities/Projectile.js';
 import Loot from '../entities/Loot.js';       
 import Movement from '../systems/Movement.js';
 import { EXP_CLASSES } from './BootScene.js'; 
-import { rollLootForMob, dropChance, itemName, rollStarGold, starterCannon, starterShield, rollCannon, rollShield, rollEngine, rollLaser, rollApophisLoot, PLASMATE_PER_SLOT, PLASMATE_DAILY_MAX, addPlasmateToInventory, totalPlasmateInInventory, removePlasmateFromInventory } from '../items.js';
+import { rollLootForMob, dropChance, itemName, rollStarGold, starterCannon, starterShield, rollCannon, rollShield, rollEngine, rollLaser, rollApophisLoot, PLASMATE_PER_SLOT, PLASMATE_DAILY_MAX, addPlasmateToInventory, totalPlasmateInInventory, removePlasmateFromInventory, CONSUMABLES, addConsumableToInventory, rollConsumableDrop } from '../items.js';
 import PlasmateDeposit from '../entities/PlasmateDeposit.js';
 import { levelInfo, xpToNext, MAX_LEVEL } from '../leveling.js';
 import { SHIP_BY_KEY } from '../ships.js';    
@@ -1232,6 +1232,11 @@ export default class GameScene extends Phaser.Scene {
       const lootTier = isLegendary ? 'legendary' : (mob.isBoss || mob.tpl.elite) ? 'boss' : 'common';
       this.loot.push(new Loot(this, mob.x, mob.y, lootItem, lootTier));
     }
+    const consDrop = rollConsumableDrop(mob);
+    if (consDrop) {
+      const ox = Phaser.Math.Between(-24, 24), oy = Phaser.Math.Between(-24, 24);
+      this.loot.push(new Loot(this, mob.x + ox, mob.y + oy, consDrop, 'common'));
+    }
     if (!mob.noRespawn) {
       this.time.delayedCall(RESPAWN_MS, () => { if (!mob.alive) { mob.respawn(); this.log(i18n.t('log.respawn', { name, lvl })); } });
     }
@@ -1736,11 +1741,25 @@ export default class GameScene extends Phaser.Scene {
           this._collectPlasmateDeposit(target);
           this.cancelCollect();
         } else {
-          if (this.inventory.length >= this._cargoMax()) {
+          const item = target.item;
+          if (CONSUMABLES[item.type]) {
+            const inv = this.inventory;
+            const hasStack = inv.some(i => i.type === item.type && i.amount < CONSUMABLES[i.type].maxPerSlot);
+            if (!hasStack && inv.length >= this._cargoMax()) {
+              this.log(i18n.t('log.cargo_full'));
+              this.cancelCollect();
+            } else {
+              addConsumableToInventory(inv, item.type, item.amount, this._cargoMax());
+              this.log(i18n.t('log.loot_pickup', { item: itemName(item) }));
+              target.collect();
+              this.cancelCollect();
+              this.advanceMission('daily_salvage', 0);
+              this._saveState();
+            }
+          } else if (this.inventory.length >= this._cargoMax()) {
             this.log(i18n.t('log.cargo_full'));
             this.cancelCollect();
           } else {
-            const item = target.item;
             this.inventory.push(item);
             this.log(i18n.t('log.loot_pickup', { item: itemName(item) }));
             target.collect();
@@ -1762,15 +1781,20 @@ export default class GameScene extends Phaser.Scene {
     if (!this.magnetEnabled) return;
     if (!this.player?.alive || this.atBase || this.jumping) return;
 
-    // Release all when cargo full — items keep floating, magnet re-activates when space frees
+    // Release all when cargo full — unless a stackable consumable still fits
     if (this.inventory.length >= this._cargoMax()) {
-      for (const l of this.loot) {
-        if (l._magnetPull) {
-          l._magnetPull = false;
-          l.sprite.setDisplaySize(l._origDisplayW ?? l.sprite.displayWidth, l._origDisplayH ?? l.sprite.displayHeight);
+      const anyStackable = this.loot.some(l => l.alive && l._magnetPull
+        && CONSUMABLES[l.item?.type]
+        && this.inventory.some(i => i.type === l.item.type && i.amount < CONSUMABLES[i.type].maxPerSlot));
+      if (!anyStackable) {
+        for (const l of this.loot) {
+          if (l._magnetPull) {
+            l._magnetPull = false;
+            l.sprite.setDisplaySize(l._origDisplayW ?? l.sprite.displayWidth, l._origDisplayH ?? l.sprite.displayHeight);
+          }
         }
+        return;
       }
-      return;
     }
 
     const MAGNET_BASE = 180;
@@ -1793,8 +1817,13 @@ export default class GameScene extends Phaser.Scene {
 
       if (dist < 8) {
         // Arrived — collect
-        this.inventory.push(loot.item);
-        this.log(i18n.t('log.loot_pickup', { item: itemName(loot.item) }));
+        const mi = loot.item;
+        if (CONSUMABLES[mi.type]) {
+          addConsumableToInventory(this.inventory, mi.type, mi.amount, this._cargoMax());
+        } else {
+          this.inventory.push(mi);
+        }
+        this.log(i18n.t('log.loot_pickup', { item: itemName(mi) }));
         loot.collect();
         this.advanceMission('daily_salvage', 0);
         this._saveState();

@@ -1,7 +1,7 @@
 import * as Phaser from 'https://cdn.jsdelivr.net/npm/phaser@4.1.0/dist/phaser.esm.js';
 import { COLORS, UI_RES } from '../constants.js';
 import { i18n } from '../i18n.js';
-import { itemName, itemStats, itemIconKey, PLASMATE_PER_SLOT, PLASMATE_GOLD_RATE, removePlasmateFromInventory, totalPlasmateInInventory } from '../items.js';
+import { itemName, itemStats, itemIconKey, PLASMATE_PER_SLOT, PLASMATE_GOLD_RATE, removePlasmateFromInventory, totalPlasmateInInventory, CONSUMABLES, addConsumableToInventory } from '../items.js';
 import { prerenderTex } from '../utils/prerenderTex.js';
 import { PERK_MAP, RARITY_COLOR, perkBonus } from '../perks.js';
 
@@ -20,6 +20,19 @@ export default class CargoScene extends Phaser.Scene {
     return 8 + drover + sl * (sl + 1) + prem;
   }
   _whMax() { const gs = this.gs; const sl = gs.skillLevels?.cargo_expand || 0; return 8 + sl * (sl + 1) + (gs.premium ? 8 : 0); }
+
+  _addConsumableToBar(type) {
+    const gs = this.gs;
+    const bar = gs.actionBar ? [...gs.actionBar] : Array(10).fill(null);
+    const barKey = `use:${type}`;
+    if (bar.includes(barKey)) return;
+    const freeIdx = bar.indexOf(null);
+    if (freeIdx < 0) return;
+    bar[freeIdx] = barKey;
+    gs.actionBar = bar;
+    gs._saveState?.();
+    this.scene.restart();
+  }
 
   create() {
     this.gs = this.scene.get('GameScene');
@@ -175,6 +188,63 @@ export default class CargoScene extends Phaser.Scene {
           dg.fillStyle(0xffa000, 0.85); dg.fillTriangle(sx, sy, sx + 14, sy, sx, sy + 14);
           container.add(dg);
         }
+        continue;
+      }
+
+      // ── Consumable / Material stack ───────────────────────────────────────────
+      if (CONSUMABLES[item.type]) {
+        const def = CONSUMABLES[item.type];
+        const isConsumable = def.category === 'consumable';
+        const inCargo = type === 'cargo' || type === 'cargo_nosell';
+        const inWarehouse = type === 'warehouse';
+
+        let stripLabel = null, stripColor, stripBg, stripAction;
+        if (isConsumable && inCargo) {
+          const barKey = `use:${item.type}`;
+          const alreadyInBar = (gs.actionBar || []).includes(barKey);
+          stripLabel  = alreadyInBar ? '✓ в панели' : '→ панель';
+          stripColor  = alreadyInBar ? '#4a9860' : '#4dd0e1';
+          stripBg     = 0x051520;
+          stripAction = () => this._addConsumableToBar(item.type);
+        } else if (!isConsumable && type === 'cargo') {
+          stripLabel  = '→ склад'; stripColor = '#4aa8cc'; stripBg = 0x071828;
+          stripAction = () => this._moveToWarehouse(item);
+        } else if (inWarehouse) {
+          stripLabel  = '← трюм'; stripColor = '#4a9860'; stripBg = 0x0a1a0a;
+          stripAction = () => {
+            const inv = gs.inventory || [];
+            const hasStack = inv.some(i => i.type === item.type && i.amount < def.maxPerSlot);
+            if (!hasStack && inv.length >= this._cargoMax()) return;
+            const idx = (gs.warehouse || []).indexOf(item); if (idx < 0) return;
+            gs.warehouse.splice(idx, 1);
+            addConsumableToInventory(inv, item.type, item.amount, this._cargoMax());
+            this.scene.restart();
+          };
+        }
+
+        const hasStrip = !!stripLabel;
+        const boxH = hasStrip ? BODY_H : SZ;
+        const borderColor = isConsumable ? 0x44aacc : 0xccaa44;
+        const box = this.add.rectangle(sx, sy, SZ, boxH, 0x0a1a2a, 0.95).setOrigin(0, 0)
+          .setStrokeStyle(2, borderColor, 0.8);
+        const iconK = itemIconKey(item);
+        const iconImg = iconK
+          ? this.add.image(sx + SZ / 2, sy + boxH / 2 - 6, prerenderTex(this, iconK, 38, 38)).setDisplaySize(38, 38).setOrigin(0.5)
+          : null;
+        const countTxt = this.add.text(sx + SZ / 2, sy + boxH - 10,
+          `${item.amount}/${def.maxPerSlot}`, this.F('10px', isConsumable ? '#88eeff' : '#ffcc88')).setOrigin(0.5);
+        const els = [box, countTxt];
+        if (iconImg) els.push(iconImg);
+
+        if (hasStrip) {
+          const strip = this.add.rectangle(sx, sy + BODY_H, SZ, STRIP_H, stripBg, 0.95).setOrigin(0, 0)
+            .setStrokeStyle(1, 0x2a6888, 0.5).setInteractive({ useHandCursor: true });
+          const stripT = this.add.text(sx + SZ / 2, sy + BODY_H + STRIP_H / 2, stripLabel,
+            this.F('9px', stripColor)).setOrigin(0.5);
+          strip.on('pointerdown', stripAction);
+          els.push(strip, stripT);
+        }
+        container.add(els);
         continue;
       }
 

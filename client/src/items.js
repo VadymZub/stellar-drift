@@ -126,9 +126,72 @@ export function starUpgradeCost(item) {
 const SELL_PRICE = { 1: 200, 2: 550, 3: 1300, 4: 3000 };
 export function itemSellPrice(item) { return SELL_PRICE[item.tier] || 100; }
 
+// ── Consumables & Materials ───────────────────────────────────────────────────
+export const CONSUMABLES = {
+  repair_pack:     { category: 'consumable', maxPerSlot: 20, canBuy: true,  price: 3500 },
+  speed_boost:     { category: 'consumable', maxPerSlot: 20, canBuy: true,  price: 2800 },
+  scanner_pulse:   { category: 'consumable', maxPerSlot: 20, canBuy: true,  price: 1800 },
+  emergency_warp:  { category: 'consumable', maxPerSlot: 10, canBuy: true,  price: 5000 },
+  biomech_core:    { category: 'material',   maxPerSlot: 5,  canBuy: false, price: 0    },
+  quantum_crystal: { category: 'material',   maxPerSlot: 5,  canBuy: false, price: 0    },
+  plasma_coil:     { category: 'material',   maxPerSlot: 5,  canBuy: false, price: 0    },
+};
+
+export function addConsumableToInventory(inventory, type, amount, maxSlots) {
+  const def = CONSUMABLES[type];
+  if (!def) return amount;
+  let rem = amount;
+  for (const it of inventory) {
+    if (it.type !== type || it.amount >= def.maxPerSlot) continue;
+    const space = def.maxPerSlot - it.amount;
+    const add = Math.min(space, rem);
+    it.amount += add;
+    rem -= add;
+    if (rem <= 0) return 0;
+  }
+  while (rem > 0 && inventory.length < maxSlots) {
+    const add = Math.min(def.maxPerSlot, rem);
+    inventory.push({ type, amount: add });
+    rem -= add;
+  }
+  return rem;
+}
+
+export function countConsumableInInventory(inventory, type) {
+  return (inventory || []).filter(i => i.type === type).reduce((s, i) => s + i.amount, 0);
+}
+
+export function removeConsumableFromInventory(inventory, type, amount) {
+  let rem = amount;
+  for (let i = inventory.length - 1; i >= 0 && rem > 0; i--) {
+    if (inventory[i].type !== type) continue;
+    const take = Math.min(inventory[i].amount, rem);
+    inventory[i].amount -= take;
+    rem -= take;
+    if (inventory[i].amount <= 0) inventory.splice(i, 1);
+  }
+  return amount - rem;
+}
+
+const _CONS_KEYS = Object.keys(CONSUMABLES);
+const _MAT_KEYS  = _CONS_KEYS.filter(k => CONSUMABLES[k].category === 'material');
+const _USE_KEYS  = _CONS_KEYS.filter(k => CONSUMABLES[k].category === 'consumable');
+
+export function rollConsumableDrop(mob) {
+  const chance = (mob.isBoss || mob.tpl.elite) ? 0.40 : 0.12;
+  if (Phaser.Math.FloatBetween(0, 1) > chance) return null;
+  if ((mob.isBoss || mob.tpl.elite) && Phaser.Math.FloatBetween(0, 1) < 0.5) {
+    const type = _MAT_KEYS[Phaser.Math.Between(0, _MAT_KEYS.length - 1)];
+    return { type, amount: 1 };
+  }
+  const type = _USE_KEYS[Phaser.Math.Between(0, _USE_KEYS.length - 1)];
+  return { type, amount: Phaser.Math.Between(1, 3) };
+}
+
 export function itemIconKey(item) {
   if (!item) return null;
   if (item.type === 'plasmate') return 'plasmate_icon';
+  if (CONSUMABLES[item.type])  return `consumable_${item.type}`;
   if (item.type === 'laser')   return 'mod_laser';
   const t = Math.min(item.tier || 1, 4);
   if (item.type === 'cannon') return `mod_plasma_t${t}`;
@@ -204,6 +267,7 @@ export function rollLootForMob(mob) {
 // Имя предмета (через i18n).
 export function itemName(item) {
   if (item.type === 'plasmate') return `${i18n.t('item.plasmate')} ×${item.amount}`;
+  if (CONSUMABLES[item.type])  return `${i18n.t(`item.${item.type}`)} ×${item.amount}`;
   if (item.type === 'laser') return i18n.t('item.laser');
   const key = item.type === 'cannon' ? 'item.cannon' : item.type === 'shield' ? 'item.shield' : 'item.engine';
   return `${i18n.t(key)} T${item.tier}`;

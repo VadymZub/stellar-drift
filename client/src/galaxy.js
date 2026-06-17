@@ -24,7 +24,7 @@ export const SECTORS = {
   pvp_2: { name: 'Граница X-44',     map: 'PvP-2',    lvlMin: 21, lvlMax: 35, sx: 2, sy: 1, pvp: true },
   pvp_3: { name: 'Алгол',            map: 'PvP-3',    lvlMin: 31, lvlMax: 45, sx: 3, sy: 1, pvp: true },
   pvp_4: { name: 'Нейтральная Зона', map: 'PvP-4',    lvlMin: 41, lvlMax: 50, sx: 4, sy: 1, pvp: true },
-  pvp_5: { name: 'Сердце Бездны',    map: 'pvp_5',    lvlMin: 48, lvlMax: 50, sx: 5, sy: 1, pvp: true },
+  pvp_5: { name: 'Сердце Бездны',    map: 'pvp_5',    lvlMin: 45, lvlMax: 50, sx: 5, sy: 1, pvp: true },
   'R-1-boss': { name: 'Алгол: Зов Апофиса', map: 'R-1-boss', lvlMin: 45, lvlMax: 50, sx: 6, sy: 1, isDungeon: true },
 
   // ══════════════════════════════════════════════════════════════════════
