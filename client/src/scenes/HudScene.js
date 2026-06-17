@@ -311,10 +311,11 @@ export default class HudScene extends Phaser.Scene {
 
     // ── Cargo indicator ──
     const cargoCount = this.gs.inventory?.length || 0;
-    const cargoMax   = 30;
+    const cargoMax   = this.gs._cargoMax();
     this._cargoTxt.setPosition(W - 16, H - 80)
       .setText(`ТРЮМ  ${cargoCount}/${cargoMax}`)
-      .setColor(cargoCount >= cargoMax ? '#ef5350' : '#4a6678');
+      .setColor(cargoCount >= cargoMax ? '#ef5350' : '#4a6678')
+      .setVisible(!atBase);
 
     // ── Подсказка (выше action bar) ──
     this.hint.setPosition(W / 2, H - 66).setVisible(!atBase);
