@@ -88,7 +88,8 @@ export default class GameScene extends Phaser.Scene {
       window.PLAYER_STATE = null;
     }
 
-    const tp  = window.TEST_PROFILE ?? null;
+    // TEST_PROFILE is only valid for unauthenticated DEV sessions; ignore for real users.
+    const tp  = getToken() ? null : (window.TEST_PROFILE ?? null);
     const sec = SECTORS[galaxy.current];
     const isPvp = sec.pvp === true;
     const scale = isPvp ? PVP_WORLD_SCALE : 1.0;

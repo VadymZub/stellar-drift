@@ -144,6 +144,7 @@ export default class LoginScene extends Phaser.Scene {
           window.PLAYER_STATE = {};
         }
 
+        window.TEST_PROFILE = null; // clear any leftover dev session data
         this._removeOverlay();
         // Go directly to game — TestProfileScene is only for DEV skip
         this.scene.start('GameScene');
