@@ -1,5 +1,8 @@
 import * as Phaser from 'https://cdn.jsdelivr.net/npm/phaser@4.1.0/dist/phaser.esm.js';
-import { UI_RES, ART_ANGLE_OFFSET } from '../constants.js';
+import { UI_RES } from '../constants.js';
+
+// Transport sprite has nose at BOTTOM (like pirate mobs), not nose-up like player ships.
+const TRANSPORT_ART_OFFSET = -Math.PI / 2;
 
 export const ESCORT_SPEED   = 55;   // px/sec
 export const ESCORT_WAVE_AT = [0.20, 0.50, 0.75];
@@ -35,7 +38,7 @@ export default class EscortTransport {
       .setDepth(42).setDisplaySize(96, 120);
     // Face toward destination from the start
     const dx = this.targetX - x, dy = this.targetY - y;
-    this.sprite.rotation = Math.atan2(dy, dx) + ART_ANGLE_OFFSET;
+    this.sprite.rotation = Math.atan2(dy, dx) + TRANSPORT_ART_OFFSET;
     // Idle pulse ring
     this._idleRing = this.scene.add.graphics().setDepth(38);
     this._idleRingPhase = 0;
@@ -44,12 +47,13 @@ export default class EscortTransport {
 
   _buildPrompt() {
     const s = this.scene;
-    // Speech bubble graphics (shared for both hint and danger)
     this._bubbleBg  = s.add.graphics().setDepth(67).setVisible(false);
-    this._bubbleTxt = s.add.text(this.x, this.y, '',
+    // Phaser 4: Text canvas is lazy-init; setVisible(false) on empty text leaves canvas null.
+    // Use setAlpha(0) + non-empty initial content so the canvas is ready before first setText.
+    this._bubbleTxt = s.add.text(this.x, this.y, ' ',
       { fontFamily: 'Orbitron, sans-serif', fontSize: '11px', color: '#4dd0e1',
         resolution: UI_RES, align: 'center' })
-      .setOrigin(0.5, 1).setDepth(68).setVisible(false);
+      .setOrigin(0.5, 1).setDepth(68).setAlpha(0);
     this._promptPhase = 0;
   }
 
@@ -64,8 +68,7 @@ export default class EscortTransport {
     const show      = hasDanger || showHint;
 
     this._bubbleBg.setVisible(show);
-    this._bubbleTxt.setVisible(show);
-    if (!show) return;
+    if (!show) { this._bubbleTxt.setAlpha(0); return; }
 
     const isDanger  = hasDanger;
     const text      = isDanger ? '⚠  КОРСАРЫ АТАКУЮТ!' : 'Мне нужна защита!\nПодлети ближе.';
@@ -166,7 +169,7 @@ export default class EscortTransport {
     this.x += nx * SPEED * dt;
     this.y += ny * SPEED * dt;
     this.sprite.setPosition(this.x, this.y);
-    this.sprite.rotation = Math.atan2(dy, dx) + ART_ANGLE_OFFSET;
+    this.sprite.rotation = Math.atan2(dy, dx) + TRANSPORT_ART_OFFSET;
     this._refreshBar();
 
     // Wave spawn triggers
