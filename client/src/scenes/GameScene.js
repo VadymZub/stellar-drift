@@ -229,12 +229,16 @@ export default class GameScene extends Phaser.Scene {
     this.createBoostFx();
     this.spawnMobs();
 
-    // Restore floor loot from previous session (same sector only)
-    if (this._pendingLoot?.length && this._pendingLootSector === galaxy.current) {
-      this._pendingLoot.forEach(l => this.loot.push(new Loot(this, l.x, l.y, l.item)));
+    // Restore floor loot for current sector
+    if (!this._lootBySector) this._lootBySector = {};
+    const _prevSec = this._prevSector;
+    const _prevDef = _prevSec ? SECTORS[_prevSec] : null;
+    // Leaving a dungeon — clear its loot (it's a one-time instance)
+    if (_prevDef?.isDungeon && _prevSec !== galaxy.current) {
+      delete this._lootBySector[_prevSec];
     }
-    this._pendingLoot = null;
-    this._pendingLootSector = null;
+    const floorLoot = this._lootBySector[galaxy.current] || [];
+    floorLoot.forEach(l => this.loot.push(new Loot(this, l.x, l.y, l.item)));
 
     this.createJumpgates();
     this.createDungeonWalls();
@@ -1637,6 +1641,7 @@ export default class GameScene extends Phaser.Scene {
   }
 
   shutdown() {
+    this._prevSector = galaxy.current;
     this._saveState();
     this.argusCtrl?.destroy();
     this.argusCtrl = null;
@@ -1667,11 +1672,7 @@ export default class GameScene extends Phaser.Scene {
       actionBar:           this.actionBar   || [],
       respeckCount:        this.respeckCount        || 0,
       skillAchievementSP:  this.skillAchievementSP  || 0,
-      // Floor loot — сохраняем с привязкой к сектору; восстанавливаем только в том же секторе
-      lootSector: galaxy.current,
-      lootFloor:  (this.loot || [])
-        .filter(l => l.alive)
-        .map(l => ({ x: Math.round(l.x), y: Math.round(l.y), item: l.item })),
+      lootBySector:        this._serializeLoot(),
     };
   }
 
@@ -1695,15 +1696,29 @@ export default class GameScene extends Phaser.Scene {
     if (s.actionBar          != null) this.actionBar          = s.actionBar;
     if (s.respeckCount       != null) this.respeckCount       = s.respeckCount;
     if (s.skillAchievementSP != null) this.skillAchievementSP = s.skillAchievementSP;
-    // Лут на полу — сохраняем для восстановления в create()
-    if (s.lootFloor?.length && s.lootSector != null) {
-      this._pendingLoot       = s.lootFloor;
-      this._pendingLootSector = s.lootSector;
-    }
+    if (s.lootBySector != null) this._lootBySector = s.lootBySector;
   }
 
   _saveState() {
     if (!getToken()) return;
     apiPut('/player/state', this._serializeState()).catch(() => {});
+  }
+
+  _serializeLoot() {
+    const sec = SECTORS[galaxy.current];
+    // PvP-арены: лут не сохраняем (дропа нет по геймдизайну)
+    if (sec?.pvp) return this._lootBySector || {};
+
+    const currentLoot = (this.loot || [])
+      .filter(l => l.alive)
+      .map(l => ({ x: Math.round(l.x), y: Math.round(l.y), item: l.item }));
+
+    const map = { ...(this._lootBySector || {}) };
+    if (currentLoot.length > 0) {
+      map[galaxy.current] = currentLoot;
+    } else {
+      delete map[galaxy.current]; // сектор пустой — убираем из карты
+    }
+    return map;
   }
 }
