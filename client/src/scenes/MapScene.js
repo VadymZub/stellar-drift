@@ -129,8 +129,9 @@ export default class MapScene extends Phaser.Scene {
       { color: '#ffb74d', label: 'HELIOS' },
       { color: CORP_STYLE.karax.text, label: 'KARAX', corp: 'karax' },
       { color: CORP_STYLE.tides.text, label: 'TIDES', corp: 'tides' },
-      { color: '#a5d6a7', label: 'PvP' },
+      { color: '#ef5350', label: 'PvP' },
       { color: '#bb86fc', label: 'Данж' },
+      { color: '#66bb6a', label: 'Прыжок' },
     ];
     let lx = 24;
     for (const item of items) {
@@ -160,7 +161,7 @@ export default class MapScene extends Phaser.Scene {
       border = 0x4a3030; fill = 0x140e10; badge = `🔒 ${acc.reason}`; badgeColor = '#ef9a9a';
       if (isOtherCorp) nodeAlpha = 0.45;
     } else if (canJump) {
-      border = COLORS.emerald; fill = 0x12251a; badge = i18n.t('map.jump'); badgeColor = '#a5d6a7';
+      border = COLORS.emerald; fill = 0x12251a; badge = i18n.t('map.jump'); badgeColor = '#66bb6a';
     } else if (isOtherCorp) {
       const cs = CORP_STYLE[sc];
       border = cs.dimBorder; fill = cs.dimFill;
@@ -175,7 +176,7 @@ export default class MapScene extends Phaser.Scene {
     } else if (s.isDungeon) {
       border = 0x7e57c2; fill = 0x100c1e; badge = '⚔ Данж'; badgeColor = '#ce93d8';
     } else if (s.pvp) {
-      border = 0xef5350; fill = 0x1c0e0e; badge = 'PvP'; badgeColor = '#ef9a9a';
+      border = 0xef5350; fill = 0x1c0e0e; badge = 'PvP'; badgeColor = '#ef5350';
     } else {
       border = 0x2a4a54; fill = 0x0e1a22; badge = i18n.t('map.sector'); badgeColor = '#7e9398';
     }

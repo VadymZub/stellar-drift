@@ -5,6 +5,7 @@ import { levelInfo, MAX_LEVEL } from '../leveling.js';
 import { minimapRect, worldToMinimap } from '../systems/minimap.js';
 import { SECTORS, galaxy } from '../galaxy.js';
 import { getActiveMissionSectorTargets } from '../data/missions.js';
+import { countConsumableInInventory } from '../items.js';
 
 // Оверлей-сцена HUD. Читает статы из GameScene, слушает события лога.
 export default class HudScene extends Phaser.Scene {
@@ -115,7 +116,7 @@ export default class HudScene extends Phaser.Scene {
       slot._key = key;
       if (slot.iconImg) { slot.iconImg.destroy(); slot.iconImg = null; }
       if (!key) return;
-      const texKey = `skill_${key}`;
+      const texKey = key.startsWith('use:') ? `consumable_${key.slice(4)}` : `skill_${key}`;
       if (!this.textures.exists(texKey)) return;
       slot.iconImg = this.add.image(slot.sx + slot.SW / 2, slot.sy + slot.SH / 2, texKey)
         .setDisplaySize(slot.SW - 4, slot.SH - 4).setDepth(102);
@@ -131,6 +132,16 @@ export default class HudScene extends Phaser.Scene {
     for (let i = 0; i < 10; i++) {
       const slot  = this._abSlots[i];
       const key   = bar[i] || null;
+
+      if (key?.startsWith('use:')) {
+        // Consumable slot — show remaining quantity, no cooldown overlay
+        slot.cdGfx.clear();
+        const total = countConsumableInInventory(gs.inventory || [], key.slice(4));
+        slot.cdTxt.setText(total > 0 ? `${total}` : '');
+        if (slot.iconImg) slot.iconImg.setAlpha(total > 0 ? 1.0 : 0.3);
+        continue;
+      }
+
       const cdEnd = key ? (gs.skillCooldowns[key] || 0) : 0;
       const cdMs  = key ? gs._skillCooldownMs(key) : 1;
       const rem   = Math.max(0, cdEnd - time);
@@ -318,20 +329,22 @@ export default class HudScene extends Phaser.Scene {
       .setColor(cargoCount >= cargoMax ? '#ef5350' : '#4a6678')
       .setVisible(!atBase);
 
+    const inMap = this.scene.isActive('MapScene');
+
     // ── Подсказка (выше action bar) ──
-    this.hint.setPosition(W / 2, H - 66).setVisible(!atBase);
+    this.hint.setPosition(W / 2, H - 66).setVisible(!atBase && !inMap);
 
     // ── Action bar ──
-    if (!atBase) {
+    if (!atBase && !inMap) {
       this._updateActionBarHUD(this.time.now);
     }
     if (this._abSlots) {
       this._abSlots.forEach(slot => {
-        slot.bg.setVisible(!atBase);
-        slot.cdGfx.setVisible(!atBase);
-        slot.hk.setVisible(!atBase);
-        slot.cdTxt.setVisible(!atBase);
-        if (slot.iconImg) slot.iconImg.setVisible(!atBase);
+        slot.bg.setVisible(!atBase && !inMap);
+        slot.cdGfx.setVisible(!atBase && !inMap);
+        slot.hk.setVisible(!atBase && !inMap);
+        slot.cdTxt.setVisible(!atBase && !inMap);
+        if (slot.iconImg) slot.iconImg.setVisible(!atBase && !inMap);
       });
     }
 
