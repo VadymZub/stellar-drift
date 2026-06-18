@@ -23,19 +23,20 @@ export default class HudScene extends Phaser.Scene {
       ({ fontFamily: 'Orbitron, sans-serif', fontSize: size, color, resolution: UI_RES });
 
     // Панель игрока (лев-верх) — фиксированный вертикальный layout
-    this.pName = this.add.text(20, 14, '', O('18px')).setDepth(101);
-    this.pShieldTxt = this.add.text(20, 48,  '', F('12px', '#4dd0e1')).setDepth(101);
-    this.pHullTxt   = this.add.text(20, 82,  '', F('12px', '#66bb6a')).setDepth(101);
-    this.pSpeed     = this.add.text(20, 116, '', F('12px', '#9fb3b8')).setDepth(101);
-    // Строки ресурсов: эмодзи + число
-    this.pCredits  = this.add.text(20, 136, '', F('13px', '#ffb74d')).setDepth(101);
-    this.pStarGold = this.add.text(20, 156, '', F('13px', '#ffd54f')).setDepth(101);
-    this.pHonor    = this.add.text(20, 176, '', F('13px', '#ef9a9a')).setDepth(101);
-    this.pCorpRep  = this.add.text(20, 196, '', F('13px', '#80cbc4')).setDepth(101);
-    // Уровень пилота + XP-бар (растёт только за PvE)
-    this.pPilot = this.add.text(20, 220, '', O('13px', '#b39ddb')).setDepth(101);
-    this.pRank  = this.add.text(20, 256, '', O('14px', '#ffcc80')).setDepth(101);
-    this.pXpTxt = this.add.text(240, 222, '', F('10px', '#9fb3b8')).setOrigin(1, 0).setDepth(101);
+    // Bar rows: icon (left) + bar (center, 155px) + value (right of bar, white)
+    this._icoShield = this.add.text(18, 20, '🛡', F('12px', '#4dd0e1')).setDepth(101);
+    this._valShield = this.add.text(202, 28, '', F('11px', '#d0eeff')).setOrigin(0, 0.5).setDepth(102);
+    this._icoHull   = this.add.text(18, 44, '⚙', F('12px', '#66bb6a')).setDepth(101);
+    this._valHull   = this.add.text(202, 52, '', F('11px', '#c8f0d0')).setOrigin(0, 0.5).setDepth(102);
+    this.pSpeed     = this.add.text(20, 68, '', F('12px', '#9fb3b8')).setDepth(101);
+    // Info panel items — position managed by _buildInfoPanel
+    this.pCredits  = this.add.text(0, 0, '', F('13px', '#ffb74d')).setDepth(101).setVisible(false);
+    this.pStarGold = this.add.text(0, 0, '', F('13px', '#ffd54f')).setDepth(101).setVisible(false);
+    this.pHonor    = this.add.text(0, 0, '', F('13px', '#ef9a9a')).setDepth(101).setVisible(false);
+    this.pCorpRep  = this.add.text(0, 0, '', F('13px', '#80cbc4')).setDepth(101).setVisible(false);
+    this.pPilot    = this.add.text(0, 0, '', O('12px', '#b39ddb')).setDepth(101).setVisible(false);
+    this.pRank     = this.add.text(0, 0, '', O('12px', '#ffcc80')).setDepth(101).setVisible(false);
+    this.pXpTxt    = this.add.text(0, 0, '', F('10px', '#9fb3b8')).setOrigin(1, 0).setDepth(101).setVisible(false);
 
     // Панель цели (центр-верх)
     this.tName = this.add.text(0, 16, '', O('16px', '#ef5350')).setOrigin(0.5, 0).setDepth(101);
@@ -84,6 +85,9 @@ export default class HudScene extends Phaser.Scene {
       devBg.on('pointerover', () => devBg.setAlpha(0.75));
       devBg.on('pointerout',  () => devBg.setAlpha(1));
     }
+
+    this._buildInfoPanel();
+    this._buildLogPanel();
   }
 
   _buildActionBarHUD() {
@@ -213,6 +217,13 @@ export default class HudScene extends Phaser.Scene {
       }
 
       if (!key) return;
+      if (key.startsWith('ship:')) {
+        const texKey = this._ensureShipSkillTex(key);
+        const iconSz = slot.SW - 4;
+        slot.iconImg = this.add.image(slot.sx + slot.SW / 2, slot.sy + slot.SH / 2, texKey)
+          .setDisplaySize(iconSz, iconSz).setDepth(102);
+        return;
+      }
       const texKey = isConsumable ? `consumable_${key.slice(4)}` : `skill_${key}`;
       if (!this.textures.exists(texKey)) return;
       const iconSz  = isConsumable ? 40 : slot.SW - 4;
@@ -221,6 +232,32 @@ export default class HudScene extends Phaser.Scene {
           prerenderTex(this, texKey, iconSz, iconSz))
         .setDisplaySize(iconSz, iconSz).setDepth(102);
     });
+  }
+
+  _ensureShipSkillTex(key) {
+    const cacheKey = `__ss_${key.replace(':', '_')}`;
+    if (this.textures.exists(cacheKey)) return cacheKey;
+    const INFO = {
+      'ship:helion_volley': { label: 'ЗП', bg: '#2a1508', fg: '#ffb74d', border: '#ffb74d' },
+      'ship:argosy_repair': { label: 'РМ', bg: '#081624', fg: '#4fc3f7', border: '#4fc3f7' },
+      'ship:drifter_jump':  { label: 'ПР', bg: '#071a18', fg: '#4db6ac', border: '#4db6ac' },
+    };
+    const info = INFO[key] || { label: '??', bg: '#0a0a14', fg: '#7e9398', border: '#7e9398' };
+    const sz = 48;
+    const ct = this.textures.createCanvas(cacheKey, sz, sz);
+    const ctx = ct.getContext();
+    ctx.fillStyle = info.bg;
+    ctx.fillRect(0, 0, sz, sz);
+    ctx.strokeStyle = info.border;
+    ctx.lineWidth = 2;
+    ctx.strokeRect(1, 1, sz - 2, sz - 2);
+    ctx.fillStyle = info.fg;
+    ctx.font = 'bold 15px Orbitron, monospace';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(info.label, sz / 2, sz / 2);
+    ct.refresh();
+    return cacheKey;
   }
 
   _updateActionBarHUD(time) {
@@ -265,7 +302,7 @@ export default class HudScene extends Phaser.Scene {
       const cdEnd   = key ? (gs.skillCooldowns[key] || 0) : 0;
       const cdMs    = key ? gs._skillCooldownMs(key) : 1;
       const cdRem   = Math.max(0, cdEnd - time);
-      const lv      = gs.skillLevels?.[key] || 0;
+      const lv      = key?.startsWith('ship:') ? 1 : (gs.skillLevels?.[key] || 0);
 
       slot.cdGfx.clear();
       if (key && buffRem > 0) {
@@ -352,8 +389,8 @@ export default class HudScene extends Phaser.Scene {
   }
 
   pushLog(text) {
-    const t = this.add.text(20, 0, text, {
-      fontFamily: 'Inter, sans-serif', fontSize: '13px', color: '#cfe9ee', resolution: UI_RES,
+    const t = this.add.text(0, 0, text, {
+      fontFamily: 'Inter, sans-serif', fontSize: '12px', color: '#cfe9ee', resolution: UI_RES,
     }).setDepth(101);
     this.logEntries.push({ t, born: this.time.now });
     while (this.logEntries.length > 7) this.logEntries.shift().t.destroy();
@@ -368,36 +405,17 @@ export default class HudScene extends Phaser.Scene {
     const atBase = this.gs.atBase;
 
     if (!atBase) {
-      // ── Игрок ── (бары под подписями: ЩИТ y48→бар y64, КОРПУС y82→бар y98)
-      this.pName.setText(i18n.t(p.ship.nameKey)).setVisible(true);
+      // ── Игрок ── (горизонтальные бары с иконкой и значением)
       const sFrac = p.shield / p.maxShield, hFrac = p.hull / p.maxHull;
-      this.pShieldTxt.setText(`${i18n.t('hud.shield')}  ${Math.ceil(p.shield)} / ${p.maxShield}`).setVisible(true);
-      this.bar(g, 20, 64, 220, 10, sFrac, COLORS.primary);
-      this.pHullTxt.setText(`${i18n.t('hud.hull')}  ${Math.ceil(p.hull)} / ${p.maxHull}`).setVisible(true);
-      this.bar(g, 20, 98, 220, 10, hFrac, COLORS.emerald);
+      this._icoShield.setVisible(true);
+      this._valShield.setText(`${Math.ceil(p.shield)} / ${p.maxShield}`).setVisible(true);
+      this.bar(g, 38, 20, 160, 16, sFrac, COLORS.primary);
+      this._icoHull.setVisible(true);
+      this._valHull.setText(`${Math.ceil(p.hull)} / ${p.maxHull}`).setVisible(true);
+      this.bar(g, 38, 44, 160, 16, hFrac, COLORS.emerald);
       const boostTag = p.boosting ? `  ⚡${i18n.t('hud.boost')}` : '';
       this.pSpeed.setText(`${i18n.t('hud.speed')}  ${Math.round(p.speed)}${boostTag}`)
         .setColor(p.boosting ? '#ffb74d' : '#9fb3b8').setVisible(true);
-      this.pCredits.setText(`💰 ${(this.gs.credits || 0).toLocaleString()}`).setVisible(true);
-      this.pStarGold.setText(`⭐ ${this.gs.starGold || 0}`).setVisible(true);
-      this.pHonor.setText(`⚔️ ${(this.gs.pilotHonor || 0).toLocaleString()}`).setVisible(true);
-      this.pCorpRep.setText(`🛡 ${Math.round((this.gs.corpRep || 0) * 100)}%`).setVisible(true);
-
-      // ── Уровень пилота + XP-бар ──
-      const info = levelInfo(this.gs.pilotXp || 0);
-      this.pPilot.setText(`${i18n.t('hud.pilot')}  ${i18n.t('mob.level')}${info.level}`).setVisible(true);
-      if (this.gs.pilotRank) {
-        this.pRank.setText(`${this.gs.pilotRank.name.toUpperCase()}`).setVisible(true);
-      } else {
-        this.pRank.setVisible(false);
-      }
-      if (info.level >= MAX_LEVEL) {
-        this.pXpTxt.setText('MAX').setVisible(true);
-        this.bar(g, 20, 242, 220, 6, 1, 0xb39ddb);
-      } else {
-        this.pXpTxt.setText(`${Math.floor(info.into)} / ${info.need}`).setVisible(true);
-        this.bar(g, 20, 242, 220, 6, info.frac, 0xb39ddb);
-      }
 
       // ── Цель ── (щит — cyan-полоска над корпусом, если у цели есть щит)
       const t = this.gs.target;
@@ -424,11 +442,22 @@ export default class HudScene extends Phaser.Scene {
       this.safeTxt.setX(W / 2).setY(targetBottom).setVisible(!!this.gs.safeProtected);
     } else {
       // At base: hide all combat/flight stats
-      [this.pName, this.pShieldTxt, this.pHullTxt, this.pSpeed, this.pCredits,
-       this.pStarGold, this.pHonor, this.pCorpRep, this.pPilot, this.pXpTxt, this.pRank,
+      [this._icoShield, this._valShield, this._icoHull, this._valHull, this.pSpeed,
        this.tName, this.tHullTxt, this.safeTxt].forEach(o => o.setVisible(false));
       g.clear();
     }
+
+    // ── Info panel: always update (stays current at base + in space) ──
+    this.pCredits.setText(`💰 ${(this.gs.credits || 0).toLocaleString()}`);
+    this.pStarGold.setText(`⭐ ${this.gs.starGold || 0}`);
+    this.pHonor.setText(`⚔️ ${(this.gs.pilotHonor || 0).toLocaleString()}`);
+    this.pCorpRep.setText(`🛡 ${Math.round((this.gs.corpRep || 0) * 100)}%`);
+    const info = levelInfo(this.gs.pilotXp || 0);
+    this.pPilot.setText(`${i18n.t('hud.pilot')}  ${i18n.t('mob.level')}${info.level}`);
+    this.pRank.setText(this.gs.pilotRank ? this.gs.pilotRank.name.toUpperCase() : '');
+    this._ipXpFrac = info.level >= MAX_LEVEL ? 1 : info.frac;
+    this.pXpTxt.setText(info.level >= MAX_LEVEL ? 'MAX' : `${Math.floor(info.into)} / ${info.need}`);
+    this._updateInfoPanelContent();
 
     // ── Миникарта (векторные блипы) ──
     this.drawMinimap();
@@ -443,10 +472,20 @@ export default class HudScene extends Phaser.Scene {
       }
     }
 
-    // ── Base nav bar (показываем/скрываем при смене atBase) ──
+    // ── Base nav bar + auto-collapse panels on base enter/exit ──
     if (this.gs.atBase !== this._lastAtBase) {
       this._lastAtBase = this.gs.atBase;
-      if (this.gs.atBase) this._showBaseNav(); else this._hideBaseNav();
+      if (this.gs.atBase) {
+        this._savedIpCollapsed  = this._ipCollapsed;
+        this._savedLogCollapsed = this._logCollapsed;
+        if (!this._ipCollapsed)  { this._ipCollapsed  = true; this._refreshInfoPanel(); }
+        if (!this._logCollapsed) { this._logCollapsed = true; this._refreshLogPanel();  }
+        this._showBaseNav();
+      } else {
+        if (this._savedIpCollapsed  === false) { this._ipCollapsed  = false; this._refreshInfoPanel(); }
+        if (this._savedLogCollapsed === false) { this._logCollapsed = false; this._refreshLogPanel();  }
+        this._hideBaseNav();
+      }
     }
 
     // ── Cargo indicator ──
@@ -478,13 +517,15 @@ export default class HudScene extends Phaser.Scene {
     this._editBtn?.setVisible(!atBase && !inMap);
     this._editBtnTxt?.setVisible(!atBase && !inMap);
 
-    // ── Лог (снизу вверх, с угасанием по возрасту) ──
-    const baseY = H - 120;
+    // ── Лог (внутри панели, снизу вверх) ──
+    const LOG_PH = 24 + 7 * 18 + 10;
+    const logBottom = this._logY + LOG_PH - 20;
+    const logVisible = !this._logCollapsed;
+    this._logBtn?.setVisible(true);
+    this._logBtnTxt?.setVisible(true);
     for (let i = this.logEntries.length - 1, row = 0; i >= 0; i--, row++) {
       const e = this.logEntries[i];
-      e.t.setY(baseY - row * 18).setVisible(!atBase);
-      const age = this.time.now - e.born;
-      e.t.setAlpha(age > 6000 ? Math.max(0.25, 1 - (age - 6000) / 6000) : 1);
+      e.t.setX(this._logX + 10).setY(logBottom - row * 18).setVisible(logVisible).setAlpha(1);
     }
   }
 
@@ -653,5 +694,161 @@ export default class HudScene extends Phaser.Scene {
       g.lineTo(p.x + Math.cos(h - 2.6) * sz * 0.75, p.y + Math.sin(h - 2.6) * sz * 0.75);
       g.closePath(); g.fillPath();
     }
+  }
+
+  _buildLogPanel() {
+    const F = (s, c) => ({ fontFamily: 'Inter, sans-serif', fontSize: s, color: c, resolution: UI_RES });
+    const SH = this.scale.height;
+
+    let lpx = 10, lpy = SH - 185;
+    try {
+      const s = JSON.parse(localStorage.getItem('sd_hud_log_pos') || 'null');
+      if (s) { lpx = s.x; lpy = s.y; }
+    } catch {}
+    this._logX = lpx; this._logY = lpy;
+    this._logCollapsed = false;
+
+    this._logBg = this.add.graphics().setDepth(100);
+
+    const BW = 52, BH = 24;
+    this._logBtn = this.add.rectangle(0, 0, BW, BH, 0x000000, 0)
+      .setOrigin(0).setStrokeStyle(1, 0x4dd0e1, 0.45).setInteractive({ useHandCursor: true }).setDepth(102);
+    this._logBtnTxt = this.add.text(BW / 2, BH / 2, 'L ◀', F('11px', '#4dd0e1')).setOrigin(0.5).setDepth(103);
+
+    let dragging = false, dox = 0, doy = 0, moved = false;
+    this._logBtn.on('pointerdown', ptr => {
+      dragging = true; moved = false;
+      dox = ptr.x - this._logX; doy = ptr.y - this._logY;
+    });
+    this.input.on('pointermove', ptr => {
+      if (!dragging) return;
+      const nx = Math.max(0, Math.min(this.scale.width - 310, ptr.x - dox));
+      const ny = Math.max(0, Math.min(this.scale.height - 185, ptr.y - doy));
+      if (Math.abs(nx - this._logX) > 3 || Math.abs(ny - this._logY) > 3) moved = true;
+      this._logX = nx; this._logY = ny;
+      this._refreshLogPanel();
+    });
+    this.input.on('pointerup', () => {
+      if (!dragging) return;
+      dragging = false;
+      if (!moved) {
+        this._logCollapsed = !this._logCollapsed;
+        this._refreshLogPanel();
+      }
+      try { localStorage.setItem('sd_hud_log_pos', JSON.stringify({ x: this._logX, y: this._logY })); } catch {}
+    });
+
+    this._refreshLogPanel();
+  }
+
+  _refreshLogPanel() {
+    const x = this._logX, y = this._logY;
+    const BW = 52, BH = 24, PW = 300, PH = BH + 7 * 18 + 10; // = 160px
+
+    this._logBtn.setPosition(x, y);
+    this._logBtnTxt.setPosition(x + BW / 2, y + BH / 2).setText(this._logCollapsed ? 'L ▶' : 'L ◀');
+
+    this._logBg.clear();
+    if (!this._logCollapsed) {
+      this._logBg.lineStyle(1.5, 0x4dd0e1, 0.45);
+      this._logBg.strokeRoundedRect(x, y, PW, PH, 8);
+    }
+  }
+
+  _buildInfoPanel() {
+    const F = (s, c) => ({ fontFamily: 'Inter, sans-serif', fontSize: s, color: c, resolution: UI_RES });
+    const O = (s, c) => ({ fontFamily: 'Orbitron, sans-serif', fontSize: s, color: c, resolution: UI_RES });
+
+    let ipx = 10, ipy = 90;
+    try {
+      const s = JSON.parse(localStorage.getItem('sd_hud_info_pos') || 'null');
+      if (s) { ipx = s.x; ipy = s.y; }
+    } catch {}
+    this._ipx = ipx; this._ipy = ipy;
+    this._ipCollapsed = false;
+    this._ipXpFrac = 0;
+
+    // Panel background (persistent graphics, cleared when collapsed)
+    this._ipBg = this.add.graphics().setDepth(100);
+
+    // XP bar graphics (redrawn every frame)
+    this._ipXpGfx = this.add.graphics().setDepth(100);
+
+    // Toggle/drag button (always visible)
+    const BW = 52, BH = 24;
+    this._ipBtn = this.add.rectangle(0, 0, BW, BH, 0x000000, 0)
+      .setOrigin(0).setStrokeStyle(1, 0x4dd0e1, 0.45).setInteractive({ useHandCursor: true }).setDepth(102);
+    this._ipBtnTxt = this.add.text(BW / 2, BH / 2, 'i ◀', F('11px', '#4dd0e1')).setOrigin(0.5).setDepth(103);
+
+    let dragging = false, dox = 0, doy = 0, moved = false;
+    this._ipBtn.on('pointerdown', ptr => {
+      dragging = true; moved = false;
+      dox = ptr.x - this._ipx; doy = ptr.y - this._ipy;
+    });
+    this.input.on('pointermove', ptr => {
+      if (!dragging) return;
+      const nx = Math.max(0, Math.min(this.scale.width - 160, ptr.x - dox));
+      const ny = Math.max(0, Math.min(this.scale.height - 200, ptr.y - doy));
+      if (Math.abs(nx - this._ipx) > 3 || Math.abs(ny - this._ipy) > 3) moved = true;
+      this._ipx = nx; this._ipy = ny;
+      this._refreshInfoPanel();
+    });
+    this.input.on('pointerup', () => {
+      if (!dragging) return;
+      dragging = false;
+      if (!moved) {
+        this._ipCollapsed = !this._ipCollapsed;
+        this._refreshInfoPanel();
+      }
+      try { localStorage.setItem('sd_hud_info_pos', JSON.stringify({ x: this._ipx, y: this._ipy })); } catch {}
+    });
+
+    this._refreshInfoPanel();
+  }
+
+  _refreshInfoPanel() {
+    const x = this._ipx, y = this._ipy;
+    const TB = 22, PW = 148, LH = 21;
+    const ITEMS = [this.pCredits, this.pStarGold, this.pHonor, this.pCorpRep, this.pPilot, this.pRank, this.pXpTxt];
+
+    const BW = 52, BH = 24;
+    this._ipBtn.setPosition(x, y);
+    this._ipBtnTxt.setPosition(x + BW / 2, y + BH / 2).setText(this._ipCollapsed ? 'i ▶' : 'i ◀');
+
+    if (this._ipCollapsed) {
+      this._ipBg.clear();
+      this._ipXpGfx.clear();
+      ITEMS.forEach(o => o.setVisible(false));
+      return;
+    }
+
+    // 6 text lines + XP bar (6px) + XP fraction text (14px) + padding
+    const pH = BH + 6 * LH + 38;
+    this._ipBg.clear();
+    this._ipBg.lineStyle(1.5, 0x4dd0e1, 0.45);
+    this._ipBg.strokeRoundedRect(x, y, PW, pH, 8);
+
+    const tx = x + 10, ty0 = y + BH + 4;
+    this.pCredits.setPosition(tx, ty0).setVisible(true);
+    this.pStarGold.setPosition(tx, ty0 + LH).setVisible(true);
+    this.pHonor.setPosition(tx, ty0 + LH * 2).setVisible(true);
+    this.pCorpRep.setPosition(tx, ty0 + LH * 3).setVisible(true);
+    this.pPilot.setPosition(tx, ty0 + LH * 4).setVisible(true);
+    this.pRank.setPosition(tx + 2, ty0 + LH * 5).setVisible(true);
+    // XP fraction text: centered under XP bar (positioned in _updateInfoPanelContent)
+    this.pXpTxt.setOrigin(0.5, 0).setPosition(x + PW / 2, ty0 + LH * 6 + 10).setVisible(true);
+  }
+
+  _updateInfoPanelContent() {
+    if (this._ipCollapsed) { this._ipXpGfx?.clear(); return; }
+    const xg = this._ipXpGfx;
+    if (!xg) return;
+    xg.clear();
+    const BH = 24, LH = 21, PW = 148;
+    const barX = this._ipx + 10;
+    const barY = this._ipy + BH + 4 + 6 * LH + 2;  // below rank line
+    const barW = PW - 20;
+    xg.fillStyle(0x1a1030, 0.6); xg.fillRect(barX, barY, barW, 6);
+    xg.fillStyle(0x7c4dff, 0.9); xg.fillRect(barX, barY, Math.round(barW * (this._ipXpFrac || 0)), 6);
   }
 }

@@ -161,16 +161,14 @@ export default class GarageScene extends Phaser.Scene {
       this.add.text(x + 18, sy + row * 22, label, this.F('12px', '#7e9398'));
       this.add.text(x + w - 18, sy + row * 22, val, this.F('12px', '#cfe9ee')).setOrigin(1, 0);
     };
-    const dmgPct = Math.round((ship.dmgMod - 1) * 100);
     stat(0, i18n.t('garage.hull'), `${ship.hullMax}`);
     stat(1, i18n.t('garage.shield_base'), `${ship.shieldBase}`);
     stat(2, i18n.t('garage.speed'), `${ship.baseSpeed}`);
     stat(3, i18n.t('garage.slots'), `${ship.wSlots}⚔ / ${ship.sSlots}🛡 / ${ship.eSlots || 0}🚀`);
-    stat(4, i18n.t('stat.damage'), `${dmgPct >= 0 ? '+' : ''}${dmgPct}%`);
 
-    // Пассивные бонусы корабля (cargoBonus / passives)
-    let pRow = 5;
-    const hasBonuses = ship.cargoBonus || ship.passives;
+    // Пассивные бонусы корабля (cargoBonus / passives / activeSkill)
+    let pRow = 4;
+    const hasBonuses = ship.cargoBonus || ship.passives || ship.activeSkill;
     if (hasBonuses) {
       const sepY = sy + pRow * 22 + 4;
       const sepG = this.add.graphics();
@@ -186,6 +184,18 @@ export default class GarageScene extends Phaser.Scene {
       }
       if (ship.passives?.shieldPerAlly) {
         stat(pRow++, i18n.t('garage.passive_shield_ally'), `+${Math.round(ship.passives.shieldPerAlly * 100)}% / ${i18n.t('garage.per_ally')}`);
+      }
+      if (ship.passives?.damageBonus) {
+        stat(pRow++, i18n.t('garage.passive_damage'), `+${Math.round(ship.passives.damageBonus * 100)}%`);
+      }
+      if (ship.passives?.hullRegen) {
+        stat(pRow++, i18n.t('garage.passive_hull_regen'), `${ship.passives.hullRegen} HP/с`);
+      }
+      if (ship.passives?.evasionBonus) {
+        stat(pRow++, i18n.t('garage.passive_evasion'), `+${Math.round(ship.passives.evasionBonus * 100)}%`);
+      }
+      if (ship.activeSkill) {
+        stat(pRow++, i18n.t('garage.active_skill'), i18n.t(ship.activeSkill.nameKey));
       }
     }
 

@@ -257,14 +257,23 @@ export default class Player {
       if (s.perk.key === 'perk_quick_recovery') this.shieldRegenDelaySec = Math.max(1, this.shieldRegenDelaySec * (1 - 0.30 * (1 + pb)));
     }
 
-    // ── Ship passives (e.g. Aegis) ─────────────────────────────────────────
+    // ── Ship passives ──────────────────────────────────────────────────────
     const passives = ship.passives;
+    this.hullRegenPerSec = 0;
     if (passives) {
       if (passives.shieldBonus) this.maxShield = Math.round(this.maxShield * (1 + passives.shieldBonus));
       if (passives.shieldPerAlly) {
         const allies = this.scene.groupSize || 0;
         if (allies > 0) this.maxShield = Math.round(this.maxShield * (1 + passives.shieldPerAlly * allies));
       }
+      if (passives.damageBonus) {
+        const db = 1 + passives.damageBonus;
+        this.cannonDamage = Math.round(this.cannonDamage * db);
+        this.laserDamage  = Math.round(this.laserDamage  * db);
+        this.weaponDamage = this.cannonDamage + this.laserDamage;
+      }
+      if (passives.hullRegen) this.hullRegenPerSec = passives.hullRegen;
+      if (passives.evasionBonus) this.evasion = Math.min(0.30, (this.evasion ?? 0) + passives.evasionBonus);
     }
 
     if (this.shield > this.maxShield) this.shield = this.maxShield;
@@ -274,6 +283,7 @@ export default class Player {
   // ignoreEvasion: AoE-залпы боссов нельзя увернуться статом — спасает только уход из круга.
   takeDamage(amount, penetration = 0, ignoreEvasion = false) {
     if (!this.alive) return { shieldHit: 0, hullHit: 0, brokeShield: false };
+    if (this.invulnerable) return { shieldHit: 0, hullHit: 0, brokeShield: false };
     if (!ignoreEvasion) {
       const body = this.sprite?.body;
       const spd = body ? Math.sqrt(body.velocity.x * body.velocity.x + body.velocity.y * body.velocity.y) : 0;
@@ -318,6 +328,7 @@ export default class Player {
   respawn(x, y) {
     this.hull = this.maxHull;
     this.shield = this.maxShield;
+    this.invulnerable = false;
     this.waypoint = null;
     this.speed = 0;
     this.boosting = false;
@@ -346,6 +357,10 @@ export default class Player {
     // Авто-ремонт корпуса: если не атакуют hullRepairDelay (10 с) — чиним 5%/сек.
     if (sinceDamage > this.cfg.hullRepairDelay && this.hull < this.maxHull) {
       this.hull = Math.min(this.maxHull, this.hull + this.maxHull * this.cfg.hullRepairPctPerSec * dt);
+    }
+    // Пассивный реген корпуса (Argosy): 25 HP/с всегда, без задержки.
+    if (this.hullRegenPerSec > 0 && this.hull < this.maxHull) {
+      this.hull = Math.min(this.maxHull, this.hull + this.hullRegenPerSec * dt);
     }
     // Нос корабля:
     //  • есть цель в радиусе → плавно доворачиваем к ней;

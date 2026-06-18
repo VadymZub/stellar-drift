@@ -84,6 +84,67 @@ render: { roundPixels: true, mipmapFilter: 'LINEAR' }
 
 ---
 
+## Престиж-корабли: баланс + активные скиллы (2026-06-18)
+
+### Три корабля по одному на корпорацию
+
+Все три: **7о / 7щ / 2дв** слотов. Дифференциация через dmgMod, базы корпуса/скорости, пассив и уникальный активный скилл.
+
+| | Helion (Гелиос) | Argosy (Каракс) | Drifter (Приливы) |
+|---|---|---|---|
+| hullMax | 3100 | 3600 | 2900 |
+| shieldBase | 450 | 480 | 440 |
+| baseSpeed | 220 | 215 | 265 |
+| dmgMod | 1.12 | 1.05 | 1.08 |
+| Пассив | +8% урон | 25 HP/с реген | +15% уклонение |
+| Активный | Залповый огонь | Аварийный ремонт | Фазовый прыжок |
+| КД | 40 с | 55 с | 60 с |
+
+### Пассивы (Player.js — recomputeStats)
+
+- `damageBonus` — умножает `cannonDamage` + `laserDamage` после всех остальных бонусов
+- `hullRegen` — сохраняется в `this.hullRegenPerSec`, в `update()` регенерирует HP без задержки (постоянно)
+- `evasionBonus` — добавляется к `this.evasion` после модулей, капает до 0.30 (не 0.15)
+
+### Активные скиллы (ключи с префиксом `ship:`)
+
+**ship:helion_volley — Залповый огонь**
+- Требует активную цель. Один выстрел с `skillMult = 1.25` (весь урон всех оружий × 1.25).
+- Реализация: `this._volleyBlastMult = 1.25` → `firePlayerWeapon()` потребляет в первом вызове.
+
+**ship:argosy_repair — Аварийный ремонт**
+- +25% maxHull мгновенно + `lastDamageAt = 0` (щит начинает регенерировать немедленно).
+
+**ship:drifter_jump — Фазовый прыжок**
+- 700 пкс вперёд по вектору носа. `invulnerable = true` на 250 мс (снаряды не наносят урон).
+- `body.reset(destX, destY)` + `waypoint = null` + `speed = 0`.
+
+### Архитектура ship: скиллов
+
+- Ключи с префиксом `ship:` (аналогично `use:` для расходников)
+- `_activateSkillSlot`: обрабатывается до проверки `lv === 0`
+- `_skillCooldownMs`: отдельная ветка для `ship:`, КД × `activeCooldownMod`
+- `_rebuildActionBarIcons` (HudScene): canvas-текстура `__ss_${key}` — цветной фон + текст (ЗП/РМ/ПР)
+- `_updateActionBarHUD`: `lv = ship: ? 1 : skillLevels[key]` — всегда активны (не тусклые)
+- Auto-insert: после `this.actionBar` инициализации в `create()`, вставляет скилл в слот 0 если пуст или занят другим `ship:` ключом
+
+### Промты для иконок
+
+Файл с промтами для генерации: см. `assets/skills/ship_skill_prompts.md`
+
+### Файлы изменены
+
+| Файл | Что |
+|---|---|
+| `src/ships.js` | Новые статы, `passives`, `activeSkill` на всех трёх престиж-кораблях |
+| `src/entities/Player.js` | `hullRegenPerSec` в update; `damageBonus`/`evasionBonus`/`hullRegen` в recomputeStats; `invulnerable` в takeDamage/respawn |
+| `src/scenes/GameScene.js` | `_volleyBlastMult`; ship: ветка в `_activateSkillSlot`/`_skillCooldownMs`; `_doShipVolleyBlast`/`_doShipArgosyRepair`/`_doShipDrifterJump`; auto-insert в create |
+| `src/scenes/HudScene.js` | `_ensureShipSkillTex`; ship: в `_rebuildActionBarIcons`; effectiveLv в `_updateActionBarHUD` |
+| `src/scenes/GarageScene.js` | Отображение `damageBonus`/`hullRegen`/`evasionBonus` в панели пассивов |
+| `locales/ru.json` | Названия скиллов + обновлённые описания кораблей |
+
+---
+
 ## Что добавлено ранее (2026-06-12)
 
 ---

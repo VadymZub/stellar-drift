@@ -233,10 +233,22 @@ export default class GameScene extends Phaser.Scene {
     this.respeckCount     = this.respeckCount     || 0;
     this.skillAchievementSP = this.skillAchievementSP || 0;
 
+    // Auto-insert ship active skill into action bar slot 0 on equip
+    const _asDef = SHIP_BY_KEY[this.activeShip];
+    if (_asDef?.activeSkill) {
+      const _ask = _asDef.activeSkill.key;
+      if (!this.actionBar[0] || (this.actionBar[0] + '').startsWith('ship:')) {
+        this.actionBar[0] = _ask;
+      }
+    } else if ((this.actionBar[0] + '').startsWith('ship:')) {
+      this.actionBar[0] = null;
+    }
+
     // Active skill runtime state (reset per session)
     this.skillCooldowns    = {};
     this._consBuffEndTimes = {};   // key → timestamp when buff/effect expires
     this._overchargeActive = false;
+    this._volleyBlastMult  = 0;
     this._berserkerBuff    = null;   // { endTime, mult } | null
     this._stealthEndTime   = 0;
     this._stealthOrigSpeed = 0;
@@ -905,6 +917,11 @@ export default class GameScene extends Phaser.Scene {
   _skillCooldownMs(key) {
     const CONS_CD = { repair_pack: 90000, speed_boost: 120000, scanner_pulse: 180000, emergency_warp: 600000 };
     if (key.startsWith('use:')) return CONS_CD[key.slice(4)] ?? 60000;
+    if (key.startsWith('ship:')) {
+      const mod = this.player?.activeCooldownMod ?? 1;
+      const SHIP_CD = { 'ship:helion_volley': 40000, 'ship:argosy_repair': 55000, 'ship:drifter_jump': 60000 };
+      return Math.round((SHIP_CD[key] || 40000) * mod);
+    }
     const lv  = Math.max(1, (this.skillLevels || {})[key] || 1);
     const mod = this.player?.activeCooldownMod ?? 1;
     const base = { overcharge_shot: 25000, salvo: 55000, emergency_repair: 120000,
@@ -925,6 +942,16 @@ export default class GameScene extends Phaser.Scene {
     const key = (this.actionBar || [])[i];
     if (!key || !this.player?.alive) return;
     if (key.startsWith('use:')) { this._useConsumable(key.slice(4), this.time.now); return; }
+    if (key.startsWith('ship:')) {
+      const now = this.time.now;
+      const cdEnd = this.skillCooldowns[key] || 0;
+      if (now < cdEnd) { this.log(`⏳ КД: ${Math.ceil((cdEnd - now) / 1000)}с`); return; }
+      const cd = this._skillCooldownMs(key);
+      if (key === 'ship:helion_volley') this._doShipVolleyBlast(now, cd);
+      else if (key === 'ship:argosy_repair') this._doShipArgosyRepair(now, cd);
+      else if (key === 'ship:drifter_jump')  this._doShipDrifterJump(now, cd);
+      return;
+    }
     const lv = (this.skillLevels || {})[key] || 0;
     if (lv === 0) return;
     const now = this.time.now;
@@ -1102,6 +1129,51 @@ export default class GameScene extends Phaser.Scene {
     });
   }
 
+  // ── Ship active skills ─────────────────────────────────────────────────
+
+  _doShipVolleyBlast(now, cd) {
+    const p = this.player;
+    if (!p?.alive) return;
+    if (!this.target?.alive) { this.log('⚠ Нет цели для залпа'); return; }
+    this.skillCooldowns['ship:helion_volley'] = now + cd;
+    this._volleyBlastMult = 1.25;
+    this.firePlayerWeapon();
+    this.log('💥 Залповый огонь!');
+    this.hitFlash(p.x, p.y, false);
+  }
+
+  _doShipArgosyRepair(now, cd) {
+    const p = this.player;
+    if (!p?.alive) return;
+    this.skillCooldowns['ship:argosy_repair'] = now + cd;
+    const heal = Math.round(p.maxHull * 0.25);
+    p.hull = Math.min(p.maxHull, p.hull + heal);
+    p.lastDamageAt = 0;
+    this.log(`🔧 Ремонт: +${heal} HP`);
+  }
+
+  _doShipDrifterJump(now, cd) {
+    const p = this.player;
+    if (!p?.alive) return;
+    this.skillCooldowns['ship:drifter_jump'] = now + cd;
+    const dist = 700;
+    const destX = Phaser.Math.Clamp(p.sprite.x + Math.cos(p.facing) * dist, 50, this.worldWidth - 50);
+    const destY = Phaser.Math.Clamp(p.sprite.y + Math.sin(p.facing) * dist, 50, this.worldHeight - 50);
+    p.invulnerable = true;
+    p.sprite.setAlpha(0.25);
+    p.waypoint = null;
+    p.speed = 0;
+    p.sprite.setPosition(destX, destY);
+    if (p.sprite.body) p.sprite.body.reset(destX, destY);
+    this.time.delayedCall(250, () => {
+      if (p?.alive) {
+        p.invulnerable = false;
+        this.tweens.add({ targets: p.sprite, alpha: 1, duration: 150 });
+      }
+    });
+    this.log('⇗ Фазовый прыжок!');
+  }
+
   gainXp(amount) {
     if (this.pilotLevel >= MAX_LEVEL || amount <= 0) return;
     this.pilotXp += amount;
@@ -1194,10 +1266,12 @@ export default class GameScene extends Phaser.Scene {
   }
   firePlayerWeapon() {
     const p = this.player;
-    // Capture shared skill state once — OC/berserker consumed here, not inside sub-methods.
     const isOC = this._overchargeActive;
     if (isOC) this._overchargeActive = false;
-    let skillMult = isOC ? 2.0 : 1.0;
+    const isVolley = this._volleyBlastMult > 0;
+    const volleyMult = isVolley ? this._volleyBlastMult : 1.0;
+    if (isVolley) this._volleyBlastMult = 0;
+    let skillMult = isOC ? 2.0 : isVolley ? volleyMult : 1.0;
     if (this._berserkerBuff && this.time.now < this._berserkerBuff.endTime) skillMult *= this._berserkerBuff.mult;
 
     if (p.hasCannon) this._fireCannon(skillMult, isOC);
