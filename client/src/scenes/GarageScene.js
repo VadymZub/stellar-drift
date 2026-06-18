@@ -2,7 +2,8 @@ import * as Phaser from 'https://cdn.jsdelivr.net/npm/phaser@4.1.0/dist/phaser.e
 import { COLORS, UI_RES } from '../constants.js';
 import { i18n } from '../i18n.js';
 import { itemName, itemStats, itemSellPrice, itemIconKey, SLOT_KEY, creditUpgradeCost, starUpgradeCost, modMult,
-         PLASMATE_GOLD_RATE, PLASMATE_PER_SLOT, totalPlasmateInInventory, removePlasmateFromInventory, AMMO_ICON } from '../items.js';
+         PLASMATE_GOLD_RATE, PLASMATE_PER_SLOT, totalPlasmateInInventory, removePlasmateFromInventory,
+         AMMO_ICON, CONSUMABLES, addConsumableToInventory } from '../items.js';
 import { SHIPS, SHIP_BY_KEY, purchaseState, shipLevelCost, SHIP_MAX_LEVEL } from '../ships.js';
 import { PERK_MAP, RARITY_COLOR, RARITY_LABEL, rollPerk, perkBonus, creditUpgCost, starUpgCost, PERK_CREDIT_COST, PERK_STAR_COST, PERK_REROLL_BASE } from '../perks.js';
 import { prerenderTex } from '../utils/prerenderTex.js';
@@ -164,7 +165,7 @@ export default class GarageScene extends Phaser.Scene {
     stat(0, i18n.t('garage.hull'), `${ship.hullMax}`);
     stat(1, i18n.t('garage.shield_base'), `${ship.shieldBase}`);
     stat(2, i18n.t('garage.speed'), `${ship.baseSpeed}`);
-    stat(3, i18n.t('garage.slots'), `${ship.wSlots}⚔ / ${ship.sSlots}🛡 / ${ship.eSlots || 0}🚀 / ${ship.aSlots || 0}📦`);
+    stat(3, i18n.t('garage.slots'), `${ship.wSlots}⚔ / ${ship.sSlots}🛡 / ${ship.eSlots || 0}🚀 / 3📦`);
 
     // Пассивные бонусы корабля (cargoBonus / passives / activeSkill)
     let pRow = 4;
@@ -246,18 +247,101 @@ export default class GarageScene extends Phaser.Scene {
     gs.ownedShips.add(ship.key);
     gs.log(i18n.t('garage.bought', { ship: i18n.t(ship.nameKey) }));
     gs._saveState?.();
-    this.selectShip(ship);          // купил → сразу активируем
+    this.selectShip(ship);
+  }
+
+  // Cargo max for a hypothetical active ship (used during overflow check before switch)
+  _cargoMaxForShip(shipKey) {
+    const gs = this.gs;
+    const sl = gs.skillLevels?.cargo_expand || 0;
+    const drover = shipKey === 'drover' ? 2 : 0;
+    const prem   = gs.premium ? (shipKey === 'drover' ? 6 : 8) : 0;
+    return 8 + drover + sl * (sl + 1) + prem;
   }
 
   selectShip(ship) {
     const gs = this.gs, p = gs.player;
+    const newShip = SHIP_BY_KEY[ship.key];
+
+    // ── Collect overflow items (slots beyond new ship's limits) ──────────
+    const eq = gs.equipped || {};
+    // Order: weapon first (priority), then shield, then engine
+    const SLOT_TYPES = [
+      { type: 'weapon', limit: newShip.wSlots },
+      { type: 'shield', limit: newShip.sSlots },
+      { type: 'engine', limit: newShip.eSlots || 0 },
+    ];
+    const overflow = [];
+    for (const { type, limit } of SLOT_TYPES) {
+      const arr = eq[type] || [];
+      for (let i = limit; i < arr.length; i++) {
+        if (arr[i] != null) overflow.push({ type, idx: i, item: arr[i] });
+      }
+    }
+
+    if (overflow.length > 0) {
+      const newCargoMax = this._cargoMaxForShip(ship.key);
+      const cargoFree   = newCargoMax - (gs.inventory || []).length;
+      const whFree      = this._whMax() - (gs.warehouse || []).length;
+
+      if (overflow.length > cargoFree + whFree) {
+        this._showNoSpaceModal(overflow.length, cargoFree + whFree);
+        return;
+      }
+
+      // Move overflow in priority order (weapons → shields → engines)
+      gs.inventory  = gs.inventory  || [];
+      gs.warehouse  = gs.warehouse  || [];
+      for (const { type, idx, item } of overflow) {
+        if (gs.inventory.length < newCargoMax) {
+          gs.inventory.push(item);
+        } else {
+          gs.warehouse.push(item);
+        }
+        eq[type][idx] = null;
+      }
+    }
+
     gs.activeShip = ship.key;
-    gs.garageSel = ship.key;
-    p.applyShip(SHIP_BY_KEY[ship.key]);
+    gs.garageSel  = ship.key;
+    p.applyShip(newShip);
     p.recomputeStats();
-    p.shield = p.maxShield;          // свежий корабль — полный щит
+    p.shield = p.maxShield;
     gs.log(i18n.t('garage.switched', { ship: i18n.t(ship.nameKey) }));
+    gs._saveState?.();
     this.scene.restart();
+  }
+
+  _showNoSpaceModal(needed, free) {
+    if (this.modal) this.closeModal();
+    const W = this.scale.width, H = this.scale.height;
+    const objs = [];
+    const dim = this.add.rectangle(0, 0, W, H, 0x000000, 0.6).setOrigin(0).setDepth(100).setInteractive();
+    objs.push(dim);
+
+    const mw = 420, mh = 180;
+    const panel = this.add.rectangle(W / 2, H / 2, mw, mh, 0x0a0f1a)
+      .setStrokeStyle(2, 0xef5350, 0.9).setDepth(101);
+    objs.push(panel);
+
+    this.add.text(W / 2, H / 2 - 52, '⚠ СМЕНА КОРАБЛЯ НЕВОЗМОЖНА',
+      this.O('14px', '#ef5350')).setOrigin(0.5).setDepth(102);
+    this.add.text(W / 2, H / 2 - 20,
+      `Предметов для переноса: ${needed}   Свободных мест: ${free}`,
+      this.F('13px', '#90a4ae')).setOrigin(0.5).setDepth(102);
+    this.add.text(W / 2, H / 2 + 4, 'Освободите трюм или склад и попробуйте снова.',
+      this.F('12px', '#607d8b')).setOrigin(0.5).setDepth(102);
+
+    const close = () => { objs.forEach(o => o?.destroy()); this.modal = null; };
+    dim.on('pointerdown', close);
+
+    const btn = this.add.rectangle(W / 2, H / 2 + 46, 100, 32, 0x1a0a0a)
+      .setStrokeStyle(1, 0xef5350, 0.8).setDepth(102).setInteractive({ useHandCursor: true });
+    this.add.text(W / 2, H / 2 + 46, 'ОК', this.O('13px', '#ef5350')).setOrigin(0.5).setDepth(103);
+    btn.on('pointerdown', close);
+    objs.push(btn);
+
+    this.modal = objs;
   }
 
   // ════════════════ СКЛАД (в вкладке ОБОРУДОВАНИЕ) ════════════════
@@ -339,6 +423,49 @@ export default class GarageScene extends Phaser.Scene {
           const els = [box, countTxt, strip, stripT];
           if (iconImg) els.push(iconImg);
           container.add(els);
+          if (overflow) {
+            const dg = this.add.graphics();
+            dg.fillStyle(0xffa000, 0.85); dg.fillTriangle(sx, sy, sx + 14, sy, sx, sy + 14);
+            container.add(dg);
+          }
+          continue;
+        }
+
+        // Consumable or ammo: → слот strip (universal quick-slot)
+        if (CONSUMABLES[item.type]) {
+          const def    = CONSUMABLES[item.type];
+          const isAmmo = def.category === 'ammo';
+          const info   = isAmmo ? AMMO_ICON[item.type] : null;
+          const hexC   = info?.color ?? 0x44aacc;
+          const clrS   = `#${hexC.toString(16).padStart(6, '0')}`;
+          const box    = this.add.rectangle(sx, sy, SZ, BODY_H, 0x0a1a2a, 0.95).setOrigin(0, 0)
+            .setStrokeStyle(2, hexC, 0.8);
+          let iconEl;
+          if (info) {
+            iconEl = this.add.text(sx + SZ / 2, sy + BODY_H / 2 - 5, info.icon ?? '?',
+              this.O('14px', clrS)).setOrigin(0.5);
+          } else {
+            const iconK = `consumable_${item.type}`;
+            const isz = 36;
+            iconEl = this.textures.exists(iconK)
+              ? this.add.image(sx + SZ / 2, sy + BODY_H / 2 - 5, prerenderTex(this, iconK, isz, isz)).setDisplaySize(isz, isz).setOrigin(0.5)
+              : this.add.text(sx + SZ / 2, sy + BODY_H / 2 - 5, '?', this.O('14px', '#88aacc')).setOrigin(0.5);
+          }
+          const cntTxt = this.add.text(sx + SZ / 2, sy + BODY_H - 8, `${item.amount}/${def.maxPerSlot}`,
+            this.F('9px', '#aaccdd')).setOrigin(0.5);
+          const ammoSlots = gs.ammoSlots || [];
+          const canLoad   = ammoSlots.some(s => s.type === item.type || !s.type);
+          const strip = this.add.rectangle(sx, sy + BODY_H, SZ, SELL_H,
+            canLoad ? 0x0a1828 : 0x0d1018, 0.9).setOrigin(0, 0)
+            .setStrokeStyle(1, canLoad ? hexC : 0x2a3040, 0.5);
+          const stripT = this.add.text(sx + SZ / 2, sy + BODY_H + SELL_H / 2,
+            canLoad ? '→ слот' : '⚡ нет мест',
+            this.F('9px', canLoad ? clrS : '#556677')).setOrigin(0.5);
+          if (canLoad) {
+            strip.setInteractive({ useHandCursor: true });
+            strip.on('pointerdown', () => this._loadAmmoToSlot(item));
+          }
+          container.add([box, iconEl, cntTxt, strip, stripT]);
           if (overflow) {
             const dg = this.add.graphics();
             dg.fillStyle(0xffa000, 0.85); dg.fillTriangle(sx, sy, sx + 14, sy, sx, sy + 14);
@@ -796,35 +923,95 @@ export default class GarageScene extends Phaser.Scene {
     this._renderSlotGrid(x, y, w, h, this.gs.inventory || [], this._cargoMax(), 'inventory', clipBotH);
   }
 
-  // Ammo slot row (display-only in garage — shows slot types and counts)
+  // Ammo slot row: N generic slots — any ammo type or consumable
   _renderAmmoSlotRow(x, y, label, limit, color) {
     const gs    = this.gs;
     const slots = gs.ammoSlots || [];
     const sz = 36, gap = 5;
-    const used = slots.slice(0, limit).filter(s => s?.type).length;
+    const used = slots.slice(0, limit).filter(s => s.type && s.count > 0).length;
 
     this.add.text(x, y, `${label}   ${used}/${limit}`, this.F('11px', '#7e9398'));
     if (limit === 0) {
       this.add.text(x, y + 18 + 9, i18n.t('garage.no_slot_short'), this.F('11px', '#5e7378'));
       return;
     }
+
     for (let i = 0; i < limit; i++) {
       const slot = slots[i] || { type: null, count: 0 };
       const sx = x + i * (sz + gap);
       const sy = y + 18;
-      const info = slot.type ? (AMMO_ICON ? AMMO_ICON[slot.type] : null) : null;
-      const borderColor = info ? (info.color ?? color) : 0x33484f;
-      const box = this.add.rectangle(sx, sy, sz, sz, slot.type ? 0x12222e : 0x0c1118, 0.95).setOrigin(0, 0)
-        .setStrokeStyle(slot.type ? 2 : 1, borderColor, slot.type ? 0.85 : 0.4);
-      if (slot.type) {
-        const hexC = info?.color ?? 0xffb74d;
-        const colorStr = `#${hexC.toString(16).padStart(6, '0')}`;
-        this.add.text(sx + sz / 2, sy + sz / 2 - 4, info?.icon ?? '?',
-          this.O('12px', colorStr)).setOrigin(0.5);
-        this.add.text(sx + sz / 2, sy + sz - 7, `${(slot.count || 0).toLocaleString()}`,
+      const isEmpty = !slot.type || slot.count <= 0;
+      const ammoInfo = slot.type ? AMMO_ICON[slot.type] : null;
+      const hexC = ammoInfo?.color ?? 0x44aacc;
+      const borderColor = isEmpty ? 0x33484f : hexC;
+      const box = this.add.rectangle(sx, sy, sz, sz, isEmpty ? 0x0c1118 : 0x12222e, 0.95).setOrigin(0, 0)
+        .setStrokeStyle(isEmpty ? 1 : 2, borderColor, isEmpty ? 0.35 : 0.85);
+
+      if (!isEmpty) {
+        if (ammoInfo) {
+          const clrS = `#${hexC.toString(16).padStart(6, '0')}`;
+          this.add.text(sx + sz / 2, sy + sz / 2 - 4, ammoInfo.icon ?? '?',
+            this.O('12px', clrS)).setOrigin(0.5);
+        } else {
+          const iconK = `consumable_${slot.type}`;
+          const tsz = sz - 12;
+          if (this.textures.exists(iconK)) {
+            this.add.image(sx + sz / 2, sy + sz / 2 - 4, prerenderTex(this, iconK, tsz, tsz))
+              .setDisplaySize(tsz, tsz).setOrigin(0.5);
+          } else {
+            this.add.text(sx + sz / 2, sy + sz / 2 - 4, '?', this.O('12px', '#88aacc')).setOrigin(0.5);
+          }
+        }
+        this.add.text(sx + sz / 2, sy + sz - 7, `${slot.count.toLocaleString()}`,
           this.F('8px', '#aaccdd')).setOrigin(0.5);
+        const idx = i;
+        box.setInteractive({ useHandCursor: true });
+        box.on('pointerover', () => box.setFillStyle(0x1e3240));
+        box.on('pointerout',  () => box.setFillStyle(0x12222e));
+        box.on('pointerdown', () => this._unloadAmmoSlot(idx));
       }
     }
+  }
+
+  _loadAmmoToSlot(item) {
+    const gs     = this.gs;
+    const slots  = gs.ammoSlots || [];
+    const def    = CONSUMABLES[item.type];
+    if (!def) return;
+    const maxPer = def.maxPerSlot;
+    let rem = item.amount;
+    for (const slot of slots) {
+      if (rem <= 0) break;
+      if (slot.type === item.type && slot.count < maxPer) {
+        const add = Math.min(maxPer - slot.count, rem);
+        slot.count += add; rem -= add;
+      }
+    }
+    for (const slot of slots) {
+      if (rem <= 0) break;
+      if (!slot.type) {
+        const add = Math.min(maxPer, rem);
+        slot.type = item.type; slot.count = add; rem -= add;
+      }
+    }
+    if (rem <= 0) {
+      const idx = (gs.inventory || []).indexOf(item);
+      if (idx >= 0) gs.inventory.splice(idx, 1);
+    } else {
+      item.amount = rem;
+    }
+    gs._saveState?.();
+    this.scene.restart();
+  }
+
+  _unloadAmmoSlot(i) {
+    const gs   = this.gs;
+    const slot = gs.ammoSlots?.[i];
+    if (!slot?.type || slot.count <= 0) return;
+    addConsumableToInventory(gs.inventory, slot.type, slot.count, this._cargoMax());
+    slot.type = null; slot.count = 0;
+    gs._saveState?.();
+    this.scene.restart();
   }
 
   // Модалка подтверждения продажи (без restart — отдельные объекты, чистятся по выбору)

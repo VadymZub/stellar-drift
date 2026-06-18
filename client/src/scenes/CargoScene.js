@@ -2,7 +2,6 @@ import * as Phaser from 'https://cdn.jsdelivr.net/npm/phaser@4.1.0/dist/phaser.e
 import { COLORS, UI_RES } from '../constants.js';
 import { i18n } from '../i18n.js';
 import { itemName, itemStats, itemIconKey, PLASMATE_PER_SLOT, PLASMATE_GOLD_RATE, removePlasmateFromInventory, totalPlasmateInInventory, CONSUMABLES, AMMO_ICON, addConsumableToInventory } from '../items.js';
-import { SHIP_BY_KEY } from '../ships.js';
 import { prerenderTex } from '../utils/prerenderTex.js';
 import { PERK_MAP, RARITY_COLOR, perkBonus } from '../perks.js';
 
@@ -44,9 +43,7 @@ export default class CargoScene extends Phaser.Scene {
 
     const atBase = !!this.gs.atBase;
     const pw = atBase ? Math.min(900, W - 40) : Math.min(580, W - 60);
-    const AMMO_H = 80; // ammo section height (label + slots row)
-    // ph increased by AMMO_H for the ammo section above the cargo grid
-    const ph = Math.min(640 + AMMO_H, H - 124);
+    const ph = Math.min(640, H - 124);
     const px = (W - pw) / 2;
     const py = Math.min(Math.round((H - ph) / 2), H - ph - 62);
 
@@ -64,22 +61,19 @@ export default class CargoScene extends Phaser.Scene {
 
     this.panelBox = { px, py, pw, ph };
 
-    // Ammo slots section (shared between base and non-base)
-    this._renderAmmoSlots(px + 12, py + 58, pw - 24);
-
     if (atBase) {
       const BTN_H = 32;
-      const gridH = ph - 90 - BTN_H - 10 - AMMO_H;
+      const gridH = ph - 90 - BTN_H - 10;
       // Минимум 290 px = ровно 4 колонки × 68 px + 3 зазора × 6 px
       const colW = Math.max(290, Math.floor((pw - 36) / 2));
-      this._renderSlotGrid(px + 12, py + 72 + AMMO_H, colW, gridH, this.gs.inventory || [], cargoMax, 'cargo');
-      this._renderSlotGrid(px + colW + 24, py + 72 + AMMO_H, colW, gridH, this.gs.warehouse || [], whMax, 'warehouse');
+      this._renderSlotGrid(px + 12, py + 72, colW, gridH, this.gs.inventory || [], cargoMax, 'cargo');
+      this._renderSlotGrid(px + colW + 24, py + 72, colW, gridH, this.gs.warehouse || [], whMax, 'warehouse');
       // Column headers
-      this.add.text(px + 12 + colW / 2, py + 58 + AMMO_H, 'ТРЮМ КОРАБЛЯ', this.O('12px', '#2a5a70')).setOrigin(0.5, 0);
-      this.add.text(px + colW + 24 + colW / 2, py + 58 + AMMO_H, `СКЛАД  ${(this.gs.warehouse||[]).length}/${whMax}`,
+      this.add.text(px + 12 + colW / 2, py + 58, 'ТРЮМ КОРАБЛЯ', this.O('12px', '#2a5a70')).setOrigin(0.5, 0);
+      this.add.text(px + colW + 24 + colW / 2, py + 58, `СКЛАД  ${(this.gs.warehouse||[]).length}/${whMax}`,
         this.O('12px', '#2a5a30')).setOrigin(0.5, 0);
       // Кнопка перехода в Гараж
-      const btnY = py + 72 + AMMO_H + gridH + 8;
+      const btnY = py + 72 + gridH + 8;
       const btnBg = this.add.rectangle(px + 12, btnY, pw - 24, BTN_H, 0x0d1e2c, 0.95)
         .setOrigin(0, 0).setStrokeStyle(1, 0x1e3a50, 0.7).setInteractive({ useHandCursor: true }).setDepth(15);
       const btnLbl = this.add.text(px + pw / 2, btnY + BTN_H / 2, 'ГАРАЖ  →  G',
@@ -92,14 +86,14 @@ export default class CargoScene extends Phaser.Scene {
         else this.scene.launch('GarageScene');
       });
     } else {
-      this._renderSlotGrid(px + 12, py + 72 + AMMO_H, pw - 24, ph - 90 - AMMO_H, this.gs.inventory || [], cargoMax, 'cargo_nosell');
-      this.add.text(px + 12 + (pw - 24) / 2, py + 58 + AMMO_H, 'ТРЮМ КОРАБЛЯ', this.O('12px', '#2a5a70')).setOrigin(0.5, 0);
+      this._renderSlotGrid(px + 12, py + 72, pw - 24, ph - 90, this.gs.inventory || [], cargoMax, 'cargo_nosell');
+      this.add.text(px + 12 + (pw - 24) / 2, py + 58, 'ТРЮМ КОРАБЛЯ', this.O('12px', '#2a5a70')).setOrigin(0.5, 0);
     }
 
     this.input.keyboard.on('keydown-ESC', () => this.scene.stop());
   }
 
-  // ── Ammo slots section ────────────────────────────────────────────────────
+  // ── Ammo texture for inventory display ───────────────────────────────────
 
   _ensureAmmoTex(type) {
     const key = `__amtex_${type}`;
@@ -123,111 +117,6 @@ export default class CargoScene extends Phaser.Scene {
     ctx.fillText(icon, 26, 26);
     c.refresh();
     return key;
-  }
-
-  _renderAmmoSlots(ax, ay, aw) {
-    const gs = this.gs;
-    const slots   = gs.ammoSlots || [];
-    const aSlots  = SHIP_BY_KEY[gs.activeShip]?.aSlots || slots.length || 2;
-    const SZ = 52, GAP = 6;
-
-    this.add.text(ax, ay, 'БОЕПРИПАСЫ', this.O('11px', '#6a8a9a'));
-
-    for (let i = 0; i < aSlots; i++) {
-      const slot = slots[i] || { type: null, count: 0 };
-      const sx = ax + i * (SZ + GAP);
-      const sy = ay + 16;
-      const isEmpty = !slot.type || slot.count <= 0;
-      const info    = AMMO_ICON[slot.type];
-      const borderColor = isEmpty ? 0x2a4060 : (info?.color ?? 0x44aacc);
-      const borderAlpha = isEmpty ? 0.4 : 0.85;
-
-      const box = this.add.rectangle(sx, sy, SZ, SZ, 0x080f1a, 0.95).setOrigin(0, 0)
-        .setStrokeStyle(isEmpty ? 1 : 2, borderColor, borderAlpha);
-
-      if (!isEmpty) {
-        const texKey = this._ensureAmmoTex(slot.type);
-        const iconImg = this.add.image(sx + SZ / 2, sy + SZ / 2 - 6, texKey)
-          .setDisplaySize(28, 28).setOrigin(0.5);
-        const cntTxt = this.add.text(sx + SZ / 2, sy + SZ - 9,
-          `${slot.count.toLocaleString()}`, this.F('8px', '#aaccdd')).setOrigin(0.5);
-        // Tooltip on hover
-        box.setInteractive({ useHandCursor: true });
-        box.on('pointerover', (ptr) => {
-          this._showAmmoTooltip(ptr.x, ptr.y, slot.type, slot.count);
-        });
-        box.on('pointerout',  () => this._hideTooltip());
-        // Click: dump slot contents to cargo
-        box.on('pointerdown', () => this._moveAmmoSlotToCargo(i));
-      }
-    }
-  }
-
-  _showAmmoTooltip(wx, wy, type, count, _unused) {
-    this._hideTooltip();
-    const maxPer  = CONSUMABLES[type]?.maxPerSlot ?? 10000;
-    const info    = AMMO_ICON[type];
-    const tipName = i18n.t(`item.${type}`);
-    const W = this.scale.width, H = this.scale.height;
-    const TW = 200, TH = 48;
-    let tx = wx + 16, ty = wy - TH / 2;
-    if (tx + TW > W - 8) tx = wx - TW - 8;
-    if (ty < 4) ty = 4;
-    if (ty + TH > H - 4) ty = H - TH - 4;
-    const g = this.add.graphics().setDepth(200);
-    g.fillStyle(0x08121e, 0.97); g.fillRoundedRect(tx, ty, TW, TH, 6);
-    g.lineStyle(1, info?.color ?? 0x1e3a50, 0.9); g.strokeRoundedRect(tx, ty, TW, TH, 6);
-    const t1 = this.add.text(tx + 10, ty + 8, tipName,
-      this.O('11px', '#ffe0b2')).setDepth(201);
-    const t2 = this.add.text(tx + 10, ty + 26, `${count.toLocaleString()} / ${maxPer.toLocaleString()}`,
-      this.F('11px', '#9fb3b8')).setDepth(201);
-    this._tooltipObjs = [g, t1, t2];
-  }
-
-  _moveAmmoSlotToCargo(slotIdx) {
-    const gs   = this.gs;
-    const slot = gs.ammoSlots?.[slotIdx];
-    if (!slot?.type || slot.count <= 0) return;
-    addConsumableToInventory(gs.inventory, slot.type, slot.count, this._cargoMax());
-    slot.type  = null;
-    slot.count = 0;
-    gs._saveState?.();
-    this.scene.restart();
-  }
-
-  _moveCargoAmmoToSlot(item) {
-    const gs = this.gs;
-    const slots = gs.ammoSlots || [];
-    const def   = CONSUMABLES[item.type];
-    if (!def) return;
-    const maxPer = def.maxPerSlot;
-    let rem = item.amount;
-    // Fill existing matching slot first
-    for (const slot of slots) {
-      if (rem <= 0) break;
-      if (slot.type === item.type) {
-        const space = maxPer - slot.count;
-        const add = Math.min(space, rem);
-        if (add > 0) { slot.count += add; rem -= add; }
-      }
-    }
-    // Then fill empty slots
-    for (const slot of slots) {
-      if (rem <= 0) break;
-      if (!slot.type) {
-        const add = Math.min(maxPer, rem);
-        slot.type = item.type; slot.count = add; rem -= add;
-      }
-    }
-    // Update or remove cargo item
-    if (rem <= 0) {
-      const idx = gs.inventory.indexOf(item);
-      if (idx >= 0) gs.inventory.splice(idx, 1);
-    } else {
-      item.amount = rem;
-    }
-    gs._saveState?.();
-    this.scene.restart();
   }
 
   // Слот-сетка: type = 'cargo' | 'cargo_nosell' | 'warehouse'
@@ -331,27 +220,14 @@ export default class CargoScene extends Phaser.Scene {
         const def = CONSUMABLES[item.type];
         const isConsumable = def.category === 'consumable';
         const isAmmo       = def.category === 'ammo';
-        // Check if any ammo slot can accept this type
-        const ammoSlots    = gs.ammoSlots || [];
-        const canGoToAmmo  = ammoSlots.some(s => s.type === item.type || (!s.type && isAmmo));
 
         // Strip specs: { label, color, bg, h, action }
         const strips = [];
 
-        if (isAmmo) {
-          // Ammo items: strip to move to ammo slot
-          strips.push({ label: canGoToAmmo ? '→ патроны' : '⚡ слотов нет',
-            color: canGoToAmmo ? '#ffb74d' : '#556677', bg: 0x1a0f00, h: STRIP_H,
-            action: () => { if (canGoToAmmo) this._moveCargoAmmoToSlot(item); } });
-        } else if (type === 'cargo' && isConsumable) {
+        if (type === 'cargo' && isConsumable) {
           // At base: two actions — warehouse, action bar
           const barKey = `use:${item.type}`;
           const inBar = (gs.actionBar || []).includes(barKey);
-          const canAmmoSlot = ammoSlots.some(s => s.type === item.type || !s.type);
-          if (canAmmoSlot) {
-            strips.push({ label: '→ патроны', color: '#ffb74d', bg: 0x1a0f00, h: STRIP_H,
-              action: () => this._moveCargoAmmoToSlot(item) });
-          }
           strips.push({ label: '→ склад',  color: '#4aa8cc', bg: 0x071828, h: STRIP_H,
             action: () => this._moveToWarehouse(item) });
           strips.push({ label: inBar ? '✓ панель' : '→ панель',
@@ -363,11 +239,6 @@ export default class CargoScene extends Phaser.Scene {
         } else if (type === 'cargo_nosell' && isConsumable) {
           const barKey = `use:${item.type}`;
           const inBar = (gs.actionBar || []).includes(barKey);
-          const canAmmoSlot = ammoSlots.some(s => s.type === item.type || !s.type);
-          if (canAmmoSlot) {
-            strips.push({ label: '→ патроны', color: '#ffb74d', bg: 0x1a0f00, h: STRIP_H,
-              action: () => this._moveCargoAmmoToSlot(item) });
-          }
           strips.push({ label: inBar ? '✓ в панели' : '→ панель',
             color: inBar ? '#4a9860' : '#4dd0e1', bg: 0x051520, h: STRIP_H,
             action: () => this._addConsumableToBar(item.type) });

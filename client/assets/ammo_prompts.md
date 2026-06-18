@@ -1,5 +1,25 @@
 # Промты для иконок боеприпасов
 
+---
+
+## ammo_slot_icon.png — Иконка секции «Боеприпасы» (ячейка + магазин)
+
+**Использование:** шапка секции БОЕПРИПАСЫ в Складе и Гараже · **Цвет:** серо-голубой #4a6a8a
+
+```
+Square game UI icon, dark navy background (#080f1a),
+sci-fi tactical ammo pouch / magazine holder panel,
+three glowing slot cells arranged in a horizontal row,
+each cell outlined with dim cyan light (#4a6a8a),
+one cell contains a small plasma cartridge with amber glow,
+compact military-style design, muted metallic tones,
+flat icon with depth, subtle inner glow, no text, 512x512
+```
+
+Для Midjourney добавить: `--ar 1:1 --style raw --stylize 300`
+
+---
+
 Целевой размер: **512×512 px**, PNG с прозрачным или тёмным фоном.
 Файлы: `ammo_plasma.png`, `ammo_plasma_elite.png`, `ammo_laser.png`
 

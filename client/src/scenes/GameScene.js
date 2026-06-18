@@ -233,9 +233,13 @@ export default class GameScene extends Phaser.Scene {
     this.respeckCount     = this.respeckCount     || 0;
     this.skillAchievementSP = this.skillAchievementSP || 0;
 
-    // Ammo slots: dedicated slots for ammo/consumables, separate from cargo
-    const _aSlotCount = SHIP_BY_KEY[this.activeShip]?.aSlots || 2;
-    this.ammoSlots = this.ammoSlots || [];
+    // Ammo slots: N generic slots (any ammo or consumable), count = ship's aSlots
+    const _aSlotCount = SHIP_BY_KEY[this.activeShip]?.aSlots || 3;
+    const _rawAmmo = Array.isArray(this.ammoSlots) ? this.ammoSlots : [];
+    // Normalize: keep type only when count > 0 (clears empty fixed-type entries from older save format)
+    this.ammoSlots = _rawAmmo.map(s =>
+      (s && typeof s === 'object') ? { type: (s.count > 0 ? s.type : null) || null, count: s.count || 0 } : { type: null, count: 0 }
+    );
     while (this.ammoSlots.length < _aSlotCount) this.ammoSlots.push({ type: null, count: 0 });
     if (this.ammoSlots.length > _aSlotCount) {
       const excess = this.ammoSlots.splice(_aSlotCount);
@@ -1291,11 +1295,46 @@ export default class GameScene extends Phaser.Scene {
     let skillMult = isOC ? 2.0 : isVolley ? volleyMult : 1.0;
     if (this._berserkerBuff && this.time.now < this._berserkerBuff.endTime) skillMult *= this._berserkerBuff.mult;
 
-    if (p.hasCannon) this._fireCannon(skillMult, isOC);
+    const isAdmin = p.ship?.tier === 'ADMIN';
+
+    if (!p.hasCannon && !p.hasLaser) {
+      if (!isAdmin) this._warnThrottle('no_weapon', 'Не установлено вооружение');
+      return;
+    }
+
+    const cannonCount = p.hasCannon
+      ? (this.equipped?.weapon || []).filter(w => w && w.type !== 'laser').length
+      : 0;
+
+    let blocked = false;
+    if (!isAdmin && cannonCount > 0 && !this._checkAmmo('cannon', cannonCount)) blocked = true;
+    if (!isAdmin && p.hasLaser && !this._checkAmmo('laser', 1)) blocked = true;
+    if (blocked) { this._warnThrottle('no_ammo', 'Недостаточно боеприпасов'); return; }
+
+    if (p.hasCannon) this._fireCannon(skillMult, isOC, cannonCount);
     if (p.hasLaser)  this._fireLaser(skillMult, isOC);
   }
 
-  _fireCannon(skillMult, isOC) {
+  _checkAmmo(type, count) {
+    const slots = this.ammoSlots || [];
+    if (type === 'cannon') {
+      const avail = slots.reduce((s, sl) =>
+        s + ((sl.type === 'ammo_plasma_elite' || sl.type === 'ammo_plasma') ? sl.count : 0), 0);
+      return avail >= count;
+    }
+    if (type === 'laser') return slots.some(s => s.type === 'ammo_laser' && s.count > 0);
+    return true;
+  }
+
+  _warnThrottle(key, msg) {
+    const now = this.time.now;
+    this._warnTimes = this._warnTimes || {};
+    if ((this._warnTimes[key] || 0) + 3000 > now) return;
+    this._warnTimes[key] = now;
+    this.log(msg);
+  }
+
+  _fireCannon(skillMult, isOC, cannonCount = 1) {
     const t = this.target, p = this.player;
     if (!t?.alive || !p.alive) return;
 
@@ -1305,7 +1344,7 @@ export default class GameScene extends Phaser.Scene {
     }
 
     const isCrit    = p.critChance > 0 && Math.random() < p.critChance;
-    const ammoMult  = this._consumeAmmo('cannon');
+    const ammoMult  = this._consumeAmmo('cannon', cannonCount);
     const dmg       = Math.round(p.cannonDamage * skillMult * ammoMult * (isCrit ? 2 : 1));
     const color     = isOC ? 0xff8800 : ammoMult > 1 ? 0xff6d00 : isCrit ? 0xffee44 : PROJECTILE.playerColor;
     // Predictive aim: lead the target based on its current velocity.
@@ -1361,15 +1400,29 @@ export default class GameScene extends Phaser.Scene {
     if (res.killed) this.onMobKilled(t);
   }
 
-  // Consume one ammo charge from matching slot. Returns damage multiplier (1.2 for elite plasma, else 1.0).
-  _consumeAmmo(weaponType) {
+  // Consume ammo charges. For cannon: elite first, then regular; returns proportional mult (1.0–1.2).
+  _consumeAmmo(weaponType, count = 1) {
     const slots = this.ammoSlots;
     if (!slots?.length) return 1.0;
     if (weaponType === 'cannon') {
-      const elite = slots.find(s => s.type === 'ammo_plasma_elite' && s.count > 0);
-      if (elite) { elite.count--; if (elite.count <= 0) { elite.type = null; elite.count = 0; } return 1.2; }
-      const std = slots.find(s => s.type === 'ammo_plasma' && s.count > 0);
-      if (std)  { std.count--;  if (std.count  <= 0) { std.type  = null; std.count  = 0; } }
+      let rem = count, eliteUsed = 0;
+      for (const s of slots) {
+        if (rem <= 0) break;
+        if (s.type === 'ammo_plasma_elite' && s.count > 0) {
+          const take = Math.min(s.count, rem);
+          s.count -= take; rem -= take; eliteUsed += take;
+          if (s.count <= 0) { s.type = null; s.count = 0; }
+        }
+      }
+      for (const s of slots) {
+        if (rem <= 0) break;
+        if (s.type === 'ammo_plasma' && s.count > 0) {
+          const take = Math.min(s.count, rem);
+          s.count -= take; rem -= take;
+          if (s.count <= 0) { s.type = null; s.count = 0; }
+        }
+      }
+      return count > 0 ? 1.0 + 0.2 * (eliteUsed / count) : 1.0;
     } else if (weaponType === 'laser') {
       const slot = slots.find(s => s.type === 'ammo_laser' && s.count > 0);
       if (slot) { slot.count--; if (slot.count <= 0) { slot.type = null; slot.count = 0; } }
@@ -1377,25 +1430,26 @@ export default class GameScene extends Phaser.Scene {
     return 1.0;
   }
 
-  // Try to add item amount to matching ammo slots. Returns how many were actually added.
+  // Try to add item amount to matching ammo slots (any item type). Returns how many were added.
   _tryAddToAmmoSlots(type, amount) {
     const slots = this.ammoSlots;
     if (!slots?.length) return 0;
     const def = CONSUMABLES[type];
     if (!def) return 0;
     const maxPer = def.maxPerSlot;
-    const isAmmo = def.category === 'ammo';
     let rem = amount;
     for (const slot of slots) {
       if (rem <= 0) break;
-      if (slot.type === type) {
-        const space = maxPer - slot.count;
-        const add = Math.min(space, rem);
-        if (add > 0) { slot.count += add; rem -= add; }
-      } else if (!slot.type && isAmmo) {
-        // Auto-fill empty slots for ammo types
+      if (slot.type === type && slot.count < maxPer) {
+        const add = Math.min(maxPer - slot.count, rem);
+        slot.count += add; rem -= add;
+      }
+    }
+    for (const slot of slots) {
+      if (rem <= 0) break;
+      if (!slot.type) {
         const add = Math.min(maxPer, rem);
-        if (add > 0) { slot.type = type; slot.count = add; rem -= add; }
+        slot.type = type; slot.count = add; rem -= add;
       }
     }
     return amount - rem;
@@ -2030,11 +2084,12 @@ export default class GameScene extends Phaser.Scene {
     if (!this.magnetEnabled) return;
     if (!this.player?.alive || this.atBase || this.jumping) return;
 
-    // Release all when cargo full — unless a stackable consumable still fits
+    // Release all when cargo full — unless a stackable consumable or partial plasmate slot still fits
     if (this.inventory.length >= this._cargoMax()) {
       const anyStackable = this.loot.some(l => l.alive && l._magnetPull
         && CONSUMABLES[l.item?.type]
         && this.inventory.some(i => i.type === l.item.type && i.amount < CONSUMABLES[i.type].maxPerSlot));
+      const hasPlasmateSpace = this.inventory.some(i => i.type === 'plasmate' && i.amount < PLASMATE_PER_SLOT);
       if (!anyStackable) {
         for (const l of this.loot) {
           if (l._magnetPull) {
@@ -2042,7 +2097,7 @@ export default class GameScene extends Phaser.Scene {
             l.sprite.setDisplaySize(l._origDisplayW ?? l.sprite.displayWidth, l._origDisplayH ?? l.sprite.displayHeight);
           }
         }
-        return;
+        if (!hasPlasmateSpace) return; // пласмит тоже полон — выходим полностью
       }
     }
 
@@ -2106,7 +2161,8 @@ export default class GameScene extends Phaser.Scene {
     // ── Plasmate auto-collect (premium + loot_magnet skill affects radius) ──
     if (this.premium) {
       const limitReached = (this.plasmateToday || 0) >= PLASMATE_DAILY_MAX;
-      const plasmateCargoFull = totalPlasmateInInventory(this.inventory) >= this._cargoMax() * PLASMATE_PER_SLOT;
+      const plasmateCargoFull = this.inventory.length >= this._cargoMax()
+        && !this.inventory.some(i => i.type === 'plasmate' && i.amount < PLASMATE_PER_SLOT);
 
       for (const dep of this.plasmateDeposits) {
         if (!dep.alive) continue;

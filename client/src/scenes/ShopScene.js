@@ -1,7 +1,7 @@
 import * as Phaser from 'https://cdn.jsdelivr.net/npm/phaser@4.1.0/dist/phaser.esm.js';
 import { COLORS, UI_RES } from '../constants.js';
 import { i18n } from '../i18n.js';
-import { CONSUMABLES, addConsumableToInventory, countConsumableInInventory } from '../items.js';
+import { CONSUMABLES, addConsumableToInventory, countConsumableInInventory, AMMO_ICON } from '../items.js';
 import { prerenderTex } from '../utils/prerenderTex.js';
 
 // Количество расходников за 1 золотой
@@ -56,7 +56,7 @@ export default class ShopScene extends Phaser.Scene {
     this.add.text(px + 34, py + 68, 'РАСХОДНИКИ', this.O('14px', '#4dd0e1'));
 
     const buyable = Object.entries(CONSUMABLES)
-      .filter(([, def]) => def.canBuy)
+      .filter(([, def]) => def.canBuy && def.category !== 'ammo')
       .map(([type, def]) => ({ type, ...def }));
 
     // Layout: max 4 per row (3 ammo slots reserved in next row)
@@ -73,16 +73,20 @@ export default class ShopScene extends Phaser.Scene {
       this._drawCard(cx, cy, CARD_W, CARD_H, item, gs, refresh);
     });
 
-    // Placeholder row for future ammo (3 slots)
+    // Ammo section
     const ammoY = row1Y + CARD_H + 24;
     this.add.text(px + 34, ammoY, 'БОЕПРИПАСЫ', this.O('14px', '#ffb74d'));
+    const AMMO_ITEMS = [
+      { type: 'ammo_plasma',       qty: 1000, price: 10000, currency: 'credits' },
+      { type: 'ammo_plasma_elite', qty: 1000, price: 10,    currency: 'gold'    },
+      { type: 'ammo_laser',        qty: 1000, price: 15,    currency: 'gold'    },
+    ];
     const AMMO_W = 220, AMMO_H = 290, AMMO_GAP = 20;
-    const ammoGridW = 3 * AMMO_W + 2 * AMMO_GAP;
+    const ammoGridW = AMMO_ITEMS.length * AMMO_W + (AMMO_ITEMS.length - 1) * AMMO_GAP;
     const ammoX = px + (pw - ammoGridW) / 2;
-    for (let i = 0; i < 3; i++) {
-      const cx = ammoX + i * (AMMO_W + AMMO_GAP);
-      this._drawPlaceholder(cx, ammoY + 24, AMMO_W, AMMO_H);
-    }
+    AMMO_ITEMS.forEach((item, i) => {
+      this._drawAmmoCard(ammoX + i * (AMMO_W + AMMO_GAP), ammoY + 24, AMMO_W, AMMO_H, item, gs, refresh);
+    });
 
     this.input.keyboard.on('keydown-ESC', () => this.scene.stop());
   }
@@ -174,12 +178,111 @@ export default class ShopScene extends Phaser.Scene {
     });
   }
 
-  _drawPlaceholder(cx, cy, cw, ch) {
+  _ensureAmmoTex(type) {
+    const key  = `__amtex_shop_${type}`;
+    if (this.textures.exists(key)) return key;
+    const info = AMMO_ICON[type];
+    const hexC = info?.color ?? 0x44aacc;
+    const r = (hexC >> 16) & 0xff, g = (hexC >> 8) & 0xff, b = hexC & 0xff;
+    const c = this.textures.createCanvas(key, 96, 96);
+    const ctx = c.getContext();
+    ctx.fillStyle = `rgb(${Math.round(r*0.12)},${Math.round(g*0.12)},${Math.round(b*0.12)})`;
+    ctx.fillRect(0, 0, 96, 96);
+    ctx.strokeStyle = `rgba(${r},${g},${b},0.8)`;
+    ctx.lineWidth = 3;
+    ctx.strokeRect(2, 2, 92, 92);
+    ctx.fillStyle = `rgb(${r},${g},${b})`;
+    ctx.font = 'bold 36px Orbitron, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(info?.icon ?? '?', 48, 48);
+    c.refresh();
+    return key;
+  }
+
+  _drawAmmoCard(cx, cy, cw, ch, item, gs, refresh) {
+    const info = AMMO_ICON[item.type];
+    const hexC = info?.color ?? 0xffb74d;
     const g = this.add.graphics();
-    g.fillStyle(0x080e18, 0.6); g.fillRoundedRect(cx, cy, cw, ch, 10);
-    g.lineStyle(1.5, 0x1e3040, 0.5); g.strokeRoundedRect(cx, cy, cw, ch, 10);
-    this.add.text(cx + cw / 2, cy + ch / 2, 'СКОРО',
-      { ...this.O('13px', '#1e3040'), align: 'center' }).setOrigin(0.5);
+    g.fillStyle(0x0c1a2e, 0.97); g.fillRoundedRect(cx, cy, cw, ch, 10);
+    g.lineStyle(2, hexC, 0.7); g.strokeRoundedRect(cx, cy, cw, ch, 10);
+
+    // Icon
+    const texKey = this._ensureAmmoTex(item.type);
+    this.add.image(cx + cw / 2, cy + 62, texKey).setDisplaySize(96, 96).setOrigin(0.5);
+
+    // Name
+    this.add.text(cx + cw / 2, cy + 118, i18n.t(`item.${item.type}`),
+      { ...this.O('13px', '#e0f0ff'), wordWrap: { width: cw - 24 }, align: 'center' }).setOrigin(0.5, 0);
+
+    // Stock counts
+    const countInSlots = (gs.ammoSlots || [])
+      .filter(s => s.type === item.type).reduce((sum, s) => sum + (s.count || 0), 0);
+    const countInCargo = countConsumableInInventory(gs.inventory || [], item.type);
+    const haveTxt = this.add.text(cx + cw / 2, cy + 142,
+      `в трюме: ${countInCargo}  ·  в патронах: ${countInSlots}`,
+      this.F('11px', '#4a7a90')).setOrigin(0.5, 0);
+
+    // Price label
+    const priceLabel = item.currency === 'gold'
+      ? `${item.price} ⭐`
+      : `${item.price.toLocaleString()} кр.`;
+    this.add.text(cx + cw / 2, cy + 162, `пачка 1000 шт. — ${priceLabel}`,
+      this.F('11px', '#4a6040')).setOrigin(0.5, 0);
+
+    // Buy button
+    const btnH = 42, btnY = cy + ch - 54;
+    const btnBg = item.currency === 'gold' ? 0x2a1a00 : 0x0d3a58;
+    const btnBd = item.currency === 'gold' ? hexC : 0x4dd0e1;
+    const btnTc = item.currency === 'gold' ? `#${hexC.toString(16).padStart(6,'0')}` : '#4dd0e1';
+    const btn = this.add.rectangle(cx + cw / 2, btnY + btnH / 2, cw - 28, btnH, btnBg)
+      .setStrokeStyle(1.5, btnBd, 0.85).setInteractive({ useHandCursor: true });
+    const btnTxt = this.add.text(cx + cw / 2, btnY + btnH / 2,
+      `КУПИТЬ 1000  —  ${priceLabel}`, this.O('10px', btnTc)).setOrigin(0.5);
+
+    btn.on('pointerover', () => btn.setFillStyle(item.currency === 'gold' ? 0x4a2a00 : 0x1a5a80));
+    btn.on('pointerout',  () => btn.setFillStyle(btnBg));
+    btn.on('pointerdown', () => {
+      const inv = gs.inventory || [];
+      const cargoMax = this._cargoMax(gs);
+      if (item.currency === 'gold') {
+        if ((gs.starGold || 0) < item.price) {
+          btn.setFillStyle(0x5a1010);
+          this.time.delayedCall(300, () => btn.setFillStyle(btnBg));
+          return;
+        }
+        const space = this._freeConsumableSpace(inv, item.type, CONSUMABLES[item.type].maxPerSlot, cargoMax);
+        if (space <= 0) {
+          btnTxt.setText('ТРЮМ ПОЛОН');
+          this.time.delayedCall(1400, () => btnTxt.setText(`КУПИТЬ 1000  —  ${priceLabel}`));
+          return;
+        }
+        gs.starGold -= item.price;
+        addConsumableToInventory(inv, item.type, item.qty, cargoMax);
+      } else {
+        if ((gs.credits || 0) < item.price) {
+          btn.setFillStyle(0x5a1010);
+          this.time.delayedCall(300, () => btn.setFillStyle(btnBg));
+          return;
+        }
+        const space = this._freeConsumableSpace(inv, item.type, CONSUMABLES[item.type].maxPerSlot, cargoMax);
+        if (space <= 0) {
+          btnTxt.setText('ТРЮМ ПОЛОН');
+          this.time.delayedCall(1400, () => btnTxt.setText(`КУПИТЬ 1000  —  ${priceLabel}`));
+          return;
+        }
+        gs.credits -= item.price;
+        addConsumableToInventory(inv, item.type, item.qty, cargoMax);
+      }
+      gs._saveState?.();
+      gs.log?.(`Куплено: ${i18n.t(`item.${item.type}`)} ×${item.qty}`);
+      // Refresh counts
+      const newSlots = (gs.ammoSlots || [])
+        .filter(s => s.type === item.type).reduce((sum, s) => sum + (s.count || 0), 0);
+      const newCargo = countConsumableInInventory(inv, item.type);
+      haveTxt.setText(`в трюме: ${newCargo}  ·  в патронах: ${newSlots}`);
+      refresh();
+    });
   }
 
   _freeConsumableSpace(inv, type, maxPerSlot, cargoMax) {
