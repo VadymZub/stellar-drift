@@ -332,7 +332,7 @@ export default class HudScene extends Phaser.Scene {
 
     const ITEMS = [
       { label: 'ГАРАЖ  G',   key: 'GarageScene' },
-      { label: 'КЛАН  N',    key: 'ClanScene'   },
+      { label: 'ГИЛЬДИЯ  N', key: 'ClanScene'   },
       { label: 'КОРП  H',    key: 'CorpScene'   },
       { label: 'МИССИИ  O',  key: 'MissionsScene' },
       { label: 'МАГАЗИН  P', key: 'ShopScene'   },

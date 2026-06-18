@@ -868,7 +868,7 @@ export default class GameScene extends Phaser.Scene {
     });
 
     this.input.on('pointerup', () => { this.steering = false; });
-    this.input.keyboard.addCapture('TAB,ESC,G,M,J,F,CTRL');
+    this.input.keyboard.addCapture('TAB,ESC,G,M,J,F,CTRL,I');
     
     this.input.keyboard.on('keydown-TAB', (e) => { e.preventDefault(); this.cycleTarget(); });
     this.input.keyboard.on('keydown-ESC', () => { this._exitToSpace(); });
@@ -888,7 +888,11 @@ export default class GameScene extends Phaser.Scene {
       if (this.scene.isActive(sceneKey)) { this._exitToSpace(); return; }
       this.player.waypoint = null; this.cancelCollect(); this.toggleOverlay(sceneKey);
     };
-    this.input.keyboard.on('keydown-C', () => { this.player.waypoint = null; this.cancelCollect(); this.toggleOverlay('CargoScene'); });
+    this.input.keyboard.on('keydown-C', () => _openBase('CargoScene', 'Склад'));
+    this.input.keyboard.on('keydown-I', () => {
+      this.player.waypoint = null; this.isFiring = false; this.steering = false;
+      this.cancelCollect(); this.toggleOverlay('CargoScene');
+    });
     this.input.keyboard.on('keydown-G', () => _openBase('GarageScene',   'Гараж'));
     this.input.keyboard.on('keydown-M', () => { this.player.waypoint = null; this.cancelCollect(); this.toggleOverlay('MapScene'); });
     this.input.keyboard.on('keydown-K', () => _openBase('SkillScene',    'Скиллы'));
@@ -1247,6 +1251,13 @@ export default class GameScene extends Phaser.Scene {
     return best;
   }
   cancelCollect() { this.collectTarget = null; this.collectTimer = 0; }
+
+  dropItemAtPlayer(item) {
+    const angle = Math.random() * Math.PI * 2;
+    const dist  = 70 + Math.random() * 50;
+    const loot  = new Loot(this, this.player.x + Math.cos(angle) * dist, this.player.y + Math.sin(angle) * dist, item, 'common');
+    this.loot.push(loot);
+  }
   _canOpenBase() {
     const sec = SECTORS[galaxy.current];
     // Данжи, арены, boss-карта (R-1-boss) — isDungeon:true, доступа нет
@@ -2345,6 +2356,7 @@ export default class GameScene extends Phaser.Scene {
       missionDailyReset:   this.missionDailyReset   || 0,
       plasmateToday:       this.plasmateToday        || 0,
       plasmateDayReset:    this.plasmateDayReset      || 0,
+      clan:                this.clan                  ?? null,
     };
   }
 
@@ -2391,6 +2403,7 @@ export default class GameScene extends Phaser.Scene {
     if (s.missionDailyReset  != null) this.missionDailyReset  = s.missionDailyReset;
     if (s.plasmateToday      != null) this.plasmateToday      = s.plasmateToday;
     if (s.plasmateDayReset   != null) this.plasmateDayReset   = s.plasmateDayReset;
+    if (s.clan               !== undefined) this.clan         = s.clan;
   }
 
   _saveState() {

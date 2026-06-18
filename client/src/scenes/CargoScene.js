@@ -37,12 +37,16 @@ export default class CargoScene extends Phaser.Scene {
   create() {
     this.gs = this.scene.get('GameScene');
     const W = this.scale.width, H = this.scale.height;
-
-    const _bg = this.add.image(W / 2, H / 2, 'bg_garage');
-    _bg.setScale(Math.max(W / _bg.width, H / _bg.height)).setAlpha(0.8);
-
     const atBase = !!this.gs.atBase;
-    const pw = atBase ? Math.min(900, W - 40) : Math.min(580, W - 60);
+
+    if (atBase) {
+      const _bg = this.add.image(W / 2, H / 2, 'bg_garage');
+      _bg.setScale(Math.max(W / _bg.width, H / _bg.height)).setAlpha(0.8);
+    } else {
+      this.add.rectangle(0, 0, W, H, 0x000000, 0.35).setOrigin(0);
+    }
+
+    const pw = atBase ? Math.min(900, W - 40) : Math.min(520, W - 60);
     const ph = Math.min(640, H - 124);
     const px = (W - pw) / 2;
     const py = Math.min(Math.round((H - ph) / 2), H - ph - 62);
@@ -51,13 +55,16 @@ export default class CargoScene extends Phaser.Scene {
     panel.fillStyle(0x080e1a, 0.97); panel.fillRoundedRect(px, py, pw, ph, 12);
     panel.lineStyle(2, COLORS.primary, 0.7); panel.strokeRoundedRect(px, py, pw, ph, 12);
 
-    this.add.text(px + 22, py + 16, 'СКЛАД', this.O('20px', '#4dd0e1'));
+    const title = atBase ? 'СКЛАД' : 'ТРЮМ';
+    this.add.text(px + 22, py + 16, title, this.O('20px', '#4dd0e1'));
     this.add.text(px + pw - 20, py + 20, 'C / ESC', this.F('11px', '#445566')).setOrigin(1, 0);
 
     const cargoMax = this._cargoMax(), whMax = this._whMax();
     const cargoCount = (this.gs.inventory || []).length;
-    const capColor = cargoCount >= cargoMax ? '#ef5350' : '#4a6678';
-    this.add.text(px + 22, py + 46, `ТРЮМ ${cargoCount}/${cargoMax}  ·  СКЛАД ${(this.gs.warehouse||[]).length}/${whMax}`, this.F('12px', '#4a6678'));
+    const statsLine = atBase
+      ? `ТРЮМ ${cargoCount}/${cargoMax}  ·  СКЛАД ${(this.gs.warehouse||[]).length}/${whMax}`
+      : `ТРЮМ КОРАБЛЯ  ${cargoCount} / ${cargoMax}`;
+    this.add.text(px + 22, py + 46, statsLine, this.F('12px', '#4a6678'));
 
     this.panelBox = { px, py, pw, ph };
 
@@ -87,7 +94,6 @@ export default class CargoScene extends Phaser.Scene {
       });
     } else {
       this._renderSlotGrid(px + 12, py + 72, pw - 24, ph - 90, this.gs.inventory || [], cargoMax, 'cargo_nosell');
-      this.add.text(px + 12 + (pw - 24) / 2, py + 58, 'ТРЮМ КОРАБЛЯ', this.O('12px', '#2a5a70')).setOrigin(0.5, 0);
     }
 
     this.input.keyboard.on('keydown-ESC', () => this.scene.stop());
@@ -236,12 +242,16 @@ export default class CargoScene extends Phaser.Scene {
         } else if (type === 'cargo' && !isConsumable) {
           strips.push({ label: '→ склад', color: '#4aa8cc', bg: 0x071828, h: STRIP_H,
             action: () => this._moveToWarehouse(item) });
-        } else if (type === 'cargo_nosell' && isConsumable) {
-          const barKey = `use:${item.type}`;
-          const inBar = (gs.actionBar || []).includes(barKey);
-          strips.push({ label: inBar ? '✓ в панели' : '→ панель',
-            color: inBar ? '#4a9860' : '#4dd0e1', bg: 0x051520, h: STRIP_H,
-            action: () => this._addConsumableToBar(item.type) });
+        } else if (type === 'cargo_nosell' && (isConsumable || isAmmo)) {
+          if (isConsumable) {
+            const barKey = `use:${item.type}`;
+            const inBar = (gs.actionBar || []).includes(barKey);
+            strips.push({ label: inBar ? '✓ в панели' : '→ панель',
+              color: inBar ? '#4a9860' : '#4dd0e1', bg: 0x051520, h: STRIP_H,
+              action: () => this._addConsumableToBar(item.type) });
+          }
+          strips.push({ label: '× выкинуть', color: '#ef9a9a', bg: 0x1a0808, h: STRIP_H,
+            action: () => this._showDropConfirm(item) });
         } else if (type === 'warehouse') {
           strips.push({ label: '← трюм', color: '#4a9860', bg: 0x0a1a0a, h: STRIP_H,
             action: () => {
@@ -305,15 +315,20 @@ export default class CargoScene extends Phaser.Scene {
           : this.add.text(sx + SZ / 2, sy + BODY_H / 2, `T${item.tier}`, this.O('14px', '#ffe0b2')).setOrigin(0.5);
         container.add([box, strip, stripT, iconImg]);
       } else if (type === 'cargo_nosell') {
-        const box = this.add.rectangle(sx, sy, SZ, SZ, 0x0d1e2c, 0.9).setOrigin(0, 0)
+        const box = this.add.rectangle(sx, sy, SZ, BODY_H, 0x0d1e2c, 0.9).setOrigin(0, 0)
           .setStrokeStyle(1, bdrHex, 0.6).setInteractive({ useHandCursor: true });
         box.on('pointerover', (p) => this._showTooltip(p.x, p.y, item));
         box.on('pointerout',  ()  => this._hideTooltip());
+        const dropStrip = this.add.rectangle(sx, sy + BODY_H, SZ, STRIP_H, 0x1a0808, 0.9).setOrigin(0, 0)
+          .setStrokeStyle(1, 0x6a2020, 0.5).setInteractive({ useHandCursor: true });
+        const dropT = this.add.text(sx + SZ / 2, sy + BODY_H + STRIP_H / 2, '× выкинуть',
+          this.F('9px', '#ef9a9a')).setOrigin(0.5);
+        dropStrip.on('pointerdown', () => this._showDropConfirm(item));
         const iconK = itemIconKey(item);
         const iconImg = iconK
-          ? this.add.image(sx + SZ / 2, sy + SZ / 2, prerenderTex(this, iconK, 48, 48)).setDisplaySize(48, 48).setOrigin(0.5)
-          : this.add.text(sx + SZ / 2, sy + SZ / 2, `T${item.tier}`, this.O('14px', '#ffe0b2')).setOrigin(0.5);
-        container.add([box, iconImg]);
+          ? this.add.image(sx + SZ / 2, sy + BODY_H / 2, prerenderTex(this, iconK, 48, 48)).setDisplaySize(48, 48).setOrigin(0.5)
+          : this.add.text(sx + SZ / 2, sy + BODY_H / 2, `T${item.tier}`, this.O('14px', '#ffe0b2')).setOrigin(0.5);
+        container.add([box, dropStrip, dropT, iconImg]);
       } else {
         const box = this.add.rectangle(sx, sy, SZ, BODY_H, 0x0c1a10, 0.9).setOrigin(0, 0)
           .setStrokeStyle(1, bdrHex, pDef ? 0.5 : 0.22).setInteractive({ useHandCursor: true });
@@ -416,6 +431,62 @@ export default class CargoScene extends Phaser.Scene {
     if (!this._tooltipObjs) return;
     this._tooltipObjs.forEach(o => o?.destroy());
     this._tooltipObjs = null;
+  }
+
+  _showDropConfirm(item) {
+    if (this._dropModal) this._closeDropModal();
+    const W = this.scale.width, H = this.scale.height;
+    const mw = 320, mh = 150;
+    const mx = (W - mw) / 2, my = (H - mh) / 2;
+    const objs = [];
+
+    const dim = this.add.rectangle(0, 0, W, H, 0x000000, 0.65).setOrigin(0).setDepth(60).setInteractive();
+    dim.on('pointerdown', () => this._closeDropModal());
+    objs.push(dim);
+
+    const panel = this.add.graphics().setDepth(61);
+    panel.fillStyle(0x0a0f1a, 0.98); panel.fillRoundedRect(mx, my, mw, mh, 10);
+    panel.lineStyle(2, 0xef5350, 0.85); panel.strokeRoundedRect(mx, my, mw, mh, 10);
+    objs.push(panel);
+
+    objs.push(this.add.text(W / 2, my + 22, 'ВЫБРОСИТЬ ПРЕДМЕТ?', this.O('13px', '#ef9a9a')).setOrigin(0.5).setDepth(62));
+    objs.push(this.add.text(W / 2, my + 52, itemName(item), this.F('12px', '#b0bec5')).setOrigin(0.5).setDepth(62));
+    objs.push(this.add.text(W / 2, my + 70, 'Предмет появится рядом с кораблём', this.F('10px', '#445566')).setOrigin(0.5).setDepth(62));
+
+    const btnY = my + mh - 42;
+    const cancelBtn = this.add.rectangle(W / 2 - 75, btnY, 120, 30, 0x0d1e2c, 1)
+      .setStrokeStyle(1, 0x2a6888, 0.8).setDepth(61).setInteractive({ useHandCursor: true });
+    cancelBtn.on('pointerover', () => cancelBtn.setFillStyle(0x162838));
+    cancelBtn.on('pointerout',  () => cancelBtn.setFillStyle(0x0d1e2c));
+    cancelBtn.on('pointerdown', () => this._closeDropModal());
+    objs.push(cancelBtn);
+    objs.push(this.add.text(W / 2 - 75, btnY, 'ОТМЕНА', this.O('11px', '#4dd0e1')).setOrigin(0.5).setDepth(62));
+
+    const dropBtn = this.add.rectangle(W / 2 + 75, btnY, 120, 30, 0x1a0808, 1)
+      .setStrokeStyle(1, 0xef5350, 0.8).setDepth(61).setInteractive({ useHandCursor: true });
+    dropBtn.on('pointerover', () => dropBtn.setFillStyle(0x2e1010));
+    dropBtn.on('pointerout',  () => dropBtn.setFillStyle(0x1a0808));
+    dropBtn.on('pointerdown', () => { this._closeDropModal(); this._dropItem(item); });
+    objs.push(dropBtn);
+    objs.push(this.add.text(W / 2 + 75, btnY, 'ВЫБРОСИТЬ', this.O('11px', '#ef9a9a')).setOrigin(0.5).setDepth(62));
+
+    this._dropModal = objs;
+  }
+
+  _closeDropModal() {
+    this._dropModal?.forEach(o => o?.destroy());
+    this._dropModal = null;
+  }
+
+  _dropItem(item) {
+    const gs = this.gs;
+    const inv = gs.inventory || [];
+    const idx = inv.indexOf(item);
+    if (idx < 0) return;
+    inv.splice(idx, 1);
+    gs.dropItemAtPlayer?.(item);
+    gs._saveState?.();
+    this.scene.restart();
   }
 
   _showSellConfirm(gs, item, slotSx, slotSy, def) {
