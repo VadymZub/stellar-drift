@@ -30,6 +30,19 @@ export default class ShopScene extends Phaser.Scene {
     this.add.text(px + 34, py + 22, 'СТАНЦИОННЫЙ МАГАЗИН', this.O('22px', '#ffb74d'));
     this.add.text(px + pw - 30, py + 28, 'ESC', this.F('13px', '#445566')).setOrigin(1, 0);
 
+    // Кнопка перехода в донат-магазин
+    const donW = 190, donH = 34;
+    const donX = px + pw - 170, donY = py + 52;
+    const donBtn = this.add.rectangle(donX, donY + donH / 2, donW, donH, 0x1a1000)
+      .setStrokeStyle(1.5, 0xffd54f, 0.85).setInteractive({ useHandCursor: true });
+    this.add.text(donX, donY + donH / 2, '⭐ ДОНАТ МАГАЗИН  ▶', this.O('11px', '#ffd54f')).setOrigin(0.5);
+    donBtn.on('pointerover', () => donBtn.setFillStyle(0x2e2000));
+    donBtn.on('pointerout',  () => donBtn.setFillStyle(0x1a1000));
+    donBtn.on('pointerdown', () => {
+      this.scene.stop();
+      this.scene.launch('DonateScene');
+    });
+
     // Live balance display
     const credTxt = this.add.text(px + pw / 2 - 60, py + 26, '', this.O('14px', '#ffd54f')).setOrigin(0, 0);
     const goldTxt = this.add.text(px + pw / 2 + 60, py + 26, '', this.O('14px', '#ffd54f')).setOrigin(0, 0);

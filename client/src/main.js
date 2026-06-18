@@ -12,6 +12,7 @@ import GarageScene from './scenes/GarageScene.js';
 import MapScene from './scenes/MapScene.js';
 import MissionsScene from './scenes/MissionsScene.js';
 import ShopScene from './scenes/ShopScene.js';
+import DonateScene from './scenes/DonateScene.js';
 import CorpScene from './scenes/CorpScene.js';
 import BaseMenuScene from './scenes/BaseMenuScene.js';
 import SkillScene from './scenes/SkillScene.js';
@@ -48,7 +49,7 @@ const config = {
   },
   scene: [
     BootScene, LoginScene, BackgroundScene, TestProfileScene, GameScene, HudScene,
-    InventoryScene, CargoScene, ClanScene, GarageScene, MapScene, MissionsScene, ShopScene, CorpScene, BaseMenuScene, SkillScene,
+    InventoryScene, CargoScene, ClanScene, GarageScene, MapScene, MissionsScene, ShopScene, DonateScene, CorpScene, BaseMenuScene, SkillScene,
   ],
 };
 
