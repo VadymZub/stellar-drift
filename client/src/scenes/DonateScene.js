@@ -1,5 +1,6 @@
 import * as Phaser from 'https://cdn.jsdelivr.net/npm/phaser@4.1.0/dist/phaser.esm.js';
 import { COLORS, UI_RES } from '../constants.js';
+import { prerenderTex } from '../utils/prerenderTex.js';
 
 const PREMIUM_PLANS = [
   { id: 'prem_1m',  label: '1 МЕСЯЦ',  price: '$5.00',  days: 30  },
@@ -44,7 +45,9 @@ export default class DonateScene extends Phaser.Scene {
     g.lineStyle(2, COLORS.amber, 0.9); g.strokeRoundedRect(px, py, pw, ph, 14);
 
     // Header
-    this.add.text(px + 34, py + 22, '⭐ ДОНАТ МАГАЗИН', this.O('20px', '#ffd54f'));
+    this.add.image(px + 22, py + 32, prerenderTex(this, 'icon_gold', 28, 28))
+      .setDisplaySize(28, 28).setOrigin(0, 0.5);
+    this.add.text(px + 56, py + 22, 'ДОНАТ МАГАЗИН', this.O('20px', '#ffd54f'));
     const escBtn = this.add.text(px + pw - 30, py + 28, 'ESC', this.F('13px', '#445566')).setOrigin(1, 0)
       .setInteractive({ useHandCursor: true });
     escBtn.on('pointerover', () => escBtn.setColor('#aabbcc'));
@@ -130,9 +133,8 @@ export default class DonateScene extends Phaser.Scene {
 
   _drawStarSection(x, y, w, h, gs, refreshBal) {
     // Icon + title
-    if (this.textures.exists('icon_gold')) {
-      this.add.image(x + 12, y + 9, 'icon_gold').setDisplaySize(22, 22).setOrigin(0, 0.5);
-    }
+    this.add.image(x + 12, y + 9, prerenderTex(this, 'icon_gold', 24, 24))
+      .setDisplaySize(24, 24).setOrigin(0, 0.5);
     this.add.text(x + 30, y, 'ЗОЛОТЫЕ ЗВЁЗДЫ', this.O('14px', '#ffd54f'));
 
     const cw = (w - 20) / 2, ch = 150, gap = 10;
@@ -149,11 +151,20 @@ export default class DonateScene extends Phaser.Scene {
     g.fillStyle(0x0c1810, 0.97); g.fillRoundedRect(cx, cy, cw, ch, 10);
     g.lineStyle(1.5, 0x3a5a20, 0.8); g.strokeRoundedRect(cx, cy, cw, ch, 10);
 
-    this.add.text(cx + cw / 2, cy + 16, pack.label,  this.O('12px', '#aed581')).setOrigin(0.5, 0);
-    this.add.text(cx + cw / 2, cy + 42, `⭐ ${pack.stars}`, this.O('18px', '#ffd54f')).setOrigin(0.5, 0);
+    this.add.text(cx + cw / 2, cy + 14, pack.label, this.O('12px', '#aed581')).setOrigin(0.5, 0);
+
+    // Icon + number side by side, centered
+    const icoSz = 28;
+    const numTxt = this.add.text(0, 0, `${pack.stars}`, this.O('20px', '#ffd54f')).setOrigin(0, 0.5);
+    const pairW  = icoSz + 6 + numTxt.width;
+    const pairX  = cx + (cw - pairW) / 2;
+    const pairY  = cy + 56;
+    this.add.image(pairX + icoSz / 2, pairY, prerenderTex(this, 'icon_gold', icoSz, icoSz))
+      .setDisplaySize(icoSz, icoSz).setOrigin(0.5);
+    numTxt.setPosition(pairX + icoSz + 6, pairY);
 
     if (pack.badge) {
-      this.add.text(cx + cw / 2, cy + 68, pack.badge, this.F('11px', '#a5d6a7')).setOrigin(0.5, 0);
+      this.add.text(cx + cw / 2, cy + 80, pack.badge, this.F('11px', '#a5d6a7')).setOrigin(0.5, 0);
     }
 
     const btnY = cy + ch - 38;
