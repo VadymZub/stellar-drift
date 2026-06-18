@@ -47,7 +47,7 @@ export default class DonateScene extends Phaser.Scene {
       this.add.rectangle(W / 2, H / 2, W, H, 0x000000, 0.6);
     }
 
-    const pw = Math.min(1100, W - 24), ph = Math.min(700, H - 24);
+    const pw = Math.min(1100, W - 24), ph = Math.min(800, H - 24);
     const px = (W - pw) / 2,          py = (H - ph) / 2;
 
     // Panel — lighter than before
@@ -112,8 +112,8 @@ export default class DonateScene extends Phaser.Scene {
   _drawPremiumSection(x, y, w, h, gs, refreshBal) {
     this.add.text(x, y, 'ПОДПИСКА PREMIUM', this.O('14px', '#ffb74d'));
 
-    // Premium icon — 2× bigger: 160px
-    const iconSz = 160;
+    // Premium icon — 320px
+    const iconSz = 320;
     const iconX  = x + w / 2;
     this.add.image(iconX, y + 44 + iconSz / 2, prerenderTex(this, 'icon_premium', iconSz, iconSz))
       .setDisplaySize(iconSz, iconSz).setOrigin(0.5);
