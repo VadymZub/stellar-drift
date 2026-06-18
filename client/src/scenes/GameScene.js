@@ -1592,7 +1592,7 @@ export default class GameScene extends Phaser.Scene {
       if (affordable) {
         btn.on('pointerover', () => btn.setFillStyle(0x0f3a22));
         btn.on('pointerout',  () => btn.setFillStyle(0x0a2a18));
-        btn.on('pointerdown', onConfirm);
+        btn.on('pointerdown', (p, lx, ly, event) => { if (event) event.stopPropagation(); onConfirm(); });
       }
       allObjs.push(cg, t1, t2, t3, btn, btnLbl);
     };
