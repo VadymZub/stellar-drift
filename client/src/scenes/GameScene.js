@@ -1601,6 +1601,8 @@ export default class GameScene extends Phaser.Scene {
       if (st > 0)      this.starGold = (this.starGold || 0) - st;
       else if (cr > 0) this.credits  = (this.credits  || 0) - cr;
       destroyAll();
+      this.steering = false;
+      this.cancelCollect();
       this.player.respawn(rx, ry);
       if (!fullHull) this.player.hull = Math.round(this.player.maxHull * 0.5);
       this.playerRespawning = false;
@@ -1728,7 +1730,7 @@ export default class GameScene extends Phaser.Scene {
       const wpt = this.cameras.main.getWorldPoint(this.input.activePointer.x, this.input.activePointer.y);
       this.movement.setWaypoint(wpt.x, wpt.y, false);
     }
-    if (!this.jumping) this.movement.update(dt, inSafe);
+    if (!this.jumping && this.player.alive) this.movement.update(dt, inSafe);
     this.mobs.forEach((m) => {
       const tgt = (m.escortTarget?.alive) ? m.escortTarget : this.player;
       const victim = (m.escortTarget?.alive) ? this.escortTransport : this.player;

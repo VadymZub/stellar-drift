@@ -308,6 +308,8 @@ export default class Player {
     this.alive = false;
     this.boosting = false;
     this.waypoint = null;
+    this.speed = 0;
+    this.sprite.body?.setVelocity(0, 0);
     this.sprite.setVisible(false);
     this._npIcon.setVisible(false);
     this._npText.setVisible(false);
@@ -316,6 +318,10 @@ export default class Player {
   respawn(x, y) {
     this.hull = this.maxHull;
     this.shield = this.maxShield;
+    this.waypoint = null;
+    this.speed = 0;
+    this.boosting = false;
+    this.sprite.body?.setVelocity(0, 0);
     this.sprite.setPosition(x, y);
     this.sprite.setVisible(true);
     this._npIcon.setVisible(true);
