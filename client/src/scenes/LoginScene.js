@@ -139,11 +139,18 @@ export default class LoginScene extends Phaser.Scene {
         setSession(data.access_token, data.username);
 
         // Preload player state so GameScene can apply it synchronously
+        const _lsKey = 'stellar_drift_state_' + data.username;
         try {
           const r = await apiGet('/player/state');
           window.PLAYER_STATE = r.state || {};
+          // Server returned empty — fall back to local save if available
+          if (!Object.keys(window.PLAYER_STATE).length) {
+            const local = localStorage.getItem(_lsKey);
+            if (local) try { window.PLAYER_STATE = JSON.parse(local); } catch (_e) {}
+          }
         } catch (_) {
-          window.PLAYER_STATE = {};
+          const local = localStorage.getItem(_lsKey);
+          window.PLAYER_STATE = local ? (() => { try { return JSON.parse(local); } catch (_e) { return {}; } })() : {};
         }
 
         window.TEST_PROFILE = null; // clear any leftover dev session data

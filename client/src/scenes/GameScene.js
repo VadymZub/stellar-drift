@@ -888,7 +888,7 @@ export default class GameScene extends Phaser.Scene {
       if (this.scene.isActive(sceneKey)) { this._exitToSpace(); return; }
       this.player.waypoint = null; this.cancelCollect(); this.toggleOverlay(sceneKey);
     };
-    this.input.keyboard.on('keydown-C', () => _openBase('CargoScene',    'Склад'));
+    this.input.keyboard.on('keydown-C', () => { this.player.waypoint = null; this.cancelCollect(); this.toggleOverlay('CargoScene'); });
     this.input.keyboard.on('keydown-G', () => _openBase('GarageScene',   'Гараж'));
     this.input.keyboard.on('keydown-M', () => { this.player.waypoint = null; this.cancelCollect(); this.toggleOverlay('MapScene'); });
     this.input.keyboard.on('keydown-K', () => _openBase('SkillScene',    'Скиллы'));
@@ -1404,6 +1404,7 @@ export default class GameScene extends Phaser.Scene {
   _consumeAmmo(weaponType, count = 1) {
     const slots = this.ammoSlots;
     if (!slots?.length) return 1.0;
+    let slotEmptied = false;
     if (weaponType === 'cannon') {
       let rem = count, eliteUsed = 0;
       for (const s of slots) {
@@ -1411,7 +1412,7 @@ export default class GameScene extends Phaser.Scene {
         if (s.type === 'ammo_plasma_elite' && s.count > 0) {
           const take = Math.min(s.count, rem);
           s.count -= take; rem -= take; eliteUsed += take;
-          if (s.count <= 0) { s.type = null; s.count = 0; }
+          if (s.count <= 0) { s.type = null; s.count = 0; slotEmptied = true; }
         }
       }
       for (const s of slots) {
@@ -1419,14 +1420,16 @@ export default class GameScene extends Phaser.Scene {
         if (s.type === 'ammo_plasma' && s.count > 0) {
           const take = Math.min(s.count, rem);
           s.count -= take; rem -= take;
-          if (s.count <= 0) { s.type = null; s.count = 0; }
+          if (s.count <= 0) { s.type = null; s.count = 0; slotEmptied = true; }
         }
       }
+      if (slotEmptied) this._saveState();
       return count > 0 ? 1.0 + 0.2 * (eliteUsed / count) : 1.0;
     } else if (weaponType === 'laser') {
       const slot = slots.find(s => s.type === 'ammo_laser' && s.count > 0);
-      if (slot) { slot.count--; if (slot.count <= 0) { slot.type = null; slot.count = 0; } }
+      if (slot) { slot.count--; if (slot.count <= 0) { slot.type = null; slot.count = 0; slotEmptied = true; } }
     }
+    if (slotEmptied) this._saveState();
     return 1.0;
   }
 
@@ -2392,7 +2395,9 @@ export default class GameScene extends Phaser.Scene {
 
   _saveState() {
     if (!getToken()) return;
-    apiPut('/player/state', this._serializeState()).catch(() => {});
+    const state = this._serializeState();
+    try { localStorage.setItem('stellar_drift_state_' + getUsername(), JSON.stringify(state)); } catch (_) {}
+    apiPut('/player/state', state).catch(() => {});
   }
 
   _serializeLoot() {

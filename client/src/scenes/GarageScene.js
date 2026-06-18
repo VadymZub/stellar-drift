@@ -307,6 +307,16 @@ export default class GarageScene extends Phaser.Scene {
     p.applyShip(newShip);
     p.recomputeStats();
     p.shield = p.maxShield;
+
+    // Sync action bar slot 0 with new ship's active skill
+    gs.actionBar = gs.actionBar || Array(10).fill(null);
+    const _ask = ship.activeSkill?.key ?? null;
+    if (_ask) {
+      if (!gs.actionBar[0] || (gs.actionBar[0] + '').startsWith('ship:')) gs.actionBar[0] = _ask;
+    } else if ((gs.actionBar[0] + '').startsWith('ship:')) {
+      gs.actionBar[0] = null;
+    }
+
     gs.log(i18n.t('garage.switched', { ship: i18n.t(ship.nameKey) }));
     gs._saveState?.();
     this.scene.restart();
