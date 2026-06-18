@@ -4,15 +4,15 @@ import { prerenderTex } from '../utils/prerenderTex.js';
 
 const PREMIUM_PLANS = [
   { id: 'prem_1m',  label: '1 МЕСЯЦ',  price: '$5.00',  days: 30  },
-  { id: 'prem_3m',  label: '3 МЕСЯЦА', price: '$12.00', days: 90, badge: '−20%' },
+  { id: 'prem_3m',  label: '3 МЕСЯЦА', price: '$12.00', days: 90,  badge: '−20%' },
   { id: 'prem_12m', label: '1 ГОД',    price: '$45.00', days: 365, badge: '−25%' },
 ];
 
 const STAR_PACKS = [
-  { id: 'stars_pilot',    label: 'ПИЛОТ',    stars: 125,  price: '$4.99'  },
-  { id: 'stars_sergeant', label: 'СЕРЖАНТ',  stars: 250,  price: '$9.99'  },
-  { id: 'stars_captain',  label: 'КАПИТАН',  stars: 550,  price: '$19.99', badge: '+10%' },
-  { id: 'stars_admiral',  label: 'АДМИРАЛ',  stars: 1200, price: '$39.99', badge: '+20%' },
+  { id: 'stars_pilot',    label: 'ПИЛОТ',   stars: 125,  price: '$4.99'  },
+  { id: 'stars_sergeant', label: 'СЕРЖАНТ', stars: 250,  price: '$9.99'  },
+  { id: 'stars_captain',  label: 'КАПИТАН', stars: 550,  price: '$19.99', badge: '+10%' },
+  { id: 'stars_admiral',  label: 'АДМИРАЛ', stars: 1200, price: '$39.99', badge: '+20%' },
 ];
 
 const PREMIUM_BENEFITS = [
@@ -22,6 +22,12 @@ const PREMIUM_BENEFITS = [
   'Элитные миссии  (скоро)',
   'Премиум данж  (скоро)',
 ];
+
+// Base hotkeys → scene to open
+const BASE_HOTKEYS = {
+  G: 'GarageScene', N: 'ClanScene', H: 'CorpScene',
+  O: 'MissionsScene', P: 'ShopScene', K: 'SkillScene', C: 'CargoScene',
+};
 
 export default class DonateScene extends Phaser.Scene {
   constructor() { super('DonateScene'); }
@@ -33,40 +39,56 @@ export default class DonateScene extends Phaser.Scene {
     const W = this.scale.width, H = this.scale.height;
     const gs = this.scene.get('GameScene');
 
-    // Dim backdrop
-    this.add.rectangle(W / 2, H / 2, W, H, 0x000000, 0.55);
+    // Background — same as ShopScene
+    if (this.textures.exists('bg_shop')) {
+      const bg = this.add.image(W / 2, H / 2, 'bg_shop');
+      bg.setScale(Math.max(W / bg.width, H / bg.height)).setAlpha(0.7);
+    } else {
+      this.add.rectangle(W / 2, H / 2, W, H, 0x000000, 0.6);
+    }
 
-    const pw = Math.min(1100, W - 24), ph = Math.min(680, H - 24);
+    const pw = Math.min(1100, W - 24), ph = Math.min(700, H - 24);
     const px = (W - pw) / 2,          py = (H - ph) / 2;
 
-    // Panel
+    // Panel — lighter than before
     const g = this.add.graphics();
-    g.fillStyle(0x060c18, 0.98); g.fillRoundedRect(px, py, pw, ph, 14);
+    g.fillStyle(0x0d1828, 0.97); g.fillRoundedRect(px, py, pw, ph, 14);
     g.lineStyle(2, COLORS.amber, 0.9); g.strokeRoundedRect(px, py, pw, ph, 14);
 
     // Header
     this.add.text(px + 34, py + 22, 'ДОНАТ МАГАЗИН', this.O('20px', '#ffd54f'));
-    const escBtn = this.add.text(px + pw - 30, py + 28, 'ESC', this.F('13px', '#445566')).setOrigin(1, 0)
-      .setInteractive({ useHandCursor: true });
+
+    // ESC button — full exit from base
+    const _exit = () => { this.scene.stop(); gs._exitToSpace(); };
+    const escBtn = this.add.text(px + pw - 30, py + 28, 'ESC', this.F('13px', '#445566'))
+      .setOrigin(1, 0).setInteractive({ useHandCursor: true });
     escBtn.on('pointerover', () => escBtn.setColor('#aabbcc'));
     escBtn.on('pointerout',  () => escBtn.setColor('#445566'));
-    escBtn.on('pointerdown', () => this.scene.stop());
-    this.input.keyboard.on('keydown-ESC', () => this.scene.stop());
+    escBtn.on('pointerdown', _exit);
+    this.input.keyboard.on('keydown-ESC', _exit);
+
+    // Base hotkeys → close donate + open target scene
+    Object.entries(BASE_HOTKEYS).forEach(([key, sceneKey]) => {
+      this.input.keyboard.on(`keydown-${key}`, () => {
+        this.scene.stop();
+        gs.toggleOverlay(sceneKey);
+      });
+    });
 
     // Divider
     g.lineStyle(1, 0x1e3a5a, 0.7); g.lineBetween(px + 20, py + 58, px + pw - 20, py + 58);
 
-    // Live balance — icon + number + separator + premium status
+    // Live balance — icon_gold (24px) + number + separator + premium status
     const balCX = px + pw / 2;
     const balY  = py + 32;
-    const icoB  = this.add.image(balCX - 76, balY, prerenderTex(this, 'icon_gold', 20, 20))
-      .setDisplaySize(20, 20).setOrigin(0.5);
-    const starTxt  = this.add.text(balCX - 62, balY, '', this.O('13px', '#ffd54f')).setOrigin(0, 0.5);
-    const sepTxt   = this.add.text(0, balY, '  |  ', this.O('13px', '#445566')).setOrigin(0, 0.5);
-    const premTxt  = this.add.text(0, balY, '', this.O('13px', '#ce93d8')).setOrigin(0, 0.5);
+    this.add.image(balCX - 80, balY, prerenderTex(this, 'icon_gold', 24, 24))
+      .setDisplaySize(24, 24).setOrigin(0.5);
+    const starTxt = this.add.text(balCX - 64, balY, '', this.O('13px', '#ffd54f')).setOrigin(0, 0.5);
+    const sepTxt  = this.add.text(0, balY, '  |  ', this.O('13px', '#445566')).setOrigin(0, 0.5);
+    const premTxt = this.add.text(0, balY, '', this.O('13px', '#ce93d8')).setOrigin(0, 0.5);
     const refreshBal = () => {
       starTxt.setText(`${gs.starGold || 0}`);
-      sepTxt.setX(balCX - 62 + starTxt.width);
+      sepTxt.setX(balCX - 64 + starTxt.width);
       const active = gs.premium;
       premTxt.setX(sepTxt.x + sepTxt.width)
              .setText(`PREMIUM: ${active ? 'АКТИВЕН' : 'НЕТ'}`)
@@ -75,38 +97,35 @@ export default class DonateScene extends Phaser.Scene {
     refreshBal();
 
     const colW = (pw - 60) / 2;
-    const leftX  = px + 20;
-    const rightX = px + 40 + colW;
+    const leftX   = px + 20;
+    const rightX  = px + 40 + colW;
     const contentY = py + 72;
 
-    // ── LEFT: Premium subscription ───────────────────────────────────────────
     this._drawPremiumSection(leftX, contentY, colW, ph - 90, gs, refreshBal);
 
-    // Vertical separator
     g.lineStyle(1, 0x1e3a5a, 0.6);
     g.lineBetween(px + pw / 2, py + 65, px + pw / 2, py + ph - 20);
 
-    // ── RIGHT: Star packs ────────────────────────────────────────────────────
     this._drawStarSection(rightX, contentY, colW, ph - 90, gs, refreshBal);
   }
 
   _drawPremiumSection(x, y, w, h, gs, refreshBal) {
     this.add.text(x, y, 'ПОДПИСКА PREMIUM', this.O('14px', '#ffb74d'));
 
-    // Premium icon
-    const iconSz = 80;
+    // Premium icon — 2× bigger: 160px
+    const iconSz = 160;
     const iconX  = x + w / 2;
     this.add.image(iconX, y + 44 + iconSz / 2, prerenderTex(this, 'icon_premium', iconSz, iconSz))
       .setDisplaySize(iconSz, iconSz).setOrigin(0.5);
 
-    // Plan buttons
-    const planY = y + 132;
+    // Plan buttons start after icon
+    const planY = y + 44 + iconSz + 20;
     PREMIUM_PLANS.forEach((plan, i) => {
       this._drawPlanBtn(x, planY + i * 58, w, plan, gs, refreshBal);
     });
 
     // Benefits hint
-    const hintY = planY + PREMIUM_PLANS.length * 58 + 16;
+    const hintY = planY + PREMIUM_PLANS.length * 58 + 12;
     const hintH = PREMIUM_BENEFITS.length * 22 + 28;
     const hg = this.add.graphics();
     hg.fillStyle(0x0a1a0a, 0.85); hg.fillRoundedRect(x, hintY, w - 10, hintH, 8);
@@ -137,12 +156,12 @@ export default class DonateScene extends Phaser.Scene {
   }
 
   _drawStarSection(x, y, w, h, gs, refreshBal) {
-    // Icon + title
+    // Icon (24px) + title with spacing
     this.add.image(x + 12, y + 9, prerenderTex(this, 'icon_gold', 24, 24))
       .setDisplaySize(24, 24).setOrigin(0, 0.5);
-    this.add.text(x + 30, y, 'ЗОЛОТЫЕ ЗВЁЗДЫ', this.O('14px', '#ffd54f'));
+    this.add.text(x + 44, y, 'ЗОЛОТЫЕ ЗВЁЗДЫ', this.O('14px', '#ffd54f'));
 
-    const cw = (w - 20) / 2, ch = 150, gap = 10;
+    const cw = (w - 20) / 2, ch = 200, gap = 10;
     STAR_PACKS.forEach((pack, i) => {
       const col = i % 2, row = Math.floor(i / 2);
       const cx  = x + col * (cw + gap);
@@ -158,24 +177,24 @@ export default class DonateScene extends Phaser.Scene {
 
     this.add.text(cx + cw / 2, cy + 14, pack.label, this.O('12px', '#aed581')).setOrigin(0.5, 0);
 
-    // Icon + number side by side, centered
-    const icoSz = 44;
-    const numTxt = this.add.text(0, 0, `${pack.stars}`, this.O('22px', '#ffd54f')).setOrigin(0, 0.5);
-    const pairW  = icoSz + 8 + numTxt.width;
+    // Icon (88px) + number centered
+    const icoSz = 88;
+    const numTxt = this.add.text(0, 0, `${pack.stars}`, this.O('24px', '#ffd54f')).setOrigin(0, 0.5);
+    const pairW  = icoSz + 10 + numTxt.width;
     const pairX  = cx + (cw - pairW) / 2;
-    const pairY  = cy + 60;
+    const pairY  = cy + 80;
     this.add.image(pairX + icoSz / 2, pairY, prerenderTex(this, 'icon_gold', icoSz, icoSz))
       .setDisplaySize(icoSz, icoSz).setOrigin(0.5);
-    numTxt.setPosition(pairX + icoSz + 8, pairY);
+    numTxt.setPosition(pairX + icoSz + 10, pairY);
 
     if (pack.badge) {
-      this.add.text(cx + cw / 2, cy + 80, pack.badge, this.F('11px', '#a5d6a7')).setOrigin(0.5, 0);
+      this.add.text(cx + cw / 2, cy + 126, pack.badge, this.F('11px', '#a5d6a7')).setOrigin(0.5, 0);
     }
 
-    const btnY = cy + ch - 38;
-    const btn  = this.add.rectangle(cx + cw / 2, btnY + 16, cw - 16, 32, 0x1a3010)
+    const btnY = cy + ch - 44;
+    const btn  = this.add.rectangle(cx + cw / 2, btnY + 18, cw - 16, 34, 0x1a3010)
       .setStrokeStyle(1.5, 0xaed581, 0.8).setInteractive({ useHandCursor: true });
-    this.add.text(cx + cw / 2, btnY + 16, pack.price, this.O('12px', '#dce775')).setOrigin(0.5);
+    this.add.text(cx + cw / 2, btnY + 18, pack.price, this.O('13px', '#dce775')).setOrigin(0.5);
 
     btn.on('pointerover', () => btn.setFillStyle(0x2a4a20));
     btn.on('pointerout',  () => btn.setFillStyle(0x1a3010));

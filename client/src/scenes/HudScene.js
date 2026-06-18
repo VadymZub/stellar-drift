@@ -322,6 +322,7 @@ export default class HudScene extends Phaser.Scene {
       btn.on('pointerover',  () => { if (!this.scene.isActive(key)) { btn.setFillStyle(0x0f2535); txt.setTint(0x4dd0e1); } });
       btn.on('pointerout',   () => { if (!this.scene.isActive(key)) { btn.setFillStyle(0x081420); txt.setTint(0x3a8aaa); } });
       btn.on('pointerdown',  () => {
+        if (this.scene.isActive('DonateScene')) this.scene.stop('DonateScene');
         if (this.scene.isActive(key)) this.gs._exitToSpace();
         else this.gs.toggleOverlay(key);
       });
@@ -336,7 +337,10 @@ export default class HudScene extends Phaser.Scene {
       .setOrigin(0.5, 0.5).setDepth(107).setTint(0xaa4444);
     exitBtn.on('pointerover',  () => { exitBtn.setFillStyle(0x2a1010); exitTxt.setTint(0xef5350); });
     exitBtn.on('pointerout',   () => { exitBtn.setFillStyle(0x1a0808); exitTxt.setTint(0xaa4444); });
-    exitBtn.on('pointerdown', () => this.gs._exitToSpace());
+    exitBtn.on('pointerdown', () => {
+      if (this.scene.isActive('DonateScene')) this.scene.stop('DonateScene');
+      this.gs._exitToSpace();
+    });
     this._navObjs.push(exitBtn, exitTxt);
   }
 
@@ -471,6 +475,8 @@ export default class HudScene extends Phaser.Scene {
         if (slot.iconImg) slot.iconImg.setVisible(!atBase && !inMap);
       });
     }
+    this._editBtn?.setVisible(!atBase && !inMap);
+    this._editBtnTxt?.setVisible(!atBase && !inMap);
 
     // ── Лог (снизу вверх, с угасанием по возрасту) ──
     const baseY = H - 120;
