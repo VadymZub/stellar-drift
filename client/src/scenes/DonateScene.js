@@ -45,9 +45,7 @@ export default class DonateScene extends Phaser.Scene {
     g.lineStyle(2, COLORS.amber, 0.9); g.strokeRoundedRect(px, py, pw, ph, 14);
 
     // Header
-    this.add.image(px + 22, py + 32, prerenderTex(this, 'icon_gold', 28, 28))
-      .setDisplaySize(28, 28).setOrigin(0, 0.5);
-    this.add.text(px + 56, py + 22, 'ДОНАТ МАГАЗИН', this.O('20px', '#ffd54f'));
+    this.add.text(px + 34, py + 22, 'ДОНАТ МАГАЗИН', this.O('20px', '#ffd54f'));
     const escBtn = this.add.text(px + pw - 30, py + 28, 'ESC', this.F('13px', '#445566')).setOrigin(1, 0)
       .setInteractive({ useHandCursor: true });
     escBtn.on('pointerover', () => escBtn.setColor('#aabbcc'));
@@ -58,9 +56,22 @@ export default class DonateScene extends Phaser.Scene {
     // Divider
     g.lineStyle(1, 0x1e3a5a, 0.7); g.lineBetween(px + 20, py + 58, px + pw - 20, py + 58);
 
-    // Live balance
-    const goldTxt = this.add.text(px + pw / 2, py + 30, '', this.O('13px', '#ffd54f')).setOrigin(0.5, 0);
-    const refreshBal = () => goldTxt.setText(`⭐ ${gs.starGold || 0}  |  PREMIUM: ${gs.premium ? 'АКТИВЕН' : 'НЕТ'}`);
+    // Live balance — icon + number + separator + premium status
+    const balCX = px + pw / 2;
+    const balY  = py + 32;
+    const icoB  = this.add.image(balCX - 76, balY, prerenderTex(this, 'icon_gold', 20, 20))
+      .setDisplaySize(20, 20).setOrigin(0.5);
+    const starTxt  = this.add.text(balCX - 62, balY, '', this.O('13px', '#ffd54f')).setOrigin(0, 0.5);
+    const sepTxt   = this.add.text(0, balY, '  |  ', this.O('13px', '#445566')).setOrigin(0, 0.5);
+    const premTxt  = this.add.text(0, balY, '', this.O('13px', '#ce93d8')).setOrigin(0, 0.5);
+    const refreshBal = () => {
+      starTxt.setText(`${gs.starGold || 0}`);
+      sepTxt.setX(balCX - 62 + starTxt.width);
+      const active = gs.premium;
+      premTxt.setX(sepTxt.x + sepTxt.width)
+             .setText(`PREMIUM: ${active ? 'АКТИВЕН' : 'НЕТ'}`)
+             .setColor(active ? '#ffd54f' : '#ce93d8');
+    };
     refreshBal();
 
     const colW = (pw - 60) / 2;
@@ -82,17 +93,11 @@ export default class DonateScene extends Phaser.Scene {
   _drawPremiumSection(x, y, w, h, gs, refreshBal) {
     this.add.text(x, y, 'ПОДПИСКА PREMIUM', this.O('14px', '#ffb74d'));
 
-    // Icon placeholder (will swap for icon_premium when asset is ready)
-    const iconSz = 72;
+    // Premium icon
+    const iconSz = 80;
     const iconX  = x + w / 2;
-    if (this.textures.exists('icon_premium')) {
-      this.add.image(iconX, y + 44 + iconSz / 2, 'icon_premium').setDisplaySize(iconSz, iconSz).setOrigin(0.5);
-    } else {
-      const ig = this.add.graphics();
-      ig.fillStyle(0x1a0a30, 1); ig.fillRoundedRect(iconX - iconSz / 2, y + 44, iconSz, iconSz, 10);
-      ig.lineStyle(2, 0x7c4dff, 0.8); ig.strokeRoundedRect(iconX - iconSz / 2, y + 44, iconSz, iconSz, 10);
-      this.add.text(iconX, y + 44 + iconSz / 2, '★', this.O('32px', '#ffd54f')).setOrigin(0.5);
-    }
+    this.add.image(iconX, y + 44 + iconSz / 2, prerenderTex(this, 'icon_premium', iconSz, iconSz))
+      .setDisplaySize(iconSz, iconSz).setOrigin(0.5);
 
     // Plan buttons
     const planY = y + 132;
@@ -154,14 +159,14 @@ export default class DonateScene extends Phaser.Scene {
     this.add.text(cx + cw / 2, cy + 14, pack.label, this.O('12px', '#aed581')).setOrigin(0.5, 0);
 
     // Icon + number side by side, centered
-    const icoSz = 28;
-    const numTxt = this.add.text(0, 0, `${pack.stars}`, this.O('20px', '#ffd54f')).setOrigin(0, 0.5);
-    const pairW  = icoSz + 6 + numTxt.width;
+    const icoSz = 44;
+    const numTxt = this.add.text(0, 0, `${pack.stars}`, this.O('22px', '#ffd54f')).setOrigin(0, 0.5);
+    const pairW  = icoSz + 8 + numTxt.width;
     const pairX  = cx + (cw - pairW) / 2;
-    const pairY  = cy + 56;
+    const pairY  = cy + 60;
     this.add.image(pairX + icoSz / 2, pairY, prerenderTex(this, 'icon_gold', icoSz, icoSz))
       .setDisplaySize(icoSz, icoSz).setOrigin(0.5);
-    numTxt.setPosition(pairX + icoSz + 6, pairY);
+    numTxt.setPosition(pairX + icoSz + 8, pairY);
 
     if (pack.badge) {
       this.add.text(cx + cw / 2, cy + 80, pack.badge, this.F('11px', '#a5d6a7')).setOrigin(0.5, 0);
