@@ -15,11 +15,11 @@ const STAR_PACKS = [
 ];
 
 const PREMIUM_BENEFITS = [
-  '+4 слота трюма',
-  '+2 слота склада',
-  '−10% цены в магазине',
-  'Доступ к элитным миссиям',
-  'Значок ★ у ника',
+  '+8 слотов трюма  (+6 для Drover)',
+  '+8 слотов склада',
+  'Авто-сбор плазмита (магнит)',
+  'Элитные миссии  (скоро)',
+  'Премиум данж  (скоро)',
 ];
 
 export default class DonateScene extends Phaser.Scene {
@@ -129,7 +129,11 @@ export default class DonateScene extends Phaser.Scene {
   }
 
   _drawStarSection(x, y, w, h, gs, refreshBal) {
-    this.add.text(x, y, 'ЗОЛОТЫЕ ЗВЁЗДЫ  ⭐', this.O('14px', '#ffd54f'));
+    // Icon + title
+    if (this.textures.exists('icon_gold')) {
+      this.add.image(x + 12, y + 9, 'icon_gold').setDisplaySize(22, 22).setOrigin(0, 0.5);
+    }
+    this.add.text(x + 30, y, 'ЗОЛОТЫЕ ЗВЁЗДЫ', this.O('14px', '#ffd54f'));
 
     const cw = (w - 20) / 2, ch = 150, gap = 10;
     STAR_PACKS.forEach((pack, i) => {
@@ -138,12 +142,6 @@ export default class DonateScene extends Phaser.Scene {
       const cy  = y + 30 + row * (ch + gap);
       this._drawStarCard(cx, cy, cw, ch, pack, gs, refreshBal);
     });
-
-    // Info note
-    const noteY = y + 30 + 2 * (ch + gap) + 14;
-    this.add.text(x, noteY,
-      '★ = 1 уровень прокачки модуля (мин.)\n1 предмет полностью ≈ 740 ⭐ (~$30)\n14 предметов (фулл) ≈ 10 360 ⭐ (~$420)',
-      { ...this.F('11px', '#4a6a80'), lineSpacing: 4 });
   }
 
   _drawStarCard(cx, cy, cw, ch, pack, gs, refreshBal) {
