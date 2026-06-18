@@ -233,6 +233,17 @@ export default class GameScene extends Phaser.Scene {
     this.respeckCount     = this.respeckCount     || 0;
     this.skillAchievementSP = this.skillAchievementSP || 0;
 
+    // Ammo slots: dedicated slots for ammo/consumables, separate from cargo
+    const _aSlotCount = SHIP_BY_KEY[this.activeShip]?.aSlots || 2;
+    this.ammoSlots = this.ammoSlots || [];
+    while (this.ammoSlots.length < _aSlotCount) this.ammoSlots.push({ type: null, count: 0 });
+    if (this.ammoSlots.length > _aSlotCount) {
+      const excess = this.ammoSlots.splice(_aSlotCount);
+      for (const s of excess) {
+        if (s.type && s.count > 0) addConsumableToInventory(this.inventory, s.type, s.count, this._cargoMax());
+      }
+    }
+
     // Auto-insert ship active skill into action bar slot 0 on equip
     const _asDef = SHIP_BY_KEY[this.activeShip];
     if (_asDef?.activeSkill) {
@@ -975,10 +986,16 @@ export default class GameScene extends Phaser.Scene {
     if (now < cdEnd)   { this.log(`⏳ КД: ${Math.ceil((cdEnd - now) / 1000)}с`); return; }
     if (now < buffEnd) { this.log(`⏳ Действует: ${Math.ceil((buffEnd - now) / 1000)}с`); return; }
 
+    // Check ammo slots first, then cargo
     const inv = this.inventory || [];
-    if (countConsumableInInventory(inv, type) <= 0) { this.log('❌ Расходник закончился'); return; }
-
-    removeConsumableFromInventory(inv, type, 1);
+    const _ammoSlot = (this.ammoSlots || []).find(s => s.type === type && s.count > 0);
+    if (_ammoSlot) {
+      _ammoSlot.count--;
+      if (_ammoSlot.count <= 0) { _ammoSlot.type = null; _ammoSlot.count = 0; }
+    } else {
+      if (countConsumableInInventory(inv, type) <= 0) { this.log('❌ Расходник закончился'); return; }
+      removeConsumableFromInventory(inv, type, 1);
+    }
 
     switch (type) {
       case 'repair_pack': {
@@ -1287,9 +1304,10 @@ export default class GameScene extends Phaser.Scene {
       return;
     }
 
-    const isCrit = p.critChance > 0 && Math.random() < p.critChance;
-    const dmg    = Math.round(p.cannonDamage * skillMult * (isCrit ? 2 : 1));
-    const color  = isOC ? 0xff8800 : isCrit ? 0xffee44 : PROJECTILE.playerColor;
+    const isCrit    = p.critChance > 0 && Math.random() < p.critChance;
+    const ammoMult  = this._consumeAmmo('cannon');
+    const dmg       = Math.round(p.cannonDamage * skillMult * ammoMult * (isCrit ? 2 : 1));
+    const color     = isOC ? 0xff8800 : ammoMult > 1 ? 0xff6d00 : isCrit ? 0xffee44 : PROJECTILE.playerColor;
     // Predictive aim: lead the target based on its current velocity.
     const aimPt = _leadTarget(p.x, p.y, t.x, t.y,
       t.sprite?.body?.velocity?.x ?? 0, t.sprite?.body?.velocity?.y ?? 0,
@@ -1322,6 +1340,7 @@ export default class GameScene extends Phaser.Scene {
 
     if (!hit) return;
 
+    this._consumeAmmo('laser');
     const dmg = Math.round(p.laserDamage * skillMult * (isCrit ? 2 : 1));
     const opts = { shieldMult: p.weaponShieldMult ?? 0.80, hullMult: p.weaponHullMult ?? 1.50, ignoreMovEvasion: true };
     const res = t.takeDamage(dmg, p.weaponPenetration, opts);
@@ -1340,6 +1359,46 @@ export default class GameScene extends Phaser.Scene {
       this.tweens.add({ targets: txt, y: t.y - 80, alpha: 0, duration: 600, ease: 'Quad.easeOut', onComplete: () => txt.destroy() });
     }
     if (res.killed) this.onMobKilled(t);
+  }
+
+  // Consume one ammo charge from matching slot. Returns damage multiplier (1.2 for elite plasma, else 1.0).
+  _consumeAmmo(weaponType) {
+    const slots = this.ammoSlots;
+    if (!slots?.length) return 1.0;
+    if (weaponType === 'cannon') {
+      const elite = slots.find(s => s.type === 'ammo_plasma_elite' && s.count > 0);
+      if (elite) { elite.count--; if (elite.count <= 0) { elite.type = null; elite.count = 0; } return 1.2; }
+      const std = slots.find(s => s.type === 'ammo_plasma' && s.count > 0);
+      if (std)  { std.count--;  if (std.count  <= 0) { std.type  = null; std.count  = 0; } }
+    } else if (weaponType === 'laser') {
+      const slot = slots.find(s => s.type === 'ammo_laser' && s.count > 0);
+      if (slot) { slot.count--; if (slot.count <= 0) { slot.type = null; slot.count = 0; } }
+    }
+    return 1.0;
+  }
+
+  // Try to add item amount to matching ammo slots. Returns how many were actually added.
+  _tryAddToAmmoSlots(type, amount) {
+    const slots = this.ammoSlots;
+    if (!slots?.length) return 0;
+    const def = CONSUMABLES[type];
+    if (!def) return 0;
+    const maxPer = def.maxPerSlot;
+    const isAmmo = def.category === 'ammo';
+    let rem = amount;
+    for (const slot of slots) {
+      if (rem <= 0) break;
+      if (slot.type === type) {
+        const space = maxPer - slot.count;
+        const add = Math.min(space, rem);
+        if (add > 0) { slot.count += add; rem -= add; }
+      } else if (!slot.type && isAmmo) {
+        // Auto-fill empty slots for ammo types
+        const add = Math.min(maxPer, rem);
+        if (add > 0) { slot.type = type; slot.count = add; rem -= add; }
+      }
+    }
+    return amount - rem;
   }
 
   _laserBeam(x1, y1, x2, y2, color, alpha, width = 3) {
@@ -1930,18 +1989,22 @@ export default class GameScene extends Phaser.Scene {
           const item = target.item;
           if (CONSUMABLES[item.type]) {
             const inv = this.inventory;
-            const hasStack = inv.some(i => i.type === item.type && i.amount < CONSUMABLES[i.type].maxPerSlot);
-            if (!hasStack && inv.length >= this._cargoMax()) {
-              this.log(i18n.t('log.cargo_full'));
-              this.cancelCollect();
-            } else {
-              addConsumableToInventory(inv, item.type, item.amount, this._cargoMax());
-              this.log(i18n.t('log.loot_pickup', { item: itemName(item) }));
-              target.collect();
-              this.cancelCollect();
-              this.advanceMission('daily_salvage', 0);
-              this._saveState();
+            const ammoAdded = this._tryAddToAmmoSlots(item.type, item.amount);
+            const remaining = item.amount - ammoAdded;
+            if (remaining > 0) {
+              const hasStack = inv.some(i => i.type === item.type && i.amount < CONSUMABLES[i.type].maxPerSlot);
+              if (!hasStack && inv.length >= this._cargoMax()) {
+                if (ammoAdded === 0) { this.log(i18n.t('log.cargo_full')); this.cancelCollect(); }
+                else { this.log(i18n.t('log.loot_pickup', { item: itemName(item) })); target.collect(); this.cancelCollect(); this.advanceMission('daily_salvage', 0); this._saveState(); }
+                return;
+              }
+              addConsumableToInventory(inv, item.type, remaining, this._cargoMax());
             }
+            this.log(i18n.t('log.loot_pickup', { item: itemName(item) }));
+            target.collect();
+            this.cancelCollect();
+            this.advanceMission('daily_salvage', 0);
+            this._saveState();
           } else if (this.inventory.length >= this._cargoMax()) {
             this.log(i18n.t('log.cargo_full'));
             this.cancelCollect();
@@ -2010,7 +2073,9 @@ export default class GameScene extends Phaser.Scene {
         // Arrived — collect
         const mi = loot.item;
         if (CONSUMABLES[mi.type]) {
-          addConsumableToInventory(this.inventory, mi.type, mi.amount, this._cargoMax());
+          const ammoAdded = this._tryAddToAmmoSlots(mi.type, mi.amount);
+          const remaining = mi.amount - ammoAdded;
+          if (remaining > 0) addConsumableToInventory(this.inventory, mi.type, remaining, this._cargoMax());
         } else {
           this.inventory.push(mi);
         }
@@ -2211,6 +2276,7 @@ export default class GameScene extends Phaser.Scene {
       warehouse:           this.warehouse   || [],
       skillLevels:         this.skillLevels || {},
       actionBar:           this.actionBar   || [],
+      ammoSlots:           this.ammoSlots   || [],
       respeckCount:        this.respeckCount        || 0,
       skillAchievementSP:  this.skillAchievementSP  || 0,
       currentSector:       galaxy.current,
@@ -2241,6 +2307,7 @@ export default class GameScene extends Phaser.Scene {
     if (s.warehouse          != null) this.warehouse          = s.warehouse;
     if (s.skillLevels        != null) this.skillLevels        = s.skillLevels;
     if (s.actionBar          != null) this.actionBar          = s.actionBar;
+    if (s.ammoSlots          != null) this.ammoSlots          = s.ammoSlots;
     if (s.respeckCount       != null) this.respeckCount       = s.respeckCount;
     if (s.skillAchievementSP != null) this.skillAchievementSP = s.skillAchievementSP;
     if (s.currentSector != null && SECTORS[s.currentSector]) {

@@ -145,6 +145,57 @@ render: { roundPixels: true, mipmapFilter: 'LINEAR' }
 
 ---
 
+## Слоты Боеприпасов (2026-06-18)
+
+### Концепция
+
+Отдельные слоты («Боеприпасы») для хранения патронов и расходников вне трюма. Количество слотов зависит от корабля.
+
+| Корабль | Слоты |
+|---|---|
+| Wisp | 2 |
+| Stiletto | 3 |
+| Anvil | 4 |
+| Drover, Aegis | 5 |
+| Phantom, Helion, Argosy, Drifter, Argus | 6 |
+
+### Типы боеприпасов
+
+| Ключ | Название | Мaкс/слот | Эффект |
+|---|---|---|---|
+| `ammo_plasma` | Плазма-патроны | 10 000 | Стандарт |
+| `ammo_plasma_elite` | Элит-плазма | 10 000 | ×1.2 урон пушки |
+| `ammo_laser` | Лазерные заряды | 10 000 | Без бонуса |
+
+Все расходники (repair_pack и др.) тоже можно перемещать в слоты боеприпасов.
+
+### Механика
+
+- **Авто-расход**: `_consumeAmmo('cannon')` в `_fireCannon` — сначала ищет elite-плазму (×1.2), потом стандарт. Лазер — `_consumeAmmo('laser')` после проверки попадания.
+- **Расходники**: `_useConsumable` сначала ищет в слотах боеприпасов, потом в трюме.
+- **Подбор лута**: `_tryAddToAmmoSlots(type, amount)` — приоритетно заполняет слоты перед трюмом. Ammo-типы авто-заполняют пустые слоты, расходники только в уже-совпадающие.
+- **Сохранение**: `ammoSlots` в `_serializeState` / `_applyLoadedState`.
+
+### UI
+
+- **Склад (C)**: секция «БОЕПРИПАСЫ» выше трюма. Клик по занятому слоту → сдампить в трюм.
+- **Гараж (G) → Оборудование**: ряд слотов боеприпасов ниже двигателей, только отображение.
+- **Иконки**: canvas-текстуры с цветным фоном и буквой (П/ПЭ/Л). Промты для AI-генерации: `assets/ammo_prompts.md`.
+
+### Файлы изменены
+
+| Файл | Что |
+|---|---|
+| `src/items.js` | `ammo_plasma/elite/laser` в `CONSUMABLES` (category: 'ammo'), экспорт `AMMO_ICON` |
+| `src/ships.js` | `aSlots` для всех кораблей |
+| `src/scenes/GameScene.js` | Init `ammoSlots`, `_consumeAmmo`, `_tryAddToAmmoSlots`, loot pickup priority, serialize |
+| `src/scenes/CargoScene.js` | Ammo section UI, `_ensureAmmoTex`, `_renderAmmoSlots`, `_moveAmmoSlotToCargo`, `_moveCargoAmmoToSlot` |
+| `src/scenes/GarageScene.js` | `_renderAmmoSlotRow`, slotRow 'ammo' ветка, импорт AMMO_ICON |
+| `locales/ru.json` | Названия ammo-типов, `garage.ammo` |
+| `assets/ammo_prompts.md` | Промты иконок боеприпасов |
+
+---
+
 ## Что добавлено ранее (2026-06-12)
 
 ---

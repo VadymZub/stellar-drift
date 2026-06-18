@@ -2,7 +2,7 @@ import * as Phaser from 'https://cdn.jsdelivr.net/npm/phaser@4.1.0/dist/phaser.e
 import { COLORS, UI_RES } from '../constants.js';
 import { i18n } from '../i18n.js';
 import { itemName, itemStats, itemSellPrice, itemIconKey, SLOT_KEY, creditUpgradeCost, starUpgradeCost, modMult,
-         PLASMATE_GOLD_RATE, PLASMATE_PER_SLOT, totalPlasmateInInventory, removePlasmateFromInventory } from '../items.js';
+         PLASMATE_GOLD_RATE, PLASMATE_PER_SLOT, totalPlasmateInInventory, removePlasmateFromInventory, AMMO_ICON } from '../items.js';
 import { SHIPS, SHIP_BY_KEY, purchaseState, shipLevelCost, SHIP_MAX_LEVEL } from '../ships.js';
 import { PERK_MAP, RARITY_COLOR, RARITY_LABEL, rollPerk, perkBonus, creditUpgCost, starUpgCost, PERK_CREDIT_COST, PERK_STAR_COST, PERK_REROLL_BASE } from '../perks.js';
 import { prerenderTex } from '../utils/prerenderTex.js';
@@ -27,7 +27,7 @@ export default class GarageScene extends Phaser.Scene {
     const _bg = this.add.image(W / 2, H / 2, 'bg_garage');
     _bg.setScale(Math.max(W / _bg.width, H / _bg.height)).setAlpha(0.8);
 
-    const pw = Math.min(960, W - 40), ph = Math.min(660, H - 40);
+    const pw = Math.min(960, W - 40), ph = Math.min(720, H - 40);
     const px = (W - pw) / 2, py = (H - ph) / 2;
     this.box = { px, py, pw, ph };
     const g = this.add.graphics();
@@ -164,7 +164,7 @@ export default class GarageScene extends Phaser.Scene {
     stat(0, i18n.t('garage.hull'), `${ship.hullMax}`);
     stat(1, i18n.t('garage.shield_base'), `${ship.shieldBase}`);
     stat(2, i18n.t('garage.speed'), `${ship.baseSpeed}`);
-    stat(3, i18n.t('garage.slots'), `${ship.wSlots}⚔ / ${ship.sSlots}🛡 / ${ship.eSlots || 0}🚀`);
+    stat(3, i18n.t('garage.slots'), `${ship.wSlots}⚔ / ${ship.sSlots}🛡 / ${ship.eSlots || 0}🚀 / ${ship.aSlots || 0}📦`);
 
     // Пассивные бонусы корабля (cargoBonus / passives / activeSkill)
     let pRow = 4;
@@ -694,10 +694,11 @@ export default class GarageScene extends Phaser.Scene {
     this.shipImg(lx + lw / 2, py + 86, 110, p.ship);
     this.add.text(lx + lw / 2, py + 142, i18n.t(p.ship.nameKey), this.O('17px', '#cfe9ee')).setOrigin(0.5, 0);
 
-    // Три группы слотов: оружие (янтарь) / щит (cyan) / двигатели (изумруд)
+    // Четыре группы слотов: оружие (янтарь) / щит (cyan) / двигатели (изумруд) / боеприпасы (оранж)
     this.slotRow(lx, py + 176, i18n.t('garage.weapon'), 'weapon', COLORS.amber);
     this.slotRow(lx, py + 240, i18n.t('garage.shield'), 'shield', COLORS.primary);
     this.slotRow(lx, py + 304, i18n.t('garage.engine'), 'engine', COLORS.emerald);
+    this.slotRow(lx, py + 368, i18n.t('garage.ammo'),   'ammo',   0xffb74d);
 
     const dps = (p.hasCannon ? Math.round(p.cannonDamage * p.weaponFireRate * (p.cannonAccuracy ?? 0.90)) : 0)
               + (p.hasLaser  ? Math.round(p.laserDamage  * p.weaponFireRate * (p.laserAccuracy  ?? 0.80)) : 0);
@@ -708,7 +709,7 @@ export default class GarageScene extends Phaser.Scene {
       `${i18n.t('garage.speed')}:  ${Math.round(p.baseSpeed)}`,
       `${i18n.t('hud.hull')}:  ${p.maxHull}`,
     ];
-    this.add.text(lx, py + 376, lines.join('\n'), this.F('13px', '#9fb3b8')).setLineSpacing(7);
+    this.add.text(lx, py + 440, lines.join('\n'), this.F('13px', '#9fb3b8')).setLineSpacing(7);
 
     const rx = px + 380, rw = pw - 420;
     const gs = this.gs;
@@ -740,8 +741,16 @@ export default class GarageScene extends Phaser.Scene {
     const p = this.gs.player;
     const ship = p.ship;
     // Определяем лимит слотов именно для ТЕКУЩЕГО корабля
-    const limit = (key === 'weapon') ? ship.wSlots : (key === 'shield') ? ship.sSlots : (ship.eSlots || 0);
-    
+    const limit = (key === 'weapon') ? ship.wSlots
+                : (key === 'shield') ? ship.sSlots
+                : (key === 'ammo')   ? (ship.aSlots || 0)
+                : (ship.eSlots || 0);
+
+    if (key === 'ammo') {
+      this._renderAmmoSlotRow(x, y, label, limit, color);
+      return;
+    }
+
     // Берем глобальный список модулей, но обрезаем его по лимиту корабля
     const allEquipped = this.gs.equipped[key] || [];
     const arr = allEquipped.slice(0, limit);
@@ -785,6 +794,37 @@ export default class GarageScene extends Phaser.Scene {
 
   renderInventory(x, y, w, h, clipBotH) {
     this._renderSlotGrid(x, y, w, h, this.gs.inventory || [], this._cargoMax(), 'inventory', clipBotH);
+  }
+
+  // Ammo slot row (display-only in garage — shows slot types and counts)
+  _renderAmmoSlotRow(x, y, label, limit, color) {
+    const gs    = this.gs;
+    const slots = gs.ammoSlots || [];
+    const sz = 36, gap = 5;
+    const used = slots.slice(0, limit).filter(s => s?.type).length;
+
+    this.add.text(x, y, `${label}   ${used}/${limit}`, this.F('11px', '#7e9398'));
+    if (limit === 0) {
+      this.add.text(x, y + 18 + 9, i18n.t('garage.no_slot_short'), this.F('11px', '#5e7378'));
+      return;
+    }
+    for (let i = 0; i < limit; i++) {
+      const slot = slots[i] || { type: null, count: 0 };
+      const sx = x + i * (sz + gap);
+      const sy = y + 18;
+      const info = slot.type ? (AMMO_ICON ? AMMO_ICON[slot.type] : null) : null;
+      const borderColor = info ? (info.color ?? color) : 0x33484f;
+      const box = this.add.rectangle(sx, sy, sz, sz, slot.type ? 0x12222e : 0x0c1118, 0.95).setOrigin(0, 0)
+        .setStrokeStyle(slot.type ? 2 : 1, borderColor, slot.type ? 0.85 : 0.4);
+      if (slot.type) {
+        const hexC = info?.color ?? 0xffb74d;
+        const colorStr = `#${hexC.toString(16).padStart(6, '0')}`;
+        this.add.text(sx + sz / 2, sy + sz / 2 - 4, info?.icon ?? '?',
+          this.O('12px', colorStr)).setOrigin(0.5);
+        this.add.text(sx + sz / 2, sy + sz - 7, `${(slot.count || 0).toLocaleString()}`,
+          this.F('8px', '#aaccdd')).setOrigin(0.5);
+      }
+    }
   }
 
   // Модалка подтверждения продажи (без restart — отдельные объекты, чистятся по выбору)

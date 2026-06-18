@@ -128,13 +128,24 @@ export function itemSellPrice(item) { return SELL_PRICE[item.tier] || 100; }
 
 // ── Consumables & Materials ───────────────────────────────────────────────────
 export const CONSUMABLES = {
-  repair_pack:     { category: 'consumable', maxPerSlot: 100, canBuy: true,  price: 3500, sell: 100 },
-  speed_boost:     { category: 'consumable', maxPerSlot: 100, canBuy: true,  price: 2800, sell: 100 },
-  scanner_pulse:   { category: 'consumable', maxPerSlot: 100, canBuy: true,  price: 1800, sell: 100 },
-  emergency_warp:  { category: 'consumable', maxPerSlot:  50, canBuy: true,  price: 5000, sell: 100 },
-  biomech_core:    { category: 'material',   maxPerSlot:   5, canBuy: false, price: 0,    sell: 0    },
-  quantum_crystal: { category: 'material',   maxPerSlot:   5, canBuy: false, price: 0,    sell: 0    },
-  plasma_coil:     { category: 'material',   maxPerSlot:   5, canBuy: false, price: 0,    sell: 0    },
+  repair_pack:     { category: 'consumable', maxPerSlot: 100,   canBuy: true,  price: 3500, sell: 100 },
+  speed_boost:     { category: 'consumable', maxPerSlot: 100,   canBuy: true,  price: 2800, sell: 100 },
+  scanner_pulse:   { category: 'consumable', maxPerSlot: 100,   canBuy: true,  price: 1800, sell: 100 },
+  emergency_warp:  { category: 'consumable', maxPerSlot:  50,   canBuy: true,  price: 5000, sell: 100 },
+  biomech_core:    { category: 'material',   maxPerSlot:   5,   canBuy: false, price: 0,    sell: 0   },
+  quantum_crystal: { category: 'material',   maxPerSlot:   5,   canBuy: false, price: 0,    sell: 0   },
+  plasma_coil:     { category: 'material',   maxPerSlot:   5,   canBuy: false, price: 0,    sell: 0   },
+  // Ammo — auto-consumed on fire; max 10000 per ammo slot
+  ammo_plasma:       { category: 'ammo', maxPerSlot: 10000, canBuy: true,  price: 100, sell: 50  },
+  ammo_plasma_elite: { category: 'ammo', maxPerSlot: 10000, canBuy: true,  price: 200, sell: 100 },
+  ammo_laser:        { category: 'ammo', maxPerSlot: 10000, canBuy: false, price: 0,   sell: 50  },
+};
+
+// Visual info for ammo types (canvas icon generation)
+export const AMMO_ICON = {
+  ammo_plasma:       { icon: 'П',  color: 0xffb74d },
+  ammo_plasma_elite: { icon: 'ПЭ', color: 0xff6d00 },
+  ammo_laser:        { icon: 'Л',  color: 0x7c4dff },
 };
 
 export function addConsumableToInventory(inventory, type, amount, maxSlots) {
