@@ -77,6 +77,7 @@ export default class ClanScene extends Phaser.Scene {
 
   create() {
     document.getElementById('sd-guild-search')?.remove(); // defensive: clear stale input on any restart
+    document.getElementById('sd-dep-inp')?.remove();
     this.gs = this.scene.get('GameScene');
     const gs = this.gs;
     const W  = this.scale.width, H = this.scale.height;
@@ -527,6 +528,7 @@ export default class ClanScene extends Phaser.Scene {
           clan.members.push({ name: app.name, role: 'Новобранец', online: false, contribution: 0, level: app.level });
           apps.splice(apps.indexOf(app), 1);
           (clan.log = clan.log || []).unshift({ time: this._ts(), text: app.name + ' вступил в гильдию', color: '#66bb6a' });
+          clan.log = clan.log.slice(0, 500);
           this._sr();
         });
         this._sBtn(x + w - 16 - bw, btnY, bw, bh, '✕ ОТКЛОНИТЬ', '#ef9a9a', 0x1a0a0a, () => {
@@ -709,6 +711,7 @@ export default class ClanScene extends Phaser.Scene {
       (clan.log = clan.log || []).unshift({ time: this._ts(),
         text: `${gs.playerName || 'Пилот'} взял «${itemName(item)}» со склада`,
         color: '#ef9a9a' });
+      clan.log = clan.log.slice(0, 500);
       gs._moveMsg = `← В ТРЮМ: ${itemName(item)}`;
       this._sr();
     });
@@ -739,13 +742,22 @@ export default class ClanScene extends Phaser.Scene {
     this.add.text(lx + 14, y + 36, 'Кредиты',              this.F('11px', '#2a5060'));
     this.add.text(lx + 14, y + 52, treas.credits.toLocaleString(), this.O('16px', '#ffe0b2'));
 
-    const depAmt  = 5000;
-    const canDep  = (this.gs.credits || 0) >= depAmt;
-    this._btn(lx, y + 90, hW, 28, `Внести ${depAmt.toLocaleString()} кр`, '#4dd0e1', 0x081420, 0x102030, () => {
-      if (!canDep) return;
-      this.gs.credits -= depAmt;
-      treas.credits   += depAmt;
-      (clan.log = clan.log || []).unshift({ time: this._ts(), text: `${this.gs.playerName || 'Пилот'} внёс ${depAmt.toLocaleString()} кр в казну`, color: '#ffe0b2' });
+    // Deposit input + button (side by side)
+    const inpW = hW - 92, btnW = 88;
+    const depBg = this.add.graphics();
+    depBg.fillStyle(0x0d1828, 1); depBg.fillRoundedRect(lx, y + 88, inpW, 28, 4);
+    depBg.lineStyle(1, 0x1a3a5a, 0.9); depBg.strokeRoundedRect(lx, y + 88, inpW, 28, 4);
+    this._buildDepositInput(lx, y + 88, inpW, 28, clan);
+    this._btn(lx + inpW + 4, y + 88, btnW, 28, 'ВНЕСТИ', '#4dd0e1', 0x081420, 0x102030, () => {
+      const raw = (document.getElementById('sd-dep-inp')?.value || '').replace(/[^0-9]/g, '');
+      const amt = parseInt(raw, 10);
+      if (!amt || amt <= 0 || amt > (this.gs.credits || 0)) return;
+      document.getElementById('sd-dep-inp')?.blur();
+      clan._depAmt = '';
+      this.gs.credits -= amt;
+      treas.credits   += amt;
+      (clan.log = clan.log || []).unshift({ time: this._ts(), text: `${this.gs.playerName || 'Пилот'} внёс ${amt.toLocaleString()} кр в казну`, color: '#ffe0b2' });
+      clan.log = clan.log.slice(0, 500);
       this._sr();
     });
 
@@ -854,6 +866,7 @@ export default class ClanScene extends Phaser.Scene {
               if (!canAff) return;
               treas.credits -= cost; b.lvl += 1;
               (clan.log = clan.log || []).unshift({ time: this._ts(), text: `${b.name} +${BUFF_PCT[b.lvl]}% — уровень гильдии ${clan.level}`, color: '#ffd54f' });
+              clan.log = clan.log.slice(0, 500);
               this._sr();
             });
         } else {
@@ -873,16 +886,40 @@ export default class ClanScene extends Phaser.Scene {
       this.add.text(x + w / 2, y + 70, 'История пуста', this.F('13px', '#1a2a3a')).setOrigin(0.5, 0);
       return;
     }
-    const rowH = 32, rowGap = 4, startY = y + 30;
-    const maxR = Math.floor((h - 36) / (rowH + rowGap));
-    entries.slice(0, maxR).forEach((e, i) => {
-      const ry = startY + i * (rowH + rowGap);
-      const ebg = this.add.graphics();
-      ebg.fillStyle(0x080e18, 0.85); ebg.fillRoundedRect(x, ry, w, rowH, 4);
-      ebg.lineStyle(1, 0x0d1a2a, 0.6); ebg.strokeRoundedRect(x, ry, w, rowH, 4);
-      this.add.text(x + 14, ry + rowH / 2, e.text, this.F('12px', e.color || '#9fb3b8')).setOrigin(0, 0.5);
-      this.add.text(x + w - 14, ry + rowH / 2, e.time || '', this.F('10px', '#1a3a4a')).setOrigin(1, 0.5);
-    });
+    const rowH = 32, rowGap = 4;
+    const listY = y + 28;
+    const listH = h - 28;
+    const maxVis = Math.floor(listH / (rowH + rowGap));
+    const maxOff = Math.max(0, entries.length - maxVis);
+
+    clan._logOffset = Phaser.Math.Clamp(clan._logOffset || 0, 0, maxOff);
+
+    let rowObjs = [];
+    const drawRows = (off) => {
+      rowObjs.forEach(o => o.destroy());
+      rowObjs = [];
+      entries.slice(off, off + maxVis).forEach((e, i) => {
+        const ry = listY + i * (rowH + rowGap);
+        const ebg = this.add.graphics();
+        ebg.fillStyle(0x080e18, 0.85); ebg.fillRoundedRect(x, ry, w, rowH, 4);
+        ebg.lineStyle(1, 0x0d1a2a, 0.6); ebg.strokeRoundedRect(x, ry, w, rowH, 4);
+        const etxt = this.add.text(x + 14,     ry + rowH / 2, e.text,       this.F('12px', e.color || '#9fb3b8')).setOrigin(0, 0.5);
+        const ttxt = this.add.text(x + w - 14, ry + rowH / 2, e.time || '', this.F('10px', '#1a3a4a')).setOrigin(1, 0.5);
+        rowObjs.push(ebg, etxt, ttxt);
+      });
+    };
+
+    drawRows(clan._logOffset);
+
+    if (entries.length > maxVis) {
+      this.input.on('wheel', (p, _o, _dx, dy) => {
+        if (p.x < x || p.x > x + w || p.y < listY || p.y > listY + listH) return;
+        const newOff = Phaser.Math.Clamp((clan._logOffset || 0) + (dy > 0 ? 1 : -1), 0, maxOff);
+        if (newOff === clan._logOffset) return;
+        clan._logOffset = newOff;
+        drawRows(newOff);
+      });
+    }
   }
 
   // ── НАСТРОЙКИ (капитан) ───────────────────────────────────────────────────
@@ -1053,6 +1090,58 @@ export default class ClanScene extends Phaser.Scene {
     });
     objs.push(delBtn);
     objs.push(this.add.text(W / 2 + 90, btnY, 'РАСПУСТИТЬ', this.O('12px', '#ef5350')).setOrigin(0.5).setDepth(62));
+  }
+
+  // ── Deposit input ─────────────────────────────────────────────────────────
+  _buildDepositInput(x, y, w, h, clan) {
+    document.getElementById('sd-dep-inp')?.remove();
+    const gs     = this.gs;
+    const canvas = document.querySelector('canvas');
+    const scaleX = parseFloat(canvas.style.width)  / canvas.width;
+    const scaleY = parseFloat(canvas.style.height) / canvas.height;
+    const rect   = canvas.getBoundingClientRect();
+
+    const inp = document.createElement('input');
+    inp.id          = 'sd-dep-inp';
+    inp.type        = 'text';
+    inp.inputMode   = 'numeric';
+    inp.maxLength   = 7;
+    inp.placeholder = 'Сумма';
+    inp.value       = clan._depAmt || '';
+    inp.style.cssText = `
+      position:fixed;
+      left:${rect.left + x * scaleX}px;
+      top:${rect.top  + y * scaleY}px;
+      width:${w * scaleX}px;
+      height:${h * scaleY}px;
+      background:transparent;
+      border:none;
+      padding:0 8px;
+      color:#cce8f0;
+      font-size:${Math.round(13 * scaleY)}px;
+      font-family:Inter,sans-serif;
+      outline:none;
+      box-sizing:border-box;
+      z-index:500;
+    `;
+    document.body.appendChild(inp);
+
+    const gameKbd = gs.input.keyboard;
+    inp.addEventListener('focus', () => { gameKbd.enabled = false; });
+    inp.addEventListener('blur',  () => { gameKbd.enabled = true; clan._depAmt = inp.value; });
+
+    inp.addEventListener('keydown', e => {
+      e.stopPropagation();
+      if (e.key === 'Escape') { e.preventDefault(); inp.blur(); return; }
+      if (e.key === 'Enter')  { e.preventDefault(); inp.blur(); return; }
+      const nav = ['Backspace','Delete','ArrowLeft','ArrowRight','Home','End','Tab'];
+      if (!nav.includes(e.key) && !/^[0-9]$/.test(e.key)) e.preventDefault();
+    });
+
+    inp.addEventListener('input', () => {
+      inp.value = inp.value.replace(/[^0-9]/g, '').slice(0, 7);
+      clan._depAmt = inp.value;
+    });
   }
 
   // ── Search helpers ────────────────────────────────────────────────────────

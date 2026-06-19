@@ -70,13 +70,13 @@ export function purchaseState(ship, gs) {
 }
 
 // ── Уровень корабля 1-10 (прокачка за КРЕДИТЫ) ──────────────────────────────
-// Бонусы корпуса по уровню: на ур.10 +20% корпус/щит, +15% урон, +10% скорость
-// (линейно от ур.1). Прокачивает HP/щит/DPS/скорость самого корпуса (не модулей).
+// Бонусы по уровню корабля: на ур.10 +60% корпус, +90% щит, +10% скорость, урон не растёт.
+// (линейно от ур.1). Не затрагивает модули — только базовые статы корпуса.
 export const SHIP_MAX_LEVEL = 10;
 
 export function shipLevelMods(level) {
   const t = (Phaser_clamp(level, 1, SHIP_MAX_LEVEL) - 1) / (SHIP_MAX_LEVEL - 1); // 0..1
-  return { hull: 1 + 0.20 * t, shield: 1 + 0.20 * t, damage: 1 + 0.15 * t, speed: 1 + 0.10 * t };
+  return { hull: 1 + 0.60 * t, shield: 1 + 0.90 * t, damage: 1, speed: 1 + 0.10 * t };
 }
 function Phaser_clamp(v, a, b) { return Math.max(a, Math.min(b, v)); }
 
@@ -85,8 +85,18 @@ const TIER_TOTAL = { 'T1': 50000, 'T2': 150000, 'T3': 300000, 'T4': 600000, 'T4 
 const CURVE_SUM = 285; // Σ L² для L=1..9 — нормировка слабо-экспоненциальной кривой
 
 // Кредиты для перехода ship-level `level` → `level+1` (level 1..9). null если уже макс.
+// Престиж-корабли качаются за золото — см. shipLevelCostGold.
 export function shipLevelCost(ship, level) {
+  if (ship.prestige) return null;
   if (level >= SHIP_MAX_LEVEL) return null;
   const total = TIER_TOTAL[ship.tier] || 150000;
   return Math.round(total * level * level / CURVE_SUM);
+}
+
+// ⭐ для перехода ship-level `level` → `level+1` у престиж-корабля.
+// Итого 2750⭐ за полный путь 1→10 по той же слабо-экспоненциальной кривой.
+export function shipLevelCostGold(ship, level) {
+  if (!ship.prestige) return null;
+  if (level >= SHIP_MAX_LEVEL) return null;
+  return Math.round(2750 * level * level / CURVE_SUM);
 }

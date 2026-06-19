@@ -481,31 +481,38 @@ export default class CargoScene extends Phaser.Scene {
     const W = this.scale.width, H = this.scale.height;
     const pDef = item.perk ? PERK_MAP[item.perk.key] : null;
     const rarColor = pDef ? `#${RARITY_COLOR[pDef.rarity].toString(16).padStart(6, '0')}` : null;
-    const TW = 230, LINE_H = 17;
-    const lines = [
+    const TW = 240, GAP = 5;
+
+    const lineDefs = [
       { text: itemName(item),  sty: this.O('13px', '#ffe0b2') },
       { text: itemStats(item), sty: this.F('11px', '#9fb3b8') },
     ];
     if (pDef) {
-      lines.push({ text: pDef.name,                       sty: this.F('11px', rarColor) });
-      lines.push({ text: pDef.desc(perkBonus(item.perk)), sty: this.F('11px', '#aaccdd') });
+      lineDefs.push({ text: pDef.name,                       sty: this.F('11px', rarColor) });
+      lineDefs.push({ text: pDef.desc(perkBonus(item.perk)), sty: this.F('11px', '#aaccdd') });
     }
-    const TH = 10 + lines.length * LINE_H + 6;
+
+    // Первый проход — создаём тексты вне экрана, чтобы замерить реальную высоту с word-wrap
+    const textObjs = lineDefs
+      .filter(l => l.text)
+      .map(l => this.add.text(-9999, -9999, l.text,
+        { ...l.sty, wordWrap: { width: TW - 20 } }).setDepth(201));
+
+    const TH = 10 + textObjs.reduce((s, t) => s + t.height + GAP, 0);
     let tx = wx + 16, ty = wy - TH / 2;
     if (tx + TW > W - 8) tx = wx - TW - 8;
     if (ty < 4) ty = 4;
     if (ty + TH > H - 4) ty = H - TH - 4;
+
     const g = this.add.graphics().setDepth(200);
     g.fillStyle(0x08121e, 0.97); g.fillRoundedRect(tx, ty, TW, TH, 6);
     g.lineStyle(1, 0x1e3a50, 0.9); g.strokeRoundedRect(tx, ty, TW, TH, 6);
-    const objs = [g];
+
+    // Второй проход — расставляем тексты по финальным координатам
     let ly = ty + 8;
-    for (const l of lines) {
-      objs.push(this.add.text(tx + 10, ly, l.text,
-        { ...l.sty, wordWrap: { width: TW - 20 } }).setDepth(201));
-      ly += LINE_H;
-    }
-    this._tooltipObjs = objs;
+    textObjs.forEach(t => { t.setPosition(tx + 10, ly); ly += t.height + GAP; });
+
+    this._tooltipObjs = [g, ...textObjs];
   }
 
   _hideTooltip() {

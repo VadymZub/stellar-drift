@@ -4,7 +4,7 @@ import { i18n } from '../i18n.js';
 import { itemName, itemStats, itemSellPrice, itemIconKey, SLOT_KEY, creditUpgradeCost, starUpgradeCost, modMult,
          PLASMATE_GOLD_RATE, PLASMATE_PER_SLOT, totalPlasmateInInventory, removePlasmateFromInventory,
          AMMO_ICON, CONSUMABLES, addConsumableToInventory } from '../items.js';
-import { SHIPS, SHIP_BY_KEY, purchaseState, shipLevelCost, SHIP_MAX_LEVEL } from '../ships.js';
+import { SHIPS, SHIP_BY_KEY, purchaseState, shipLevelCost, shipLevelCostGold, SHIP_MAX_LEVEL } from '../ships.js';
 import { PERK_MAP, RARITY_COLOR, RARITY_LABEL, rollPerk, perkBonus, creditUpgCost, starUpgCost, PERK_CREDIT_COST, PERK_STAR_COST, PERK_REROLL_BASE } from '../perks.js';
 import { prerenderTex } from '../utils/prerenderTex.js';
 
@@ -165,7 +165,7 @@ export default class GarageScene extends Phaser.Scene {
     stat(0, i18n.t('garage.hull'), `${ship.hullMax}`);
     stat(1, i18n.t('garage.shield_base'), `${ship.shieldBase}`);
     stat(2, i18n.t('garage.speed'), `${ship.baseSpeed}`);
-    stat(3, i18n.t('garage.slots'), `${ship.wSlots}⚔ / ${ship.sSlots}🛡 / ${ship.eSlots || 0}🚀 / 3📦`);
+    stat(3, i18n.t('garage.slots'), `${ship.wSlots}⚔ / ${ship.sSlots}🛡 / ${ship.eSlots || 0}🚀 / ${ship.aSlots || 3}📦`);
 
     // Пассивные бонусы корабля (cargoBonus / passives / activeSkill)
     let pRow = 4;
@@ -637,20 +637,23 @@ export default class GarageScene extends Phaser.Scene {
     this.add.text(lx + lw / 2, py + 180, `${i18n.t('garage.ship_level')}: ${lvl} / ${SHIP_MAX_LEVEL}`, this.O('15px', '#ffb74d')).setOrigin(0.5, 0);
 
     // Текущие эффективные статы активного корабля
-    const effDps = (p.hasCannon ? Math.round(p.cannonDamage * p.weaponFireRate * (p.cannonAccuracy ?? 0.90)) : 0)
-                 + (p.hasLaser  ? Math.round(p.laserDamage  * p.weaponFireRate * (p.laserAccuracy  ?? 0.80)) : 0);
     const lines = [
       `${i18n.t('garage.hull')}:  ${p.maxHull}`,
       `${i18n.t('hud.shield')}:  ${p.maxShield}`,
-      `${i18n.t('garage.dps')}:  ${effDps}`,
       `${i18n.t('garage.speed')}:  ${Math.round(p.baseSpeed)}`,
     ];
     this.add.text(lx + 20, py + 220, lines.join('\n'), this.F('13px', '#9fb3b8')).setLineSpacing(8);
 
-    const cost = shipLevelCost(p.ship, lvl);
+    const isPrestige = !!p.ship.prestige;
+    const cost = isPrestige ? shipLevelCostGold(p.ship, lvl) : shipLevelCost(p.ship, lvl);
     const ay = py + ph - 92;
     if (cost == null) {
       this.bigBtn(lx + lw / 2, ay, 0x5d4037, i18n.t('garage.max_level'), null);
+    } else if (isPrestige) {
+      const can = (gs.starGold || 0) >= cost;
+      this.add.text(lx + lw / 2, ay - 22, `${i18n.t('garage.next_level')}: ${cost} ⭐`,
+        this.F('12px', can ? '#ffd54f' : '#ef9a9a')).setOrigin(0.5, 0);
+      this.bigBtn(lx + lw / 2, ay, can ? 0x3a2c00 : 0x263238, i18n.t('garage.upgrade_ship'), can ? () => this.upgradeShip() : null);
     } else {
       const can = (gs.credits || 0) >= cost;
       this.add.text(lx + lw / 2, ay - 22, `${i18n.t('garage.next_level')}: ${cost.toLocaleString('ru')} кр`,
@@ -764,9 +767,16 @@ export default class GarageScene extends Phaser.Scene {
   upgradeShip() {
     const gs = this.gs, p = gs.player, key = p.ship.key;
     const lvl = gs.shipLevels?.[key] || 1;
-    const cost = shipLevelCost(p.ship, lvl);
-    if (cost == null || (gs.credits || 0) < cost) return;
-    gs.credits -= cost;
+    const isPrestige = !!p.ship.prestige;
+    const cost = isPrestige ? shipLevelCostGold(p.ship, lvl) : shipLevelCost(p.ship, lvl);
+    if (cost == null) return;
+    if (isPrestige) {
+      if ((gs.starGold || 0) < cost) return;
+      gs.starGold -= cost;
+    } else {
+      if ((gs.credits || 0) < cost) return;
+      gs.credits -= cost;
+    }
     gs.shipLevels = gs.shipLevels || {};
     gs.shipLevels[key] = lvl + 1;
     p.applyShip(p.ship);            // переприменить уровень к активному кораблю (сохранит долю корпуса)
@@ -1449,18 +1459,24 @@ export default class GarageScene extends Phaser.Scene {
     const W = this.scale.width, H = this.scale.height;
     const pDef = item.perk ? PERK_MAP[item.perk.key] : null;
     const rarColor = pDef ? `#${RARITY_COLOR[pDef.rarity].toString(16).padStart(6, '0')}` : null;
-    const TW = 230, LINE_H = 17;
+    const TW = 240, GAP = 5;
 
-    const lines = [
+    const lineDefs = [
       { text: itemName(item),  sty: this.O('13px', '#ffe0b2') },
       { text: itemStats(item), sty: this.F('11px', '#9fb3b8') },
     ];
     if (pDef) {
-      lines.push({ text: pDef.name,                       sty: this.F('11px', rarColor) });
-      lines.push({ text: pDef.desc(perkBonus(item.perk)), sty: this.F('11px', '#aaccdd') });
+      lineDefs.push({ text: pDef.name,                       sty: this.F('11px', rarColor) });
+      lineDefs.push({ text: pDef.desc(perkBonus(item.perk)), sty: this.F('11px', '#aaccdd') });
     }
 
-    const TH = 10 + lines.length * LINE_H + 6;
+    // Первый проход — создаём тексты вне экрана, чтобы замерить реальную высоту с word-wrap
+    const textObjs = lineDefs
+      .filter(l => l.text)
+      .map(l => this.add.text(-9999, -9999, l.text,
+        { ...l.sty, wordWrap: { width: TW - 20 } }).setDepth(201));
+
+    const TH = 10 + textObjs.reduce((s, t) => s + t.height + GAP, 0);
     let tx = wx + 16, ty = wy - TH / 2;
     if (tx + TW > W - 8) tx = wx - TW - 8;
     if (ty < 4) ty = 4;
@@ -1469,14 +1485,12 @@ export default class GarageScene extends Phaser.Scene {
     const g = this.add.graphics().setDepth(200);
     g.fillStyle(0x08121e, 0.97); g.fillRoundedRect(tx, ty, TW, TH, 6);
     g.lineStyle(1, 0x1e3a50, 0.9); g.strokeRoundedRect(tx, ty, TW, TH, 6);
-    const objs = [g];
+
+    // Второй проход — расставляем тексты по финальным координатам
     let ly = ty + 8;
-    for (const l of lines) {
-      objs.push(this.add.text(tx + 10, ly, l.text,
-        { ...l.sty, wordWrap: { width: TW - 20 } }).setDepth(201));
-      ly += LINE_H;
-    }
-    this._tooltipObjs = objs;
+    textObjs.forEach(t => { t.setPosition(tx + 10, ly); ly += t.height + GAP; });
+
+    this._tooltipObjs = [g, ...textObjs];
   }
 
   _hideTooltip() {
