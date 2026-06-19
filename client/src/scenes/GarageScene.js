@@ -119,7 +119,7 @@ export default class GarageScene extends Phaser.Scene {
     this.add.text(x + w / 2, y + h - 16, badge, this.F('11px', color)).setOrigin(0.5, 0);
   }
 
-  // Картинка корабля для Гаража: геройский арт (garageKey) если есть, иначе игровой спрайт.
+// Картинка корабля для Гаража: геройский арт (garageKey) если есть, иначе игровой спрайт.
   // Вписываем в box с сохранением пропорций (арт не квадратный). Возвращает image для тинта.
   shipImg(cx, cy, box, ship) {
     const key = ship.garageKey || ship.key;
@@ -198,6 +198,25 @@ export default class GarageScene extends Phaser.Scene {
       if (ship.activeSkill) {
         stat(pRow++, i18n.t('garage.active_skill'), i18n.t(ship.activeSkill.nameKey));
       }
+    }
+
+    // Corp affinity bonus
+    if (ship.corpAffinity) {
+      const isActive = ship.corpAffinity === gs.playerCorp;
+      const bonusLabels = {
+        helios: '+5% скорость (Гелиос)',
+        karax:  '+5% корпус (Каракс)',
+        tides:  '+5% щит / +3% реген (Тидес)',
+      };
+      const label = bonusLabels[ship.corpAffinity];
+      const color = isActive ? '#ffb74d' : '#2a4a5a';
+      const sepY = sy + pRow * 22 + 4;
+      const sepG = this.add.graphics();
+      sepG.lineStyle(1, 0x1e3a50, 0.7);
+      sepG.beginPath(); sepG.moveTo(x + 18, sepY); sepG.lineTo(x + w - 18, sepY); sepG.strokePath();
+      this.add.text(x + 18, sepY + 6, isActive ? '★ ' + label : label,
+        this.F('11px', color));
+      pRow++;
     }
 
     // Требования / действие

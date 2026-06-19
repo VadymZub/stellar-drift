@@ -34,6 +34,7 @@ const MOCK_MY_GUILD = {
   clanPoints: 1200,
   recruiting: true,
   motto: 'В единстве сила',
+  message: 'Рейд в пятницу в 20:00!',
   members: [
     { name: 'VoidRunner',  role: 'Капитан',  online: true,  contribution: 45000, level: 14 },
     { name: 'NovaStar',    role: 'Офицер',   online: true,  contribution: 32000, level: 12 },
@@ -57,9 +58,9 @@ const MOCK_MY_GUILD = {
   log: [
     { time: '18.06  18:44', text: 'EchoWarden вступил в гильдию',                  color: '#66bb6a' },
     { time: '18.06  15:20', text: 'Уровень гильдии 2 — Броня +6%',                color: '#ffd54f' },
-    { time: '17.06  22:10', text: 'NovaStar положил предмет на склад',             color: '#4dd0e1' },
+    { time: '17.06  22:10', text: 'NovaStar положил «Плазмопушка T3» на склад',    color: '#4dd0e1' },
     { time: '17.06  19:32', text: 'IronPilot внёс 5 000 кр в казну',              color: '#ffe0b2' },
-    { time: '16.06  14:05', text: 'StormEagle взял предмет со склада',             color: '#ef9a9a' },
+    { time: '16.06  14:05', text: 'StormEagle взял «Щит T2» со склада',            color: '#ef9a9a' },
     { time: '15.06  09:17', text: 'DarkMatter вступил в гильдию',                  color: '#66bb6a' },
     { time: '14.06  21:44', text: 'OldPilot покинул гильдию',                      color: '#ef9a9a' },
     { time: '13.06  18:00', text: 'Уровень гильдии 1 — Щит +3%',                 color: '#ffd54f' },
@@ -221,7 +222,7 @@ export default class ClanScene extends Phaser.Scene {
       this.add.text(rx + 12, ry + 8,  `[${g.tag}]`,  this.O('12px', cc));
       this.add.text(rx + 12 + g.tag.length * 9 + 8, ry + 8, g.name, this.O('12px', '#cce8f0'));
       this.add.text(rx + 12, ry + 28, `Ур.${g.level}  ·  ${g.members}/50`, this.F('11px', '#2a5a70'));
-      if (g.motto) this.add.text(rx + 12, ry + 46, `"${g.motto}"`, this.F('10px', '#1a3a4a'));
+      if (g.motto) this.add.text(rx + 12, ry + 46, `"${g.motto}"`, this.F('10px', '#4a8898'));
 
       this.add.text(rx + rw - 12, ry + 8, g.recruiting ? '● набор открыт' : '● набор закрыт',
         this.F('10px', g.recruiting ? '#4acc88' : '#334455')).setOrigin(1, 0);
@@ -367,15 +368,26 @@ export default class ClanScene extends Phaser.Scene {
 
     // Header
     const cc = { helios: '#ffe082', karax: '#ef9a9a', tides: '#80cbc4' }[clan.corp] || '#4dd0e1';
-    const tagW = this.add.text(px + 20, py + 14, `[${clan.tag}]`, this.O('17px', cc)).width + 10;
-    this.add.text(px + 20 + tagW, py + 14, clan.name, this.O('17px', '#cce8f0'));
+    const tagW = this.add.text(px + 20, py + 12, `[${clan.tag}]`, this.O('20px', cc)).width + 10;
+    this.add.text(px + 20 + tagW, py + 12, clan.name, this.O('20px', '#cce8f0'));
     const online = (clan.members || []).filter(m => m.online).length;
-    this.add.text(px + 20, py + 44,
+    this.add.text(px + 20, py + 48,
       `${online} онлайн · ${(clan.members || []).length} участников · Гильдия ур.${clan.level}`,
-      this.F('11px', '#2a5a70'));
+      this.F('13px', '#6aaabb'));
+    // Motto (left half of py+66 row)
+    if (clan.motto) this.add.text(px + 20, py + 67, '"' + clan.motto + '"', this.F('12px', '#5a9aac'));
+    // Message block (right half of py+66 row, different background)
+    if (clan.message) {
+      const msgBX = px + Math.floor(pw / 2) + 10;
+      const msgBW = pw - Math.floor(pw / 2) - 30;
+      const msgBG = this.add.graphics();
+      msgBG.fillStyle(0x0a1a2c, 0.95); msgBG.fillRoundedRect(msgBX, py + 62, msgBW, 20, 4);
+      msgBG.lineStyle(1, 0x1e4a6a, 0.9); msgBG.strokeRoundedRect(msgBX, py + 62, msgBW, 20, 4);
+      this.add.text(msgBX + 10, py + 72, '📢 ' + clan.message, this.F('11px', '#7ac8e0')).setOrigin(0, 0.5);
+    }
     const rCol = clan.myRole === 'Капитан' ? '#ffb74d' : clan.myRole === 'Офицер' ? '#4dd0e1' : '#9fb3b8';
-    this.add.text(px + pw - 16, py + 18, clan.myRole || 'Новобранец', this.F('11px', rCol)).setOrigin(1, 0);
-    this.add.text(px + pw - 16, py + 36, 'N / ESC', this.F('10px', '#223344')).setOrigin(1, 0);
+    this.add.text(px + pw - 16, py + 16, clan.myRole || 'Новобранец', this.F('13px', rCol)).setOrigin(1, 0);
+    this.add.text(px + pw - 16, py + 36, 'N / ESC', this.F('11px', '#3a5a6a')).setOrigin(1, 0);
 
     // Tabs — captain sees all 6, others 5 (no НАСТРОЙКИ)
     const allTabs = [
@@ -389,23 +401,25 @@ export default class ClanScene extends Phaser.Scene {
     const tabs   = clan.myRole === 'Капитан' ? allTabs : allTabs.filter(t => t.key !== 'settings');
     if (!gs.clanTab || !tabs.find(t => t.key === gs.clanTab)) gs.clanTab = 'members';
 
-    const tabY = py + 60, tabH = 26, tabW = Math.floor(pw / tabs.length);
+    const tabY = py + 84, tabH = 30, tabW = Math.floor(pw / tabs.length);
     tabs.forEach(({ key, label }, i) => {
       const tx  = px + i * tabW;
       const sel = gs.clanTab === key;
       const tbg = this.add.graphics();
-      tbg.fillStyle(sel ? 0x0d2030 : 0x040c15, sel ? 1 : 0.8);
+      const fillIdle = sel ? 0x0d2030 : 0x112640;
+      tbg.fillStyle(fillIdle, 1);
       tbg.fillRoundedRect(tx + 2, tabY, tabW - 4, tabH, 4);
-      if (sel) { tbg.lineStyle(1, COLORS.primary, 0.7); tbg.strokeRoundedRect(tx + 2, tabY, tabW - 4, tabH, 4); }
+      tbg.lineStyle(1, sel ? COLORS.primary : 0x3a7aaa, sel ? 0.8 : 0.7);
+      tbg.strokeRoundedRect(tx + 2, tabY, tabW - 4, tabH, 4);
       const btn = this.add.rectangle(tx + tabW / 2, tabY + tabH / 2, tabW - 4, tabH, 0, 0)
         .setInteractive({ useHandCursor: true });
       btn.on('pointerdown', () => { gs.clanTab = key; this.scene.restart(); });
-      btn.on('pointerover', () => { if (!sel) { tbg.clear(); tbg.fillStyle(0x0a1822, 0.9); tbg.fillRoundedRect(tx + 2, tabY, tabW - 4, tabH, 4); } });
-      btn.on('pointerout',  () => { if (!sel) { tbg.clear(); tbg.fillStyle(0x040c15, 0.8); tbg.fillRoundedRect(tx + 2, tabY, tabW - 4, tabH, 4); } });
-      this.add.text(tx + tabW / 2, tabY + tabH / 2, label, this.O('10px', sel ? '#4dd0e1' : '#2a4a5a')).setOrigin(0.5);
+      btn.on('pointerover', () => { if (!sel) { tbg.clear(); tbg.fillStyle(0x1a3a54, 1); tbg.fillRoundedRect(tx + 2, tabY, tabW - 4, tabH, 4); tbg.lineStyle(1, 0x4a9ac0, 0.8); tbg.strokeRoundedRect(tx + 2, tabY, tabW - 4, tabH, 4); } });
+      btn.on('pointerout',  () => { if (!sel) { tbg.clear(); tbg.fillStyle(0x112640, 1); tbg.fillRoundedRect(tx + 2, tabY, tabW - 4, tabH, 4); tbg.lineStyle(1, 0x3a7aaa, 0.7); tbg.strokeRoundedRect(tx + 2, tabY, tabW - 4, tabH, 4); } });
+      this.add.text(tx + tabW / 2, tabY + tabH / 2, label, this.O('12px', sel ? '#4dd0e1' : '#7abccc')).setOrigin(0.5);
     });
 
-    const cx = px + 12, cy = py + 92, cw = pw - 24, ch = ph - 100;
+    const cx = px + 12, cy = py + 120, cw = pw - 24, ch = ph - 128;
     switch (gs.clanTab) {
       case 'members':  this._tabMembers( cx, cy, cw, ch, clan); break;
       case 'vault':    this._tabVault(   cx, cy, cw, ch, clan); break;
@@ -421,65 +435,46 @@ export default class ClanScene extends Phaser.Scene {
     const isOff  = ['Капитан', 'Офицер'].includes(clan.myRole);
     const isCapt = clan.myRole === 'Капитан';
     const apps   = clan.applications || [];
-    let   curY   = y;
 
-    // Applications block (officer+)
+    // Calculate apps block height
+    let appsBlockH = 0;
     if (isOff && apps.length > 0) {
-      const appBlockH = 26 + apps.length * 44 + 6;
-      const abBg = this.add.graphics();
-      abBg.fillStyle(0x0a1810, 0.9); abBg.fillRoundedRect(x, curY, w, appBlockH, 6);
-      abBg.lineStyle(1, 0x2a5a2a, 0.5); abBg.strokeRoundedRect(x, curY, w, appBlockH, 6);
-      this.add.text(x + 14, curY + 7, `ЗАЯВКИ (${apps.length})`, this.O('11px', '#66bb6a'));
-
-      apps.forEach((app, i) => {
-        const ry = curY + 26 + i * 44;
-        const rbg2 = this.add.graphics();
-        rbg2.fillStyle(0x0c1f10, 0.88); rbg2.fillRoundedRect(x + 8, ry, w - 16, 36, 4);
-        this.add.text(x + 22, ry + 6,  app.name,            this.O('12px', '#b8e4c4'));
-        this.add.text(x + 22, ry + 22, `Уровень ${app.level}`, this.F('10px', '#2a6a3a'));
-        if (app.msg) this.add.text(x + 130, ry + 14, `"${app.msg}"`, this.F('10px', '#1a4a2a')).setOrigin(0, 0.5);
-
-        const bw = 76, bh = 20, btnY = ry + 8;
-        this._sBtn(x + w - 16 - bw * 2 - 6, btnY, bw, bh, '✓ ПРИНЯТЬ', '#66bb6a', 0x0a1a0e, () => {
-          clan.members.push({ name: app.name, role: 'Новобранец', online: false, contribution: 0, level: app.level });
-          apps.splice(apps.indexOf(app), 1);
-          (clan.log = clan.log || []).unshift({ time: this._ts(), text: `${app.name} вступил в гильдию`, color: '#66bb6a' });
-          this._sr();
-        });
-        this._sBtn(x + w - 16 - bw, btnY, bw, bh, '✕ ОТКЛОНИТЬ', '#ef9a9a', 0x1a0a0a, () => {
-          apps.splice(apps.indexOf(app), 1);
-          this._sr();
-        });
-      });
-      curY += appBlockH + 6;
+      appsBlockH = 30 + apps.length * 48 + 12;
     }
 
-    // Member rows
-    const rowH = 44, rowGap = 4;
-    const maxR = Math.floor((h - (curY - y)) / (rowH + rowGap));
-    (clan.members || []).slice(0, maxR).forEach((m, i) => {
-      const ry = curY + i * (rowH + rowGap);
+    const listY = y + appsBlockH;
+    const listH = h - appsBlockH;
+
+    // Member rows — scrollable container (rendered before apps so apps mask overflow)
+    const rowH = 50, rowGap = 5;
+    const members = clan.members || [];
+    const container = this.add.container(x, listY);
+
+    members.forEach((m, i) => {
+      const ry = i * (rowH + rowGap);
+
       const mbg = this.add.graphics();
-      mbg.fillStyle(0x0a1520, 0.9); mbg.fillRoundedRect(x, ry, w, rowH, 5);
-      mbg.lineStyle(1, m.online ? 0x1a3a20 : 0x0d1a26, 0.6); mbg.strokeRoundedRect(x, ry, w, rowH, 5);
+      mbg.fillStyle(0x0a1520, 0.9); mbg.fillRoundedRect(0, ry, w, rowH, 5);
+      mbg.lineStyle(1, m.online ? 0x1a3a20 : 0x0d1a26, 0.6); mbg.strokeRoundedRect(0, ry, w, rowH, 5);
 
       const dot = this.add.graphics();
-      dot.fillStyle(m.online ? COLORS.emerald : 0x334455, 1);
-      dot.fillCircle(x + 16, ry + rowH / 2, 5);
+      dot.fillStyle(m.online ? 0x66bb6a : 0x334455, 1);
+      dot.fillCircle(18, ry + rowH / 2, 5);
 
       const rc = m.role === 'Капитан' ? '#ffb74d' : m.role === 'Офицер' ? '#4dd0e1' : '#3a5a6a';
-      this.add.text(x + 30, ry + 7,  m.name,  this.O('12px', '#cce8f0'));
-      this.add.text(x + 30, ry + 24, m.role,  this.F('10px', rc));
-      this.add.text(x + w / 2, ry + rowH / 2, `Ур. ${m.level || '?'}`, this.F('10px', '#2a5a70')).setOrigin(0.5);
+      const nameTxt  = this.add.text(34, ry + 9,  m.name, this.O('13px', '#cce8f0'));
+      const roleTxt  = this.add.text(34, ry + 28, m.role, this.F('12px', rc));
+      const lvlTxt   = this.add.text(w / 2, ry + rowH / 2, 'Ур. ' + (m.level || '?'), this.F('12px', '#2a5a70')).setOrigin(0.5);
 
-      // Role badge + change button (captain only, not self)
+      const rowEls = [mbg, dot, nameTxt, roleTxt, lvlTxt];
+
       if (isCapt && m.role !== 'Капитан') {
         const isOfficer = m.role === 'Офицер';
         const newRole   = isOfficer ? 'Новобранец' : 'Офицер';
         const lbl       = isOfficer ? '▼ в Новобранцы' : '▲ в Офицеры';
         const clr       = isOfficer ? '#ef9a9a' : '#4dd0e1';
-        const bw = 108, bh = 18;
-        const bx = x + w - 14 - bw;
+        const bw = 114, bh = 20;
+        const bx = w - 14 - bw;
         const by = ry + (rowH - bh) / 2;
         const bbg = this.add.graphics();
         bbg.fillStyle(isOfficer ? 0x1a0808 : 0x081822, 0.9);
@@ -488,15 +483,58 @@ export default class ClanScene extends Phaser.Scene {
         bbg.strokeRoundedRect(bx, by, bw, bh, 3);
         const rbtn = this.add.rectangle(bx + bw / 2, by + bh / 2, bw, bh, 0, 0)
           .setInteractive({ useHandCursor: true });
-        this.add.text(bx + bw / 2, by + bh / 2, lbl, this.F('9px', clr)).setOrigin(0.5);
+        const rLbl = this.add.text(bx + bw / 2, by + bh / 2, lbl, this.F('11px', clr)).setOrigin(0.5);
         rbtn.on('pointerdown', () => { m.role = newRole; this._sr(); });
         rbtn.on('pointerover', () => { bbg.clear(); bbg.fillStyle(isOfficer ? 0x2a1010 : 0x102030, 0.9); bbg.fillRoundedRect(bx, by, bw, bh, 3); });
         rbtn.on('pointerout',  () => { bbg.clear(); bbg.fillStyle(isOfficer ? 0x1a0808 : 0x081822, 0.9); bbg.fillRoundedRect(bx, by, bw, bh, 3); });
+        rowEls.push(bbg, rbtn, rLbl);
       } else if (!isCapt) {
-        this.add.text(x + w - 14, ry + 8,  `вклад: ${(m.contribution || 0).toLocaleString()}`, this.F('10px', '#1a4060')).setOrigin(1, 0);
-        this.add.text(x + w - 14, ry + 26, m.online ? 'онлайн' : 'офлайн', this.F('10px', m.online ? '#2a6a3a' : '#2a3a4a')).setOrigin(1, 0);
+        const contrTxt = this.add.text(w - 14, ry + 10, 'вклад: ' + (m.contribution || 0).toLocaleString(), this.F('11px', '#5a9aac')).setOrigin(1, 0);
+        const onlTxt   = this.add.text(w - 14, ry + 28, m.online ? 'онлайн' : 'офлайн', this.F('11px', m.online ? '#5aaa66' : '#5a7a8a')).setOrigin(1, 0);
+        rowEls.push(contrTxt, onlTxt);
       }
+
+      container.add(rowEls);
     });
+
+    // Scroll wheel
+    const totalH = members.length * (rowH + rowGap);
+    if (totalH > listH) {
+      this.input.on('wheel', (p, _o, _dx, dy) => {
+        if (p.x < x || p.x > x + w || p.y < listY || p.y > listY + listH) return;
+        container.y = Phaser.Math.Clamp(container.y - dy * 0.5, listY - (totalH - listH), listY);
+      });
+      this.add.rectangle(x, listY + listH, w, 60, 0x080e1a).setOrigin(0, 0).setDepth(12);
+    }
+
+    // Applications block — rendered AFTER container so its background masks scrolled overflow
+    if (isOff && apps.length > 0) {
+      const abBg = this.add.graphics();
+      abBg.fillStyle(0x0a1810, 0.9); abBg.fillRoundedRect(x, y, w, appsBlockH - 12, 6);
+      abBg.lineStyle(1, 0x2a5a2a, 0.5); abBg.strokeRoundedRect(x, y, w, appsBlockH - 12, 6);
+      this.add.text(x + 14, y + 9, 'ЗАЯВКИ (' + apps.length + ')', this.O('13px', '#66bb6a'));
+
+      apps.forEach((app, i) => {
+        const ry = y + 30 + i * 48;
+        const rbg2 = this.add.graphics();
+        rbg2.fillStyle(0x0c1f10, 0.88); rbg2.fillRoundedRect(x + 8, ry, w - 16, 40, 4);
+        this.add.text(x + 22, ry + 8,  app.name,               this.O('13px', '#b8e4c4'));
+        this.add.text(x + 22, ry + 26, 'Уровень ' + app.level, this.F('11px', '#2a6a3a'));
+        if (app.msg) this.add.text(x + 140, ry + 18, '"' + app.msg + '"', this.F('11px', '#1a4a2a')).setOrigin(0, 0.5);
+
+        const bw = 86, bh = 22, btnY = ry + 9;
+        this._sBtn(x + w - 16 - bw * 2 - 8, btnY, bw, bh, '✓ ПРИНЯТЬ', '#66bb6a', 0x0a1a0e, () => {
+          clan.members.push({ name: app.name, role: 'Новобранец', online: false, contribution: 0, level: app.level });
+          apps.splice(apps.indexOf(app), 1);
+          (clan.log = clan.log || []).unshift({ time: this._ts(), text: app.name + ' вступил в гильдию', color: '#66bb6a' });
+          this._sr();
+        });
+        this._sBtn(x + w - 16 - bw, btnY, bw, bh, '✕ ОТКЛОНИТЬ', '#ef9a9a', 0x1a0a0a, () => {
+          apps.splice(apps.indexOf(app), 1);
+          this._sr();
+        });
+      });
+    }
   }
 
   // ── СКЛАД ─────────────────────────────────────────────────────────────────
@@ -523,21 +561,24 @@ export default class ClanScene extends Phaser.Scene {
         });
     }
 
-    // Slot grid — 5 cols × N rows
-    const SZ = 54, GAP = 5, COLS = 5;
-    const STRIP_H = 14, BODY_H = SZ - STRIP_H;
+    // Slot grid — larger cells, auto cols, centered
+    const SZ = 68, GAP = 6;
+    const STRIP_H = 16, BODY_H = SZ - STRIP_H;
+    const COLS = Math.min(10, Math.floor((w + GAP) / (SZ + GAP)));
+    const gridW = COLS * SZ + (COLS - 1) * GAP;
+    const gx = x + Math.floor((w - gridW) / 2);
     const gridY = y + 58;
 
     for (let si = 0; si < maxSlots; si++) {
       const col = si % COLS, row = Math.floor(si / COLS);
-      const sx = x + col * (SZ + GAP);
+      const sx = gx + col * (SZ + GAP);
       const sy = gridY + row * (SZ + GAP);
       const item = vault[si] ?? null;
 
       if (!item) {
         const eg = this.add.graphics();
-        eg.fillStyle(0x080e18, 0.85); eg.fillRoundedRect(sx, sy, SZ, SZ, 4);
-        eg.lineStyle(1, 0x1a2a3a, 0.3); eg.strokeRoundedRect(sx, sy, SZ, SZ, 4);
+        eg.fillStyle(0x0c1828, 0.95); eg.fillRoundedRect(sx, sy, SZ, SZ, 4);
+        eg.lineStyle(1, 0x2a4a6a, 0.65); eg.strokeRoundedRect(sx, sy, SZ, SZ, 4);
         continue;
       }
 
@@ -549,8 +590,8 @@ export default class ClanScene extends Phaser.Scene {
       vbg.lineStyle(1, bdrClr, pDef ? 0.6 : 0.35); vbg.strokeRoundedRect(sx, sy, SZ, BODY_H, 4);
       const iconK = itemIconKey(item);
       if (iconK) {
-        this.add.image(sx + SZ / 2, sy + BODY_H / 2, prerenderTex(this, iconK, 32, 32))
-          .setDisplaySize(32, 32).setOrigin(0.5);
+        this.add.image(sx + SZ / 2, sy + BODY_H / 2, prerenderTex(this, iconK, 48, 48))
+          .setDisplaySize(48, 48).setOrigin(0.5);
       } else {
         this.add.text(sx + SZ / 2, sy + BODY_H / 2, `T${item.tier}`, this.F('10px', '#b8e4c4')).setOrigin(0.5);
       }
@@ -576,7 +617,7 @@ export default class ClanScene extends Phaser.Scene {
         const sZone = this.add.rectangle(sx + SZ / 2, sy + BODY_H + STRIP_H / 2, SZ, STRIP_H, 0, 0)
           .setInteractive({ useHandCursor: !cargoFull });
         this.add.text(sx + SZ / 2, sy + BODY_H + STRIP_H / 2, '← в трюм',
-          this.F('8px', cargoFull ? '#1a3020' : '#4acc88')).setOrigin(0.5);
+          this.F('10px', cargoFull ? '#1a3a22' : '#5cdd9a')).setOrigin(0.5);
         if (!cargoFull) {
           sZone.on('pointerdown', () => {
             this._hideVaultTooltip();
@@ -666,9 +707,9 @@ export default class ClanScene extends Phaser.Scene {
       vault.splice(idx, 1);
       (gs.inventory = gs.inventory || []).push(item);
       (clan.log = clan.log || []).unshift({ time: this._ts(),
-        text: `${gs.playerName || 'Пилот'} взял «${item.name || item.key || '?'}» со склада`,
+        text: `${gs.playerName || 'Пилот'} взял «${itemName(item)}» со склада`,
         color: '#ef9a9a' });
-      gs._moveMsg = `← В ТРЮМ: ${item.name || item.key || '?'}`;
+      gs._moveMsg = `← В ТРЮМ: ${itemName(item)}`;
       this._sr();
     });
     objs.push(takeBtn);
@@ -846,57 +887,172 @@ export default class ClanScene extends Phaser.Scene {
 
   // ── НАСТРОЙКИ (капитан) ───────────────────────────────────────────────────
   _tabSettings(x, y, w, h, clan) {
-    this.add.text(x + w / 2, y + 6, 'НАСТРОЙКИ ГИЛЬДИИ', this.O('13px', '#2a5a70')).setOrigin(0.5, 0);
+    this.add.text(x + w / 2, y + 6, 'НАСТРОЙКИ ГИЛЬДИИ', this.O('15px', '#5a9aac')).setOrigin(0.5, 0);
     const hW = Math.floor((w - 14) / 2);
     const lx = x, rx = x + hW + 14;
 
-    // Left: edit info
-    this.add.text(lx + hW / 2, y + 34, 'ИНФОРМАЦИЯ', this.O('11px', '#2a4a5a')).setOrigin(0.5, 0);
-    this._btn(lx, y + 56, hW, 30, '✎ Изменить название', '#4dd0e1', 0x081420, 0x102030, () => {
-      const v = window.prompt('Новое название гильдии (3–20 символов):', clan.name);
-      if (v === null) return;
-      const t = v.trim();
-      if (t.length < 3 || t.length > 20) { window.alert('Название: 3–20 символов'); return; }
-      clan.name = t; this._sr();
+    // Left: edit info — 5 buttons
+    this.add.text(lx + hW / 2, y + 36, 'ИНФОРМАЦИЯ', this.O('12px', '#5a8898')).setOrigin(0.5, 0);
+    this._btn(lx, y + 58, hW, 32, '✎ Изменить название', '#4dd0e1', 0x081420, 0x102030, () => {
+      this._showTextInputModal('ИЗМЕНИТЬ НАЗВАНИЕ', 'Название (3–20 символов)', clan.name, 20, (val) => {
+        if (val.length < 3) return;
+        clan.name = val; this._sr();
+      });
     });
-    this._btn(lx, y + 94, hW, 30, '✎ Изменить девиз', '#4dd0e1', 0x081420, 0x102030, () => {
-      const v = window.prompt('Девиз гильдии (макс. 40 символов):', clan.motto || '');
-      if (v === null) return;
-      clan.motto = v.trim().substring(0, 40); this._sr();
+    this._btn(lx, y + 98, hW, 32, '✎ Изменить девиз', '#4dd0e1', 0x081420, 0x102030, () => {
+      this._showTextInputModal('ИЗМЕНИТЬ ДЕВИЗ', 'Девиз гильдии (макс. 40 символов)', clan.motto || '', 40, (val) => {
+        clan.motto = val.substring(0, 40); this._sr();
+      });
+    });
+    this._btn(lx, y + 138, hW, 32, '✎ Изменить тег', '#4dd0e1', 0x081420, 0x102030, () => {
+      this._showTextInputModal('ИЗМЕНИТЬ ТЕГ', 'Аббревиатура (2–4 символа)', clan.tag, 4, (val) => {
+        const t = val.toUpperCase();
+        if (t.length < 2) return;
+        clan.tag = t; this._sr();
+      });
+    });
+    this._btn(lx, y + 178, hW, 32, '✎ Сообщение гильдии', '#ffcc66', 0x0e1408, 0x1a1f08, () => {
+      this._showTextInputModal('СООБЩЕНИЕ ГИЛЬДИИ', 'Сообщение для участников (макс. 60 символов)', clan.message || '', 60, (val) => {
+        clan.message = val.substring(0, 60); this._sr();
+      });
     });
     const recr = clan.recruiting !== false;
-    this._btn(lx, y + 132, hW, 30,
+    this._btn(lx, y + 218, hW, 32,
       recr ? '🔒 Закрыть набор' : '🔓 Открыть набор',
       recr ? '#ef9a9a' : '#66bb6a', 0x0a0e14, 0x121820, () => {
         clan.recruiting = !recr; this._sr();
       });
 
-    // Right: management info
-    this.add.text(rx + hW / 2, y + 34, 'УПРАВЛЕНИЕ', this.O('11px', '#2a4a5a')).setOrigin(0.5, 0);
-    this.add.text(rx + 14, y + 58,
+    // Right column
+    this.add.text(rx + hW / 2, y + 36, 'УПРАВЛЕНИЕ', this.O('12px', '#5a8898')).setOrigin(0.5, 0);
+    this.add.text(rx + 14, y + 60,
       'Смена ролей — вкладка ЧЛЕНЫ.\nОфицер ↔ Новобранец (только Капитан).',
-      this.F('12px', '#2a5060'));
+      this.F('13px', '#5a9aac'));
 
-    // Current guild tag
-    const tBg = this.add.graphics();
-    tBg.fillStyle(0x080e18, 0.9); tBg.fillRoundedRect(rx, y + 116, hW, 38, 6);
-    tBg.lineStyle(1, 0x1a2a3a, 0.8); tBg.strokeRoundedRect(rx, y + 116, hW, 38, 6);
-    this.add.text(rx + 14, y + 124, 'Тэг гильдии', this.F('11px', '#2a5060'));
-    this.add.text(rx + 14, y + 138, `[${clan.tag}]`, this.O('14px', '#4dd0e1'));
+    // Current info display
+    const infoBg = this.add.graphics();
+    infoBg.fillStyle(0x0c1a28, 0.95); infoBg.fillRoundedRect(rx, y + 118, hW, 54, 6);
+    infoBg.lineStyle(1, 0x2a4a6a, 0.9); infoBg.strokeRoundedRect(rx, y + 118, hW, 54, 6);
+    this.add.text(rx + 14, y + 126, 'Тег:', this.F('12px', '#5a8898'));
+    this.add.text(rx + 14, y + 142, '[' + clan.tag + ']', this.O('16px', '#4dd0e1'));
+    this.add.text(rx + 14 + 60, y + 126, 'Девиз:', this.F('12px', '#5a8898'));
+    this.add.text(rx + 14 + 60, y + 142, clan.motto ? '"' + clan.motto + '"' : '—', this.F('12px', '#5a9aac'));
 
-    // Dissolve — danger zone at bottom
-    const dY  = y + h - 44;
-    const dbg = this.add.graphics();
-    dbg.fillStyle(0x1a0808, 0.9); dbg.fillRoundedRect(x, dY, w, 34, 5);
-    dbg.lineStyle(1, 0x5a1a1a, 0.7); dbg.strokeRoundedRect(x, dY, w, 34, 5);
-    const dBtn = this.add.rectangle(x + w / 2, dY + 17, w, 34, 0, 0).setInteractive({ useHandCursor: true });
-    this.add.text(x + w / 2, dY + 17, `⚠  РАСПУСТИТЬ ГИЛЬДИЮ «${clan.name}»`, this.F('12px', '#ef5350')).setOrigin(0.5);
-    dBtn.on('pointerdown', () => {
-      if (!window.confirm(`Распустить гильдию ${clan.name}? Это действие необратимо.`)) return;
-      this.gs.clan    = null;
-      this.gs.clanTab = null;
-      this._sr();
+    // Dissolve — small toggle + button at bottom-right (no guild name in label)
+    let dissolveArmed = false;
+    const togW = 48, togH = 22, dBtnW = 120, dBtnH = 26, gap = 8;
+    const bottomY = y + h - 34;
+    const groupW = togW + gap + dBtnW;
+    const togX = x + w - 14 - groupW;
+    const dBtnX = togX + togW + gap;
+
+    const togBg    = this.add.graphics();
+    const togThumb = this.add.graphics();
+    const dBtnBg   = this.add.graphics();
+    const dBtnTxt  = this.add.text(dBtnX + dBtnW / 2, bottomY + dBtnH / 2, 'РАСПУСТИТЬ',
+      this.O('11px', '#2a2020')).setOrigin(0.5).setAlpha(0.35);
+
+    const drawDissolveCtrls = () => {
+      togBg.clear();
+      togBg.fillStyle(dissolveArmed ? 0x3a0808 : 0x0d1010, dissolveArmed ? 0.9 : 0.35);
+      togBg.fillRoundedRect(togX, bottomY + 2, togW, togH, togH / 2);
+      togBg.lineStyle(1, dissolveArmed ? 0x8a1a1a : 0x1a2020, dissolveArmed ? 0.9 : 0.25);
+      togBg.strokeRoundedRect(togX, bottomY + 2, togW, togH, togH / 2);
+      togThumb.clear();
+      togThumb.fillStyle(dissolveArmed ? 0xef5350 : 0x2a3a3a, 1);
+      const tx2 = dissolveArmed ? togX + togW - togH + 4 : togX + 4;
+      togThumb.fillCircle(tx2 + (togH - 8) / 2, bottomY + 2 + togH / 2, (togH - 8) / 2);
+      dBtnBg.clear();
+      if (dissolveArmed) {
+        dBtnBg.fillStyle(0x3a0808, 0.95); dBtnBg.fillRoundedRect(dBtnX, bottomY, dBtnW, dBtnH, 4);
+        dBtnBg.lineStyle(1, 0xef5350, 0.9); dBtnBg.strokeRoundedRect(dBtnX, bottomY, dBtnW, dBtnH, 4);
+        dBtnTxt.setColor('#ef5350').setAlpha(1);
+      } else {
+        dBtnBg.fillStyle(0x080808, 0.4); dBtnBg.fillRoundedRect(dBtnX, bottomY, dBtnW, dBtnH, 4);
+        dBtnBg.lineStyle(1, 0x1a1a1a, 0.2); dBtnBg.strokeRoundedRect(dBtnX, bottomY, dBtnW, dBtnH, 4);
+        dBtnTxt.setColor('#2a2020').setAlpha(0.35);
+      }
+    };
+    drawDissolveCtrls();
+
+    const togHit = this.add.rectangle(togX + togW / 2, bottomY + 2 + togH / 2, togW, togH, 0, 0)
+      .setInteractive({ useHandCursor: true });
+    togHit.on('pointerdown', () => { dissolveArmed = !dissolveArmed; drawDissolveCtrls(); });
+
+    const dBtnHit = this.add.rectangle(dBtnX + dBtnW / 2, bottomY + dBtnH / 2, dBtnW, dBtnH, 0, 0)
+      .setInteractive({ useHandCursor: false });
+    dBtnHit.on('pointerdown', () => {
+      if (!dissolveArmed) return;
+      this._showDissolveModal(clan);
     });
+  }
+
+  // ── TEXT INPUT MODAL (replaces window.prompt) ─────────────────────────────
+  _showTextInputModal(title, label, initial, maxLen, onOk) {
+    document.getElementById('sd-guild-overlay')?.remove();
+    const ov = document.createElement('div');
+    ov.id = 'sd-guild-overlay';
+    ov.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.78);z-index:1000;font-family:Inter,sans-serif';
+    const safeInitial = (initial || '').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;');
+    ov.innerHTML = `
+      <div style="background:#080e1a;border:2px solid #4dd0e1;border-radius:12px;padding:28px 36px;min-width:340px;color:#cce8f0">
+        <div style="font-family:Orbitron,sans-serif;font-size:15px;color:#4dd0e1;margin-bottom:16px">${title}</div>
+        <label style="display:block;font-size:12px;color:#445566;margin-bottom:6px">${label}</label>
+        <input id="sd-ti-inp" maxlength="${maxLen}" value="${safeInitial}"
+          style="width:100%;box-sizing:border-box;background:#0d1828;border:1px solid #1a3a5a;border-radius:4px;padding:8px 10px;color:#cce8f0;font-size:14px;outline:none;margin-bottom:16px">
+        <div style="display:flex;gap:10px">
+          <button id="sd-ti-ok"  style="flex:1;padding:10px;background:#0a1a10;border:1px solid #4acc88;border-radius:6px;color:#66bb6a;font-size:13px;cursor:pointer">✓ СОХРАНИТЬ</button>
+          <button id="sd-ti-can" style="flex:1;padding:10px;background:#0a0e14;border:1px solid #1a2a3a;border-radius:6px;color:#445566;font-size:13px;cursor:pointer">ОТМЕНА</button>
+        </div>
+      </div>`;
+    document.body.appendChild(ov);
+    ov.addEventListener('keydown', e => e.stopPropagation());
+    const inp = ov.querySelector('#sd-ti-inp');
+    inp.focus(); inp.select();
+    ov.querySelector('#sd-ti-can').addEventListener('click', () => ov.remove());
+    ov.querySelector('#sd-ti-ok').addEventListener('click', () => {
+      const val = inp.value.trim(); ov.remove(); onOk(val);
+    });
+    inp.addEventListener('keydown', e => {
+      if (e.key === 'Enter') { e.preventDefault(); const val = inp.value.trim(); ov.remove(); onOk(val); }
+      if (e.key === 'Escape') { e.preventDefault(); ov.remove(); }
+    });
+  }
+
+  // ── DISSOLVE CONFIRM MODAL ────────────────────────────────────────────────
+  _showDissolveModal(clan) {
+    const W = this.scale.width, H = this.scale.height;
+    const gs = this.gs;
+    const mw = 380, mh = 168;
+    const mx = (W - mw) / 2, my = (H - mh) / 2;
+    const objs = [];
+    const dim = this.add.rectangle(0, 0, W, H, 0x000000, 0.72).setOrigin(0).setDepth(60).setInteractive();
+    objs.push(dim);
+    const panel = this.add.graphics().setDepth(61);
+    panel.fillStyle(0x0f0808, 0.99); panel.fillRoundedRect(mx, my, mw, mh, 10);
+    panel.lineStyle(2, 0xef5350, 0.9); panel.strokeRoundedRect(mx, my, mw, mh, 10);
+    objs.push(panel);
+    objs.push(this.add.text(W / 2, my + 26, '⚠  РАСПУСТИТЬ ГИЛЬДИЮ?', this.O('13px', '#ef5350')).setOrigin(0.5).setDepth(62));
+    objs.push(this.add.text(W / 2, my + 56, 'Это действие необратимо.', this.F('13px', '#9fb3b8')).setOrigin(0.5).setDepth(62));
+    objs.push(this.add.text(W / 2, my + 74, 'Все данные гильдии будут удалены.', this.F('12px', '#6a6a7a')).setOrigin(0.5).setDepth(62));
+    const btnY = my + mh - 48;
+    const cancelBtn = this.add.rectangle(W / 2 - 90, btnY, 150, 32, 0x0d1e2c, 1)
+      .setStrokeStyle(1, 0x2a6888, 0.8).setDepth(61).setInteractive({ useHandCursor: true });
+    cancelBtn.on('pointerover', () => cancelBtn.setFillStyle(0x162838));
+    cancelBtn.on('pointerout',  () => cancelBtn.setFillStyle(0x0d1e2c));
+    cancelBtn.on('pointerdown', () => { objs.forEach(o => o?.destroy()); });
+    objs.push(cancelBtn);
+    objs.push(this.add.text(W / 2 - 90, btnY, 'ОТМЕНА', this.O('12px', '#4dd0e1')).setOrigin(0.5).setDepth(62));
+    const delBtn = this.add.rectangle(W / 2 + 90, btnY, 150, 32, 0x2a0808, 1)
+      .setStrokeStyle(1, 0xef5350, 0.8).setDepth(61).setInteractive({ useHandCursor: true });
+    delBtn.on('pointerover', () => delBtn.setFillStyle(0x3e1010));
+    delBtn.on('pointerout',  () => delBtn.setFillStyle(0x2a0808));
+    delBtn.on('pointerdown', () => {
+      objs.forEach(o => o?.destroy());
+      gs.clan = null; gs.clanTab = null; this._sr();
+    });
+    objs.push(delBtn);
+    objs.push(this.add.text(W / 2 + 90, btnY, 'РАСПУСТИТЬ', this.O('12px', '#ef5350')).setOrigin(0.5).setDepth(62));
   }
 
   // ── Search helpers ────────────────────────────────────────────────────────
@@ -1004,7 +1160,7 @@ export default class ClanScene extends Phaser.Scene {
     };
     _draw(fillN);
     const btn = this.add.rectangle(x + w / 2, y + h / 2, w, h, 0, 0).setInteractive({ useHandCursor: true });
-    this.add.text(x + w / 2, y + h / 2, label, this.F('12px', tc)).setOrigin(0.5);
+    this.add.text(x + w / 2, y + h / 2, label, this.F('13px', tc)).setOrigin(0.5);
     btn.on('pointerover',  () => _draw(fillH));
     btn.on('pointerout',   () => _draw(fillN));
     btn.on('pointerdown', cb);
@@ -1016,7 +1172,7 @@ export default class ClanScene extends Phaser.Scene {
     bg.fillStyle(fill, 0.9); bg.fillRoundedRect(x, y, w, h, 3);
     bg.lineStyle(1, 0x1a3a3a, 0.4); bg.strokeRoundedRect(x, y, w, h, 3);
     const btn = this.add.rectangle(x + w / 2, y + h / 2, w, h, 0, 0).setInteractive({ useHandCursor: true });
-    this.add.text(x + w / 2, y + h / 2, label, this.F('10px', tc)).setOrigin(0.5);
+    this.add.text(x + w / 2, y + h / 2, label, this.F('12px', tc)).setOrigin(0.5);
     btn.on('pointerdown', cb);
     return btn;
   }

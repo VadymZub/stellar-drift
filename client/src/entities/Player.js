@@ -276,6 +276,16 @@ export default class Player {
       if (passives.evasionBonus) this.evasion = Math.min(0.30, (this.evasion ?? 0) + passives.evasionBonus);
     }
 
+    // ── Corp prestige bonus ────────────────────────────────────────────────
+    // Prestige ships grant a passive bonus when the player's corp matches the ship's corpAffinity.
+    const _prestigeDef = SHIP_BY_KEY[this.scene.activeShip];
+    if (_prestigeDef?.corpAffinity && _prestigeDef.corpAffinity === this.scene.playerCorp) {
+      const aff = _prestigeDef.corpAffinity;
+      if (aff === 'helios') this.baseSpeed        = Math.round(this.baseSpeed * 1.05);
+      if (aff === 'karax')  this.maxHull          = Math.round(this.maxHull * 1.05);
+      if (aff === 'tides') { this.maxShield       = Math.round(this.maxShield * 1.05); this.shieldRegenPerSec = Math.round(this.shieldRegenPerSec * 1.03); }
+    }
+
     if (this.shield > this.maxShield) this.shield = this.maxShield;
   }
 

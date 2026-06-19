@@ -653,10 +653,10 @@ export default class CargoScene extends Phaser.Scene {
     const d = new Date();
     const ts = `${String(d.getDate()).padStart(2,'0')}.${String(d.getMonth()+1).padStart(2,'0')}  ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
     (clan.log = clan.log || []).unshift({ time: ts,
-      text: `${gs.playerName || 'Пилот'} положил «${item.name || item.key || '?'}» на склад гильдии`,
+      text: `${gs.playerName || 'Пилот'} положил «${itemName(item)}» на склад гильдии`,
       color: '#4dd0e1' });
     gs._saveState?.();
-    gs._moveMsg = `→ Склад гильдии: ${item.name || item.key || '?'}`;
+    gs._moveMsg = `→ Склад гильдии: ${itemName(item)}`;
     this.scene.restart();
   }
 
