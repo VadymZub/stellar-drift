@@ -274,7 +274,7 @@ export default class Player {
       if (s.perk.key === 'perk_quick_recovery') this.shieldRegenDelaySec = Math.max(1, this.shieldRegenDelaySec * (1 - 0.30 * (1 + pb)));
       // Armor perks (perk_armor_plating applied earlier in sumArmorHull)
       if (s.perk.key === 'perk_nimble')         this.evasion             = Math.min(0.30, (this.evasion ?? 0) + 0.06 * (1 + pb));
-      if (s.perk.key === 'perk_kinetic_absorb') this.kineticAbsorbChance = Math.min(0.50, this.kineticAbsorbChance + 0.10 * (1 + pb));
+      if (s.perk.key === 'perk_kinetic_absorb') this.kineticAbsorbChance = Math.max(this.kineticAbsorbChance, 0.15 * (1 + pb));
       // perk_bulwark: bonus resist only in pure armor builds (no shield modules at all)
       if (s.perk.key === 'perk_bulwark' && shieldItems.length === 0) this.damageResistMod = Math.max(0.20, this.damageResistMod - 0.20 * (1 + pb));
     }
