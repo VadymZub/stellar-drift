@@ -7,10 +7,10 @@ import { rollPerk } from './perks.js';
 // roll: base × random(0.85, 1.15) × (1 + max(0, mob_lvl − tier_min)/50)
 
 const CANNON_TIERS = {
-  1: { min: 1,  dmg: 40,  pen: 0.02 },
-  2: { min: 11, dmg: 75,  pen: 0.06 },
-  3: { min: 21, dmg: 130, pen: 0.12 },
-  4: { min: 31, dmg: 210, pen: 0.20 },
+  1: { min: 1,  dmg: 40,  pen: 0 },
+  2: { min: 11, dmg: 75,  pen: 0 },
+  3: { min: 21, dmg: 130, pen: 0 },
+  4: { min: 31, dmg: 210, pen: 0 },
 };
 
 const SHIELD_TIERS = {
@@ -18,6 +18,16 @@ const SHIELD_TIERS = {
   2: { min: 11, dur: 550,  regen: 45,  eva: 0.04 },
   3: { min: 21, dur: 900,  regen: 70,  eva: 0.07 },
   4: { min: 31, dur: 1500, regen: 100, eva: 0.10 },
+};
+
+// Броня — прибавка к корпусу (hull). Ставится в слоты щита (sSlots), альтернатива щиту.
+// Нет регенерации и уклонения — чистая прочность. 90% от показателей щита по тирам.
+// Hull-бонус НЕ масштабируется множителем уровня корабля; добавляется плоско к maxHull.
+const ARMOR_TIERS = {
+  1: { min: 1,  hull: 270  },
+  2: { min: 11, hull: 500  },
+  3: { min: 21, hull: 810  },
+  4: { min: 31, hull: 1350 },
 };
 
 // Двигатели — прирост скорости (px/сек). Ставятся в слоты двигателей (eSlots), со 2-го корабля.
@@ -67,6 +77,16 @@ export function rollEngine(tier, mobLevel) {
   return { type: 'engine', tier, speed: Math.round(t.speed * roll() * scale), perk: rollPerk('engine') };
 }
 
+export function rollArmor(tier, mobLevel) {
+  const t = ARMOR_TIERS[tier];
+  const scale = 1 + Math.max(0, mobLevel - t.min) / 50;
+  return {
+    type: 'armor', tier,
+    hullBonus: Math.round(t.hull * roll() * scale),
+    perk: rollPerk('armor'),
+  };
+}
+
 export function rollLaser() {
   return {
     type: 'laser', tier: 4,
@@ -99,7 +119,7 @@ export function defaultLoadout(wSlots, sSlots, eSlots) {
 }
 
 // item.type → ключ группы слотов на корабле
-export const SLOT_KEY = { cannon: 'weapon', laser: 'weapon', shield: 'shield', engine: 'engine' };
+export const SLOT_KEY = { cannon: 'weapon', laser: 'weapon', shield: 'shield', armor: 'shield', engine: 'engine' };
 
 // ── Апгрейд модулей: ДВА ВЗАИМОИСКЛЮЧАЮЩИХ пути (2026-06-04) ──
 //  • кредитный — дёшево, слабо: 5 уровней, +1.5%/ур → до +7.5%;

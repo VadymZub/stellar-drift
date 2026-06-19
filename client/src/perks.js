@@ -169,6 +169,27 @@ export const PERK_DEFS = [
     slot: 'engine', rarity: 'rare',
     effect: '+50% длительность стелса',
     desc: (b) => `+${+(50 * (1 + b)).toFixed(1)}% длит. стелса` },
+
+  // Armor perks
+  { key: 'perk_armor_plating', imgFile: 'Armor Plating.png', name: 'Armor Plating',
+    slot: 'armor', rarity: 'common',
+    effect: '+10% прочность этого модуля брони',
+    desc: (b) => `+${+(10 * (1 + b)).toFixed(1)}% прочность модуля` },
+
+  { key: 'perk_nimble', imgFile: 'Nimble.png', name: 'Nimble',
+    slot: 'armor', rarity: 'uncommon',
+    effect: '+6% уклонение',
+    desc: (b) => `+${+(6 * (1 + b)).toFixed(1)}% уклонение` },
+
+  { key: 'perk_kinetic_absorb', imgFile: 'Kinetic Absorb.png', name: 'Kinetic Absorb',
+    slot: 'armor', rarity: 'rare',
+    effect: '10% шанс нивелировать удар (только без щита)',
+    desc: (b) => `${+(10 * (1 + b)).toFixed(1)}% шанс нивелировать удар` },
+
+  { key: 'perk_bulwark', imgFile: 'Bulwark.png', name: 'Bulwark',
+    slot: 'armor', rarity: 'jackpot',
+    effect: '+20% сопр. урону при полном броне-билде (нет щитов)',
+    desc: (b) => `+${+(20 * (1 + b)).toFixed(1)}% сопр. (только броня)` },
 ];
 
 export const PERK_MAP = {};
@@ -179,6 +200,7 @@ const WEAPON_PERKS = PERK_DEFS.filter(p => p.slot === 'weapon');
 const SHIELD_PERKS = PERK_DEFS.filter(p => p.slot === 'shield');
 const LASER_PERKS  = PERK_DEFS.filter(p => p.slot === 'laser');
 const ENGINE_PERKS = PERK_DEFS.filter(p => p.slot === 'engine');
+const ARMOR_PERKS  = PERK_DEFS.filter(p => p.slot === 'armor');
 
 // Weighted random pick from a pool
 function weightedPick(pool) {
@@ -196,6 +218,7 @@ export function rollPerk(slotType) {
   const pool = slotType === 'cannon' ? WEAPON_PERKS
     : slotType === 'laser'  ? LASER_PERKS
     : slotType === 'engine' ? ENGINE_PERKS
+    : slotType === 'armor'  ? ARMOR_PERKS
     : SHIELD_PERKS;
   const def = weightedPick(pool);
   return { key: def.key, creditLvl: 0, starLvl: 0 };

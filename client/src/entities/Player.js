@@ -147,6 +147,18 @@ export default class Player {
     const S = (this.slots.shield || []).slice(0, ship.sSlots).filter(Boolean);
     const E = (this.slots.engine || []).slice(0, ship.eSlots || 0).filter(Boolean);
 
+    // Shield slots: separate shield modules from armor modules.
+    const shieldItems = S.filter(s => s.type !== 'armor');
+    const armorItems  = S.filter(s => s.type === 'armor');
+
+    // Armor hull bonus — flat addition to maxHull, NOT scaled by ship level or reinforced_hull skill.
+    // perk_armor_plating multiplies each module's contribution individually.
+    const sumArmorHull = armorItems.reduce((a, s) => {
+      let bonus = s.hullBonus * modMult(s);
+      if (s.perk?.key === 'perk_armor_plating') bonus *= (1 + 0.10 * (1 + perkBonus(s.perk)));
+      return a + bonus;
+    }, 0);
+
     // Split weapon slots by type: lasers fire hitscan, cannons fire projectiles.
     const cannonW = W.filter(w => w.type !== 'laser');
     const laserW  = W.filter(w => w.type === 'laser');
@@ -163,11 +175,11 @@ export default class Player {
     this.weaponDamage = this.cannonDamage + this.laserDamage;
     this.weaponFireRate = isAdmin ? 2.0 : 1.0;
 
-    const sumDur = S.reduce((a, s) => a + s.durability * modMult(s), 0);
+    const sumDur = shieldItems.reduce((a, s) => a + s.durability * modMult(s), 0);
     this.maxShield = Math.round((this.shipShieldBase + sumDur) * m.shield);
     const defaultRegen = Math.round(this.maxShield * 0.03);
-    this.shieldRegenPerSec = S.length ? Math.round(S.reduce((a, s) => a + s.regen * modMult(s), 0)) : (isAdmin ? 500 : defaultRegen);
-    this.evasion = Math.min(isAdmin ? 0.25 : 0.15, S.reduce((a, s) => a + s.evasion * modMult(s), 0));
+    this.shieldRegenPerSec = shieldItems.length ? Math.round(shieldItems.reduce((a, s) => a + s.regen * modMult(s), 0)) : (isAdmin ? 500 : defaultRegen);
+    this.evasion = Math.min(isAdmin ? 0.25 : 0.15, shieldItems.reduce((a, s) => a + s.evasion * modMult(s), 0));
 
     const sumSpd = E.reduce((a, e) => a + (e.speed || 0) * modMult(e), 0);
     this.baseSpeed = Math.round((this.shipBaseSpeed + sumSpd) * m.speed);
@@ -181,16 +193,17 @@ export default class Player {
     this.cannonDamage      = Math.round(this.cannonDamage * hcMult);
     this.laserDamage       = Math.round(this.laserDamage  * hcMult);
     this.weaponDamage      = this.cannonDamage + this.laserDamage;
-    this.weaponPenetration = Math.min(0.95, this.weaponPenetration + sl('penetrating_rounds') * 0.10);
+    this.weaponPenetration = Math.min(0.25, this.weaponPenetration + sl('penetrating_rounds') * 0.05);
     this.critChance        = Math.min(0.65, sl('sharpshooter') * 0.04);
-    // Engineering — maxHull вычисляется от базы корабля, а не от this.maxHull (иначе накопление)
-    this.maxHull           = Math.round(this.ship.hullMax * m.hull * (1 + sl('reinforced_hull') * 0.06));
+    // Engineering — maxHull: база корабля × мульт уровня × скилл. Броня — плоский бонус поверх.
+    this.maxHull           = Math.round(this.ship.hullMax * m.hull * (1 + sl('reinforced_hull') * 0.06)) + Math.round(sumArmorHull);
     this.hull              = Math.min(this.hull, this.maxHull);
     this.maxShield         = Math.round(this.maxShield * (1 + sl('shield_optimizer') * 0.05));
     const fastRegen = sl('fast_regen');
     this.shieldRegenDelaySec = 6 - fastRegen * 0.25;
-    if (!S.length && !isAdmin && fastRegen > 0) this.shieldRegenPerSec = Math.round(this.maxShield * (0.03 + fastRegen * 0.0175));
+    if (!shieldItems.length && !isAdmin && fastRegen > 0) this.shieldRegenPerSec = Math.round(this.maxShield * (0.03 + fastRegen * 0.0175));
     this.damageResistMod     = Math.max(0.20, 1 - sl('damage_resist') * 0.05);
+    this.kineticAbsorbChance = 0;
     this.activeCooldownMod   = Math.max(0.30, 1 - sl('module_specialist') * 0.10);
     // Trading
     this.lootPickupRadiusMult = 1 + sl('loot_magnet') * 0.30;
@@ -200,13 +213,16 @@ export default class Player {
 
     // ── Perk bonuses — cannon perks affect cannonDamage, laser perks affect laserDamage ──
     let cannonPerkMult = 1;
+    let hullBreakerPen = 0;
     for (const w of cannonW) {
       if (!w.perk) continue;
       const pb = perkBonus(w.perk);
-      if (w.perk.key === 'perk_steady_aim')    cannonPerkMult        *= 1 + 0.10 * (1 + pb);
-      if (w.perk.key === 'perk_critical_edge') this.critChance        = Math.min(0.65, this.critChance + 0.12 * (1 + pb));
-      if (w.perk.key === 'perk_hull_breaker')  this.weaponPenetration = Math.min(0.95, this.weaponPenetration + 0.18 * (1 + pb));
+      if (w.perk.key === 'perk_steady_aim')    cannonPerkMult  *= 1 + 0.10 * (1 + pb);
+      if (w.perk.key === 'perk_critical_edge') this.critChance  = Math.min(0.65, this.critChance + 0.12 * (1 + pb));
+      if (w.perk.key === 'perk_hull_breaker')  hullBreakerPen  += 0.05 * (1 + pb);
     }
+    // Perks contribute max 0.15 pen; combined with skill (0.25) total cap is 0.40.
+    this.weaponPenetration = Math.min(0.40, this.weaponPenetration + Math.min(0.15, hullBreakerPen));
     this.cannonDamage = Math.round(this.cannonDamage * cannonPerkMult);
 
     // ── Weapon accuracy + laser properties ────────────────────────────────
@@ -248,13 +264,19 @@ export default class Player {
       if (e.perk.key === 'perk_engine_boost')   this.stealthDurMult *= 1 + 0.50 * (1 + pb);
     }
 
-    // ── Perk bonuses (shield slots) ────────────────────────────────────────
+    // ── Perk bonuses (shield + armor slots) ───────────────────────────────────
     for (const s of S) {
       if (!s.perk) continue;
       const pb = perkBonus(s.perk);
-      if (s.perk.key === 'perk_resonance')      this.shieldRegenPerSec  = Math.round(this.shieldRegenPerSec * (1 + 0.12 * (1 + pb)));
-      if (s.perk.key === 'perk_hardened')       this.damageResistMod    = Math.max(0.20, this.damageResistMod - 0.10 * (1 + pb));
+      // Shield perks
+      if (s.perk.key === 'perk_resonance')      this.shieldRegenPerSec   = Math.round(this.shieldRegenPerSec * (1 + 0.12 * (1 + pb)));
+      if (s.perk.key === 'perk_hardened')       this.damageResistMod     = Math.max(0.20, this.damageResistMod - 0.10 * (1 + pb));
       if (s.perk.key === 'perk_quick_recovery') this.shieldRegenDelaySec = Math.max(1, this.shieldRegenDelaySec * (1 - 0.30 * (1 + pb)));
+      // Armor perks (perk_armor_plating applied earlier in sumArmorHull)
+      if (s.perk.key === 'perk_nimble')         this.evasion             = Math.min(0.30, (this.evasion ?? 0) + 0.06 * (1 + pb));
+      if (s.perk.key === 'perk_kinetic_absorb') this.kineticAbsorbChance = Math.min(0.50, this.kineticAbsorbChance + 0.10 * (1 + pb));
+      // perk_bulwark: bonus resist only in pure armor builds (no shield modules at all)
+      if (s.perk.key === 'perk_bulwark' && shieldItems.length === 0) this.damageResistMod = Math.max(0.20, this.damageResistMod - 0.20 * (1 + pb));
     }
 
     // ── Ship passives ──────────────────────────────────────────────────────
@@ -302,6 +324,10 @@ export default class Player {
       if (totalEvasion > 0 && Phaser.Math.FloatBetween(0, 1) < totalEvasion) {
         return { shieldHit: 0, hullHit: 0, brokeShield: false, dodged: true };
       }
+    }
+    // Kinetic absorb (armor perk): only procs when shield is fully depleted.
+    if (this.shield <= 0 && this.kineticAbsorbChance > 0 && Math.random() < this.kineticAbsorbChance) {
+      return { shieldHit: 0, hullHit: 0, brokeShield: false, absorbed: true };
     }
     amount = Math.round(amount * (this.damageResistMod ?? 1));
     this.lastDamageAt = this.scene.time.now;
