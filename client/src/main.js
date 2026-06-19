@@ -66,8 +66,16 @@ document.fonts.ready.then(() => {
 
   fitCanvas();
 
+  let _resizeRaf = null;
   window.addEventListener('resize', () => {
-    game.scale.resize(W(), H());
-    fitCanvas();
+    // Debounce via rAF: let the browser commit the new layout before Phaser
+    // re-reads getBoundingClientRect() for input coordinate transforms.
+    if (_resizeRaf) cancelAnimationFrame(_resizeRaf);
+    _resizeRaf = requestAnimationFrame(() => {
+      game.scale.resize(W(), H());
+      fitCanvas();
+      game.scale.refresh?.();   // recalculate canvas bounds for input hit-testing
+      _resizeRaf = null;
+    });
   });
 });
