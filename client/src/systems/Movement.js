@@ -100,7 +100,7 @@ export default class Movement {
     const targetHeading = Math.atan2(dy, dx);
     p.heading = Phaser.Math.Angle.RotateTo(p.heading, targetHeading, HANDLING.turnRate * (p.turnRateMult ?? 1) * dt);
 
-    let desired = p.baseSpeed;
+    let desired = p.baseSpeed * (p.debuffSpeedMult ?? 1);
     if (p.boosting) {
       if (!inSafeZone) {
         p.shield -= p.maxShield * 0.10 * dt;

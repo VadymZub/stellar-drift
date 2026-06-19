@@ -1,5 +1,5 @@
 import * as Phaser from 'https://cdn.jsdelivr.net/npm/phaser@4.1.0/dist/phaser.esm.js';
-import { COLORS, BASE_WORLD, PVP_WORLD_SCALE, PLAYER, MOBS, PROJECTILE, RESPAWN_MS, UI_RES, BOSS, DPR, HANDLING, ART_ANGLE_OFFSET, RANKS, BASE_SCAN_RADIUS, HONOR_PER_LVL50 } from '../constants.js';
+import { COLORS, BASE_WORLD, PVP_WORLD_SCALE, PLAYER, MOBS, PROJECTILE, PROJ_TYPES, RESPAWN_MS, UI_RES, BOSS, DPR, HANDLING, ART_ANGLE_OFFSET, RANKS, BASE_SCAN_RADIUS, HONOR_PER_LVL50 } from '../constants.js';
 import { minimapRect, minimapToWorld } from '../systems/minimap.js';
 import { i18n } from '../i18n.js';
 import Player from '../entities/Player.js';
@@ -539,7 +539,7 @@ export default class GameScene extends Phaser.Scene {
         // PvP 1: 3 дрона курсируют между базами (стаей)
         const leader = add('sec_drone', Lmax, rnd(-1800, 1800), rnd(-1200, 1200), { behavior: 'roam', targets: baseTargets });
         for (let i = 0; i < 2; i++) {
-          add('sec_drone', Lmax, leader.spawnX - cx + rnd(-100, 100), leader.spawnY - cy + rnd(-100, 100), { leader });
+          add('sec_drone', Lmax, leader.spawnX - cx + rnd(-100, 100), leader.spawnY - cy + rnd(-100, 100), { leader, orbitLeader: true });
         }
       } else {
         // PvP 2-5: Эсминцы + Дроны
@@ -550,13 +550,13 @@ export default class GameScene extends Phaser.Scene {
           5: { destroyers: 4, dronesPerDest: 4 }
         };
         const config = compositions[pvpLvl] || compositions[2];
-        
+
         for (let i = 0; i < config.destroyers; i++) {
           const b = miningBases[i % miningBases.length];
-          // Патрули теперь ROAM (курсируют между всеми базами), но стартуют у баз
-          const dest = add('sec_destroyer', Lmax, b.x - cx + rnd(-200, 200), b.y - cy + rnd(-200, 200), { behavior: 'roam', targets: baseTargets });
+          // Эсминцы курсируют между базами с отклонением от прямой линии
+          const dest = add('sec_destroyer', Lmax, b.x - cx + rnd(-200, 200), b.y - cy + rnd(-200, 200), { behavior: 'roam', targets: baseTargets, pathDeviation: 200 });
           for (let j = 0; j < config.dronesPerDest; j++) {
-            add('sec_drone', Lmax, dest.spawnX - cx + rnd(-100, 100), dest.spawnY - cy + rnd(-100, 100), { leader: dest });
+            add('sec_drone', Lmax, dest.spawnX - cx + rnd(-100, 100), dest.spawnY - cy + rnd(-100, 100), { leader: dest, orbitLeader: true });
           }
         }
       }
@@ -565,11 +565,14 @@ export default class GameScene extends Phaser.Scene {
 
     if (galaxy.current === 'R-1-boss') {
       // Специальный спавн для босс-уровня Алгол: Зов Апофиса
+      const apophis = add('apophis', 50, 0, 0, { behavior: 'guard', patrolRadius: 100, leash: Infinity });
       const ring = [[720, 720], [-720, 720], [720, -720], [-720, -720]];
-      ring.forEach(o => add('ancient_06', 50, o[0], o[1], { behavior: 'guard', patrolRadius: 300 }));
-      add('apophis', 50, 0, 0, { behavior: 'guard', patrolRadius: 100, leash: Infinity });
+      ring.forEach(o => add('ancient_06', 50, o[0], o[1], { behavior: 'guard', patrolRadius: 300, bossRef: apophis }));
       return;
     }
+
+    // Home sectors (lvlMin 1) — мобы пассивны, не атакуют первыми
+    const isHomeSector = sec.lvlMin === 1 && !sec.isDungeon && !sec.pvp;
 
     if (galaxy.current === 'dungeon_5') {
       pool = ['ancient_03', 'ancient_04', 'ancient_05', 'ancient_01', 'ancient_02'];
@@ -597,14 +600,17 @@ export default class GameScene extends Phaser.Scene {
       const pts = [[960, 960], [-960, 960], [960, -960], [-960, -960], [0, 1800], [0, -1800], [2160, 0], [-2160, 0]];
       pts.forEach((o, i) => add(pool[i % pool.length], rnd(Lmin, Lmax), o[0], o[1], { patrolRadius: 400 }));
       // Босс в центре (где обычно база)
-      add(boss, Lmax, 0, 0, { behavior: 'guard', patrolRadius: 300, leash: 900 });
+      const dungeon5boss = add(boss, Lmax, 0, 0, { behavior: 'guard', patrolRadius: 300, leash: 900 });
+      // Охранники вокруг босса данжа
+      [[-340, -150], [350, -120], [-120, 340]].forEach(([ox, oy]) =>
+        add(pool[0], rnd(Lmin, Lmax), ox, oy, { patrolRadius: 160, bossRef: dungeon5boss }));
     } else {
       const ring = [[1200, -360], [-1320, 480], [480, 1260], [-1020, -840], [1800, 624], [-1800, -180]];
-      ring.forEach((o, i) => add(pool[i % pool.length], rnd(Lmin, Lmax), o[0], o[1]));
+      ring.forEach((o, i) => add(pool[i % pool.length], rnd(Lmin, Lmax), o[0], o[1], isHomeSector ? { passive: true } : {}));
       const gx = 1800, gy = 1140;
-      add(boss, Lmax, gx, gy, { behavior: 'guard', patrolRadius: 180, leash: 480 });
+      const sectorBoss = add(boss, Lmax, gx, gy, { behavior: 'guard', patrolRadius: 180, leash: 480 });
       for (const [ox, oy] of [[-240, -130], [250, -90], [-110, 250]]) {
-        add(pool[0], rnd(Lmin, Lmax), gx + ox, gy + oy, { patrolRadius: 150, leash: 520 });
+        add(pool[0], rnd(Lmin, Lmax), gx + ox, gy + oy, { patrolRadius: 150, leash: 520, bossRef: sectorBoss, ...(isHomeSector ? { passive: true } : {}) });
       }
     }
   }
@@ -1280,13 +1286,13 @@ export default class GameScene extends Phaser.Scene {
     this.selectTarget(null);
     this.isFiring = false;
     this.atBase = false;
-    for (const o of ['GarageScene','CargoScene','MapScene','MissionsScene','ShopScene','CorpScene','BaseMenuScene','SkillScene','ClanScene'])
+    for (const o of ['GarageScene','CargoScene','MapScene','MissionsScene','ShopScene','CorpScene','BaseMenuScene','SkillScene','ClanScene','ShadowBattleScene'])
       if (this.scene.isActive(o)) this.scene.stop(o);
   }
 
   toggleOverlay(key, data) {
     document.getElementById('sd-guild-search')?.remove(); // always clean up HTML overlay on any scene switch
-    const overlays = ['GarageScene', 'CargoScene', 'MapScene', 'MissionsScene', 'ShopScene', 'CorpScene', 'ClanScene', 'SkillScene'];
+    const overlays = ['GarageScene', 'CargoScene', 'MapScene', 'MissionsScene', 'ShopScene', 'CorpScene', 'ClanScene', 'SkillScene', 'ShadowBattleScene'];
     for (const o of overlays) { if (o !== key && this.scene.isActive(o)) this.scene.stop(o); }
     if (this.scene.isActive(key)) this.scene.stop(key); else this.scene.launch(key, data);
   }
@@ -1481,12 +1487,38 @@ export default class GameScene extends Phaser.Scene {
     this.tweens.add({ targets: g, alpha: 0, duration: 160, ease: 'Expo.easeOut', onComplete: () => g.destroy() });
   }
   fireMobWeapon(mob, tx, ty, victim = this.player) {
-    // Самонаводящийся болт: обычные мобы 90°/сек, боссы 180°/сек
-    const turnRate = mob.isBoss
-      ? (180 * Math.PI / 180)
-      : (90  * Math.PI / 180);
-    this.projectiles.push(new Projectile(this, 'mob', mob.x, mob.y, tx, ty, victim, mob.damage, 0.05, PROJECTILE.mobColor, turnRate));
-    this.muzzleFlash(mob.x, mob.y, 0xff8a7a);
+    const pType = mob.tpl.projectileType || 'plasma';
+    const cfg   = PROJ_TYPES[pType] || PROJ_TYPES.plasma;
+
+    // void — хитскан: мгновенный луч, урон без снаряда
+    if (cfg.hitscan) {
+      const pen = cfg.penetration ?? 0.6;
+      const res = victim.takeDamage(mob.damage, pen, { ignoreMovEvasion: true });
+      this._laserBeam(mob.x, mob.y, victim.x, victim.y, 0xce93d8, 0.85, 4);
+      this.onProjectileHit({ owner: 'mob', victim, type: pType, effect: null, effectCfg: cfg }, res);
+      return;
+    }
+
+    // ion — 3 болта в ±12° веере, каждый несёт 35% урона
+    if (cfg.spread) {
+      const baseAng = Math.atan2(ty - mob.y, tx - mob.x);
+      const turnRate = mob.isBoss ? (150 * Math.PI / 180) : (70 * Math.PI / 180);
+      for (const off of [-0.21, 0, 0.21]) {
+        const ang = baseAng + off;
+        const ex = mob.x + Math.cos(ang) * 60;
+        const ey = mob.y + Math.sin(ang) * 60;
+        this.projectiles.push(new Projectile(this, 'mob', mob.x, mob.y, ex, ey, victim, mob.damage * 0.35, 0.05, cfg.color, turnRate, pType));
+      }
+      this.muzzleFlash(mob.x, mob.y, 0x80d8ff);
+      return;
+    }
+
+    // Остальные типы: один болт с самонаведением
+    const turnRate = mob.isBoss ? (180 * Math.PI / 180) : (90 * Math.PI / 180);
+    const pen = cfg.penetration ?? 0.05;
+    this.projectiles.push(new Projectile(this, 'mob', mob.x, mob.y, tx, ty, victim, mob.damage, pen, cfg.color, turnRate, pType));
+    const flashColor = { plasma: 0xff8a7a, acid: 0x76ff03, grav: 0xffb74d, emp: 0x4dd0e1 }[pType] ?? 0xff8a7a;
+    this.muzzleFlash(mob.x, mob.y, flashColor);
   }
   muzzleFlash(x, y, color) {
     const f = this.add.image(x, y, 'glow').setTint(color).setBlendMode(Phaser.BlendModes.ADD).setDepth(61).setDisplaySize(10, 10);
@@ -1513,10 +1545,33 @@ export default class GameScene extends Phaser.Scene {
       this.hitFlash(hx, hy, toHull);
       if (toHull) this.vfx?.play('hull_hit', hx, hy, { scale: 0.15, depth: 67 });
       this.showDamage(hx, hy, res);
-      if (proj.victim === this.player) {
-        if (res.brokeShield) this.log(i18n.t('log.shield_down'));
+      if (proj.victim === this.player && !res?.dodged) {
+        this._applyProjEffect(proj, hx, hy);
+        if (res?.brokeShield) this.log(i18n.t('log.shield_down'));
         if (!this.player.alive) this.onPlayerKilled();
       }
+    }
+  }
+
+  _applyProjEffect(proj, hx, hy) {
+    const eff = proj.effect;
+    const cfg = proj.effectCfg;
+    const p   = this.player;
+    if (!eff || !cfg) return;
+    if (eff === 'dot') {
+      p.dotDamage = proj.damage * (cfg.dotDmg ?? 0.5) / (cfg.dotSec ?? 2.0);
+      p.dotTimer  = cfg.dotSec ?? 2.0;
+      this.log('☣ Кислотное поражение!');
+    } else if (eff === 'emp') {
+      p.empMult  = cfg.slowMult ?? 0.45;
+      p.empTimer = cfg.slowSec  ?? 2.0;
+      this.log('⚡ ЭМИ-разряд! Скорость снижена.');
+    } else if (eff === 'push') {
+      // Гравпульс: отталкиваем игрока + замедляем
+      const ang = Math.atan2(p.y - hy, p.x - hx);
+      p.sprite.body.setVelocity(Math.cos(ang) * (cfg.pushDist ?? 180) * 3, Math.sin(ang) * (cfg.pushDist ?? 180) * 3);
+      p.gravMult  = cfg.slowMult ?? 0.65;
+      p.gravTimer = cfg.slowSec  ?? 1.5;
     }
   }
   onMobKilled(mob) {
@@ -1841,6 +1896,17 @@ export default class GameScene extends Phaser.Scene {
   spawnBossAoe(mob, x, y) {
     const telegraph = mob.phase >= 2 ? BOSS.aoeTelegraphP2 : BOSS.aoeTelegraphP1;
     const now = this.time.now; this.aoeZones.push({ x, y, radius: BOSS.aoeRadius, bornAt: now, detonateAt: now + telegraph, done: false }); this.log(i18n.t('log.boss_aoe'));
+  }
+  spawnApophisMinions() {
+    const apophis = this.mobs.find(m => m.tpl.key === 'bigboss' && m.alive);
+    if (!apophis) return;
+    const cx = apophis.x, cy = apophis.y;
+    [0, Math.PI / 2, Math.PI, Math.PI * 1.5].forEach(ang => {
+      const m = new Mob(this, MOBS['ancient_01'], 50,
+        cx + Math.cos(ang) * 320, cy + Math.sin(ang) * 320,
+        { patrolRadius: 150, bossRef: apophis });
+      this.mobs.push(m);
+    });
   }
   updateAoe() {
     this.aoeGfx.clear(); if (!this.aoeZones.length) return;

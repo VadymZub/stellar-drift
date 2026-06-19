@@ -91,6 +91,14 @@ export default class Player {
     this.fireCooldown = 0;
     this.alive = true;
     this.lockedRotation = false; // флаг для блокировки вращения (при прыжке)
+
+    // Дебаффы от снарядов мобов
+    this.dotTimer   = 0;    // кислота: секунд осталось
+    this.dotDamage  = 0;    // кислота: урон/сек
+    this.empTimer   = 0;    // EMP: секунд осталось
+    this.empMult    = 1;    // EMP: множитель скорости (0.45 при активном дебаффе)
+    this.gravTimer  = 0;    // гравпульс: секунд замедления осталось
+    this.gravMult   = 1;    // гравпульс: множитель скорости
   }
 
   get x() { return this.sprite.x; }
@@ -377,9 +385,27 @@ export default class Player {
   }
 
   // faceAngle: угол на цель, если игрок её атакует; иначе null → нос по курсу движения.
+  // Суммарный штраф к скорости от дебаффов (EMP + гравпульс).
+  get debuffSpeedMult() { return this.empMult * this.gravMult; }
+
   update(dt, inSafeZone, faceAngle = null) {
     if (!this.alive) return;
     const now = this.scene.time.now;
+
+    // Дебаффы: кислота (DoT), EMP (замедление скорости), гравпульс (замедление)
+    if (this.dotTimer > 0) {
+      this.dotTimer -= dt;
+      this.takeDamage(this.dotDamage * dt, 0.8); // кислота бьёт преимущественно по корпусу
+      if (this.dotTimer <= 0) { this.dotTimer = 0; this.dotDamage = 0; }
+    }
+    if (this.empTimer > 0) {
+      this.empTimer -= dt;
+      if (this.empTimer <= 0) { this.empTimer = 0; this.empMult = 1; }
+    }
+    if (this.gravTimer > 0) {
+      this.gravTimer -= dt;
+      if (this.gravTimer <= 0) { this.gravTimer = 0; this.gravMult = 1; }
+    }
     if (this.boosting) this.lastBoostAt = now; // отсчёт «после форсажа» идёт от его конца
     const sinceDamage = now - this.lastDamageAt;
     const sinceBoost = now - this.lastBoostAt;

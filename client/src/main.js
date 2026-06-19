@@ -17,6 +17,7 @@ import CorpScene from './scenes/CorpScene.js';
 import BaseMenuScene from './scenes/BaseMenuScene.js';
 import SkillScene from './scenes/SkillScene.js';
 import TestProfileScene from './scenes/TestProfileScene.js';
+import ShadowBattleScene from './scenes/ShadowBattleScene.js';
 
 // Canvas at physical pixel resolution. CSS canvas element uses image-rendering:pixelated
 // for nearest-neighbour CSS scaling — eliminates bilinear blur at non-integer DPR
@@ -49,7 +50,7 @@ const config = {
   },
   scene: [
     BootScene, LoginScene, BackgroundScene, TestProfileScene, GameScene, HudScene,
-    InventoryScene, CargoScene, ClanScene, GarageScene, MapScene, MissionsScene, ShopScene, DonateScene, CorpScene, BaseMenuScene, SkillScene,
+    InventoryScene, CargoScene, ClanScene, GarageScene, MapScene, MissionsScene, ShopScene, DonateScene, CorpScene, BaseMenuScene, SkillScene, ShadowBattleScene,
   ],
 };
 
