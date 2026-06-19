@@ -926,7 +926,11 @@ export default class GameScene extends Phaser.Scene {
         this.credits  = (this.credits  || 0) + 1000000;
         this.starGold = (this.starGold || 0) + 500;
         addPlasmateToInventory(this.inventory, 500, this._cargoMax());
-        this.log('DEV: +1 000 000 кр, +500 ⭐, +500 плазмита');
+        this._tryAddToAmmoSlots('ammo_laser',  5000);
+        this._tryAddToAmmoSlots('ammo_plasma', 5000);
+        for (let i = 0; i < 3; i++) this.inventory.push(rollLaser(4, 50));
+        for (let i = 0; i < 3; i++) this.inventory.push(rollCannon(4, 50));
+        this.log('DEV: +1M кр, +500 ⭐, патроны (лазер+плазма), 3×лазер T4, 3×пушка T4');
       });
     }
   }
