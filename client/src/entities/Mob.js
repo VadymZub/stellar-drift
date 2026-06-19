@@ -112,6 +112,20 @@ export default class Mob {
       }
     }
 
+    // Пассивные мобы агрятся при атаке игрока
+    if (this.passive) {
+      this.passive = false;
+      this.state   = 'aggro';
+      // Ближайшие пассивные союзники в 600px тоже реагируют
+      if (this.scene.mobs) {
+        this.scene.mobs.forEach(m => {
+          if (m !== this && m.alive && m.passive) {
+            const d = Phaser.Math.Distance.Between(this.x, this.y, m.x, m.y);
+            if (d < 600) { m.passive = false; m.state = 'aggro'; }
+          }
+        });
+      }
+    }
     if (this.neutral && !this.passive) {
       this.neutral = false;
       this.state   = 'aggro';
