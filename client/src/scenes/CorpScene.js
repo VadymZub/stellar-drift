@@ -68,14 +68,14 @@ export default class CorpScene extends Phaser.Scene {
       { ...TF, fontSize: '14px', color: cm.color }).setOrigin(1, 0);
 
     // → Клан button (compact, in header)
-    const clanBtnW = 90, clanBtnH = 24;
+    const clanBtnW = 112, clanBtnH = 24;
     const clanBtnX = px + pw - clanBtnW - 22, clanBtnY = py + 40;
     const clanBg = this.add.graphics();
     clanBg.fillStyle(0x0a1a28, 0.9); clanBg.fillRoundedRect(clanBtnX, clanBtnY, clanBtnW, clanBtnH, 4);
     clanBg.lineStyle(1, COLORS.primary, 0.4); clanBg.strokeRoundedRect(clanBtnX, clanBtnY, clanBtnW, clanBtnH, 4);
     const clanBtn = this.add.rectangle(clanBtnX + clanBtnW / 2, clanBtnY + clanBtnH / 2, clanBtnW, clanBtnH, 0, 0)
       .setInteractive({ useHandCursor: true });
-    this.add.text(clanBtnX + clanBtnW / 2, clanBtnY + clanBtnH / 2, '→ КЛАН',
+    this.add.text(clanBtnX + clanBtnW / 2, clanBtnY + clanBtnH / 2, '→ ГИЛЬДИЯ',
       { ...TF, fontSize: '11px', color: '#4dd0e1' }).setOrigin(0.5);
     clanBtn.on('pointerover',  () => { clanBg.clear(); clanBg.fillStyle(0x102535, 0.95); clanBg.fillRoundedRect(clanBtnX, clanBtnY, clanBtnW, clanBtnH, 4); });
     clanBtn.on('pointerout',   () => { clanBg.clear(); clanBg.fillStyle(0x0a1a28, 0.9); clanBg.fillRoundedRect(clanBtnX, clanBtnY, clanBtnW, clanBtnH, 4); });

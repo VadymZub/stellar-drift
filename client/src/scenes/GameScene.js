@@ -1281,6 +1281,7 @@ export default class GameScene extends Phaser.Scene {
   }
 
   toggleOverlay(key, data) {
+    document.getElementById('sd-guild-search')?.remove(); // always clean up HTML overlay on any scene switch
     const overlays = ['GarageScene', 'CargoScene', 'MapScene', 'MissionsScene', 'ShopScene', 'CorpScene', 'ClanScene', 'SkillScene'];
     for (const o of overlays) { if (o !== key && this.scene.isActive(o)) this.scene.stop(o); }
     if (this.scene.isActive(key)) this.scene.stop(key); else this.scene.launch(key, data);

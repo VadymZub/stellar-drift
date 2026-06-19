@@ -79,22 +79,71 @@ export default class CargoScene extends Phaser.Scene {
       this.add.text(px + 12 + colW / 2, py + 58, 'ТРЮМ КОРАБЛЯ', this.O('12px', '#2a5a70')).setOrigin(0.5, 0);
       this.add.text(px + colW + 24 + colW / 2, py + 58, `СКЛАД  ${(this.gs.warehouse||[]).length}/${whMax}`,
         this.O('12px', '#2a5a30')).setOrigin(0.5, 0);
-      // Кнопка перехода в Гараж
+      // Global guild mode checkbox — right of warehouse column, above header
+      if (typeof this.gs._whGuildMode !== 'boolean') this.gs._whGuildMode = false;
+      const gMode = !!this.gs._whGuildMode;
+      const _clan = this.gs.clan;
+      const _canGV = !!(_clan && ['Капитан', 'Офицер'].includes(_clan.myRole));
+      const _cbW = 96, _cbH = 18;
+      const _cbX = px + colW + 24 + colW - _cbW - 4;
+      const _cbY = py + 44;
+      const _cbBg = this.add.graphics();
+      _cbBg.fillStyle(gMode ? 0x0a1f28 : 0x060e14, _canGV ? 0.95 : 0.5);
+      _cbBg.fillRoundedRect(_cbX, _cbY, _cbW, _cbH, 3);
+      _cbBg.lineStyle(1, gMode ? 0x1e6a80 : (_canGV ? 0x1a3040 : 0x0d1a20), 0.75);
+      _cbBg.strokeRoundedRect(_cbX, _cbY, _cbW, _cbH, 3);
+      const _cbHit = this.add.rectangle(_cbX + _cbW / 2, _cbY + _cbH / 2, _cbW, _cbH, 0, 0)
+        .setInteractive({ useHandCursor: _canGV }).setDepth(15);
+      this.add.text(_cbX + _cbW / 2, _cbY + _cbH / 2,
+        (gMode ? '[✓]' : '[ ]') + ' склад ги.',
+        this.F('10px', !_canGV ? '#1a3040' : gMode ? '#4dd0e1' : '#3a7888')).setOrigin(0.5).setDepth(15);
+      if (_canGV) {
+        _cbHit.on('pointerdown', () => { this.gs._whGuildMode = !gMode; this.scene.restart(); });
+      }
+      // Нижние кнопки: ГАРАЖ + СКЛАД ГИЛЬДИИ
       const btnY = py + 72 + gridH + 8;
-      const btnBg = this.add.rectangle(px + 12, btnY, pw - 24, BTN_H, 0x0d1e2c, 0.95)
+      const bGap = 4, bW = Math.floor((pw - 28) / 2);
+
+      // Кнопка 1: ГАРАЖ
+      const b1x = px + 12;
+      const b1Bg = this.add.rectangle(b1x, btnY, bW, BTN_H, 0x0d1e2c, 0.95)
         .setOrigin(0, 0).setStrokeStyle(1, 0x1e3a50, 0.7).setInteractive({ useHandCursor: true }).setDepth(15);
-      const btnLbl = this.add.text(px + pw / 2, btnY + BTN_H / 2, 'ГАРАЖ  →  G',
+      const b1Lbl = this.add.text(b1x + bW / 2, btnY + BTN_H / 2, 'ГАРАЖ  →  G',
         this.O('12px', '#4dd0e1')).setOrigin(0.5).setDepth(15);
-      btnBg.on('pointerover', () => { btnBg.setFillStyle(0x142838); btnLbl.setColor('#7ee8f0'); });
-      btnBg.on('pointerout',  () => { btnBg.setFillStyle(0x0d1e2c); btnLbl.setColor('#4dd0e1'); });
-      btnBg.on('pointerdown', () => {
+      b1Bg.on('pointerover', () => { b1Bg.setFillStyle(0x142838); b1Lbl.setColor('#7ee8f0'); });
+      b1Bg.on('pointerout',  () => { b1Bg.setFillStyle(0x0d1e2c); b1Lbl.setColor('#4dd0e1'); });
+      b1Bg.on('pointerdown', () => {
         this.scene.stop();
         if (this.scene.isActive('GarageScene')) this.scene.bringToTop('GarageScene');
         else this.scene.launch('GarageScene');
       });
+
+      // Кнопка 2: СКЛАД ГИЛЬДИИ
+      const clan        = this.gs.clan;
+      const canGuildVlt = !!(clan && ['Капитан', 'Офицер'].includes(clan.myRole));
+      const b2x   = b1x + bW + bGap;
+      const b2Clr = canGuildVlt ? '#66bb6a' : '#2a3a2a';
+      const b2Bg  = this.add.rectangle(b2x, btnY, bW, BTN_H, canGuildVlt ? 0x0a1a10 : 0x0a0e0a, 0.95)
+        .setOrigin(0, 0).setStrokeStyle(1, canGuildVlt ? 0x2a6840 : 0x1a221a, 0.7)
+        .setInteractive({ useHandCursor: canGuildVlt }).setDepth(15);
+      const b2Lbl = this.add.text(b2x + bW / 2, btnY + BTN_H / 2, 'СКЛАД ГИЛЬДИИ  N',
+        this.O('12px', b2Clr)).setOrigin(0.5).setDepth(15);
+      if (canGuildVlt) {
+        b2Bg.on('pointerover', () => { b2Bg.setFillStyle(0x122018); b2Lbl.setColor('#8add8a'); });
+        b2Bg.on('pointerout',  () => { b2Bg.setFillStyle(0x0a1a10); b2Lbl.setColor(b2Clr); });
+        b2Bg.on('pointerdown', () => {
+          this.gs.clanTab = 'vault';
+          this.scene.stop();
+          if (this.scene.isActive('ClanScene')) this.scene.bringToTop('ClanScene');
+          else this.scene.launch('ClanScene');
+        });
+      }
     } else {
       this._renderSlotGrid(px + 12, py + 72, pw - 24, ph - 90, this.gs.inventory || [], cargoMax, 'cargo_nosell');
     }
+
+    const gs2 = this.gs;
+    if (gs2._moveMsg) { this._showMoveMsg(gs2._moveMsg); gs2._moveMsg = null; }
 
     this.input.keyboard.on('keydown-ESC', () => this.scene.stop());
   }
@@ -330,26 +379,58 @@ export default class CargoScene extends Phaser.Scene {
           : this.add.text(sx + SZ / 2, sy + BODY_H / 2, `T${item.tier}`, this.O('14px', '#ffe0b2')).setOrigin(0.5);
         container.add([box, dropStrip, dropT, iconImg]);
       } else {
+        // Warehouse module item — body (52px) + single action strip (16px)
+        // Action label/destination driven by the global gs._whGuildMode checkbox
+        if (typeof gs._whGuildMode !== 'boolean') gs._whGuildMode = false;
+        const guildMode = !!gs._whGuildMode;
+
+        const VAULT_MAX_BY_TIER = [10, 15, 20, 25, 30, 40, 50];
+        const gClan     = gs.clan;
+        const canUseGV  = !!(gClan && ['Капитан', 'Офицер'].includes(gClan.myRole));
+        const vaultFull = !gClan || (gClan.vault || []).length >= (VAULT_MAX_BY_TIER[gClan.vaultTier ?? 0] ?? 10);
+        // Items upgraded with stars (module or perk) cannot be placed in guild vault
+        const goldLocked = (item.starLvl || 0) > 0 || (item.perk?.starLvl || 0) > 0;
+        const actActive = guildMode ? (canUseGV && !vaultFull && !goldLocked) : true;
+
         const box = this.add.rectangle(sx, sy, SZ, BODY_H, 0x0c1a10, 0.9).setOrigin(0, 0)
           .setStrokeStyle(1, bdrHex, pDef ? 0.5 : 0.22).setInteractive({ useHandCursor: true });
         box.on('pointerover', (p) => this._showTooltip(p.x, p.y, item));
         box.on('pointerout',  ()  => this._hideTooltip());
-        const strip = this.add.rectangle(sx, sy + BODY_H, SZ, STRIP_H, 0x0a1a0a, 0.9).setOrigin(0, 0)
-          .setStrokeStyle(1, 0x2a6840, 0.4).setInteractive({ useHandCursor: true });
-        const stripT = this.add.text(sx + SZ / 2, sy + BODY_H + STRIP_H / 2, '← трюм',
-          this.F('9px', '#4a9860')).setOrigin(0.5);
+
+        let actLbl, actClr, actBg, actBdr;
+        if (!guildMode) {
+          actLbl = '← в трюм';    actClr = '#4a9860'; actBg = 0x0a1a0a; actBdr = 0x2a6840;
+        } else if (goldLocked) {
+          actLbl = '× ⭐ заблок.'; actClr = '#5a4a20'; actBg = 0x0c0e08; actBdr = 0x2a2010;
+        } else {
+          actLbl = '→ скл ги';
+          actClr = actActive ? '#4dd0e1' : '#2a4050';
+          actBg = 0x081822; actBdr = 0x1a4a6a;
+        }
+        const strip = this.add.rectangle(sx, sy + BODY_H, SZ, STRIP_H, actBg, 0.9).setOrigin(0, 0)
+          .setStrokeStyle(1, actBdr, 0.4)
+          .setInteractive({ useHandCursor: actActive && !goldLocked });
+        const stripT = this.add.text(sx + SZ / 2, sy + BODY_H + STRIP_H / 2, actLbl,
+          this.F('9px', actClr)).setOrigin(0.5);
         strip.on('pointerdown', () => {
-          const cargoMax = this._cargoMax();
-          const inv = gs.inventory || [];
-          if (inv.length >= cargoMax) return;
-          const idx = (gs.warehouse || []).indexOf(item); if (idx < 0) return;
-          gs.warehouse.splice(idx, 1); inv.push(item);
-          this.scene.restart();
+          if (!actActive) return;
+          if (guildMode) {
+            this._moveToGuildVault(item);
+          } else {
+            const cargoMax = this._cargoMax();
+            const inv = gs.inventory || [];
+            if (inv.length >= cargoMax) return;
+            const idx = (gs.warehouse || []).indexOf(item); if (idx < 0) return;
+            gs.warehouse.splice(idx, 1); inv.push(item);
+            gs._saveState?.();
+            this.scene.restart();
+          }
         });
+
         const iconK = itemIconKey(item);
         const iconImg = iconK
           ? this.add.image(sx + SZ / 2, sy + BODY_H / 2, prerenderTex(this, iconK, 48, 48)).setDisplaySize(48, 48).setOrigin(0.5)
-          : this.add.text(sx + SZ / 2, sy + BODY_H / 2, `T${item.tier}`, this.O('14px', '#b8e4c4')).setOrigin(0.5);
+          : this.add.text(sx + SZ / 2, sy + BODY_H / 2, `T${item.tier}`, this.O('12px', '#b8e4c4')).setOrigin(0.5);
         container.add([box, strip, stripT, iconImg]);
       }
 
@@ -551,6 +632,41 @@ export default class CargoScene extends Phaser.Scene {
     if (this.gs.warehouse.length >= whMax) return;
     inv.splice(idx, 1);
     this.gs.warehouse.push(item);
+    this.gs._saveState?.();
     this.scene.restart();
+  }
+
+  _moveToGuildVault(item) {
+    const gs   = this.gs;
+    const clan = gs.clan;
+    if (!clan) return;
+    if ((item.starLvl || 0) > 0 || (item.perk?.starLvl || 0) > 0) return;
+    const VAULT_MAX_BY_TIER = [10, 15, 20, 25, 30, 40, 50];
+    const vaultMax = VAULT_MAX_BY_TIER[clan.vaultTier ?? 0] ?? 10;
+    const vault = clan.vault = clan.vault || [];
+    if (vault.length >= vaultMax) return;
+    const wh  = gs.warehouse || [];
+    const idx = wh.indexOf(item);
+    if (idx < 0) return;
+    wh.splice(idx, 1);
+    vault.push(item);
+    const d = new Date();
+    const ts = `${String(d.getDate()).padStart(2,'0')}.${String(d.getMonth()+1).padStart(2,'0')}  ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+    (clan.log = clan.log || []).unshift({ time: ts,
+      text: `${gs.playerName || 'Пилот'} положил «${item.name || item.key || '?'}» на склад гильдии`,
+      color: '#4dd0e1' });
+    gs._saveState?.();
+    gs._moveMsg = `→ Склад гильдии: ${item.name || item.key || '?'}`;
+    this.scene.restart();
+  }
+
+  _showMoveMsg(text) {
+    const W = this.scale.width, H = this.scale.height;
+    const t = this.add.text(W / 2, H - 110, text,
+      { fontFamily: 'Orbitron, sans-serif', fontSize: '13px', color: '#66bb6a', resolution: UI_RES })
+      .setOrigin(0.5).setDepth(300).setAlpha(0);
+    this.tweens.add({ targets: t, alpha: 1, duration: 150,
+      onComplete: () => this.tweens.add({ targets: t, alpha: 0, y: H - 140,
+        duration: 600, delay: 900, onComplete: () => t.destroy() }) });
   }
 }

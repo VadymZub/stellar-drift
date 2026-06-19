@@ -1,5 +1,8 @@
 import * as Phaser from 'https://cdn.jsdelivr.net/npm/phaser@4.1.0/dist/phaser.esm.js';
 import { COLORS, UI_RES } from '../constants.js';
+import { itemName, itemStats, itemIconKey } from '../items.js';
+import { prerenderTex } from '../utils/prerenderTex.js';
+import { PERK_MAP, RARITY_COLOR, perkBonus } from '../perks.js';
 
 const GUILD_CREATE_CR  = 50_000;
 const GUILD_CREATE_ST  = 100;
@@ -35,10 +38,10 @@ const MOCK_MY_GUILD = {
     { name: 'VoidRunner',  role: 'Капитан',  online: true,  contribution: 45000, level: 14 },
     { name: 'NovaStar',    role: 'Офицер',   online: true,  contribution: 32000, level: 12 },
     { name: 'StormEagle',  role: 'Офицер',   online: false, contribution: 28000, level: 11 },
-    { name: 'IronPilot',   role: 'Участник', online: true,  contribution: 15000, level: 9  },
-    { name: 'DarkMatter',  role: 'Участник', online: false, contribution: 12000, level: 8  },
-    { name: 'StarForge',   role: 'Участник', online: false, contribution: 8000,  level: 8  },
-    { name: 'EchoWarden',  role: 'Участник', online: true,  contribution: 6000,  level: 8  },
+    { name: 'IronPilot',   role: 'Новобранец', online: true,  contribution: 15000, level: 9  },
+    { name: 'DarkMatter',  role: 'Новобранец', online: false, contribution: 12000, level: 8  },
+    { name: 'StarForge',   role: 'Новобранец', online: false, contribution: 8000,  level: 8  },
+    { name: 'EchoWarden',  role: 'Новобранец', online: true,  contribution: 6000,  level: 8  },
   ],
   applications: [
     { name: 'CometRider',  level: 9,  msg: 'Хочу вступить в вашу гильдию!' },
@@ -72,6 +75,7 @@ export default class ClanScene extends Phaser.Scene {
   F(s, c = '#cce8f0') { return { fontFamily: 'Inter, sans-serif',     fontSize: s, color: c, resolution: UI_RES }; }
 
   create() {
+    document.getElementById('sd-guild-search')?.remove(); // defensive: clear stale input on any restart
     this.gs = this.scene.get('GameScene');
     const gs = this.gs;
     const W  = this.scale.width, H = this.scale.height;
@@ -89,8 +93,17 @@ export default class ClanScene extends Phaser.Scene {
       this._renderGuildPanel(W, H, gs.clan);
     }
 
-    this.input.keyboard.on('keydown-ESC', () => { this._destroyOverlay(); this.scene.stop(); });
-    this.input.keyboard.on('keydown-N',   () => { this._destroyOverlay(); this.scene.stop(); });
+    if (gs._moveMsg) { this._showMoveMsg(gs._moveMsg); gs._moveMsg = null; }
+
+    this.input.keyboard.on('keydown-ESC', () => {
+      // If search input is focused, ESC is handled inside the input's keydown listener
+      if (document.activeElement === this._searchInp) return;
+      this._destroyOverlay(); this.scene.stop();
+    });
+    this.input.keyboard.on('keydown-N', () => {
+      if (document.activeElement === this._searchInp) return;
+      this._destroyOverlay(); this.scene.stop();
+    });
   }
 
   _destroyOverlay() {
@@ -164,15 +177,19 @@ export default class ClanScene extends Phaser.Scene {
       fb.on('pointerdown', () => { gs._guildFilter = c; this.scene.restart(); });
     });
 
+    // Consume first-focus flag set by Enter in search input
+    const firstFocus = gs._guildFirstFocus || false;
+    gs._guildFirstFocus = false;
+
     // Text search input (HTML overlay)
     const searchY = filterY + 48;
     this._buildSearchInput(px + 14, searchY, pw - 28, 30);
 
-    // Relevance filter + sort
+    // Relevance filter + sort — only apply when 2+ chars typed
     const query  = (gs._guildSearch || '').trim().toLowerCase();
     const corpF  = gs._guildFilter;
     let guilds   = MOCK_GUILDS.filter(g => corpF === 'все' || g.corp === corpF);
-    if (query) {
+    if (query.length >= 2) {
       guilds = guilds
         .map(g => ({ g, score: this._searchScore(g, query) }))
         .filter(({ score }) => score > 0)
@@ -186,17 +203,19 @@ export default class ClanScene extends Phaser.Scene {
     const myLvl   = gs.pilotLevel || 1;
     const maxRows = Math.floor((ph - (listY - py) - 54) / (rowH + rowGap));
 
-    if (guilds.length === 0 && query) {
+    if (guilds.length === 0 && query.length >= 2) {
       this.add.text(px + pw / 2, listY + 20, 'Ничего не найдено', this.F('13px', '#1a2a3a')).setOrigin(0.5, 0);
     }
 
     guilds.slice(0, maxRows).forEach((g, i) => {
       const ry = listY + i * (rowH + rowGap);
       const rw = pw - 28, rx = px + 14;
+      const highlight = firstFocus && i === 0;
 
       const rbg = this.add.graphics();
       rbg.fillStyle(0x0a1520, 0.9); rbg.fillRoundedRect(rx, ry, rw, rowH, 6);
-      rbg.lineStyle(1, 0x1a2a3a, 0.6); rbg.strokeRoundedRect(rx, ry, rw, rowH, 6);
+      rbg.lineStyle(highlight ? 2 : 1, highlight ? COLORS.primary : 0x1a2a3a, highlight ? 0.9 : 0.6);
+      rbg.strokeRoundedRect(rx, ry, rw, rowH, 6);
 
       const cc = corpCl[g.corp] || '#9fb3b8';
       this.add.text(rx + 12, ry + 8,  `[${g.tag}]`,  this.O('12px', cc));
@@ -261,6 +280,9 @@ export default class ClanScene extends Phaser.Scene {
 
   // ── CREATE DIALOG ─────────────────────────────────────────────────────────
   _showCreateDialog() {
+    // Guard: remove any existing overlay before creating a new one
+    document.getElementById('sd-guild-overlay')?.remove();
+
     const gs = this.gs;
     const ov = document.createElement('div');
     ov.id = 'sd-guild-overlay';
@@ -268,28 +290,28 @@ export default class ClanScene extends Phaser.Scene {
     ov.innerHTML = `
       <div style="background:#080e1a;border:2px solid #4dd0e1;border-radius:12px;padding:28px 36px;min-width:340px;color:#cce8f0">
         <div style="font-family:Orbitron,sans-serif;font-size:18px;color:#4dd0e1;margin-bottom:20px">ОСНОВАТЬ ГИЛЬДИЮ</div>
-        <label style="display:block;font-size:11px;color:#445566;margin-bottom:4px">НАЗВАНИЕ (3–20 символов)</label>
-        <input id="gn" maxlength="20" placeholder="Название гильдии" style="width:100%;box-sizing:border-box;background:#0d1828;border:1px solid #1a3a5a;border-radius:4px;padding:8px 10px;color:#cce8f0;font-size:14px;outline:none;margin-bottom:12px">
-        <label style="display:block;font-size:11px;color:#445566;margin-bottom:4px">АББРЕВИАТУРА (2–4 символа)</label>
-        <input id="gt" maxlength="4" placeholder="ТЭГГ" style="width:120px;background:#0d1828;border:1px solid #1a3a5a;border-radius:4px;padding:8px 10px;color:#cce8f0;font-size:14px;outline:none;text-transform:uppercase;margin-bottom:16px">
+        <label for="sd-gc-name" style="display:block;font-size:11px;color:#445566;margin-bottom:4px">НАЗВАНИЕ (3–20 символов)</label>
+        <input id="sd-gc-name" maxlength="20" placeholder="Название гильдии" style="width:100%;box-sizing:border-box;background:#0d1828;border:1px solid #1a3a5a;border-radius:4px;padding:8px 10px;color:#cce8f0;font-size:14px;outline:none;margin-bottom:12px">
+        <label for="sd-gc-tag" style="display:block;font-size:11px;color:#445566;margin-bottom:4px">АББРЕВИАТУРА (2–4 символа)</label>
+        <input id="sd-gc-tag" maxlength="4" placeholder="ТЭГГ" style="width:120px;background:#0d1828;border:1px solid #1a3a5a;border-radius:4px;padding:8px 10px;color:#cce8f0;font-size:14px;outline:none;text-transform:uppercase;margin-bottom:16px">
         <div style="font-size:11px;color:#ffe0b2;margin-bottom:16px">Стоимость: 50 000 кр + 100 ⭐</div>
         <div style="display:flex;gap:10px">
-          <button id="gc-ok" style="flex:1;padding:10px;background:#0a1a10;border:1px solid #4acc88;border-radius:6px;color:#66bb6a;font-size:13px;cursor:pointer">✓ ОСНОВАТЬ</button>
-          <button id="gc-no" style="flex:1;padding:10px;background:#0a0e14;border:1px solid #1a2a3a;border-radius:6px;color:#445566;font-size:13px;cursor:pointer">ОТМЕНА</button>
+          <button id="sd-gc-ok" style="flex:1;padding:10px;background:#0a1a10;border:1px solid #4acc88;border-radius:6px;color:#66bb6a;font-size:13px;cursor:pointer">✓ ОСНОВАТЬ</button>
+          <button id="sd-gc-cancel" style="flex:1;padding:10px;background:#0a0e14;border:1px solid #1a2a3a;border-radius:6px;color:#445566;font-size:13px;cursor:pointer">ОТМЕНА</button>
         </div>
-        <div id="gc-err" style="color:#ef9a9a;font-size:11px;margin-top:10px;min-height:16px"></div>
+        <div id="sd-gc-err" style="color:#ef9a9a;font-size:11px;margin-top:10px;min-height:16px"></div>
       </div>`;
     document.body.appendChild(ov);
     ov.addEventListener('keydown', e => e.stopPropagation());
 
-    const nameI = ov.querySelector('#gn');
-    const tagI  = ov.querySelector('#gt');
-    const errD  = ov.querySelector('#gc-err');
+    const nameI = ov.querySelector('#sd-gc-name');
+    const tagI  = ov.querySelector('#sd-gc-tag');
+    const errD  = ov.querySelector('#sd-gc-err');
     tagI.addEventListener('input', () => { tagI.value = tagI.value.toUpperCase(); });
     nameI.focus();
 
-    ov.querySelector('#gc-no').addEventListener('click', () => ov.remove());
-    ov.querySelector('#gc-ok').addEventListener('click', () => {
+    ov.querySelector('#sd-gc-cancel').addEventListener('click', () => ov.remove());
+    ov.querySelector('#sd-gc-ok').addEventListener('click', () => {
       const name = nameI.value.trim(), tag = tagI.value.trim().toUpperCase();
       if (name.length < 3) { errD.textContent = 'Минимум 3 символа в названии'; return; }
       if (tag.length < 2)  { errD.textContent = 'Аббревиатура: 2–4 символа'; return; }
@@ -316,6 +338,8 @@ export default class ClanScene extends Phaser.Scene {
       };
       gs.pendingGuildApp = null;
       gs.clanTab = 'members';
+      gs._guildSearch = '';
+      gs._guildFilter = 'все';
       ov.remove();
       this._sr();
     });
@@ -350,7 +374,7 @@ export default class ClanScene extends Phaser.Scene {
       `${online} онлайн · ${(clan.members || []).length} участников · Гильдия ур.${clan.level}`,
       this.F('11px', '#2a5a70'));
     const rCol = clan.myRole === 'Капитан' ? '#ffb74d' : clan.myRole === 'Офицер' ? '#4dd0e1' : '#9fb3b8';
-    this.add.text(px + pw - 16, py + 18, clan.myRole || 'Участник', this.F('11px', rCol)).setOrigin(1, 0);
+    this.add.text(px + pw - 16, py + 18, clan.myRole || 'Новобранец', this.F('11px', rCol)).setOrigin(1, 0);
     this.add.text(px + pw - 16, py + 36, 'N / ESC', this.F('10px', '#223344')).setOrigin(1, 0);
 
     // Tabs — captain sees all 6, others 5 (no НАСТРОЙКИ)
@@ -417,7 +441,7 @@ export default class ClanScene extends Phaser.Scene {
 
         const bw = 76, bh = 20, btnY = ry + 8;
         this._sBtn(x + w - 16 - bw * 2 - 6, btnY, bw, bh, '✓ ПРИНЯТЬ', '#66bb6a', 0x0a1a0e, () => {
-          clan.members.push({ name: app.name, role: 'Участник', online: false, contribution: 0, level: app.level });
+          clan.members.push({ name: app.name, role: 'Новобранец', online: false, contribution: 0, level: app.level });
           apps.splice(apps.indexOf(app), 1);
           (clan.log = clan.log || []).unshift({ time: this._ts(), text: `${app.name} вступил в гильдию`, color: '#66bb6a' });
           this._sr();
@@ -443,21 +467,34 @@ export default class ClanScene extends Phaser.Scene {
       dot.fillStyle(m.online ? COLORS.emerald : 0x334455, 1);
       dot.fillCircle(x + 16, ry + rowH / 2, 5);
 
-      const rc = m.role === 'Капитан' ? '#ffb74d' : m.role === 'Офицер' ? '#4dd0e1' : '#4a6678';
+      const rc = m.role === 'Капитан' ? '#ffb74d' : m.role === 'Офицер' ? '#4dd0e1' : '#3a5a6a';
       this.add.text(x + 30, ry + 7,  m.name,  this.O('12px', '#cce8f0'));
       this.add.text(x + 30, ry + 24, m.role,  this.F('10px', rc));
       this.add.text(x + w / 2, ry + rowH / 2, `Ур. ${m.level || '?'}`, this.F('10px', '#2a5a70')).setOrigin(0.5);
-      this.add.text(x + w - 14, ry + 8,  `вклад: ${(m.contribution || 0).toLocaleString()}`, this.F('10px', '#1a4060')).setOrigin(1, 0);
-      this.add.text(x + w - 14, ry + 26, m.online ? 'онлайн' : 'офлайн', this.F('10px', m.online ? '#2a6a3a' : '#2a3a4a')).setOrigin(1, 0);
 
-      // Role toggle (captain only, not self)
+      // Role badge + change button (captain only, not self)
       if (isCapt && m.role !== 'Капитан') {
-        const newRole = m.role === 'Офицер' ? 'Участник' : 'Офицер';
-        const lbl     = m.role === 'Офицер' ? '▼ Участник' : '▲ Офицер';
-        const clr     = m.role === 'Офицер' ? '#ef9a9a' : '#4dd0e1';
-        this._sBtn(x + w - 130, ry + rowH - 22, 80, 16, lbl, clr, 0x060e18, () => {
-          m.role = newRole; this._sr();
-        });
+        const isOfficer = m.role === 'Офицер';
+        const newRole   = isOfficer ? 'Новобранец' : 'Офицер';
+        const lbl       = isOfficer ? '▼ в Новобранцы' : '▲ в Офицеры';
+        const clr       = isOfficer ? '#ef9a9a' : '#4dd0e1';
+        const bw = 108, bh = 18;
+        const bx = x + w - 14 - bw;
+        const by = ry + (rowH - bh) / 2;
+        const bbg = this.add.graphics();
+        bbg.fillStyle(isOfficer ? 0x1a0808 : 0x081822, 0.9);
+        bbg.fillRoundedRect(bx, by, bw, bh, 3);
+        bbg.lineStyle(1, isOfficer ? 0x5a2a2a : 0x1a4a6a, 0.7);
+        bbg.strokeRoundedRect(bx, by, bw, bh, 3);
+        const rbtn = this.add.rectangle(bx + bw / 2, by + bh / 2, bw, bh, 0, 0)
+          .setInteractive({ useHandCursor: true });
+        this.add.text(bx + bw / 2, by + bh / 2, lbl, this.F('9px', clr)).setOrigin(0.5);
+        rbtn.on('pointerdown', () => { m.role = newRole; this._sr(); });
+        rbtn.on('pointerover', () => { bbg.clear(); bbg.fillStyle(isOfficer ? 0x2a1010 : 0x102030, 0.9); bbg.fillRoundedRect(bx, by, bw, bh, 3); });
+        rbtn.on('pointerout',  () => { bbg.clear(); bbg.fillStyle(isOfficer ? 0x1a0808 : 0x081822, 0.9); bbg.fillRoundedRect(bx, by, bw, bh, 3); });
+      } else if (!isCapt) {
+        this.add.text(x + w - 14, ry + 8,  `вклад: ${(m.contribution || 0).toLocaleString()}`, this.F('10px', '#1a4060')).setOrigin(1, 0);
+        this.add.text(x + w - 14, ry + 26, m.online ? 'онлайн' : 'офлайн', this.F('10px', m.online ? '#2a6a3a' : '#2a3a4a')).setOrigin(1, 0);
       }
     });
   }
@@ -467,50 +504,182 @@ export default class ClanScene extends Phaser.Scene {
     const isOff    = ['Капитан', 'Офицер'].includes(clan.myRole);
     const tier     = VAULT_TIERS[clan.vaultTier ?? 0];
     const maxSlots = tier?.slots ?? 10;
-    const count    = (clan.vault || []).length;
+    const vault    = clan.vault || [];
+    const count    = vault.length;
+    const gs       = this.gs;
 
-    this.add.text(x + w / 2, y + 6, `${count} / ${maxSlots} слотов`, this.F('12px', '#2a5a70')).setOrigin(0.5, 0);
+    const roleHint = isOff ? '' : '  (просмотр)';
+    this.add.text(x + w / 2, y + 6, `СКЛАД ГИЛЬДИИ  ${count} / ${maxSlots}${roleHint}`, this.F('12px', '#2a5a70')).setOrigin(0.5, 0);
 
+    // "Положить из трюма" → переходим в личный склад (CargoScene)
     if (isOff) {
-      const cargo  = this.gs.inventory || [];
-      const canPut = cargo.some(i => i.type !== 'plasmate') && count < maxSlots;
-      this._btn(x + w / 2 - 100, y + 24, 200, 26, 'Положить из трюма',
+      const canPut = count < maxSlots;
+      this._btn(x + w / 2 - 106, y + 24, 212, 26, '+ Положить из трюма',
         canPut ? '#66bb6a' : '#2a4a2a', 0x0a1a0e, 0x162818, () => {
           if (!canPut) return;
-          const idx = cargo.findIndex(i => i.type !== 'plasmate'); if (idx < 0) return;
-          const item = cargo.splice(idx, 1)[0];
-          (clan.vault = clan.vault || []).push(item);
-          (clan.log = clan.log || []).unshift({ time: this._ts(), text: `${this.gs.playerName || 'Пилот'} положил предмет на склад`, color: '#4dd0e1' });
-          this._sr();
+          this._destroyOverlay();
+          this.scene.stop();
+          gs.toggleOverlay?.('CargoScene');
         });
     }
 
-    if (!count) {
-      this.add.text(x + w / 2, y + 76, isOff ? 'Склад гильдии пуст' : 'Нет доступа к складу', this.F('13px', '#1a2a3a')).setOrigin(0.5, 0);
-      return;
-    }
+    // Slot grid — 5 cols × N rows
+    const SZ = 54, GAP = 5, COLS = 5;
+    const STRIP_H = 14, BODY_H = SZ - STRIP_H;
+    const gridY = y + 58;
 
-    const startY = y + 58, rowH = 48, rowGap = 4;
-    const maxR   = Math.floor((h - 62) / (rowH + rowGap));
-    clan.vault.slice(0, maxR).forEach((it, i) => {
-      const ry  = startY + i * (rowH + rowGap);
-      const vbg = this.add.graphics();
-      vbg.fillStyle(0x0c1a10, 0.9); vbg.fillRoundedRect(x, ry, w, rowH, 5);
-      vbg.lineStyle(1, COLORS.emerald, 0.13); vbg.strokeRoundedRect(x, ry, w, rowH, 5);
-      this.add.image(x + 22, ry + rowH / 2, 'lootbox').setDisplaySize(22, 22);
-      this.add.text(x + 42, ry + 8,  it.name || it.key || '?', this.O('11px', '#b8e4c4'));
-      this.add.text(x + 42, ry + 26, it.stats || '',            this.F('10px', '#5a8860'));
-      if (isOff) {
-        this._sBtn(x + w - 118, ry + (rowH - 20) / 2, 108, 20, '← забрать в трюм', '#4acc88', 0x0a1a0e, () => {
-          if ((this.gs.inventory || []).length >= 30) return;
-          const idx = clan.vault.indexOf(it); if (idx < 0) return;
-          clan.vault.splice(idx, 1);
-          (this.gs.inventory = this.gs.inventory || []).push(it);
-          (clan.log = clan.log || []).unshift({ time: this._ts(), text: `${this.gs.playerName || 'Пилот'} взял предмет со склада`, color: '#ef9a9a' });
-          this._sr();
-        });
+    for (let si = 0; si < maxSlots; si++) {
+      const col = si % COLS, row = Math.floor(si / COLS);
+      const sx = x + col * (SZ + GAP);
+      const sy = gridY + row * (SZ + GAP);
+      const item = vault[si] ?? null;
+
+      if (!item) {
+        const eg = this.add.graphics();
+        eg.fillStyle(0x080e18, 0.85); eg.fillRoundedRect(sx, sy, SZ, SZ, 4);
+        eg.lineStyle(1, 0x1a2a3a, 0.3); eg.strokeRoundedRect(sx, sy, SZ, SZ, 4);
+        continue;
       }
+
+      const pDef   = item.perk ? PERK_MAP[item.perk.key] : null;
+      const rarHex = pDef ? RARITY_COLOR[pDef.rarity] : null;
+      const bdrClr = rarHex ?? COLORS.emerald;
+      const vbg = this.add.graphics();
+      vbg.fillStyle(0x0c1a10, 0.9); vbg.fillRoundedRect(sx, sy, SZ, BODY_H, 4);
+      vbg.lineStyle(1, bdrClr, pDef ? 0.6 : 0.35); vbg.strokeRoundedRect(sx, sy, SZ, BODY_H, 4);
+      const iconK = itemIconKey(item);
+      if (iconK) {
+        this.add.image(sx + SZ / 2, sy + BODY_H / 2, prerenderTex(this, iconK, 32, 32))
+          .setDisplaySize(32, 32).setOrigin(0.5);
+      } else {
+        this.add.text(sx + SZ / 2, sy + BODY_H / 2, `T${item.tier}`, this.F('10px', '#b8e4c4')).setOrigin(0.5);
+      }
+      this.add.text(sx + 3, sy + 3, `T${item.tier || '?'}`, this.F('8px', '#3a6840'));
+      if (rarHex) {
+        const dg = this.add.graphics();
+        dg.fillStyle(rarHex, 1); dg.fillCircle(sx + SZ - 6, sy + 6, 4);
+      }
+
+      // Hover tooltip — always interactive regardless of role
+      const hitBox = this.add.rectangle(sx + SZ / 2, sy + BODY_H / 2, SZ, BODY_H, 0, 0)
+        .setInteractive({ useHandCursor: false });
+      hitBox.on('pointerover', (p) => this._showVaultTooltip(p.x, p.y, item));
+      hitBox.on('pointerout',  ()  => this._hideVaultTooltip());
+
+      if (isOff) {
+        const cargoFull = (gs.inventory || []).length >= 30;
+        const sBg = this.add.graphics();
+        sBg.fillStyle(cargoFull ? 0x080e0a : 0x0a1a0e, 0.9);
+        sBg.fillRoundedRect(sx, sy + BODY_H, SZ, STRIP_H, 0);
+        sBg.lineStyle(1, cargoFull ? 0x131a13 : 0x1a4a2a, 0.5);
+        sBg.strokeRoundedRect(sx, sy + BODY_H, SZ, STRIP_H, 0);
+        const sZone = this.add.rectangle(sx + SZ / 2, sy + BODY_H + STRIP_H / 2, SZ, STRIP_H, 0, 0)
+          .setInteractive({ useHandCursor: !cargoFull });
+        this.add.text(sx + SZ / 2, sy + BODY_H + STRIP_H / 2, '← в трюм',
+          this.F('8px', cargoFull ? '#1a3020' : '#4acc88')).setOrigin(0.5);
+        if (!cargoFull) {
+          sZone.on('pointerdown', () => {
+            this._hideVaultTooltip();
+            this._showVaultMoveConfirm(item, vault, clan);
+          });
+        }
+      }
+    }
+  }
+
+  // ── VAULT TOOLTIP ─────────────────────────────────────────────────────────
+  _showVaultTooltip(wx, wy, item) {
+    this._hideVaultTooltip();
+    if (!item) return;
+    const W = this.scale.width, H = this.scale.height;
+    const pDef = item.perk ? PERK_MAP[item.perk.key] : null;
+    const rarColor = pDef ? `#${RARITY_COLOR[pDef.rarity].toString(16).padStart(6, '0')}` : null;
+    const TW = 230, LINE_H = 17;
+    const lines = [
+      { text: itemName(item),  sty: this.O('13px', '#ffe0b2') },
+      { text: itemStats(item), sty: this.F('11px', '#9fb3b8') },
+    ];
+    if (pDef) {
+      lines.push({ text: pDef.name,                       sty: this.F('11px', rarColor) });
+      lines.push({ text: pDef.desc(perkBonus(item.perk)), sty: this.F('11px', '#aaccdd') });
+    }
+    const TH = 10 + lines.length * LINE_H + 6;
+    let tx = wx + 16, ty = wy - TH / 2;
+    if (tx + TW > W - 8) tx = wx - TW - 8;
+    if (ty < 4) ty = 4;
+    if (ty + TH > H - 4) ty = H - TH - 4;
+    const g = this.add.graphics().setDepth(200);
+    g.fillStyle(0x08121e, 0.97); g.fillRoundedRect(tx, ty, TW, TH, 6);
+    g.lineStyle(1, 0x1e3a50, 0.9); g.strokeRoundedRect(tx, ty, TW, TH, 6);
+    const objs = [g];
+    let ly = ty + 8;
+    for (const l of lines) {
+      objs.push(this.add.text(tx + 10, ly, l.text,
+        { ...l.sty, wordWrap: { width: TW - 20 } }).setDepth(201));
+      ly += LINE_H;
+    }
+    this._vaultTooltipObjs = objs;
+  }
+
+  _hideVaultTooltip() {
+    this._vaultTooltipObjs?.forEach(o => o?.destroy());
+    this._vaultTooltipObjs = null;
+  }
+
+  // ── VAULT MOVE CONFIRM ────────────────────────────────────────────────────
+  _showVaultMoveConfirm(item, vault, clan) {
+    if (this._vaultConfirmObjs) this._closeVaultConfirm();
+    const W = this.scale.width, H = this.scale.height;
+    const gs = this.gs;
+    const mw = 320, mh = 150;
+    const mx = (W - mw) / 2, my = (H - mh) / 2;
+    const objs = [];
+
+    const dim = this.add.rectangle(0, 0, W, H, 0x000000, 0.65).setOrigin(0).setDepth(60).setInteractive();
+    dim.on('pointerdown', () => this._closeVaultConfirm());
+    objs.push(dim);
+
+    const panel = this.add.graphics().setDepth(61);
+    panel.fillStyle(0x0a0f1a, 0.98); panel.fillRoundedRect(mx, my, mw, mh, 10);
+    panel.lineStyle(2, 0x1e6a80, 0.85); panel.strokeRoundedRect(mx, my, mw, mh, 10);
+    objs.push(panel);
+
+    objs.push(this.add.text(W / 2, my + 22, 'ВЗЯТЬ ИЗ СКЛАДА ГИЛЬДИИ?', this.O('12px', '#4dd0e1')).setOrigin(0.5).setDepth(62));
+    objs.push(this.add.text(W / 2, my + 52, itemName(item), this.F('12px', '#b0bec5')).setOrigin(0.5).setDepth(62));
+
+    const btnY = my + mh - 42;
+    const cancelBtn = this.add.rectangle(W / 2 - 75, btnY, 120, 30, 0x0d1e2c, 1)
+      .setStrokeStyle(1, 0x2a6888, 0.8).setDepth(61).setInteractive({ useHandCursor: true });
+    cancelBtn.on('pointerover', () => cancelBtn.setFillStyle(0x162838));
+    cancelBtn.on('pointerout',  () => cancelBtn.setFillStyle(0x0d1e2c));
+    cancelBtn.on('pointerdown', () => this._closeVaultConfirm());
+    objs.push(cancelBtn);
+    objs.push(this.add.text(W / 2 - 75, btnY, 'ОТМЕНА', this.O('11px', '#4dd0e1')).setOrigin(0.5).setDepth(62));
+
+    const takeBtn = this.add.rectangle(W / 2 + 75, btnY, 120, 30, 0x0a1a0e, 1)
+      .setStrokeStyle(1, 0x2a6840, 0.8).setDepth(61).setInteractive({ useHandCursor: true });
+    takeBtn.on('pointerover', () => takeBtn.setFillStyle(0x142818));
+    takeBtn.on('pointerout',  () => takeBtn.setFillStyle(0x0a1a0e));
+    takeBtn.on('pointerdown', () => {
+      this._closeVaultConfirm();
+      const idx = vault.indexOf(item); if (idx < 0) return;
+      vault.splice(idx, 1);
+      (gs.inventory = gs.inventory || []).push(item);
+      (clan.log = clan.log || []).unshift({ time: this._ts(),
+        text: `${gs.playerName || 'Пилот'} взял «${item.name || item.key || '?'}» со склада`,
+        color: '#ef9a9a' });
+      gs._moveMsg = `← В ТРЮМ: ${item.name || item.key || '?'}`;
+      this._sr();
     });
+    objs.push(takeBtn);
+    objs.push(this.add.text(W / 2 + 75, btnY, 'ВЗЯТЬ', this.O('11px', '#4acc88')).setOrigin(0.5).setDepth(62));
+
+    this._vaultConfirmObjs = objs;
+  }
+
+  _closeVaultConfirm() {
+    this._vaultConfirmObjs?.forEach(o => o?.destroy());
+    this._vaultConfirmObjs = null;
   }
 
   // ── КАЗНА ─────────────────────────────────────────────────────────────────
@@ -705,7 +874,7 @@ export default class ClanScene extends Phaser.Scene {
     // Right: management info
     this.add.text(rx + hW / 2, y + 34, 'УПРАВЛЕНИЕ', this.O('11px', '#2a4a5a')).setOrigin(0.5, 0);
     this.add.text(rx + 14, y + 58,
-      'Смена ролей участников\nдоступна во вкладке ЧЛЕНЫ.\nОфицер ↔ Участник.',
+      'Смена ролей — вкладка ЧЛЕНЫ.\nОфицер ↔ Новобранец (только Капитан).',
       this.F('12px', '#2a5060'));
 
     // Current guild tag
@@ -732,6 +901,9 @@ export default class ClanScene extends Phaser.Scene {
 
   // ── Search helpers ────────────────────────────────────────────────────────
   _buildSearchInput(x, y, w, h) {
+    // Guard: remove any stale input before creating a new one
+    document.getElementById('sd-guild-search')?.remove();
+
     const gs     = this.gs;
     const canvas = document.querySelector('canvas');
     const scaleX = parseFloat(canvas.style.width)  / canvas.width;
@@ -763,12 +935,38 @@ export default class ClanScene extends Phaser.Scene {
     document.body.appendChild(inp);
     this._searchInp = inp;
 
-    inp.addEventListener('keydown', e => e.stopPropagation());
+    // Disable GameScene keyboard (G/H/N/K/etc.) while input is focused
+    const gameKbd = gs.input.keyboard;
+    inp.addEventListener('focus', () => { gameKbd.enabled = false; });
+    inp.addEventListener('blur',  () => { gameKbd.enabled = true;  });
+
+    inp.addEventListener('keydown', e => {
+      e.stopPropagation();
+      if (e.key === 'Escape') {
+        // First ESC: clear search, return focus to guild list
+        e.preventDefault();
+        gs._guildSearch = '';
+        inp.value = '';
+        clearTimeout(this._searchDebounce);
+        inp.blur();            // re-enables GameScene keyboard via blur handler
+        this.scene.restart();  // re-render with full unfiltered list
+      } else if (e.key === 'Enter') {
+        // Enter: blur input and highlight first result
+        e.preventDefault();
+        gs._guildFirstFocus = true;
+        clearTimeout(this._searchDebounce);
+        inp.blur();
+        this.scene.restart();
+      }
+    });
 
     inp.addEventListener('input', () => {
       gs._guildSearch = inp.value;
       clearTimeout(this._searchDebounce);
-      this._searchDebounce = setTimeout(() => { this.scene.restart(); }, 180);
+      // Auto-search only when query is cleared or has 2+ chars
+      if (inp.value.length === 0 || inp.value.length >= 2) {
+        this._searchDebounce = setTimeout(() => { this.scene.restart(); }, 180);
+      }
     });
   }
 
@@ -782,6 +980,15 @@ export default class ClanScene extends Phaser.Scene {
     if (tag.includes(query))    return 60;
     if (name.includes(query))   return 50;
     return 0;
+  }
+
+  _showMoveMsg(text) {
+    const W = this.scale.width, H = this.scale.height;
+    const t = this.add.text(W / 2, H - 110, text, this.O('13px', '#66bb6a'))
+      .setOrigin(0.5).setDepth(300).setAlpha(0);
+    this.tweens.add({ targets: t, alpha: 1, duration: 150,
+      onComplete: () => this.tweens.add({ targets: t, alpha: 0, y: H - 140,
+        duration: 600, delay: 900, onComplete: () => t.destroy() }) });
   }
 
   // save → restart (для всех мутирующих действий)
