@@ -99,6 +99,12 @@ export default class GarageScene extends Phaser.Scene {
       .setInteractive({ useHandCursor: true });
     rect.on('pointerdown', () => { this.gs.garageSel = ship.key; this.scene.restart(); });
 
+    // Inner glow для активного корабля
+    if (active) {
+      const ig = this.add.graphics();
+      ig.fillStyle(COLORS.amber, 0.06); ig.fillRect(x + 1, y + 1, w - 2, h - 2);
+    }
+
     // Hero art (garageKey) — крупное изображение в карточке
     const heroBox = Math.round(h * 0.66);
     const _cardMult = { stiletto: 1.2, wisp: 1.0, anvil: 1.0 };
@@ -1236,7 +1242,7 @@ export default class GarageScene extends Phaser.Scene {
     // ── Left: slot list ──────────────────────────────────────────────────
     const listW = 200;
     const listX = px + 18;
-    const itemH = 68;  // увеличен для отображения значения перка
+    const itemH = 50;
 
     this.add.text(listX + listW / 2, contentY + 6, 'СЛОТЫ МОДУЛЕЙ',
       this.O('13px', '#2a4a5a')).setOrigin(0.5, 0).setDepth(14);
@@ -1268,7 +1274,6 @@ export default class GarageScene extends Phaser.Scene {
         dot.fillStyle(rarColor, 1); dot.fillCircle(10, 34, 4);
         si.push([dot, 0, false]);
         si.push([this.add.text(listX + 18, baseY + 28, pDef.name, this.F('11px', rarColorHex)).setOrigin(0, 0), 28, false]);
-        si.push([this.add.text(listX + 8, baseY + 46, pDef.desc(perkBonus(item.perk)), this.F('12px', '#2a6070')).setOrigin(0, 0), 46, false]);
       } else {
         si.push([this.add.text(listX + 8, baseY + 32, 'нет перка', this.F('12px', '#223344')).setOrigin(0, 0), 32, false]);
       }
@@ -1384,11 +1389,15 @@ export default class GarageScene extends Phaser.Scene {
       this.F('12px', '#2a4a5a')).setOrigin(0.5, 0);
     cy += 18;
 
-    // Separator
+    // Separator — линия с ромбом посередине
     const dg = this.add.graphics();
-    dg.lineStyle(1, 0x162030, 1);
-    dg.strokeLineShape(new Phaser.Geom.Line(detX + 16, cy, detX + detW - 16, cy));
-    cy += 10;
+    const smx = detX + detW / 2, smy = cy + 1, sds = 5;
+    dg.lineStyle(1, 0x1e3a50, 0.8);
+    dg.strokeLineShape(new Phaser.Geom.Line(detX + 16, smy, smx - sds - 2, smy));
+    dg.strokeLineShape(new Phaser.Geom.Line(smx + sds + 2, smy, detX + detW - 16, smy));
+    dg.fillStyle(0x2a6080, 0.9);
+    dg.beginPath(); dg.moveTo(smx, smy - sds); dg.lineTo(smx + sds, smy); dg.lineTo(smx, smy + sds); dg.lineTo(smx - sds, smy); dg.closePath(); dg.fillPath();
+    cy += 14;
 
     // Two upgrade columns
     const halfW = (detW - 40) / 2;

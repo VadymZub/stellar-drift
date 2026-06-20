@@ -108,9 +108,10 @@ export default class BaseMenuScene extends Phaser.Scene {
 
     // HP bar — live-updated during construction
     const barW   = W - PAD * 2;
-    this.add.rectangle(cx, y, barW, 13, 0x222233).setOrigin(0.5);
-    const hpFill = this.add.rectangle(cx - barW / 2, y, 1, 13, 0x4dd0e1).setOrigin(0, 0.5);
-    const hpTxt  = this.add.text(cx, y + 18, '', { ...TF, fontSize: '14px', color: '#6688aa' }).setOrigin(0.5);
+    this.add.text(cx - barW / 2, y - 12, 'ОБШИВКА', { ...TF, fontSize: '11px', color: '#2a4a5a' }).setOrigin(0, 0.5);
+    this.add.rectangle(cx, y, barW, 16, 0x0a1420).setOrigin(0.5).setStrokeStyle(1, 0x1a3a50, 0.7);
+    const hpFill = this.add.rectangle(cx - barW / 2, y, 1, 16, 0x4dd0e1).setOrigin(0, 0.5);
+    const hpTxt  = this.add.text(cx, y + 20, '', { ...TF, fontSize: '13px', color: '#4a7090' }).setOrigin(0.5);
     const refreshHp = () => {
       const f = BASE_CONFIG.hullMax > 0 ? this.base.hull / BASE_CONFIG.hullMax : 0;
       const c = f > 0.5 ? 0x4dd0e1 : f > 0.25 ? 0xffb74d : 0xef5350;
@@ -271,14 +272,16 @@ export default class BaseMenuScene extends Phaser.Scene {
   // ── Helpers ───────────────────────────────────────────────────────────────
 
   _panel(cx, cy, w, h) {
-    this.add.rectangle(cx, cy, w, h, 0x080c18, 0.97).setStrokeStyle(2, COLORS.primary, 0.85);
+    const g = this.add.graphics();
+    g.fillStyle(0x060b16, 0.97); g.fillRoundedRect(cx - w / 2, cy - h / 2, w, h, 8);
+    g.lineStyle(2, COLORS.primary, 0.85); g.strokeRoundedRect(cx - w / 2, cy - h / 2, w, h, 8);
   }
 
   _closeBtn(cx, y) {
-    const bg = this.add.rectangle(cx, y, 208, 47, 0x101828).setStrokeStyle(1, COLORS.primary, 0.7).setInteractive();
-    this.add.text(cx, y, 'ЗАКРЫТЬ', { ...TF, fontSize: '17px', color: '#4dd0e1' }).setOrigin(0.5);
-    bg.on('pointerover',  () => bg.setFillStyle(0x1a2a3e));
-    bg.on('pointerout',   () => bg.setFillStyle(0x101828));
+    const bg = this.add.rectangle(cx, y, 208, 48, 0x0c1622).setStrokeStyle(1, COLORS.primary, 0.75).setInteractive();
+    this.add.text(cx, y, 'ЗАКРЫТЬ', { ...TF, fontSize: '16px', color: '#3ac0d0' }).setOrigin(0.5);
+    bg.on('pointerover',  () => bg.setFillStyle(0x162638));
+    bg.on('pointerout',   () => bg.setFillStyle(0x0c1622));
     bg.on('pointerdown',  () => this.scene.stop());
   }
 
