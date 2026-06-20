@@ -7,7 +7,7 @@ import { SECTORS, galaxy } from '../galaxy.js';
 import { getActiveMissionSectorTargets } from '../data/missions.js';
 import { countConsumableInInventory } from '../items.js';
 import { prerenderTex } from '../utils/prerenderTex.js';
-import { loadSettings, getMinimapDims } from '../settings.js';
+import { loadSettings, saveSettings, getMinimapDims } from '../settings.js';
 
 // Оверлей-сцена HUD. Читает статы из GameScene, слушает события лога.
 export default class HudScene extends Phaser.Scene {
@@ -68,15 +68,48 @@ export default class HudScene extends Phaser.Scene {
     // Cargo indicator (always visible)
     this._cargoTxt = this.add.text(0, 0, '', F('11px', '#7e9398')).setOrigin(1, 0.5).setDepth(101);
 
-    // Settings button (bottom-right, 28×28, 8px from edge)
+    // Settings gear button — draggable, position saved in settings
     const _W = this.scale.width, _H = this.scale.height;
-    const _sbX = _W - 36, _sbY = _H - 104; // top-left of 28x28 box
-    const _sb = this.add.rectangle(_sbX, _sbY, 28, 28, 0x0a1828, 0.85).setOrigin(0)
+    const _gPos = loadSettings();
+    const _sbDefX = _W - 36, _sbDefY = _H - 104;
+    let _gearX = Math.max(0, Math.min(_W - 28, _gPos.gearX ?? _sbDefX));
+    let _gearY = Math.max(0, Math.min(_H - 28, _gPos.gearY ?? _sbDefY));
+
+    const _sb   = this.add.rectangle(_gearX, _gearY, 28, 28, 0x0a1828, 0.85).setOrigin(0)
       .setStrokeStyle(1, 0x1e4060, 0.8).setInteractive({ useHandCursor: true }).setDepth(101);
-    const _sTxt = this.add.text(_sbX + 14, _sbY + 14, '⚙', F('14px', '#2a6080')).setOrigin(0.5).setDepth(102);
-    _sb.on('pointerover',  () => { _sb.setFillStyle(0x102840); _sTxt.setColor('#4dd0e1'); });
-    _sb.on('pointerout',   () => { _sb.setFillStyle(0x0a1828); _sTxt.setColor('#2a6080'); });
-    _sb.on('pointerdown',  () => { this.gs.toggleOverlay('SettingsScene'); });
+    const _sTxt = this.add.text(_gearX + 14, _gearY + 14, '⚙', F('14px', '#2a6080')).setOrigin(0.5).setDepth(102);
+
+    let _gDragActive = false, _gDragSX = 0, _gDragSY = 0, _gDragOX = 0, _gDragOY = 0;
+
+    _sb.on('pointerover', () => { if (!_gDragActive) { _sb.setFillStyle(0x102840); _sTxt.setColor('#4dd0e1'); } });
+    _sb.on('pointerout',  () => { _sb.setFillStyle(0x0a1828); _sTxt.setColor('#2a6080'); });
+
+    _sb.on('pointerdown', (pointer) => {
+      _gDragActive = true;
+      _gDragSX = pointer.x; _gDragSY = pointer.y;
+      _gDragOX = pointer.x - _sb.x; _gDragOY = pointer.y - _sb.y;
+    });
+
+    this.input.on('pointermove', (pointer) => {
+      if (!_gDragActive || !pointer.isDown) return;
+      const nx = Math.max(0, Math.min(_W - 28, pointer.x - _gDragOX));
+      const ny = Math.max(0, Math.min(_H - 28, pointer.y - _gDragOY));
+      _sb.setPosition(nx, ny);
+      _sTxt.setPosition(nx + 14, ny + 14);
+    });
+
+    this.input.on('pointerup', (pointer) => {
+      if (!_gDragActive) return;
+      _gDragActive = false;
+      const moved = Math.abs(pointer.x - _gDragSX) > 5 || Math.abs(pointer.y - _gDragSY) > 5;
+      if (!moved) {
+        this.gs.toggleOverlay('SettingsScene');
+      } else {
+        const s = loadSettings();
+        s.gearX = Math.round(_sb.x); s.gearY = Math.round(_sb.y);
+        saveSettings(s);
+      }
+    });
 
     // Base nav bar (dynamic — built/destroyed on atBase change)
     this._navObjs = null;

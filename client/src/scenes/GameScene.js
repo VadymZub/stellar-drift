@@ -22,7 +22,7 @@ import ArgusController from '../systems/ArgusController.js';
 import { getUsername, getToken, apiPut, apiGet } from '../api.js';
 import { MISSIONS, getMissionSectorTarget } from '../data/missions.js';
 import EscortTransport, { ESCORT_SPEED, ESCORT_WAVE_AT } from '../entities/EscortTransport.js';
-import { loadSettings } from '../settings.js';
+import { loadSettings, getMinimapDims } from '../settings.js';
 import SettingsScene from './SettingsScene.js';
 
 const PICKUP_RADIUS = 95;
@@ -854,7 +854,7 @@ export default class GameScene extends Phaser.Scene {
       const isDouble = (now - lastClickTime < 350);
       lastClickTime = now;
 
-      const mr = minimapRect(this);
+      const mr = minimapRect(this, getMinimapDims(loadSettings().minimapSize));
       if (pointer.x >= mr.x && pointer.x <= mr.x + mr.w && pointer.y >= mr.y && pointer.y <= mr.y + mr.h) {
         const wp = minimapToWorld(pointer.x, pointer.y, mr, this.worldWidth, this.worldHeight);
         this.cancelCollect(); this.selectTarget(null);
@@ -954,7 +954,7 @@ export default class GameScene extends Phaser.Scene {
     this.input.keyboard.on('keydown-O', () => _openBase('MissionsScene', 'Миссии'));
     this.input.keyboard.on('keydown-P', () => _openBase('ShopScene',     'Магазин'));
     this.input.keyboard.on('keydown-H', () => _openBase('CorpScene',     'Корпорация'));
-    this.input.keyboard.on('keydown-N', () => _openBase('ClanScene',     'Клан'));
+    this.input.keyboard.on('keydown-N', () => _openBase('ClanScene',     'Гильдия'));
     
     this.input.keyboard.on('keydown-CTRL', (e) => {
       e.preventDefault();
@@ -1860,11 +1860,43 @@ export default class GameScene extends Phaser.Scene {
     const spotCr = Math.round(raw.credits * 2 * mult);
     const spotSt = raw.stars > 0 ? Math.max(1, Math.round(raw.stars * 2   * mult)) : 0;
 
-    const sec   = SECTORS[galaxy.current];
-    const isPvp = sec?.pvp === true;
-    const corpPos = isPvp ? this.homeBasePositions?.[this.playerCorp] : null;
-    const baseX = corpPos ? corpPos.x : this.worldWidth / 2;
-    const baseY = corpPos ? corpPos.y : this.worldHeight / 2 - 40;
+    const sec          = SECTORS[galaxy.current];
+    const isPvp        = sec?.pvp === true;
+    const isDungOrBoss = !!(sec?.isDungeon || sec?.personal);
+
+    // Dungeon / boss-map deaths → eject to the parent sector (the one with the jumpgate to here).
+    // personal sectors (shadow_arena) have no edges → fall back to corp home sector.
+    const CORP_HOME  = { helios: 'helios_1', karax: 'karax_1', tides: 'tides_1' };
+    const parentSecKey = isDungOrBoss
+      ? (neighbors(galaxy.current).find(k => !SECTORS[k]?.isDungeon && !SECTORS[k]?.personal)
+         ?? CORP_HOME[this.playerCorp] ?? 'helios_1')
+      : null;
+
+    // Compute corp-base position within the parent sector, mirroring _spawnHomeBase() logic.
+    const parentSec   = parentSecKey ? SECTORS[parentSecKey] : null;
+    const parentScale = parentSec?.pvp ? PVP_WORLD_SCALE : 1.0;
+    const parentW     = BASE_WORLD.width  * parentScale;
+    const parentH     = BASE_WORLD.height * parentScale;
+
+    let baseX, baseY;
+    if (isDungOrBoss) {
+      if (parentSec?.pvp) {
+        // PvP home bases mirror _spawnHomeBase: add('corp', ox, -(my-500)) where my = worldH/2-320
+        const PVP_OX = { helios: 0, karax: -3120, tides: 3120 };
+        const ox = PVP_OX[this.playerCorp] ?? 0;
+        const pmy = parentH / 2 - 320;
+        baseX = parentW / 2 + ox;
+        baseY = parentH / 2 - (pmy - 500) + 80; // +80: spawn just below the base object
+      } else {
+        // Corp / neutral sector: base is always at world centre
+        baseX = parentW / 2;
+        baseY = parentH / 2 + 80;
+      }
+    } else {
+      const corpPos = isPvp ? this.homeBasePositions?.[this.playerCorp] : null;
+      baseX = corpPos ? corpPos.x : this.worldWidth  / 2;
+      baseY = corpPos ? corpPos.y : this.worldHeight / 2 - 40;
+    }
 
     const canAffordCheck = (cr, st) => st > 0 ? (this.starGold || 0) >= st : (this.credits || 0) >= cr;
     const costStr = (cr, st) => st > 0 ? `${st} ⭐` : cr > 0 ? `${cr.toLocaleString()} cr` : 'бесплатно';
@@ -1918,20 +1950,28 @@ export default class GameScene extends Phaser.Scene {
       allObjs.push(cg, t1, t2, t3, btn, btnLbl);
     };
 
-    const finishRespawn = (rx, ry, fullHull, cr, st) => {
+    const finishRespawn = (rx, ry, fullHull, cr, st, jumpToSector) => {
       if (st > 0)      this.starGold = (this.starGold || 0) - st;
       else if (cr > 0) this.credits  = (this.credits  || 0) - cr;
       destroyAll();
       this.steering = false;
       this.cancelCollect();
-      this.player.respawn(rx, ry);
-      if (!fullHull) this.player.hull = Math.round(this.player.maxHull * 0.5);
       this.playerRespawning = false;
-      this._spawnEngineFx();
+      if (jumpToSector) {
+        // Eject from dungeon/boss map → jump to home sector
+        galaxy.current = jumpToSector;
+        this.scene.restart({ startX: rx, startY: ry });
+      } else {
+        this.player.respawn(rx, ry);
+        if (!fullHull) this.player.hull = Math.round(this.player.maxHull * 0.5);
+        this._spawnEngineFx();
+      }
     };
 
-    makeCard(W / 2 - 130, 'К БАЗЕ', '100% прочности', costStr(baseCr, baseSt), canBase,
-      () => finishRespawn(baseX, baseY, true, baseCr, baseSt));
+    makeCard(W / 2 - 130, 'К БАЗЕ',
+      isDungOrBoss ? '100% HP · родная база' : '100% прочности',
+      costStr(baseCr, baseSt), canBase,
+      () => finishRespawn(baseX, baseY, true, baseCr, baseSt, parentSecKey));
     makeCard(W / 2 + 130, 'НА МЕСТЕ', '50% прочности', costStr(spotCr, spotSt), canSpot,
       () => finishRespawn(deathX, deathY, false, spotCr, spotSt));
   }
