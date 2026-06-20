@@ -141,12 +141,11 @@ export default class Mob {
     let shieldHit = 0;
 
     if (this.shield > 0) {
-      // hullMult активен только по голому корпусу; пробивание и overflow при живом щите — ×1.0
-      hullHit = direct;
+      hullHit = direct * hullMult;
       const toShield = toShieldRaw * shieldMult;
       shieldHit = toShield;
       if (toShield <= this.shield) { this.shield -= toShield; }
-      else { hullHit += (toShield - this.shield); this.shield = 0; }
+      else { hullHit += (toShield - this.shield) * hullMult; this.shield = 0; }
     } else {
       hullHit = amount * hullMult;
     }

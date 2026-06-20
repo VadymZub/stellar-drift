@@ -1438,7 +1438,7 @@ export default class GameScene extends Phaser.Scene {
 
     this._consumeAmmo('laser');
     const dmg = Math.round(p.laserDamage * skillMult * (isCrit ? 2 : 1));
-    const opts = { shieldMult: p.weaponShieldMult ?? 0.80, hullMult: p.weaponHullMult ?? 1.50, ignoreMovEvasion: true };
+    const opts = { shieldMult: p.weaponShieldMult ?? 0.90, hullMult: p.weaponHullMult ?? 1.30, ignoreMovEvasion: true };
     const res = t.takeDamage(dmg, p.weaponPenetration, opts);
 
     this.vfx?.play('laser_beam2', t.x, t.y, { scale: isOC ? 0.22 : 0.13, depth: 67 });
@@ -1522,14 +1522,14 @@ export default class GameScene extends Phaser.Scene {
     g.beginPath(); g.moveTo(x1, y1); g.lineTo(x2, y2); g.strokePath();
     this.tweens.add({ targets: g, alpha: 0, duration: 160, ease: 'Expo.easeOut', onComplete: () => g.destroy() });
   }
-  fireMobWeapon(mob, tx, ty, victim = this.player) {
+  fireMobWeapon(mob, tx, ty, victim = this.player, extraOpts = {}) {
     const pType = mob.tpl.projectileType || 'plasma';
     const cfg   = PROJ_TYPES[pType] || PROJ_TYPES.plasma;
 
     // void — хитскан: мгновенный луч, урон без снаряда
     if (cfg.hitscan) {
       const pen = cfg.penetration ?? 0.6;
-      const res = victim.takeDamage(mob.damage, pen, { ignoreMovEvasion: true });
+      const res = victim.takeDamage(mob.damage, pen, { ignoreMovEvasion: true, ...extraOpts });
       this._laserBeam(mob.x, mob.y, victim.x, victim.y, 0xce93d8, 0.85, 4);
       this.onProjectileHit({ owner: 'mob', victim, type: pType, effect: null, effectCfg: cfg }, res);
       return;
@@ -2497,11 +2497,13 @@ export default class GameScene extends Phaser.Scene {
     const mkPerk    = (type) => ({ ...rollPerk(type), creditLvl: PERK_CL, starLvl: PERK_SL });
     const wPerkType = cfg.weaponType === 'laser' ? 'laser' : 'cannon';
     let wDmgMult = 1.0, extraPen = 0, dmgResist = 0, shdRegenMult = 1.0, spdPerkMult = 1.0;
+    let weaponShieldMult = cfg.weaponType === 'laser' ? 0.90 : 1.0;
+    let weaponHullMult   = cfg.weaponType === 'laser' ? 1.30 : 1.0;
     for (let i = 0; i < wSlots; i++) {
       const p = mkPerk(wPerkType); const pb = perkBonus(p);
-      if (p.key === 'perk_steady_aim')     wDmgMult  *= 1 + 0.10 * (1 + pb);
-      if (p.key === 'perk_hull_breaker')   extraPen   = Math.min(0.15, extraPen + 0.05 * (1 + pb));
-      if (p.key === 'perk_laser_shredder') wDmgMult  *= 1 + 0.20 * (1 + pb);
+      if (p.key === 'perk_steady_aim')     wDmgMult     *= 1 + 0.10 * (1 + pb);
+      if (p.key === 'perk_hull_breaker')   extraPen       = Math.min(0.15, extraPen + 0.05 * (1 + pb));
+      if (p.key === 'perk_laser_shredder') weaponHullMult += 0.20 * (1 + pb);
     }
     for (let i = 0; i < sSlots; i++) {
       const p = mkPerk('shield'); const pb = perkBonus(p);
@@ -2544,6 +2546,7 @@ export default class GameScene extends Phaser.Scene {
       speed: finalSpeed, baseFireRate: 1 / fireRate,
       fireCooldown: 1.5,
       weaponDamage: finalWeaponDmg, weaponPenetration: finalWeaponPen,
+      weaponShieldMult, weaponHullMult,
       weaponType: cfg.weaponType, weaponTier,
       shipDef: ship, isBoss: false, isShadowBot: true,
       tpl: { nameKey: 'mob.shadow_bot' }, level: cfg.pilotLevel,
@@ -2571,12 +2574,11 @@ export default class GameScene extends Phaser.Scene {
         const hullMult = opts?.hullMult   ?? 1.0;
         let shHit = 0, hullHit = 0, brokeShield = false;
         if (this.shield > 0) {
-          // hullMult только по голому корпусу; пробивание и overflow при живом щите — ×1.0
           const shAbs = Math.min(this.shield, toShd * shdMult);
           this.shield = Math.max(0, this.shield - shAbs);
           shHit = shAbs;
           const overflow = Math.max(0, toShd - shAbs / shdMult);
-          hullHit = overflow + direct;
+          hullHit = (overflow + direct) * hullMult;
           if (this.shield <= 0) brokeShield = true;
         } else {
           hullHit = effDmg * hullMult;
@@ -2745,10 +2747,13 @@ export default class GameScene extends Phaser.Scene {
     const pType = b.weaponType === 'laser' ? 'void' : 'plasma';
     const dmg = Math.round(b.weaponDamage * (b._overcharge ? 2.0 : 1.0));
     b._overcharge = false;
+    const dmgOpts = b.weaponType === 'laser'
+      ? { shieldMult: b.weaponShieldMult, hullMult: b.weaponHullMult }
+      : {};
     this.fireMobWeapon({
       tpl: { projectileType: pType }, damage: dmg,
       x: b.x, y: b.y, isBoss: false, level: 1,
-    }, tx, ty, this.player);
+    }, tx, ty, this.player, dmgOpts);
   }
 
   _botSkillCheck(now, dist, hullPct) {

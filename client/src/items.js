@@ -310,7 +310,7 @@ export function itemStats(item) {
   const k = modMult(item);
   const up = (item.creditLvl || 0) > 0 ? `   ·   ↑${item.creditLvl}` : '';
   if (item.type === 'laser') {
-    return `${i18n.t('stat.damage')} ${Math.round(item.damage * k)}   ·   ${i18n.t('stat.accuracy')} 70%   ·   ${i18n.t('stat.firerate')} ${item.fireRate.toFixed(1)}/${i18n.t('unit.sec')}   ·   щит -20%  корпус +50%${up}`;
+    return `${i18n.t('stat.damage')} ${Math.round(item.damage * k)}   ·   ${i18n.t('stat.accuracy')} 80%   ·   ${i18n.t('stat.firerate')} ${item.fireRate.toFixed(1)}/${i18n.t('unit.sec')}   ·   щит -10%  корпус +30%${up}`;
   }
   if (item.type === 'cannon') {
     return `${i18n.t('stat.damage')} ${Math.round(item.damage * k)}   ·   ${i18n.t('stat.penetration')} ${Math.round(item.penetration * k * 100)}%   ·   ${i18n.t('stat.firerate')} ${item.fireRate.toFixed(1)}/${i18n.t('unit.sec')}${up}`;

@@ -243,8 +243,8 @@ export default class Player {
     this.weaponShieldMult = 1.0;
     this.weaponHullMult   = 1.0;
     if (this.hasLaser) {
-      this.weaponShieldMult = 0.80;
-      this.weaponHullMult   = 1.50;
+      this.weaponShieldMult = 0.90;
+      this.weaponHullMult   = 1.30;
       let laserPerkMult = 1;
       for (const w of laserW) {
         if (!w.perk) continue;
@@ -320,10 +320,16 @@ export default class Player {
   }
 
   // Урон: penetration-доля идёт прямо в корпус, остальное — в щит, излишек переливается в корпус.
-  // ignoreEvasion: AoE-залпы боссов нельзя увернуться статом — спасает только уход из круга.
-  takeDamage(amount, penetration = 0, ignoreEvasion = false) {
+  // Третий аргумент: true (ignoreEvasion для AoE) или opts { ignoreMovEvasion, shieldMult, hullMult }.
+  takeDamage(amount, penetration = 0, optsOrIgnoreEvasion = false) {
     if (!this.alive) return { shieldHit: 0, hullHit: 0, brokeShield: false };
     if (this.invulnerable) return { shieldHit: 0, hullHit: 0, brokeShield: false };
+
+    const opts        = (typeof optsOrIgnoreEvasion === 'object' && optsOrIgnoreEvasion !== null) ? optsOrIgnoreEvasion : {};
+    const ignoreEvasion = optsOrIgnoreEvasion === true || !!opts.ignoreMovEvasion;
+    const shieldMult  = opts.shieldMult ?? 1;
+    const hullMult    = opts.hullMult   ?? 1;
+
     if (!ignoreEvasion) {
       const body = this.sprite?.body;
       const spd = body ? Math.sqrt(body.velocity.x * body.velocity.x + body.velocity.y * body.velocity.y) : 0;
@@ -340,22 +346,27 @@ export default class Player {
     amount = Math.round(amount * (this.damageResistMod ?? 1));
     this.lastDamageAt = this.scene.time.now;
 
-    const direct = amount * penetration;
-    let toShield = amount - direct;
-    let hullHit = direct;
-    const hadShield = this.shield > 0;
+    const direct       = amount * penetration;
+    const toShieldRaw  = amount - direct;
+    let hullHit        = direct * hullMult;
+    const hadShield    = this.shield > 0;
 
-    if (toShield <= this.shield) {
-      this.shield -= toShield;
+    if (this.shield > 0) {
+      const toShieldEff = toShieldRaw * shieldMult;
+      if (toShieldEff <= this.shield) {
+        this.shield -= toShieldEff;
+      } else {
+        hullHit += (toShieldEff - this.shield) * hullMult;
+        this.shield = 0;
+      }
     } else {
-      hullHit += (toShield - this.shield);
-      this.shield = 0;
+      hullHit = amount * hullMult;
     }
     this.hull -= hullHit;
 
     const brokeShield = hadShield && this.shield <= 0;
     if (this.hull <= 0) { this.hull = 0; this.die(); }
-    return { shieldHit: toShield, hullHit, brokeShield };
+    return { shieldHit: toShieldRaw * shieldMult, hullHit, brokeShield };
   }
 
   die() {
