@@ -7,6 +7,7 @@ import { SECTORS, galaxy } from '../galaxy.js';
 import { getActiveMissionSectorTargets } from '../data/missions.js';
 import { countConsumableInInventory } from '../items.js';
 import { prerenderTex } from '../utils/prerenderTex.js';
+import { loadSettings, getMinimapDims } from '../settings.js';
 
 // Оверлей-сцена HUD. Читает статы из GameScene, слушает события лога.
 export default class HudScene extends Phaser.Scene {
@@ -14,6 +15,11 @@ export default class HudScene extends Phaser.Scene {
 
   create() {
     this.gs = this.scene.get('GameScene');
+
+    // Apply UI Scale from settings
+    const _s = loadSettings();
+    this.cameras.main.setZoom(_s.uiScale / 100);
+
     this.bars = this.add.graphics().setDepth(100);
     this.miniGfx = this.add.graphics().setDepth(101);   // миникарта — векторные блипы
 
@@ -61,6 +67,16 @@ export default class HudScene extends Phaser.Scene {
 
     // Cargo indicator (always visible)
     this._cargoTxt = this.add.text(0, 0, '', F('11px', '#7e9398')).setOrigin(1, 0.5).setDepth(101);
+
+    // Settings button (bottom-right, 28×28, 8px from edge)
+    const _W = this.scale.width, _H = this.scale.height;
+    const _sbX = _W - 36, _sbY = _H - 104; // top-left of 28x28 box
+    const _sb = this.add.rectangle(_sbX, _sbY, 28, 28, 0x0a1828, 0.85).setOrigin(0)
+      .setStrokeStyle(1, 0x1e4060, 0.8).setInteractive({ useHandCursor: true }).setDepth(101);
+    const _sTxt = this.add.text(_sbX + 14, _sbY + 14, '⚙', F('14px', '#2a6080')).setOrigin(0.5).setDepth(102);
+    _sb.on('pointerover',  () => { _sb.setFillStyle(0x102840); _sTxt.setColor('#4dd0e1'); });
+    _sb.on('pointerout',   () => { _sb.setFillStyle(0x0a1828); _sTxt.setColor('#2a6080'); });
+    _sb.on('pointerdown',  () => { this.gs.toggleOverlay('SettingsScene'); });
 
     // Base nav bar (dynamic — built/destroyed on atBase change)
     this._navObjs = null;
@@ -552,7 +568,7 @@ export default class HudScene extends Phaser.Scene {
     const g = this.miniGfx; g.clear();
     if (this.gs.atBase) return;
     const gs = this.gs;
-    const r = minimapRect(this);
+    const r = minimapRect(this, getMinimapDims(loadSettings().minimapSize));
     const ww = gs.worldWidth, wh = gs.worldHeight;
 
     // Панель + рамка с техно-углами
@@ -778,8 +794,10 @@ export default class HudScene extends Phaser.Scene {
 
     this._logBg.clear();
     if (!this._logCollapsed) {
-      this._logBg.fillStyle(0x03080f, 0.88);
-      this._logBg.fillRoundedRect(x, y, PW, PH, 8);
+      if (loadSettings().logBg !== false) {
+        this._logBg.fillStyle(0x03080f, 0.88);
+        this._logBg.fillRoundedRect(x, y, PW, PH, 8);
+      }
       this._logBg.lineStyle(1.5, 0x4dd0e1, 0.65);
       this._logBg.strokeRoundedRect(x, y, PW, PH, 8);
     }
@@ -857,8 +875,10 @@ export default class HudScene extends Phaser.Scene {
     // 6 text lines + XP bar (6px) + XP fraction text (14px) + padding
     const pH = BH + 6 * LH + 38;
     this._ipBg.clear();
-    this._ipBg.fillStyle(0x03080f, 0.88);
-    this._ipBg.fillRoundedRect(x, y, PW, pH, 8);
+    if (loadSettings().infoBg !== false) {
+      this._ipBg.fillStyle(0x03080f, 0.88);
+      this._ipBg.fillRoundedRect(x, y, PW, pH, 8);
+    }
     this._ipBg.lineStyle(1.5, 0x4dd0e1, 0.65);
     this._ipBg.strokeRoundedRect(x, y, PW, pH, 8);
 
@@ -900,13 +920,16 @@ export default class HudScene extends Phaser.Scene {
     this._chatResizing = false;
     this._chatRzOx = 0; this._chatRzOy = 0;
 
-    let cx = W - 380, cy = 20, cw = 360, ch = 230;
+    const BAR_TOP = H - 62; // action bar: H - 52 - 10
+    let cx = W - 380, cy = BAR_TOP - 234, cw = 360, ch = 230;
     try {
       const s = JSON.parse(localStorage.getItem('sd_chat_state') || 'null');
       if (s) { cx = s.x; cy = s.y; cw = s.w; ch = s.h; }
+      // Сброс если позиция из старого дефолта (верхняя зона < 100px)
+      if (s && s.y < 100) { cx = W - 380; cy = BAR_TOP - 234; }
     } catch {}
     this._chatX = Math.max(0, Math.min(W - 260, cx));
-    this._chatY = Math.max(0, Math.min(H - 150, cy));
+    this._chatY = Math.max(0, Math.min(BAR_TOP - 50, cy));
     this._chatW = Math.max(260, Math.min(600, cw));
     this._chatH = Math.max(150, Math.min(480, ch));
 
@@ -922,10 +945,14 @@ export default class HudScene extends Phaser.Scene {
       color: '#cfe9ee', fontFamily: 'Inter, sans-serif',
       padding: '0 6px', outline: 'none', zIndex: '1000',
       boxSizing: 'border-box', display: 'none',
+      pointerEvents: 'none', // не перехватывает клики — активируется только через focus()
     });
+    inp.addEventListener('focus', () => { inp.style.pointerEvents = 'auto'; });
+    inp.addEventListener('blur',  () => { inp.style.pointerEvents = 'none'; });
     inp.addEventListener('keydown', e => {
       if (e.key === 'Enter') {
         const v = inp.value.trim(); if (v) this._sendChatMessage(v); inp.value = '';
+        inp.blur();
         e.preventDefault();
       } else if (e.key === 'Escape') {
         this._chatPmTarget = null;
@@ -1003,7 +1030,9 @@ export default class HudScene extends Phaser.Scene {
 
     // Фон
     const bg = this.add.graphics();
-    bg.fillStyle(0x03080f, 0.93); bg.fillRoundedRect(0, 0, w, h, 6);
+    if (loadSettings().chatBg !== false) {
+      bg.fillStyle(0x03080f, 0.93); bg.fillRoundedRect(0, 0, w, h, 6);
+    }
     bg.lineStyle(1.5, 0x1a4060, 0.85); bg.strokeRoundedRect(0, 0, w, h, 6);
     mk(bg);
     const hg = this.add.graphics();
@@ -1068,16 +1097,24 @@ export default class HudScene extends Phaser.Scene {
       mk(this.add.text(txX, my, disp, { ...F(`${fSz}px`, msg.isPm ? '#ffe082' : '#aacce0'), wordWrap: { width: Math.max(30, w - txX - 8) } }).setOrigin(0, 0));
     });
 
-    // Разделитель + PM-индикатор + ручка ресайза
+    // Разделитель + PM-индикатор
     const sg = this.add.graphics();
     sg.lineStyle(1, 0x1a3a50, 0.5); sg.strokeLineShape(new Phaser.Geom.Line(1, h - INP - 1, w - 1, h - INP - 1));
     mk(sg);
     if (this._chatPmTarget) mk(this.add.text(4, h - INP + 4, `→ ${this._chatPmTarget}`, F('10px', '#ffd54f')).setOrigin(0, 0));
+
+    // Ручка ресайза — правый край нижней строки (не перекрытой HTML-инпутом)
+    const RZ = 20;
+
+    // Кликабельная зона инпута — фокусирует HTML-поле (само поле pointer-events:none)
+    mk(this.add.rectangle(1, h - INP, w - RZ - 1, INP - 1, 0, 0).setOrigin(0).setInteractive({ useHandCursor: true }))
+      .on('pointerdown', () => this._chatInputEl?.focus());
     const rg = this.add.graphics();
-    rg.lineStyle(1.5, 0x2a5070, 0.6);
-    [1, 2, 3].forEach(k => rg.strokeLineShape(new Phaser.Geom.Line(w - k * 4, h, w, h - k * 4)));
+    rg.fillStyle(0x081422, 1); rg.fillRect(w - RZ, h - INP, RZ, INP);
+    rg.lineStyle(1.5, 0x2a5070, 0.7);
+    [1, 2, 3].forEach(k => rg.strokeLineShape(new Phaser.Geom.Line(w - 2 - k * 4, h - 2, w - 2, h - 2 - k * 4)));
     mk(rg);
-    mk(this.add.rectangle(w - 14, h - 14, 14, 14, 0, 0).setOrigin(0).setInteractive({ useHandCursor: true }))
+    mk(this.add.rectangle(w - RZ, h - INP, RZ, INP, 0, 0).setOrigin(0).setInteractive({ useHandCursor: true }))
       .on('pointerdown', ptr => { this._chatResizing = true; this._chatRzOx = ptr.x; this._chatRzOy = ptr.y; });
 
     this._posChatInput(fSz);
@@ -1095,7 +1132,7 @@ export default class HudScene extends Phaser.Scene {
       display:  'block',
       left:     `${Math.round(r.left + (this._chatX + 1) * sx)}px`,
       top:      `${Math.round(r.top  + (this._chatY + this._chatH - INP + 1) * sy)}px`,
-      width:    `${Math.round((this._chatW - 2) * sx)}px`,
+      width:    `${Math.round((this._chatW - 22) * sx)}px`,
       height:   `${Math.round((INP - 2) * sy)}px`,
       fontSize: `${Math.round(fSz * sy)}px`,
     });

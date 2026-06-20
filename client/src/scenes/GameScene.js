@@ -22,6 +22,8 @@ import ArgusController from '../systems/ArgusController.js';
 import { getUsername, getToken, apiPut, apiGet } from '../api.js';
 import { MISSIONS, getMissionSectorTarget } from '../data/missions.js';
 import EscortTransport, { ESCORT_SPEED, ESCORT_WAVE_AT } from '../entities/EscortTransport.js';
+import { loadSettings } from '../settings.js';
+import SettingsScene from './SettingsScene.js';
 
 const PICKUP_RADIUS = 95;
 const PICKUP_TIME = 2000;
@@ -301,7 +303,15 @@ export default class GameScene extends Phaser.Scene {
     this.collectTarget = null;
     this.collectTimer = 0;
     this.collectGfx = this.add.graphics().setDepth(58);
-    this.magnetEnabled = this.magnetEnabled ?? true;
+    // Ensure SettingsScene is registered — fallback for cases where main.js
+    // registration was skipped (stale cache, module-load race, etc.)
+    if (!this.sys.game.scene.scenes.some(s => s.sys?.settings?.key === 'SettingsScene')) {
+      this.sys.game.scene.add('SettingsScene', SettingsScene, false);
+    }
+
+    const _cfg = loadSettings();
+    this.magnetEnabled      = _cfg.autoLoot;
+    this._autoTargetEnabled = _cfg.autoTarget;
 
     this.aoeZones = [];
     this.aoeGfx = this.add.graphics().setDepth(36);
@@ -912,9 +922,10 @@ export default class GameScene extends Phaser.Scene {
     });
 
     this.input.on('pointerup', () => { this.steering = false; });
-    this.input.keyboard.addCapture('TAB,ESC,G,M,J,F,CTRL,I');
-    
-    this.input.keyboard.on('keydown-TAB', (e) => { e.preventDefault(); this.cycleTarget(); });
+    this.input.keyboard.addCapture('TAB,ESC,G,M,J,F,CTRL,I,S');
+
+    this.input.keyboard.on('keydown-TAB', (e) => { e.preventDefault(); if (this._autoTargetEnabled !== false) this.cycleTarget(); });
+    this.input.keyboard.on('keydown-S', () => { this.toggleOverlay('SettingsScene'); });
     this.input.keyboard.on('keydown-ESC', () => { this._exitToSpace(); });
     this.input.keyboard.on('keydown-F', () => {
       if (!this.player.alive) return;
@@ -1325,14 +1336,20 @@ export default class GameScene extends Phaser.Scene {
     this.isFiring = false;
     this.atBase = false;
     if (galaxy.current === 'shadow_arena') { this.exitShadowBattle(); return; }
-    for (const o of ['GarageScene','CargoScene','MapScene','MissionsScene','ShopScene','CorpScene','BaseMenuScene','SkillScene','ClanScene','ShadowBattleScene'])
-      if (this.scene.isActive(o)) this.scene.stop(o);
+    for (const o of ['GarageScene','CargoScene','MapScene','MissionsScene','ShopScene','CorpScene','BaseMenuScene','SkillScene','ClanScene','ShadowBattleScene','SettingsScene'])
+      if (this._sceneExists(o) && this.scene.isActive(o)) this.scene.stop(o);
+  }
+
+  // Safe existence check — avoids "Scene key not found" on Phaser 4 isActive/stop/launch.
+  _sceneExists(key) {
+    return this.sys.game.scene.scenes.some(s => s.sys?.settings?.key === key);
   }
 
   toggleOverlay(key, data) {
     document.getElementById('sd-guild-search')?.remove(); // always clean up HTML overlay on any scene switch
-    const overlays = ['GarageScene', 'CargoScene', 'MapScene', 'MissionsScene', 'ShopScene', 'CorpScene', 'ClanScene', 'SkillScene', 'ShadowBattleScene'];
-    for (const o of overlays) { if (o !== key && this.scene.isActive(o)) this.scene.stop(o); }
+    const overlays = ['GarageScene', 'CargoScene', 'MapScene', 'MissionsScene', 'ShopScene', 'CorpScene', 'ClanScene', 'SkillScene', 'ShadowBattleScene', 'SettingsScene'];
+    for (const o of overlays) { if (o !== key && this._sceneExists(o) && this.scene.isActive(o)) this.scene.stop(o); }
+    if (!this._sceneExists(key)) return;
     if (this.scene.isActive(key)) this.scene.stop(key); else this.scene.launch(key, data);
   }
   selectTarget(mob) {

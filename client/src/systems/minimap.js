@@ -4,8 +4,10 @@ import { MINIMAP } from '../constants.js';
 // Геометрия общая для рисования (HudScene) и клик-навигации (GameScene).
 
 // Прямоугольник миникарты на экране (правый верх). scene.scale.width одинаков во всех сценах.
-export function minimapRect(scene) {
-  return { x: scene.scale.width - MINIMAP.w - MINIMAP.pad, y: MINIMAP.pad, w: MINIMAP.w, h: MINIMAP.h };
+// dims — опционально переопределяет размеры из settings (getMinimapDims).
+export function minimapRect(scene, dims) {
+  const d = dims || MINIMAP;
+  return { x: scene.scale.width - d.w - d.pad, y: d.pad, w: d.w, h: d.h };
 }
 
 // Вписываем мир в квадрат миникарты с сохранением пропорций (letterbox).
