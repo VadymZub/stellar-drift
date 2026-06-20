@@ -972,9 +972,13 @@ export default class HudScene extends Phaser.Scene {
       this.pushChatMessage(channel, from, text, opts);
     }, this);
     this.events.once('shutdown', () => {
+      this._chatWsDestroyed = true;
+      this._chatWS?.close();
       this.game.events.off('chat-message', null, this);
       this._chatInputEl?.parentNode?.removeChild(this._chatInputEl);
     });
+
+    this._connectChatWS();
   }
 
   _rebuildChatPanel() {
@@ -1099,7 +1103,8 @@ export default class HudScene extends Phaser.Scene {
 
   pushChatMessage(channel, from, text, opts = {}) {
     const d = new Date();
-    const time = `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`;
+    const fallbackTime = `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`;
+    const time = opts._time || fallbackTime;
     const isPm = !!(opts.pmTo || opts.pmFrom);
     const msg = { from, text, time, isPm, pmTo: opts.pmTo };
     const push = ch => { const a = this._chatMessages[ch]; a.push(msg); if (a.length > 80) a.shift(); };
@@ -1109,14 +1114,66 @@ export default class HudScene extends Phaser.Scene {
   }
 
   _sendChatMessage(text) {
-    const from = this.gs?.playerName || 'Пилот';
-    if (this._chatPmTarget) {
-      this.pushChatMessage(this._chatTab, from, text, { pmTo: this._chatPmTarget });
-      this._chatPmTarget = null;
-      this._chatInputEl.placeholder = 'Написать сообщение…';
+    if (this._chatWS?.readyState === WebSocket.OPEN) {
+      if (this._chatPmTarget) {
+        this._chatWS.send(JSON.stringify({ type: 'pm', to: this._chatPmTarget, text }));
+      } else {
+        this._chatWS.send(JSON.stringify({ type: 'msg', channel: this._chatTab, text }));
+      }
+      // Server will echo/broadcast — don't push locally to avoid duplicates
     } else {
-      this.pushChatMessage(this._chatTab, from, text);
+      // Fallback: local only (no server)
+      const from = this.gs?.playerName || 'Пилот';
+      if (this._chatPmTarget) {
+        this.pushChatMessage(this._chatTab, from, text, { pmTo: this._chatPmTarget });
+      } else {
+        this.pushChatMessage(this._chatTab, from, text);
+      }
     }
+    this._chatPmTarget = null;
+    this._chatInputEl.placeholder = 'Написать сообщение…';
+  }
+
+  _connectChatWS() {
+    const token = sessionStorage.getItem('sd_token');
+    if (!token) return;
+    this._chatWsDestroyed = false;
+    let ws;
+    try {
+      ws = new WebSocket(`ws://localhost:8000/ws/chat?token=${encodeURIComponent(token)}`);
+    } catch { return; }
+    this._chatWS = ws;
+
+    ws.onopen = () => {};
+
+    ws.onmessage = evt => {
+      let d;
+      try { d = JSON.parse(evt.data); } catch { return; }
+
+      if (d.type === 'history') {
+        const arr = this._chatMessages[d.channel];
+        if (arr) {
+          arr.length = 0;
+          (d.messages || []).forEach(m => arr.push({ from: m.from, text: m.text, time: m.time, isPm: false }));
+          if (this._chatVisible) this._rebuildChatPanel();
+        }
+      } else if (d.type === 'msg') {
+        this.pushChatMessage(d.channel, d.from, d.text, { _time: d.time });
+      } else if (d.type === 'pm') {
+        const myName = this.gs?.playerName || '';
+        if (d.from === myName) {
+          this.pushChatMessage('general', d.from, d.text, { pmTo: d.to, _time: d.time });
+        } else {
+          this.pushChatMessage('general', d.from, d.text, { pmFrom: d.from, _time: d.time });
+        }
+      }
+    };
+
+    ws.onclose = () => {
+      this._chatWS = null;
+      if (!this._chatWsDestroyed) setTimeout(() => this._connectChatWS(), 5000);
+    };
+    ws.onerror = () => {};
   }
 
   _saveChatState() {

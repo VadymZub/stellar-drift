@@ -1,5 +1,5 @@
 from datetime import datetime
-from sqlalchemy import Column, Integer, String, JSON, DateTime, ForeignKey, func
+from sqlalchemy import Column, Integer, String, Float, JSON, DateTime, ForeignKey, func
 from database import Base
 
 
@@ -30,3 +30,14 @@ class AuditLog(Base):
     params  = Column(JSON, nullable=True)
     sector  = Column(String(50), nullable=True)
     ts      = Column(DateTime, default=datetime.utcnow)
+
+
+class ChatMessage(Base):
+    __tablename__ = "chat_messages"
+
+    id       = Column(Integer, primary_key=True)
+    channel  = Column(String(50), nullable=False, index=True)
+    user_id  = Column(Integer, ForeignKey("users.id"), nullable=False)
+    username = Column(String(50), nullable=False)
+    text     = Column(String(500), nullable=False)
+    ts       = Column(Float, nullable=False)

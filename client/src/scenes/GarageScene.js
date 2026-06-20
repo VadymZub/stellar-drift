@@ -333,6 +333,17 @@ export default class GarageScene extends Phaser.Scene {
     p.recomputeStats();
     p.shield = p.maxShield;
 
+    // Resize ammoSlots to match new ship's aSlots count
+    const _newASlots = newShip.aSlots || 3;
+    gs.ammoSlots = gs.ammoSlots || [];
+    while (gs.ammoSlots.length < _newASlots) gs.ammoSlots.push({ type: null, count: 0 });
+    if (gs.ammoSlots.length > _newASlots) {
+      const excess = gs.ammoSlots.splice(_newASlots);
+      for (const s of excess) {
+        if (s.type && s.count > 0) addConsumableToInventory(gs.inventory, s.type, s.count, this._cargoMax());
+      }
+    }
+
     // Sync action bar slot 0 with new ship's active skill
     gs.actionBar = gs.actionBar || Array(10).fill(null);
     const _ask = ship.activeSkill?.key ?? null;
