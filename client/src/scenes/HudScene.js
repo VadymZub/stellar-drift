@@ -88,6 +88,7 @@ export default class HudScene extends Phaser.Scene {
 
     this._buildInfoPanel();
     this._buildLogPanel();
+    this._buildChatPanel();
   }
 
   _buildActionBarHUD() {
@@ -276,7 +277,10 @@ export default class HudScene extends Phaser.Scene {
         const cdEnd   = gs.skillCooldowns[key] || 0;
         const cdMs    = gs._skillCooldownMs(key);
         const cdRem   = Math.max(0, cdEnd - time);
-        const total   = countConsumableInInventory(gs.inventory || [], key.slice(4));
+        const type    = key.slice(4);
+        const invCount  = countConsumableInInventory(gs.inventory || [], type);
+        const ammoCount = (gs.ammoSlots || []).reduce((s, sl) => s + (sl.type === type ? sl.count : 0), 0);
+        const total     = invCount + ammoCount;
         slot.cdGfx.clear();
         if (buffRem > 0) {
           slot.cdTxt.setPosition(slot.sx + slot.SW / 2, slot.sy + slot.SH / 2).setOrigin(0.5, 0.5)
@@ -880,5 +884,242 @@ export default class HudScene extends Phaser.Scene {
     const barW = PW - 20;
     xg.fillStyle(0x1a1030, 0.6); xg.fillRect(barX, barY, barW, 6);
     xg.fillStyle(0x7c4dff, 0.9); xg.fillRect(barX, barY, Math.round(barW * (this._ipXpFrac || 0)), 6);
+  }
+
+  // ══════════════════════════════════════════════════════════
+  // ЧАТ — перетаскиваемое/масштабируемое окно, 3 вкладки, ЛС
+  // ══════════════════════════════════════════════════════════
+
+  _buildChatPanel() {
+    const W = this.scale.width, H = this.scale.height;
+    this._chatMessages = { general: [], corp: [], clan: [] };
+    this._chatTab = 'general';
+    this._chatPmTarget = null;
+    this._chatVisible = true;
+    this._chatDragging = false;
+    this._chatResizing = false;
+    this._chatRzOx = 0; this._chatRzOy = 0;
+
+    let cx = W - 380, cy = 20, cw = 360, ch = 230;
+    try {
+      const s = JSON.parse(localStorage.getItem('sd_chat_state') || 'null');
+      if (s) { cx = s.x; cy = s.y; cw = s.w; ch = s.h; }
+    } catch {}
+    this._chatX = Math.max(0, Math.min(W - 260, cx));
+    this._chatY = Math.max(0, Math.min(H - 150, cy));
+    this._chatW = Math.max(260, Math.min(600, cw));
+    this._chatH = Math.max(150, Math.min(480, ch));
+
+    // Контейнер — всё содержимое в нём, при drag просто двигаем контейнер
+    this._chatC = this.add.container(this._chatX, this._chatY).setDepth(205);
+
+    // HTML input — поверх канваса
+    const inp = document.createElement('input');
+    inp.type = 'text'; inp.maxLength = 200;
+    inp.placeholder = 'Написать сообщение…';
+    Object.assign(inp.style, {
+      position: 'fixed', background: '#050d15', border: '1px solid #1e3a50',
+      color: '#cfe9ee', fontFamily: 'Inter, sans-serif',
+      padding: '0 6px', outline: 'none', zIndex: '1000',
+      boxSizing: 'border-box', display: 'none',
+    });
+    inp.addEventListener('keydown', e => {
+      if (e.key === 'Enter') {
+        const v = inp.value.trim(); if (v) this._sendChatMessage(v); inp.value = '';
+        e.preventDefault();
+      } else if (e.key === 'Escape') {
+        this._chatPmTarget = null;
+        inp.placeholder = 'Написать сообщение…';
+        inp.blur(); this._rebuildChatPanel();
+      }
+      e.stopPropagation(); e.stopImmediatePropagation();
+    });
+    document.body.appendChild(inp);
+    this._chatInputEl = inp;
+
+    // Глобальные drag/resize — один раз
+    this.input.on('pointermove', ptr => {
+      if (this._chatDragging) {
+        const W2 = this.scale.width, H2 = this.scale.height;
+        this._chatX = Math.max(0, Math.min(W2 - this._chatW, ptr.x - this._chatDragOx));
+        this._chatY = Math.max(0, Math.min(H2 - this._chatH, ptr.y - this._chatDragOy));
+        this._chatC.setPosition(this._chatX, this._chatY);
+        this._posChatInput();
+      }
+      if (this._chatResizing) {
+        const dx = ptr.x - this._chatRzOx, dy = ptr.y - this._chatRzOy;
+        this._chatRzOx = ptr.x; this._chatRzOy = ptr.y;
+        this._chatW = Math.max(260, Math.min(600, this._chatW + dx));
+        this._chatH = Math.max(150, Math.min(480, this._chatH + dy));
+        this._rebuildChatPanel();
+      }
+    });
+    this.input.on('pointerup', () => {
+      if (this._chatDragging || this._chatResizing) {
+        this._chatDragging = false; this._chatResizing = false;
+        this._saveChatState();
+      }
+    });
+
+    // Стартовые mock-сообщения
+    this.pushChatMessage('general', 'AceShooter', 'Всем привет!');
+    this.pushChatMessage('general', 'StarWolf', 'Кто идёт в D3?');
+    this.pushChatMessage('corp', 'DarkWanderer', 'Защищаем базу на PvP-3');
+    this.pushChatMessage('clan', 'AceShooter', 'Собираемся на R1 в 20:00');
+    this._rebuildChatPanel();
+
+    this.game.events.on('chat-message', ({ channel, from, text, opts = {} }) => {
+      this.pushChatMessage(channel, from, text, opts);
+    }, this);
+    this.events.once('shutdown', () => {
+      this.game.events.off('chat-message', null, this);
+      this._chatInputEl?.parentNode?.removeChild(this._chatInputEl);
+    });
+  }
+
+  _rebuildChatPanel() {
+    this._chatC.removeAll(true);
+    this._chatC.setPosition(this._chatX, this._chatY);
+
+    const HDR = 22, TAB = 24, INP = 26;
+    const w = this._chatW, h = this._chatH;
+    const F = (sz, c) => ({ fontFamily: 'Inter, sans-serif', fontSize: sz, color: c, resolution: UI_RES });
+    const O = (sz, c) => ({ fontFamily: 'Orbitron, sans-serif', fontSize: sz, color: c, resolution: UI_RES });
+    const mk = o => { this._chatC.add(o); return o; };
+
+    // Свёрнуто — только кнопка-тоггл
+    if (!this._chatVisible) {
+      this._chatInputEl.style.display = 'none';
+      const tbg = mk(this.add.rectangle(0, 0, 72, 22, 0x050e18, 0.95).setOrigin(0)
+        .setStrokeStyle(1, 0x1a4060, 0.8).setInteractive({ useHandCursor: true }));
+      mk(this.add.text(36, 11, '💬 ЧАТ', F('10px', '#4dd0e1')).setOrigin(0.5));
+      tbg.on('pointerdown', () => { this._chatVisible = true; this._rebuildChatPanel(); });
+      return;
+    }
+
+    // Фон
+    const bg = this.add.graphics();
+    bg.fillStyle(0x03080f, 0.93); bg.fillRoundedRect(0, 0, w, h, 6);
+    bg.lineStyle(1.5, 0x1a4060, 0.85); bg.strokeRoundedRect(0, 0, w, h, 6);
+    mk(bg);
+    const hg = this.add.graphics();
+    hg.fillStyle(0x081422, 1); hg.fillRoundedRect(0, 0, w, HDR, { tl: 6, tr: 6, bl: 0, br: 0 });
+    mk(hg);
+    mk(this.add.text(w / 2, HDR / 2, 'ЧАТ', O('11px', '#4dd0e1')).setOrigin(0.5));
+    const xBtn = mk(this.add.text(w - 6, HDR / 2, '✕', F('11px', '#335566')).setOrigin(1, 0.5).setInteractive({ useHandCursor: true }));
+    xBtn.on('pointerover', () => xBtn.setColor('#ef5350'));
+    xBtn.on('pointerout',  () => xBtn.setColor('#335566'));
+    xBtn.on('pointerdown', () => { this._chatVisible = false; this._rebuildChatPanel(); });
+
+    // Drag-зона (заголовок)
+    mk(this.add.rectangle(0, 0, w - 20, HDR, 0, 0).setOrigin(0).setInteractive({ useHandCursor: true }))
+      .on('pointerdown', ptr => {
+        this._chatDragging = true;
+        this._chatDragOx = ptr.x - this._chatX;
+        this._chatDragOy = ptr.y - this._chatY;
+      });
+
+    // Вкладки
+    const CTABS = [{ key: 'general', label: 'ОБЩИЙ' }, { key: 'corp', label: 'КОРП' }, { key: 'clan', label: 'ГИЛЬДИЯ' }];
+    const tabW = Math.floor(w / 3);
+    CTABS.forEach((tab, i) => {
+      const active = tab.key === this._chatTab;
+      const tx = i * tabW, tW = i < 2 ? tabW : w - 2 * tabW;
+      mk(this.add.rectangle(tx, HDR, tW, TAB, active ? 0x0a1e2e : 0x040b14).setOrigin(0)
+        .setStrokeStyle(0.5, active ? 0x2a5060 : 0x0e1e2a, 0.6).setInteractive({ useHandCursor: true }))
+        .on('pointerdown', () => { this._chatTab = tab.key; this._rebuildChatPanel(); });
+      mk(this.add.text(tx + tW / 2, HDR + TAB / 2, tab.label, F('11px', active ? '#4dd0e1' : '#2a5060')).setOrigin(0.5));
+      if (active) {
+        const ag = this.add.graphics();
+        ag.lineStyle(2, 0x4dd0e1, 0.9);
+        ag.strokeLineShape(new Phaser.Geom.Line(tx + 2, HDR + TAB - 1, tx + tW - 2, HDR + TAB - 1));
+        mk(ag);
+      }
+    });
+
+    // Сообщения
+    const msgY0 = HDR + TAB + 3;
+    const msgAreaH = h - HDR - TAB - INP - 5;
+    const fSz = Math.max(10, Math.min(13, Math.round(msgAreaH / 14)));
+    const lineH = Math.round(fSz * 1.45);
+    const msgs = (this._chatMessages[this._chatTab] || []).slice(-Math.floor(msgAreaH / lineH));
+    msgs.forEach((msg, i) => {
+      const my = msgY0 + i * lineH;
+      if (msg.isPm) mk(this.add.rectangle(1, my - 1, w - 2, lineH, 0x1a0e00, 0.65).setOrigin(0));
+      const tmT = mk(this.add.text(6, my, `[${msg.time}] `, F(`${fSz - 1}px`, '#1a4a5a')).setOrigin(0, 0));
+      const nc = msg.isPm ? '#ffd54f' : (msg.from === (this.gs?.playerName || '') ? '#80cbc4' : '#66aacc');
+      const nT = mk(this.add.text(6 + tmT.width, my, `${msg.from}:`, F(`${fSz}px`, nc)).setOrigin(0, 0).setInteractive({ useHandCursor: true }));
+      nT.on('pointerdown', ptr => {
+        const ctrl = ptr.event?.ctrlKey || false;
+        if (ctrl && msg.from !== (this.gs?.playerName || '')) {
+          this._chatPmTarget = msg.from;
+          this._chatInputEl.placeholder = `→ ${msg.from}: `;
+          this._chatInputEl.focus(); this._rebuildChatPanel();
+        }
+      });
+      nT.on('pointerover', () => nT.setAlpha(0.7));
+      nT.on('pointerout',  () => nT.setAlpha(1));
+      const txX = 6 + tmT.width + nT.width + 3;
+      const disp = msg.pmTo ? `→${msg.pmTo}: ${msg.text}` : msg.text;
+      mk(this.add.text(txX, my, disp, { ...F(`${fSz}px`, msg.isPm ? '#ffe082' : '#aacce0'), wordWrap: { width: Math.max(30, w - txX - 8) } }).setOrigin(0, 0));
+    });
+
+    // Разделитель + PM-индикатор + ручка ресайза
+    const sg = this.add.graphics();
+    sg.lineStyle(1, 0x1a3a50, 0.5); sg.strokeLineShape(new Phaser.Geom.Line(1, h - INP - 1, w - 1, h - INP - 1));
+    mk(sg);
+    if (this._chatPmTarget) mk(this.add.text(4, h - INP + 4, `→ ${this._chatPmTarget}`, F('10px', '#ffd54f')).setOrigin(0, 0));
+    const rg = this.add.graphics();
+    rg.lineStyle(1.5, 0x2a5070, 0.6);
+    [1, 2, 3].forEach(k => rg.strokeLineShape(new Phaser.Geom.Line(w - k * 4, h, w, h - k * 4)));
+    mk(rg);
+    mk(this.add.rectangle(w - 14, h - 14, 14, 14, 0, 0).setOrigin(0).setInteractive({ useHandCursor: true }))
+      .on('pointerdown', ptr => { this._chatResizing = true; this._chatRzOx = ptr.x; this._chatRzOy = ptr.y; });
+
+    this._posChatInput(fSz);
+  }
+
+  // Позиционирует HTML-инпут поверх канваса
+  _posChatInput(fSz = 12) {
+    const inp = this._chatInputEl;
+    if (!inp) return;
+    if (!this._chatVisible) { inp.style.display = 'none'; return; }
+    const r = this.game.canvas.getBoundingClientRect();
+    const sx = r.width / this.scale.width, sy = r.height / this.scale.height;
+    const INP = 26;
+    Object.assign(inp.style, {
+      display:  'block',
+      left:     `${Math.round(r.left + (this._chatX + 1) * sx)}px`,
+      top:      `${Math.round(r.top  + (this._chatY + this._chatH - INP + 1) * sy)}px`,
+      width:    `${Math.round((this._chatW - 2) * sx)}px`,
+      height:   `${Math.round((INP - 2) * sy)}px`,
+      fontSize: `${Math.round(fSz * sy)}px`,
+    });
+  }
+
+  pushChatMessage(channel, from, text, opts = {}) {
+    const d = new Date();
+    const time = `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`;
+    const isPm = !!(opts.pmTo || opts.pmFrom);
+    const msg = { from, text, time, isPm, pmTo: opts.pmTo };
+    const push = ch => { const a = this._chatMessages[ch]; a.push(msg); if (a.length > 80) a.shift(); };
+    if (isPm) ['general', 'corp', 'clan'].forEach(push);
+    else push(['general', 'corp', 'clan'].includes(channel) ? channel : 'general');
+    if (this._chatVisible) this._rebuildChatPanel();
+  }
+
+  _sendChatMessage(text) {
+    const from = this.gs?.playerName || 'Пилот';
+    if (this._chatPmTarget) {
+      this.pushChatMessage(this._chatTab, from, text, { pmTo: this._chatPmTarget });
+      this._chatPmTarget = null;
+      this._chatInputEl.placeholder = 'Написать сообщение…';
+    } else {
+      this.pushChatMessage(this._chatTab, from, text);
+    }
+  }
+
+  _saveChatState() {
+    try { localStorage.setItem('sd_chat_state', JSON.stringify({ x: this._chatX, y: this._chatY, w: this._chatW, h: this._chatH })); } catch {}
   }
 }
