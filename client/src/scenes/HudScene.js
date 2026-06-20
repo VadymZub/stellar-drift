@@ -552,7 +552,7 @@ export default class HudScene extends Phaser.Scene {
 
     // База + кольцо безопасной зоны (центр мира)
     const sec = SECTORS[galaxy.current];
-    if (!sec.isDungeon && !sec.pvp) {
+    if (!sec.isDungeon && !sec.pvp && !sec.personal) {
       const base = worldToMinimap(ww / 2, wh / 2, r, ww, wh);
       g.lineStyle(1, COLORS.safezone, 0.5);
       g.strokeCircle(base.x, base.y, gs.safeZoneRadius * base.s);
@@ -624,6 +624,12 @@ export default class HudScene extends Phaser.Scene {
       const p = worldToMinimap(m.x, m.y, r, ww, wh);
       if (m.isBoss) { g.fillStyle(0xff7a6b, 1); g.fillCircle(p.x, p.y, 3.4); }
       else { g.fillStyle(COLORS.danger, 0.95); g.fillCircle(p.x, p.y, 2); }
+    }
+
+    // Бот (арена теней) — отдельная красная точка
+    if (gs.botPilot?.alive) {
+      const bp = worldToMinimap(gs.botPilot.x, gs.botPilot.y, r, ww, wh);
+      g.fillStyle(0xff4444, 1); g.fillCircle(bp.x, bp.y, 3);
     }
 
     // Джапгейты (порталы) — cyan-кольца, чтобы видеть, куда лететь для прыжка

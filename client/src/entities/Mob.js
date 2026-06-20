@@ -137,16 +137,18 @@ export default class Mob {
     const hullMult   = opts.hullMult   ?? 1;
     const direct     = amount * penetration;
     const toShieldRaw = amount - direct;
-    let hullHit   = direct * hullMult;
+    let hullHit   = 0;
     let shieldHit = 0;
 
     if (this.shield > 0) {
+      // hullMult активен только по голому корпусу; пробивание и overflow при живом щите — ×1.0
+      hullHit = direct;
       const toShield = toShieldRaw * shieldMult;
       shieldHit = toShield;
       if (toShield <= this.shield) { this.shield -= toShield; }
-      else { hullHit += (toShield - this.shield) * hullMult; this.shield = 0; }
+      else { hullHit += (toShield - this.shield); this.shield = 0; }
     } else {
-      hullHit += toShieldRaw * hullMult;
+      hullHit = amount * hullMult;
     }
 
     // shielder-аура: -30% урон соседним мобам

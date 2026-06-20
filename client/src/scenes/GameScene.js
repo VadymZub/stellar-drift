@@ -10,8 +10,9 @@ import Movement from '../systems/Movement.js';
 import { EXP_CLASSES } from './BootScene.js'; 
 import { rollLootForMob, dropChance, itemName, rollStarGold, starterCannon, starterShield, rollCannon, rollShield, rollEngine, rollLaser, rollApophisLoot, PLASMATE_PER_SLOT, PLASMATE_DAILY_MAX, addPlasmateToInventory, totalPlasmateInInventory, removePlasmateFromInventory, CONSUMABLES, addConsumableToInventory, countConsumableInInventory, removeConsumableFromInventory, rollConsumableDrop } from '../items.js';
 import PlasmateDeposit from '../entities/PlasmateDeposit.js';
+import { rollPerk, perkBonus } from '../perks.js';
 import { levelInfo, xpToNext, MAX_LEVEL } from '../leveling.js';
-import { SHIP_BY_KEY } from '../ships.js';    
+import { SHIPS, SHIP_BY_KEY, shipLevelMods } from '../ships.js';
 import { SECTORS, galaxy, neighbors, edgeDir, sectorAccess } from '../galaxy.js';
 import { calculateRating, getRank } from '../ranking.js';
 import VFXManager from '../systems/VFXManager.js';
@@ -90,14 +91,28 @@ export default class GameScene extends Phaser.Scene {
 
     // TEST_PROFILE is only valid for unauthenticated DEV sessions; ignore for real users.
     const tp  = getToken() ? null : (window.TEST_PROFILE ?? null);
-    const sec = SECTORS[galaxy.current];
+    let sec = SECTORS[galaxy.current];
+    if (!sec) { galaxy.current = 'helios_1'; sec = SECTORS['helios_1']; }
     const isPvp = sec.pvp === true;
     const scale = isPvp ? PVP_WORLD_SCALE : 1.0;
     
-    this.worldWidth = BASE_WORLD.width * scale;
-    this.worldHeight = BASE_WORLD.height * scale;
+    this.worldWidth = BASE_WORLD.width * (galaxy.current === 'shadow_arena' ? 0.5 : scale);
+    this.worldHeight = BASE_WORLD.height * (galaxy.current === 'shadow_arena' ? 0.5 : scale);
     this.safeZoneRadius = BASE_WORLD.safeZoneRadius;
     this.objScale = 1.0;
+
+    // Shadow battle — persist across sector restarts
+    this._shadowBattleCfg  = this._shadowBattleCfg  ?? null;
+    this._shadowPrevSector = this._shadowPrevSector ?? null;
+    this._shadowBattleDone = false;
+    this.botPilot = null;
+    // Сброс базового режима при входе в персональный сектор
+    if (galaxy.current === 'shadow_arena') {
+      this.atBase  = false;
+      this.jumping = false;
+      this.pendingGate = null;
+      this.steering = true;
+    }
 
     // Камера БЕЗ границ (корабль всегда в центре). Физика ОСТАЁТСЯ в границах.
     this.physics.world.setBounds(0, 0, this.worldWidth, this.worldHeight);
@@ -119,6 +134,7 @@ export default class GameScene extends Phaser.Scene {
     const cx = this.worldWidth / 2, cy = this.worldHeight / 2;
     let startX = data?.startX ?? cx;
     let startY = data?.startY ?? (cy - 40);
+    if (galaxy.current === 'shadow_arena') { startX = Math.round(this.worldWidth * 0.2); startY = Math.round(cy); }
     if (this._reconnectPvpCorp) {
       const pos = this.homeBasePositions?.[this._reconnectPvpCorp];
       if (pos) { startX = pos.x; startY = pos.y + 80; }
@@ -333,6 +349,8 @@ export default class GameScene extends Phaser.Scene {
     this._adminBroadcastGameState();
 
     this.time.delayedCall(60, () => this.log(i18n.t('log.entered', { sector: SECTORS[galaxy.current].name })));
+    // Auto-select bot target (vfx not ready during spawnMobs, defer one tick)
+    if (this.botPilot) this.time.delayedCall(16, () => { if (this.botPilot?.alive) this.selectTarget(this.botPilot); });
   }
 
   createSpaceDust() {
@@ -393,7 +411,7 @@ export default class GameScene extends Phaser.Scene {
 
   spawnPlasmateDeposits() {
     const sec = SECTORS[galaxy.current];
-    if (sec.isDungeon) return;
+    if (sec.isDungeon || sec.personal) return;
     const isPvp = sec.pvp === true;
     const lvl = sec.lvlMin || 1;
     const tier = Math.min(4, Math.floor(lvl / 10));
@@ -474,6 +492,7 @@ export default class GameScene extends Phaser.Scene {
     const sec = SECTORS[galaxy.current];
     if (sec.isDungeon) return; // В данжах нет безопасных зон
     if (sec.pvp) return; // В PvP секторах нет центральной базы
+    if (sec.personal) return; // В персональных секторах нет базы
 
     const cx = this.worldWidth / 2, cy = this.worldHeight / 2;
     this.safeZoneGfx = this.add.graphics().setDepth(-10);
@@ -494,6 +513,10 @@ export default class GameScene extends Phaser.Scene {
     this.miningBases = [];
     for (const b of this.homeBases) b.destroy();
     this.homeBases = [];
+
+    // Shadow arena — no mobs, no bases, only BotPilot
+    if (galaxy.current === 'shadow_arena') { this._initBotPilot(); return; }
+
     this._spawnHomeBase();
 
     const sec = SECTORS[galaxy.current];
@@ -834,6 +857,16 @@ export default class GameScene extends Phaser.Scene {
         this.cancelCollect(); this.selectTarget(null); this.pendingGate = gate; this.steering = false;
         if (this.player.alive && !this.jumping) this.movement.setWaypoint(gate.x, gate.y, false);
         return;
+      }
+
+      // Shadow arena bot targeting
+      if (this.botPilot?.alive) {
+        const bd = Phaser.Math.Distance.Between(wx, wy, this.botPilot.x, this.botPilot.y);
+        if (bd < 80) {
+          this.selectTarget(this.botPilot);
+          if (isDouble) this.isFiring = true;
+          return;
+        }
       }
 
       // Mob check first — takes priority over loot when overlapping
@@ -1286,6 +1319,7 @@ export default class GameScene extends Phaser.Scene {
     this.selectTarget(null);
     this.isFiring = false;
     this.atBase = false;
+    if (galaxy.current === 'shadow_arena') { this.exitShadowBattle(); return; }
     for (const o of ['GarageScene','CargoScene','MapScene','MissionsScene','ShopScene','CorpScene','BaseMenuScene','SkillScene','ClanScene','ShadowBattleScene'])
       if (this.scene.isActive(o)) this.scene.stop(o);
   }
@@ -1303,6 +1337,7 @@ export default class GameScene extends Phaser.Scene {
     this._targetFx = this.vfx?.playLoop('targeting_reticle', mob.x, mob.y, { scale: 0.18, depth: 46 });
   }
   cycleTarget() {
+    if (this.botPilot?.alive) { this.selectTarget(this.botPilot); this.isFiring = true; return; }
     const alive = this.mobs.filter((m) => m.alive).sort((a, b) => Phaser.Math.Distance.Between(this.player.x, this.player.y, a.x, a.y) - Phaser.Math.Distance.Between(this.player.x, this.player.y, b.x, b.y));
     if (!alive.length) { this.target = null; return; }
     const idx = alive.indexOf(this.target); this.target = alive[(idx + 1) % alive.length];
@@ -1407,6 +1442,7 @@ export default class GameScene extends Phaser.Scene {
     const res = t.takeDamage(dmg, p.weaponPenetration, opts);
 
     this.vfx?.play('laser_beam2', t.x, t.y, { scale: isOC ? 0.22 : 0.13, depth: 67 });
+    if (res.dodged) { this.showDodge(t.x, t.y); return; }
     const toHull = (res.hullHit || 0) > 0;
     this.hitFlash(t.x, t.y, toHull);
     if (toHull && this._onScreen(t.x, t.y)) this.vfx?.play('hull_hit', t.x, t.y, { scale: 0.15, depth: 67 });
@@ -1758,6 +1794,7 @@ export default class GameScene extends Phaser.Scene {
     }
   }
   onPlayerKilled(killedByPlayer = false) {
+    if (galaxy.current === 'shadow_arena') { this._endShadowBattle('lose'); return; }
     if (this.playerRespawning) return;
     this.playerRespawning = true;
     this.jumping = false;
@@ -2023,6 +2060,7 @@ export default class GameScene extends Phaser.Scene {
     this.plasmateDeposits.forEach(d => d.update(now2));
     if (this.pendingGate && Phaser.Math.Distance.Between(this.player.x, this.player.y, this.pendingGate.x, this.pendingGate.y) < 60) { this.pendingGate = null; }
     this.argusCtrl?.update(dt);
+    this._updateBotPilot(dt);
     this._updateEscort(dt);
 
     // Spawn transport if we just arrived in the escort target sector
@@ -2384,9 +2422,506 @@ export default class GameScene extends Phaser.Scene {
     this.mobs.forEach(m => this.physics.add.collider(m.sprite, this.walls));
   }
 
+  // ═══════════════════════════════════════════════════════════════════════════
+  //  БОЙ С ТЕНЬЮ — shadow_arena логика
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  startShadowBattle(cfg) {
+    this._shadowBattleCfg  = cfg;
+    this._shadowPrevSector = galaxy.current;
+    galaxy.current = 'shadow_arena';
+    this.scene.restart();
+  }
+
+  exitShadowBattle() {
+    this._cleanupBotPilot();
+    this._shadowBattleCfg  = null;
+    this._shadowBattleDone = false;
+    galaxy.current = this._shadowPrevSector || 'helios_1';
+    this._shadowPrevSector = null;
+    this.scene.restart();
+  }
+
+  _cleanupBotPilot() {
+    if (this.botPilot) {
+      this.botPilot.sprite?.destroy();
+      this.botPilot._nameplate?.destroy();
+      this.botPilot._hullGfx?.destroy();
+      this.botPilot = null;
+    }
+    this._shadowCdTxt?.destroy();
+    this._shadowCdTxt = null;
+    this._shadowCountdown = 0;
+    this._shadowResultObjs?.forEach(o => o?.destroy());
+    this._shadowResultObjs = null;
+  }
+
+  _initBotPilot() {
+    if (!this._shadowBattleCfg) return;
+    const cfg = this._shadowBattleCfg;
+    const ship = cfg.shipDef;
+
+    // ── Compute stats ──────────────────────────────────────────────────────
+    const CANNON_DMG = { 1: 40, 2: 75, 3: 130, 4: 210 };
+    const SHIELD_DUR = { 1: 300, 2: 550, 3: 900, 4: 1500 };
+    const SHIELD_REG = { 1: 30,  2: 45,  3: 70,  4: 100  };
+    const ENGINE_SPD = { 1: 10,  2: 15,  3: 20,  4: 27   };
+    const wSlots = Math.min(ship.wSlots, 4), sSlots = Math.min(ship.sSlots, 4), eSlots = ship.eSlots || 0;
+    const m = shipLevelMods(cfg.shipLevel);
+    const skillHull = 1 + Math.min(0.30, (cfg.pilotLevel / 50) * 0.30);
+    const skillShd  = 1 + Math.min(0.25, (cfg.pilotLevel / 50) * 0.25);
+    const skillDmg  = 1 + Math.min(0.30, (cfg.pilotLevel / 50) * 0.30);
+
+    const maxHull   = Math.round(ship.hullMax * m.hull * skillHull);
+    const maxShield = Math.round((ship.shieldBase + SHIELD_DUR[cfg.equipTier] * sSlots) * m.shield * skillShd);
+    const shieldRegen = Math.round(SHIELD_REG[cfg.equipTier] * sSlots);
+    const speed     = Math.round((ship.baseSpeed + ENGINE_SPD[cfg.equipTier] * eSlots) * m.speed);
+    const baseDmg   = cfg.weaponType === 'laser' ? 252 * wSlots : CANNON_DMG[cfg.equipTier] * wSlots;
+    const weaponDmg = Math.round(baseDmg * skillDmg);
+    const weaponPen = cfg.weaponType === 'laser' ? 0 : 0.05;
+    const weaponTier = cfg.equipTier;
+    const fireRate  = cfg.weaponType === 'laser' ? 1.4 : 1.0;
+
+    // ── Ship passives ──────────────────────────────────────────────────────
+    const shipPassive   = ship.passives ?? {};
+    const shipDmgBonus  = shipPassive.damageBonus  ?? 0;
+    const shipHullRegen = shipPassive.hullRegen    ?? 0;
+    const shipEvasion   = shipPassive.evasionBonus ?? 0;
+    const shipShdBonus  = shipPassive.shieldBonus  ?? 0;
+    const maxShieldFinal = Math.round(maxShield * (1 + shipShdBonus));
+    const weaponDmgPassive = Math.round(weaponDmg * (1 + shipDmgBonus));
+
+    // ── Перки снаряжения (случайные, уровень зависит от тира) ─────────────
+    const PERK_CL   = [0, 2, 3, 5][cfg.equipTier - 1] ?? 0;
+    const PERK_SL   = [0, 0, 1, 3][cfg.equipTier - 1] ?? 0;
+    const mkPerk    = (type) => ({ ...rollPerk(type), creditLvl: PERK_CL, starLvl: PERK_SL });
+    const wPerkType = cfg.weaponType === 'laser' ? 'laser' : 'cannon';
+    let wDmgMult = 1.0, extraPen = 0, dmgResist = 0, shdRegenMult = 1.0, spdPerkMult = 1.0;
+    for (let i = 0; i < wSlots; i++) {
+      const p = mkPerk(wPerkType); const pb = perkBonus(p);
+      if (p.key === 'perk_steady_aim')     wDmgMult  *= 1 + 0.10 * (1 + pb);
+      if (p.key === 'perk_hull_breaker')   extraPen   = Math.min(0.15, extraPen + 0.05 * (1 + pb));
+      if (p.key === 'perk_laser_shredder') wDmgMult  *= 1 + 0.20 * (1 + pb);
+    }
+    for (let i = 0; i < sSlots; i++) {
+      const p = mkPerk('shield'); const pb = perkBonus(p);
+      if (p.key === 'perk_hardened')  dmgResist    = Math.min(0.40, dmgResist + 0.10 * (1 + pb));
+      if (p.key === 'perk_resonance') shdRegenMult *= 1 + 0.12 * (1 + pb);
+    }
+    for (let i = 0; i < eSlots; i++) {
+      const p = mkPerk('engine'); const pb = perkBonus(p);
+      if (p.key === 'perk_engine_thrust') spdPerkMult *= 1 + 0.10 * (1 + pb);
+    }
+    const finalWeaponDmg   = Math.round(weaponDmgPassive * wDmgMult);
+    const finalWeaponPen   = Math.min(0.60, weaponPen + extraPen);
+    const finalShieldRegen = Math.round(shieldRegen * shdRegenMult);
+    const finalSpeed       = Math.round(speed * spdPerkMult);
+
+    // ── Spawn position (правая сторона карты, зеркально игроку) ───────────
+    const bx = Math.round(this.worldWidth * 0.8), by = Math.round(this.worldHeight * 0.5);
+
+    // ── Sprite ────────────────────────────────────────────────────────────
+    const src   = this.textures.get(ship.key).getSourceImage();
+    const scale = ship.displaySize / Math.max(src.width, src.height);
+    const dw    = Math.round(src.width  * scale);
+    const dh    = Math.round(src.height * scale);
+    const sprite = this.add.image(bx, by, ship.key)
+      .setDisplaySize(dw, dh).setTint(0xff6666).setDepth(40);
+
+    // Bot HUD — name tag above sprite
+    const nameplate = this.add.text(0, 0, 'ТЕНЬ', {
+      fontFamily: 'Orbitron, sans-serif', fontSize: '13px',
+      color: '#ff6666', stroke: '#000000', strokeThickness: 3, resolution: UI_RES,
+    }).setOrigin(0.5, 1).setDepth(51);
+    const hullGfx = this.add.graphics().setDepth(52);
+
+    // ── Build botPilot object ──────────────────────────────────────────────
+    const scene = this;
+    this.botPilot = {
+      alive: true, x: bx, y: by, heading: Math.PI,
+      hull: maxHull, maxHull, shield: maxShieldFinal, maxShield: maxShieldFinal, shieldRegen: finalShieldRegen,
+      hullRegen: shipHullRegen, evasion: shipEvasion, damageResist: dmgResist,
+      speed: finalSpeed, baseFireRate: 1 / fireRate,
+      fireCooldown: 1.5,
+      weaponDamage: finalWeaponDmg, weaponPenetration: finalWeaponPen,
+      weaponType: cfg.weaponType, weaponTier,
+      shipDef: ship, isBoss: false, isShadowBot: true,
+      tpl: { nameKey: 'mob.shadow_bot' }, level: cfg.pilotLevel,
+      _aiState: 'approach', _strafeDir: 1, _strafeTimer: 0,
+      _dodgeTimer: 0, _skillCheckTimer: 0.5,
+      _speedMult: 1, _speedBuffTimer: 0,
+      _overcharge: false,
+      skillCooldowns: {},
+      _inventory: [
+        { type: 'repair_pack', qty: 2 },
+        { type: 'speed_boost', qty: 1 },
+      ],
+      sprite, _nameplate: nameplate, _hullGfx: hullGfx,
+      // Mob-like takeDamage interface used by Projectile + _fireLaser
+      takeDamage(dmg, pen, opts) {
+        if (!this.alive) return { killed: false, hullHit: 0, shieldHit: 0 };
+        if (this.evasion > 0 && Math.random() < this.evasion) {
+          return { killed: false, hullHit: 0, shieldHit: 0, dodged: true };
+        }
+        const effDmg  = dmg * (1 - (this.damageResist ?? 0));
+        const penFrac = pen ?? 0;
+        const direct  = effDmg * penFrac;
+        const toShd   = effDmg - direct;
+        const shdMult  = opts?.shieldMult ?? 1.0;
+        const hullMult = opts?.hullMult   ?? 1.0;
+        let shHit = 0, hullHit = 0, brokeShield = false;
+        if (this.shield > 0) {
+          // hullMult только по голому корпусу; пробивание и overflow при живом щите — ×1.0
+          const shAbs = Math.min(this.shield, toShd * shdMult);
+          this.shield = Math.max(0, this.shield - shAbs);
+          shHit = shAbs;
+          const overflow = Math.max(0, toShd - shAbs / shdMult);
+          hullHit = overflow + direct;
+          if (this.shield <= 0) brokeShield = true;
+        } else {
+          hullHit = effDmg * hullMult;
+        }
+        this.hull = Math.max(0, this.hull - hullHit);
+        if (this.hull <= 0 && this.alive) {
+          this.alive = false;
+          scene._endShadowBattle('win');
+        }
+        return { killed: false, hullHit, shieldHit: shHit, brokeShield, dodged: false };
+      },
+    };
+
+    // ── Обратный отсчёт ───────────────────────────────────────────────────
+    this._shadowCountdown = 3.0;
+    const W = this.scale.width, H = this.scale.height;
+    this._shadowCdTxt = this.add.text(W / 2, H / 2 - 80, '3', {
+      fontFamily: 'Orbitron, sans-serif', fontSize: '96px', color: '#4dd0e1',
+      stroke: '#000000', strokeThickness: 8, resolution: UI_RES,
+    }).setOrigin(0.5).setScrollFactor(0).setDepth(210);
+
+    // ── Auto-target bot (цель без автострельбы до конца отсчёта) ──────────
+    this.target = this.botPilot;
+    this.isFiring = false;
+  }
+
+  _updateBotPilot(dt) {
+    if (!this.botPilot || !this.botPilot.alive || this._shadowBattleDone) return;
+    const b   = this.botPilot;
+    const p   = this.player;
+    const now = this.time.now;
+
+    // ── Обратный отсчёт ───────────────────────────────────────────────────
+    if (this._shadowCountdown > 0) {
+      this._shadowCountdown -= dt;
+      // Заморозить игрока — очищать waypoint каждый кадр
+      this.movement.setWaypoint(null);
+      this.isFiring = false;
+      // Обновить текст
+      if (this._shadowCdTxt?.active) {
+        if (this._shadowCountdown > 0) {
+          const n = Math.ceil(this._shadowCountdown);
+          this._shadowCdTxt.setText(`${n}`).setColor(n === 1 ? '#ef5350' : n === 2 ? '#ffcc44' : '#4dd0e1');
+        } else {
+          this._shadowCdTxt.setText('БОЙ!').setColor('#88ff88').setFontSize('64px');
+          this.time.delayedCall(700, () => { this._shadowCdTxt?.destroy(); this._shadowCdTxt = null; });
+          this.isFiring = true;
+          this.log('Бой с тенью начался!');
+        }
+      }
+      return; // бот стоит во время отсчёта
+    }
+
+    // Shield regen
+    b.shield = Math.min(b.maxShield, b.shield + b.shieldRegen * dt);
+    // Hull regen (ship passive, e.g. Argosy)
+    if (b.hullRegen > 0) b.hull = Math.min(b.maxHull, b.hull + b.hullRegen * dt);
+
+    // Speed buff timer
+    if (b._speedBuffTimer > 0) { b._speedBuffTimer -= dt; if (b._speedBuffTimer <= 0) b._speedMult = 1; }
+
+    const dist    = Phaser.Math.Distance.Between(b.x, b.y, p.x, p.y);
+    const hullPct = b.hull / b.maxHull;
+
+    // ── AI state machine ───────────────────────────────────────────────────
+    if (hullPct < 0.20)    b._aiState = 'flee';
+    else if (dist > 900)   b._aiState = 'approach';
+    else if (dist < 280)   b._aiState = 'retreat';
+    else                   b._aiState = 'strafe';
+
+    // ── Projectile dodge ──────────────────────────────────────────────────
+    if (b._dodgeTimer > 0) {
+      b._dodgeTimer -= dt;
+    } else {
+      for (const proj of this.projectiles) {
+        if (proj.owner !== 'player' || proj.dead) continue;
+        const pd = Phaser.Math.Distance.Between(proj.sprite.x, proj.sprite.y, b.x, b.y);
+        if (pd < 180) {
+          b.heading += (Math.random() < 0.5 ? 1 : -1) * Math.PI * 0.55;
+          b._dodgeTimer = 0.45;
+          break;
+        }
+      }
+    }
+
+    // ── Movement ──────────────────────────────────────────────────────────
+    let targetAngle;
+    let spd = b.speed * b._speedMult;
+    if (b._aiState === 'approach') {
+      targetAngle = Math.atan2(p.y - b.y, p.x - b.x);
+    } else if (b._aiState === 'retreat' || b._aiState === 'flee') {
+      targetAngle = Math.atan2(b.y - p.y, b.x - p.x);
+      spd *= 1.35;
+    } else {
+      b._strafeTimer -= dt;
+      if (b._strafeTimer <= 0) {
+        b._strafeDir   *= -1;
+        b._strafeTimer  = Phaser.Math.FloatBetween(1.2, 2.0);
+      }
+      targetAngle = Math.atan2(p.y - b.y, p.x - b.x) + Math.PI / 2 * b._strafeDir;
+    }
+
+    // ── Уклонение от стен — приоритет над dodge/AI ───────────────────────
+    const WALL_M = 260;
+    const nearLeft  = b.x < WALL_M, nearRight  = b.x > this.worldWidth  - WALL_M;
+    const nearTop   = b.y < WALL_M, nearBottom = b.y > this.worldHeight - WALL_M;
+    if (nearLeft || nearRight || nearTop || nearBottom) {
+      // Стрельба к центру карты с небольшим смещением к игроку
+      const cx = this.worldWidth / 2, cy = this.worldHeight / 2;
+      const toCenter = Math.atan2(cy - b.y, cx - b.x);
+      const toPlayer = Math.atan2(p.y - b.y, p.x - b.x);
+      targetAngle = Phaser.Math.Angle.RotateTo(toCenter, toPlayer, 0.4);
+    }
+
+    if (b._dodgeTimer <= 0) {
+      b.heading = Phaser.Math.Angle.RotateTo(b.heading, targetAngle, 4.5 * dt);
+    }
+
+    const margin = 80;
+    b.x = Phaser.Math.Clamp(b.x + Math.cos(b.heading) * spd * dt, margin, this.worldWidth  - margin);
+    b.y = Phaser.Math.Clamp(b.y + Math.sin(b.heading) * spd * dt, margin, this.worldHeight - margin);
+
+    // Update sprite
+    b.sprite.setPosition(b.x, b.y);
+    b.sprite.setRotation(b.heading + (b.shipDef.artAngleOffset ?? ART_ANGLE_OFFSET));
+
+    // Nameplate + hull bar above bot
+    const npY = b.y - b.shipDef.displaySize / 2 - 10;
+    b._nameplate.setPosition(b.x, npY);
+    b._hullGfx.clear();
+    const bw = 60, bh = 5;
+    b._hullGfx.fillStyle(0x111a22, 0.9); b._hullGfx.fillRect(b.x - bw / 2, npY - 20, bw, bh);
+    b._hullGfx.fillStyle(0xef5350);      b._hullGfx.fillRect(b.x - bw / 2, npY - 20, bw * Math.max(0, b.hull / b.maxHull), bh);
+    b._hullGfx.fillStyle(0x111a22, 0.9); b._hullGfx.fillRect(b.x - bw / 2, npY - 14, bw, 3);
+    b._hullGfx.fillStyle(COLORS.primary); b._hullGfx.fillRect(b.x - bw / 2, npY - 14, bw * Math.max(0, b.shield / b.maxShield), 3);
+
+    // ── Auto-fire at player (predictive aim) ───────────────────────────────
+    b.fireCooldown -= dt;
+    if (b.fireCooldown <= 0 && dist < 1400 && b._aiState !== 'flee') {
+      b.fireCooldown = b.baseFireRate;
+      const pBody = p.sprite?.body;
+      const pvx = pBody ? pBody.velocity.x / DPR : 0;
+      const pvy = pBody ? pBody.velocity.y / DPR : 0;
+      const BSPD = 680;
+      const aim = _leadTarget(b.x, b.y, p.x, p.y, pvx, pvy, BSPD);
+      this._botShootAt(aim.x, aim.y);
+    }
+
+    // ── Overcharge shot: next bolt double damage ───────────────────────────
+    // (flag is consumed in _botShootAt)
+
+    // ── Skill check every 0.5s ────────────────────────────────────────────
+    b._skillCheckTimer -= dt;
+    if (b._skillCheckTimer <= 0) {
+      b._skillCheckTimer = 0.5;
+      this._botSkillCheck(now, dist, hullPct);
+    }
+
+    // Check if player died
+    if (!p.alive && !this._shadowBattleDone) this._endShadowBattle('lose');
+  }
+
+  _botShootAt(tx, ty) {
+    const b = this.botPilot;
+    if (!b?.alive) return;
+    const pType = b.weaponType === 'laser' ? 'void' : 'plasma';
+    const dmg = Math.round(b.weaponDamage * (b._overcharge ? 2.0 : 1.0));
+    b._overcharge = false;
+    this.fireMobWeapon({
+      tpl: { projectileType: pType }, damage: dmg,
+      x: b.x, y: b.y, isBoss: false, level: 1,
+    }, tx, ty, this.player);
+  }
+
+  _botSkillCheck(now, dist, hullPct) {
+    const b = this.botPilot;
+    if (!b?.alive) return;
+    const cdReady = (key, ms) => (b.skillCooldowns[key] || 0) < now && ((b.skillCooldowns[key] = now + ms) || true);
+    const invItem = (type) => { const it = b._inventory.find(i => i.type === type); return it?.qty > 0 ? it : null; };
+
+    // ── Корабельная способность ────────────────────────────────────────────
+    const sKey = b.shipDef?.activeSkill?.key;
+    if (sKey === 'ship:argosy_repair' && hullPct < 0.80 && cdReady(sKey, 55000)) {
+      const heal = Math.round(b.maxHull * 0.25);
+      b.hull = Math.min(b.maxHull, b.hull + heal);
+      this.log(`Тень: ремонт корабля +${heal} HP`);
+      return;
+    }
+    if (sKey === 'ship:helion_volley' && dist < 900 && cdReady(sKey, 40000)) {
+      // Залп — 5 выстрелов с интервалом 100мс
+      for (let i = 0; i < 5; i++) {
+        this.time.delayedCall(i * 110, () => {
+          if (!this.botPilot?.alive || !this.player?.alive) return;
+          const aim = _leadTarget(this.botPilot.x, this.botPilot.y, this.player.x, this.player.y, 0, 0, 680);
+          this._botShootAt(aim.x, aim.y);
+        });
+      }
+      this.log('Тень: залп!');
+      return;
+    }
+    if (sKey === 'ship:drifter_jump' && (hullPct < 0.50 || dist < 220) && cdReady(sKey, 60000)) {
+      // Тактический прыжок в направлении движения
+      const jd = 700;
+      b.x = Phaser.Math.Clamp(b.x + Math.cos(b.heading) * jd, 80, this.worldWidth  - 80);
+      b.y = Phaser.Math.Clamp(b.y + Math.sin(b.heading) * jd, 80, this.worldHeight - 80);
+      b.sprite.setPosition(b.x, b.y);
+      return;
+    }
+
+    // ── emergency_repair (скилл, КД как у игрока) ─────────────────────────
+    if (hullPct < 0.45 && cdReady('emergency_repair', 120000)) {
+      const heal = Math.round(b.maxHull * 0.30);
+      b.hull = Math.min(b.maxHull, b.hull + heal);
+      this.log(`Тень: аварийный ремонт +${heal} HP`);
+      return;
+    }
+
+    // ── repair_pack (расходник, собственный КД 35s чтобы не спамить) ──────
+    if (hullPct < 0.60) {
+      const it = invItem('repair_pack');
+      if (it && cdReady('repair_pack', 35000)) {
+        it.qty--;
+        const heal = Math.round(b.maxHull * 0.30);
+        b.hull = Math.min(b.maxHull, b.hull + heal);
+        this.log(`Тень использует ремкомплект (+${heal} HP)`);
+        return;
+      }
+    }
+
+    // ── shield_burst ───────────────────────────────────────────────────────
+    if (b.shield / b.maxShield < 0.65 && cdReady('shield_burst', 85000)) {
+      b.shield = Math.min(b.maxShield, b.shield + b.maxShield * 0.90);
+      this.log('Тень: восстановление щита');
+      return;
+    }
+
+    // ── stealth_sprint (ускорение при ближнем бое) ─────────────────────────
+    if (dist < 400 && cdReady('stealth_sprint', 55000)) {
+      b._speedMult = 1.5; b._speedBuffTimer = 3;
+      return;
+    }
+
+    // ── speed_boost consumable (бегство при критическом HP) ───────────────
+    if (hullPct < 0.22) {
+      const it = invItem('speed_boost');
+      if (it && cdReady('speed_boost', 120000)) {
+        it.qty--; b._speedMult = 1.6; b._speedBuffTimer = 15;
+        return;
+      }
+    }
+
+    // ── overcharge_shot ────────────────────────────────────────────────────
+    if (dist < 650 && !b._overcharge && cdReady('overcharge_shot', 25000)) {
+      b._overcharge = true;
+      return;
+    }
+
+    // ── berserker (агрессия при высоком HP) ───────────────────────────────
+    if (hullPct > 0.55 && cdReady('berserker', 90000)) {
+      b._speedMult = 1.25; b._speedBuffTimer = 8;
+    }
+  }
+
+  _endShadowBattle(result) {
+    if (this._shadowBattleDone) return;
+    this._shadowBattleDone = true;
+    this.isFiring = false;
+    this.target = null;
+
+    const W = this.scale.width, H = this.scale.height;
+    const cx = W / 2, cy = H / 2;
+    const TF  = (sz, c) => ({ fontFamily: 'Orbitron, sans-serif', fontSize: sz, color: c, resolution: UI_RES });
+    const TFI = (sz, c) => ({ fontFamily: 'Inter, sans-serif', fontSize: sz, color: c, resolution: UI_RES });
+
+    let xpGain = 0, credGain = 0, honorGain = 0;
+    if (result === 'win') {
+      xpGain   = 3500;
+      credGain = 12000;
+      const bPow = this.botPilot ? this._shadowBotPower() : 0;
+      const pPow = this._shadowPlayerPower();
+      if (bPow > pPow) honorGain = Math.round(50 * (bPow / Math.max(1, pPow)));
+      this.gainXp(xpGain);
+      this.credits    = (this.credits    || 0) + credGain;
+      this.pilotHonor = (this.pilotHonor || 0) + honorGain;
+    }
+
+    const panH = 290, panW = 460;
+    const objs = [];
+    const reg  = (o) => { objs.push(o); return o; };
+
+    reg(this.add.rectangle(cx, cy, panW, panH, 0x040c18, 0.97)
+      .setStrokeStyle(2, result === 'win' ? COLORS.primary : 0xef5350, 0.9)
+      .setScrollFactor(0).setDepth(200));
+
+    reg(this.add.text(cx, cy - panH / 2 + 34,
+      result === 'win' ? '✓  ПОБЕДА' : '✗  ПОРАЖЕНИЕ',
+      TF('28px', result === 'win' ? '#4dd0e1' : '#ef5350'))
+      .setOrigin(0.5).setScrollFactor(0).setDepth(201));
+
+    if (result === 'win') {
+      reg(this.add.text(cx, cy - 30, `+${xpGain.toLocaleString()} XP`,        TF('17px', '#88ff88')).setOrigin(0.5).setScrollFactor(0).setDepth(201));
+      reg(this.add.text(cx, cy - 6,  `+${credGain.toLocaleString()} кредитов`, TF('15px', '#ffcc44')).setOrigin(0.5).setScrollFactor(0).setDepth(201));
+      const honorLine  = honorGain > 0 ? `+${honorGain} чести` : 'Честь не начислена (противник слабее)';
+      const honorColor = honorGain > 0 ? '#aaddff' : '#557788';
+      reg(this.add.text(cx, cy + 18, honorLine, TFI('13px', honorColor)).setOrigin(0.5).setScrollFactor(0).setDepth(201));
+    } else {
+      reg(this.add.text(cx, cy - 10, 'Тень оказалась сильнее.', TFI('15px', '#bb6666')).setOrigin(0.5).setScrollFactor(0).setDepth(201));
+    }
+
+    const closeY = cy + panH / 2 - 44;
+    [
+      { x: cx - 100, label: 'НА БАЗУ', color: COLORS.primary, fill: 0x0d2233, hover: 0x1a3a50, action: () => this.exitShadowBattle() },
+      { x: cx + 100, label: 'РЕВАНШ',  color: 0xccbb44, fill: 0x1a1a0d, hover: 0x2a2a10,
+        action: () => { this._shadowBattleDone = false; this._cleanupBotPilot(); this.scene.restart(); } },
+    ].forEach(({ x, label, color, fill, hover, action }) => {
+      const btn = reg(this.add.rectangle(x, closeY, 180, 42, fill)
+        .setStrokeStyle(1, color, 0.8).setInteractive({ useHandCursor: true })
+        .setScrollFactor(0).setDepth(201));
+      reg(this.add.text(x, closeY, label, TF('14px', `#${color.toString(16).padStart(6, '0')}`))
+        .setOrigin(0.5).setScrollFactor(0).setDepth(202));
+      btn.on('pointerdown', action);
+      btn.on('pointerover', () => btn.setFillStyle(hover));
+      btn.on('pointerout',  () => btn.setFillStyle(fill));
+    });
+
+    this._shadowResultObjs = objs;
+  }
+
+  _shadowBotPower() {
+    const b = this.botPilot;
+    if (!b) return 0;
+    return b.maxHull * 0.4 + b.maxShield * 0.6 + b.weaponDamage * 14 + b.speed * 5;
+  }
+
+  _shadowPlayerPower() {
+    const p = this.player;
+    return (p?.maxHull || 1000) * 0.4 + (p?.maxShield || 500) * 0.6
+      + (p?.weaponDamage || 100) * 14 + (p?.baseSpeed || 200) * 5
+      + (this.pilotLevel || 1) * 60;
+  }
+
   shutdown() {
     this._prevSector = galaxy.current;
     this._saveState();
+    this._cleanupBotPilot();
     this.escortTransport?.destroy();
     this.escortTransport = null;
     this._escortMobs = null;
@@ -2420,7 +2955,7 @@ export default class GameScene extends Phaser.Scene {
       ammoSlots:           this.ammoSlots   || [],
       respeckCount:        this.respeckCount        || 0,
       skillAchievementSP:  this.skillAchievementSP  || 0,
-      currentSector:       galaxy.current,
+      currentSector:       galaxy.current === 'shadow_arena' ? (this._shadowPrevSector || 'helios_1') : galaxy.current,
       playerCorp:          this.playerCorp          || 'neutral',
       lootBySector:        this._serializeLoot(),
       missionState:        this.missionState        || {},
@@ -2454,8 +2989,8 @@ export default class GameScene extends Phaser.Scene {
     if (s.skillAchievementSP != null) this.skillAchievementSP = s.skillAchievementSP;
     if (s.currentSector != null && SECTORS[s.currentSector]) {
       const restoredSec = SECTORS[s.currentSector];
-      if (s.currentSector === 'R-1-boss') {
-        // Арена без базы: редирект на максимально доступный домашний сектор
+      if (s.currentSector === 'R-1-boss' || s.currentSector === 'shadow_arena') {
+        // Персональные/boss арены без базы: редирект на домашний сектор
         const corp  = s.playerCorp || 'helios';
         const level = levelInfo(s.pilotXp || 0).level;
         galaxy.current = _bestHomeSector(corp, level);

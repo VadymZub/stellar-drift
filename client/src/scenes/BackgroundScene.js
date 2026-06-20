@@ -16,13 +16,17 @@ export default class BackgroundScene extends Phaser.Scene {
 
   fit() {
     const W = this.scale.width, H = this.scale.height;
-    const src = this.textures.get(SECTORS[galaxy.current].map).getSourceImage();
+    const mapKey = (SECTORS[galaxy.current] ?? SECTORS[this.cur])?.map;
+    if (!mapKey) return;
+    const src = this.textures.get(mapKey).getSourceImage();
     const cover = Math.max(W / src.width, H / src.height) * 1.30;   // увеличенный запас под PvP-параллакс
     this.img.setDisplaySize(src.width * cover, src.height * cover).setPosition(W / 2, H / 2);
   }
 
   update() {
-    if (this.cur !== galaxy.current) { this.cur = galaxy.current; this.img.setTexture(SECTORS[this.cur].map); this.fit(); }
+    const sec = SECTORS[galaxy.current];
+    if (!sec) return;
+    if (this.cur !== galaxy.current) { this.cur = galaxy.current; this.img.setTexture(sec.map); this.fit(); }
     // Плавный параллакс: центрируем смещение относительно центра мира, чтобы минимизировать выход за края.
     const gs = this.scene.get('GameScene');
     const cam = gs.cameras && gs.cameras.main;
