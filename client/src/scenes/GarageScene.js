@@ -851,6 +851,56 @@ export default class GarageScene extends Phaser.Scene {
     this.modal = objs;
   }
 
+  // ⭐-апгрейд перка. Если у перка есть кредитный прогресс — предупреждаем о сбросе.
+  tryStarPerkUpgrade(item) {
+    if ((item.perk.creditLvl || 0) > 0) this.showPerkResetConfirm(item);
+    else this.doStarPerkUpgrade(item);
+  }
+
+  doStarPerkUpgrade(item) {
+    const gs = this.gs;
+    const sLvl = item.perk.starLvl || 0;
+    const cost = sLvl < 5 ? PERK_STAR_COST[sLvl] : null;
+    if (cost == null || (gs.starGold || 0) < cost) return;
+    gs.starGold -= cost;
+    item.perk.creditLvl = 0;
+    item.perk.starLvl = sLvl + 1;
+    gs._saveState?.();
+    this.scene.restart();
+  }
+
+  showPerkResetConfirm(item) {
+    if (this.modal) this.closeModal();
+    const W = this.scale.width, H = this.scale.height;
+    const objs = [];
+    const dim = this.add.rectangle(0, 0, W, H, 0x000000, 0.55).setOrigin(0).setDepth(100).setInteractive();
+    dim.on('pointerdown', () => this.closeModal());
+    objs.push(dim);
+
+    const mw = Math.min(480, W - 60), mh = 200, mx = (W - mw) / 2, my = (H - mh) / 2;
+    const g = this.add.graphics().setDepth(101);
+    g.fillStyle(0x10202b, 1); g.fillRoundedRect(mx, my, mw, mh, 10);
+    g.lineStyle(2, COLORS.amber, 0.85); g.strokeRoundedRect(mx, my, mw, mh, 10);
+    objs.push(g);
+
+    objs.push(this.add.text(mx + mw / 2, my + 30,
+      i18n.t('garage.perk_reset_warn', { lvl: item.perk.creditLvl }),
+      { ...this.F('14px', '#cfe9ee'), align: 'center', wordWrap: { width: mw - 48 } }).setOrigin(0.5, 0).setDepth(102));
+
+    const mkBtn = (cxr, color, brd, label, cb) => {
+      const bw = 190, bh = 40, bx = cxr - bw / 2, by = my + mh - bh - 22;
+      const r = this.add.rectangle(bx, by, bw, bh, color, 0.95).setOrigin(0, 0).setDepth(102)
+        .setStrokeStyle(1, brd, 0.4).setInteractive({ useHandCursor: true });
+      const t = this.add.text(cxr, by + bh / 2, label, this.O('13px', '#ffffff')).setOrigin(0.5).setDepth(103);
+      r.on('pointerdown', cb);
+      objs.push(r, t);
+    };
+    mkBtn(mx + mw * 0.30, 0x3a2c12, COLORS.amber, i18n.t('garage.reset_yes'), () => { this.closeModal(); this.doStarPerkUpgrade(item); });
+    mkBtn(mx + mw * 0.70, 0x37474f, 0xffffff, i18n.t('garage.no'), () => this.closeModal());
+
+    this.modal = objs;
+  }
+
   // ════════════════ ТАБ «ОБОРУДОВАНИЕ» — слоты модулей + склад ════════════════
   renderEquipTab() {
     const { px, py, pw, ph } = this.box;
@@ -1402,12 +1452,7 @@ export default class GarageScene extends Phaser.Scene {
       if (canStar) {
         sbg.on('pointerover', () => sbg.setFillStyle(0x261c00));
         sbg.on('pointerout',  () => sbg.setFillStyle(0x1a1200));
-        sbg.on('pointerdown', () => {
-          gs.starGold    = (gs.starGold || 0) - sCost;
-          item.perk.starLvl = nextSLvl - 1 + 1;
-          gs._saveState?.();
-          this.scene.restart();
-        });
+        sbg.on('pointerdown', () => this.tryStarPerkUpgrade(item));
       }
     } else {
       this.add.text(colRX + halfW / 2, cy + 48, '✓ MAX (звёзды)',

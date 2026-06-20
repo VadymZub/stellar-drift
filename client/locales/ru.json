@@ -111,6 +111,7 @@
   "garage.mod_upgraded": "{item} → кред. ур. {lvl}",
   "garage.mod_star_upgraded": "{item} → ⭐ ур. {lvl}",
   "garage.reset_warn": "Прокачка «{item}» за ⭐ сбросит кредитную прокачку (ур. {lvl} → 0) и начнёт ⭐-путь с нуля. Продолжить?",
+  "garage.perk_reset_warn": "Прокачка перка за ⭐ сбросит кредитную прокачку (ур. {lvl} → 0) и начнёт ⭐-путь с нуля. Продолжить?",
   "garage.reset_yes": "Сбросить и качать ⭐",
 
   "map.title": "КАРТА СЕКТОРОВ",
