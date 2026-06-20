@@ -357,8 +357,8 @@ export default class HudScene extends Phaser.Scene {
       const txt = this.add.bitmapText(bx, barY + BTN_H / 2, 'bmf_orb12', label, 12)
         .setOrigin(0.5, 0.5).setDepth(107).setTint(0x3a8aaa);
 
-      btn.on('pointerover',  () => { if (!this.scene.isActive(key)) { btn.setFillStyle(0x0f2535); txt.setTint(0x4dd0e1); } });
-      btn.on('pointerout',   () => { if (!this.scene.isActive(key)) { btn.setFillStyle(0x081420); txt.setTint(0x3a8aaa); } });
+      btn.on('pointerover',  () => { if (!this.scene.isActive(key)) { btn.setFillStyle(0x0f2535); txt.setTint(0x4dd0e1); this.tweens.add({ targets: [btn, txt], scaleY: 1.06, duration: 80, ease: 'Sine.easeOut' }); } });
+      btn.on('pointerout',   () => { if (!this.scene.isActive(key)) { btn.setFillStyle(0x081420); txt.setTint(0x3a8aaa); this.tweens.add({ targets: [btn, txt], scaleY: 1.0, duration: 80, ease: 'Sine.easeOut' }); } });
       btn.on('pointerdown',  () => {
         if (this.scene.isActive('DonateScene')) this.scene.stop('DonateScene');
         if (this.scene.isActive(key)) this.gs._exitToSpace();
@@ -392,6 +392,7 @@ export default class HudScene extends Phaser.Scene {
   pushLog(text) {
     const t = this.add.text(0, 0, text, {
       fontFamily: 'Inter, sans-serif', fontSize: '12px', color: '#cfe9ee', resolution: UI_RES,
+      wordWrap: { width: 276 },
     }).setDepth(101);
     this.logEntries.push({ t, born: this.time.now });
     while (this.logEntries.length > 7) this.logEntries.shift().t.destroy();
@@ -413,7 +414,8 @@ export default class HudScene extends Phaser.Scene {
       this.bar(g, 38, 20, 160, 16, sFrac, COLORS.primary);
       this._icoHull.setVisible(true);
       this._valHull.setText(`${Math.ceil(p.hull)} / ${p.maxHull}`).setVisible(true);
-      this.bar(g, 38, 44, 160, 16, hFrac, COLORS.emerald);
+      const hullColor = hFrac > 0.5 ? COLORS.emerald : (hFrac > 0.25 ? COLORS.amber : COLORS.danger);
+      this.bar(g, 38, 44, 160, 16, hFrac, hullColor);
       const boostTag = p.boosting ? `  ⚡${i18n.t('hud.boost')}` : '';
       this.pSpeed.setText(`${i18n.t('hud.speed')}  ${Math.round(p.speed)}${boostTag}`)
         .setColor(p.boosting ? '#ffb74d' : '#9fb3b8').setVisible(true);
@@ -532,9 +534,12 @@ export default class HudScene extends Phaser.Scene {
 
   bar(g, x, y, w, h, frac, color) {
     frac = Phaser.Math.Clamp(frac, 0, 1);
-    g.fillStyle(0x0a141a, 0.85); g.fillRoundedRect(x - 2, y - 2, w + 4, h + 4, 3);
-    g.fillStyle(0x1a2a30, 1); g.fillRect(x, y, w, h);
-    g.fillStyle(color, 1); g.fillRect(x, y, w * frac, h);
+    g.fillStyle(0x050c12, 0.9); g.fillRoundedRect(x - 2, y - 2, w + 4, h + 4, 4);
+    g.fillStyle(0x0e1e26, 1); g.fillRect(x, y, w, h);
+    if (frac > 0) {
+      g.fillStyle(color, 1); g.fillRect(x, y, Math.ceil(w * frac), h);
+      g.fillStyle(0xffffff, 0.13); g.fillRect(x, y, Math.ceil(w * frac), Math.ceil(h * 0.38));
+    }
   }
 
   // Миникарта векторными блипами: панель + база/safe-зона + лут + мобы + игрок + waypoint.
@@ -546,9 +551,19 @@ export default class HudScene extends Phaser.Scene {
     const r = minimapRect(this);
     const ww = gs.worldWidth, wh = gs.worldHeight;
 
-    // Панель + рамка
-    g.fillStyle(0x06101c, 0.85); g.fillRect(r.x, r.y, r.w, r.h);
-    g.lineStyle(2, COLORS.primary, 0.8); g.strokeRect(r.x, r.y, r.w, r.h);
+    // Панель + рамка с техно-углами
+    g.fillStyle(0x03090f, 0.9); g.fillRect(r.x, r.y, r.w, r.h);
+    g.lineStyle(1, COLORS.primary, 0.25); g.strokeRect(r.x, r.y, r.w, r.h);
+    const cr = 7;
+    g.lineStyle(2, COLORS.primary, 0.9);
+    g.strokeLineShape(new Phaser.Geom.Line(r.x, r.y + cr, r.x, r.y));
+    g.strokeLineShape(new Phaser.Geom.Line(r.x, r.y, r.x + cr, r.y));
+    g.strokeLineShape(new Phaser.Geom.Line(r.x + r.w - cr, r.y, r.x + r.w, r.y));
+    g.strokeLineShape(new Phaser.Geom.Line(r.x + r.w, r.y, r.x + r.w, r.y + cr));
+    g.strokeLineShape(new Phaser.Geom.Line(r.x + r.w, r.y + r.h - cr, r.x + r.w, r.y + r.h));
+    g.strokeLineShape(new Phaser.Geom.Line(r.x + r.w, r.y + r.h, r.x + r.w - cr, r.y + r.h));
+    g.strokeLineShape(new Phaser.Geom.Line(r.x + cr, r.y + r.h, r.x, r.y + r.h));
+    g.strokeLineShape(new Phaser.Geom.Line(r.x, r.y + r.h, r.x, r.y + r.h - cr));
 
     // База + кольцо безопасной зоны (центр мира)
     const sec = SECTORS[galaxy.current];
@@ -707,12 +722,14 @@ export default class HudScene extends Phaser.Scene {
     const F = (s, c) => ({ fontFamily: 'Inter, sans-serif', fontSize: s, color: c, resolution: UI_RES });
     const SH = this.scale.height;
 
+    const SW = this.scale.width;
     let lpx = 10, lpy = SH - 185;
     try {
       const s = JSON.parse(localStorage.getItem('sd_hud_log_pos') || 'null');
       if (s) { lpx = s.x; lpy = s.y; }
     } catch {}
-    this._logX = lpx; this._logY = lpy;
+    this._logX = Math.max(0, Math.min(SW - 310, lpx));
+    this._logY = Math.max(0, Math.min(SH - 185, lpy));
     this._logCollapsed = false;
 
     this._logBg = this.add.graphics().setDepth(100);
@@ -757,7 +774,9 @@ export default class HudScene extends Phaser.Scene {
 
     this._logBg.clear();
     if (!this._logCollapsed) {
-      this._logBg.lineStyle(1.5, 0x4dd0e1, 0.45);
+      this._logBg.fillStyle(0x03080f, 0.88);
+      this._logBg.fillRoundedRect(x, y, PW, PH, 8);
+      this._logBg.lineStyle(1.5, 0x4dd0e1, 0.65);
       this._logBg.strokeRoundedRect(x, y, PW, PH, 8);
     }
   }
@@ -766,12 +785,14 @@ export default class HudScene extends Phaser.Scene {
     const F = (s, c) => ({ fontFamily: 'Inter, sans-serif', fontSize: s, color: c, resolution: UI_RES });
     const O = (s, c) => ({ fontFamily: 'Orbitron, sans-serif', fontSize: s, color: c, resolution: UI_RES });
 
+    const SW = this.scale.width, SH = this.scale.height;
     let ipx = 10, ipy = 90;
     try {
       const s = JSON.parse(localStorage.getItem('sd_hud_info_pos') || 'null');
       if (s) { ipx = s.x; ipy = s.y; }
     } catch {}
-    this._ipx = ipx; this._ipy = ipy;
+    this._ipx = Math.max(0, Math.min(SW - 160, ipx));
+    this._ipy = Math.max(0, Math.min(SH - 200, ipy));
     this._ipCollapsed = false;
     this._ipXpFrac = 0;
 
@@ -832,7 +853,9 @@ export default class HudScene extends Phaser.Scene {
     // 6 text lines + XP bar (6px) + XP fraction text (14px) + padding
     const pH = BH + 6 * LH + 38;
     this._ipBg.clear();
-    this._ipBg.lineStyle(1.5, 0x4dd0e1, 0.45);
+    this._ipBg.fillStyle(0x03080f, 0.88);
+    this._ipBg.fillRoundedRect(x, y, PW, pH, 8);
+    this._ipBg.lineStyle(1.5, 0x4dd0e1, 0.65);
     this._ipBg.strokeRoundedRect(x, y, PW, pH, 8);
 
     const tx = x + 10, ty0 = y + BH + 4;
