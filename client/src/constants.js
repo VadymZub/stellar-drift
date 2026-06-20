@@ -68,8 +68,8 @@ export const PLAYER = {
 };
 
 export const PROJECTILE = {
-  speed: 950,             // px/сек
-  hitRadius: 22,          // дистанция засчёта попадания
+  speed: 1400,            // px/сек
+  hitRadius: 24,          // дистанция засчёта попадания
   playerColor: COLORS.primary,
   mobColor: COLORS.danger,
 };
@@ -77,8 +77,8 @@ export const PROJECTILE = {
 // Типы снарядов мобов. speed=0 + hitscan=true → мгновенный луч (без Projectile-объекта).
 // spread=true → 3 болта в ±12° веере (ion). effect → доп. действие при попадании.
 export const PROJ_TYPES = {
-  plasma: { color: 0xef5350, speed: 950, w: 32, h: 13, hitR: 22 },
-  ion:    { color: 0x80d8ff, speed: 950, w: 20, h: 8,  hitR: 18, spread: true },
+  plasma: { color: 0xef5350, speed: 1400, w: 32, h: 13, hitR: 24 },
+  ion:    { color: 0x80d8ff, speed: 1400, w: 20, h: 8,  hitR: 18, spread: true },
   acid:   { color: 0x76ff03, speed: 720, w: 34, h: 34, hitR: 20, effect: 'dot',  dotDmg: 0.5,  dotSec: 2.0 },
   grav:   { color: 0xffb74d, speed: 480, w: 36, h: 36, hitR: 24, effect: 'push', pushDist: 180, slowMult: 0.65, slowSec: 1.5 },
   emp:    { color: 0x4dd0e1, speed: 580, w: 28, h: 28, hitR: 22, effect: 'emp',  slowMult: 0.45, slowSec: 2.0 },

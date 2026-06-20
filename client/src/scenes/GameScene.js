@@ -65,7 +65,12 @@ function _leadTarget(sx, sy, tx, ty, tvx, tvy, boltSpeed) {
       leadT = (t1 > 0) ? t1 : (t2 > 0 ? t2 : 0);
     }
   }
-  if (leadT <= 0) return { x: tx, y: ty };
+  if (leadT <= 0) {
+    // target faster than bolt — partial lead: aim where target is in bolt-travel-time to current distance
+    const dist = Math.sqrt(dx * dx + dy * dy);
+    const partialT = boltSpeed > 0 ? dist / boltSpeed : 0;
+    return { x: tx + tvx * partialT, y: ty + tvy * partialT };
+  }
   return { x: tx + tvx * leadT, y: ty + tvy * leadT };
 }
 
@@ -1406,9 +1411,10 @@ export default class GameScene extends Phaser.Scene {
     const color     = isOC ? 0xff8800 : ammoMult > 1 ? 0xff6d00 : isCrit ? 0xffee44 : PROJECTILE.playerColor;
     // Predictive aim: lead the target based on its current velocity.
     const aimPt = _leadTarget(p.x, p.y, t.x, t.y,
-      t.sprite?.body?.velocity?.x ?? 0, t.sprite?.body?.velocity?.y ?? 0,
+      (t.sprite?.body?.velocity?.x ?? 0) / DPR,
+      (t.sprite?.body?.velocity?.y ?? 0) / DPR,
       PROJECTILE.speed);
-    this.projectiles.push(new Projectile(this, 'player', p.x, p.y, aimPt.x, aimPt.y, t, dmg, p.weaponPenetration, color, 90 * Math.PI / 180));
+    this.projectiles.push(new Projectile(this, 'player', p.x, p.y, aimPt.x, aimPt.y, t, dmg, p.weaponPenetration, color, 160 * Math.PI / 180));
     this.muzzleFlash(p.x, p.y, isOC ? 0xff8800 : isCrit ? 0xffee44 : 0x8fe6ff);
     if (isCrit || isOC) {
       const label = isOC ? '⚡ УДАР!' : 'КРИТ!';
@@ -2529,6 +2535,7 @@ export default class GameScene extends Phaser.Scene {
     const dh    = Math.round(src.height * scale);
     const sprite = this.add.image(bx, by, ship.key)
       .setDisplaySize(dw, dh).setTint(0xff6666).setDepth(40);
+    sprite.body = { velocity: { x: 0, y: 0 }, destroy() {} }; // fake physics body for _leadTarget in _fireCannon
 
     // Bot HUD — name tag above sprite
     const nameplate = this.add.text(0, 0, 'ТЕНЬ', {
@@ -2700,6 +2707,8 @@ export default class GameScene extends Phaser.Scene {
     const margin = 80;
     b.x = Phaser.Math.Clamp(b.x + Math.cos(b.heading) * spd * dt, margin, this.worldWidth  - margin);
     b.y = Phaser.Math.Clamp(b.y + Math.sin(b.heading) * spd * dt, margin, this.worldHeight - margin);
+    b.sprite.body.velocity.x = Math.cos(b.heading) * spd * DPR;
+    b.sprite.body.velocity.y = Math.sin(b.heading) * spd * DPR;
 
     // Update sprite
     b.sprite.setPosition(b.x, b.y);
@@ -2722,8 +2731,7 @@ export default class GameScene extends Phaser.Scene {
       const pBody = p.sprite?.body;
       const pvx = pBody ? pBody.velocity.x / DPR : 0;
       const pvy = pBody ? pBody.velocity.y / DPR : 0;
-      const BSPD = 680;
-      const aim = _leadTarget(b.x, b.y, p.x, p.y, pvx, pvy, BSPD);
+      const aim = _leadTarget(b.x, b.y, p.x, p.y, pvx, pvy, PROJECTILE.speed);
       this._botShootAt(aim.x, aim.y);
     }
 
@@ -2775,7 +2783,9 @@ export default class GameScene extends Phaser.Scene {
       for (let i = 0; i < 5; i++) {
         this.time.delayedCall(i * 110, () => {
           if (!this.botPilot?.alive || !this.player?.alive) return;
-          const aim = _leadTarget(this.botPilot.x, this.botPilot.y, this.player.x, this.player.y, 0, 0, 680);
+          const _pb = this.player.sprite?.body;
+          const aim = _leadTarget(this.botPilot.x, this.botPilot.y, this.player.x, this.player.y,
+            _pb ? _pb.velocity.x / DPR : 0, _pb ? _pb.velocity.y / DPR : 0, PROJECTILE.speed);
           this._botShootAt(aim.x, aim.y);
         });
       }
