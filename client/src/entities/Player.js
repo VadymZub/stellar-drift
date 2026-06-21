@@ -1,5 +1,6 @@
 import * as Phaser from 'https://cdn.jsdelivr.net/npm/phaser@4.1.0/dist/phaser.esm.js';
 import { PLAYER, ART_ANGLE_OFFSET, HANDLING, BASE_SCAN_RADIUS, UI_RES } from '../constants.js';
+import { getBoardEffects } from '../boards.js';
 import { defaultLoadout, modMult } from '../items.js';
 import { perkBonus } from '../perks.js';
 import { SHIP_BY_KEY, shipLevelMods, SHIP_MAX_LEVEL } from '../ships.js';
@@ -316,6 +317,23 @@ export default class Player {
       if (aff === 'tides') { this.maxShield       = Math.round(this.maxShield * 1.05); this.shieldRegenPerSec = Math.round(this.shieldRegenPerSec * 1.03); }
     }
 
+    // ── Expansion board effects ────────────────────────────────────────────
+    const boardFx = getBoardEffects(this.scene.equippedBoard);
+    for (const [stat, pct] of Object.entries(boardFx)) {
+      const f = pct / 100;
+      if (stat === 'cannonDmg')   { this.cannonDamage = Math.round(this.cannonDamage * (1 + f)); }
+      if (stat === 'laserDmg')    { this.laserDamage  = Math.round(this.laserDamage  * (1 + f)); }
+      if (stat === 'piercing')    { this.weaponPenetration = Math.min(0.40, this.weaponPenetration + f); }
+      if (stat === 'piercingRes') { this.damageResistMod   = Math.max(0.10, this.damageResistMod - f); }
+      if (stat === 'shieldMax')   { this.maxShield = Math.round(this.maxShield * (1 + f)); }
+      if (stat === 'hullMax')     { this.maxHull   = Math.round(this.maxHull   * (1 + f)); this.hull = Math.min(this.hull, this.maxHull); }
+      if (stat === 'speed')       { this.baseSpeed = Math.round(this.baseSpeed * (1 + f)); }
+      if (stat === 'cooldown')    { this.activeCooldownMod = Math.max(0.10, this.activeCooldownMod - f); }
+    }
+    if (Object.keys(boardFx).length > 0) {
+      this.weaponDamage = this.cannonDamage + this.laserDamage;
+    }
+
     if (this.shield > this.maxShield) this.shield = this.maxShield;
   }
 
@@ -387,8 +405,10 @@ export default class Player {
     this.waypoint = null;
     this.speed = 0;
     this.boosting = false;
+    this.lockedRotation = false;
     this.sprite.body?.setVelocity(0, 0);
     this.sprite.setPosition(x, y);
+    this.sprite.setScale(1);
     this.sprite.setVisible(true);
     this._npIcon.setVisible(true);
     this._npText.setVisible(true);

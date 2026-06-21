@@ -845,7 +845,7 @@ export default class GameScene extends Phaser.Scene {
       ease: 'Quint.easeIn'
     });
 
-    this.tweens.add({
+    this._jumpScaleTween = this.tweens.add({
       targets: this.player.sprite,
       x: gate.x, y: gate.y,
       scaleX: 0.01, scaleY: 0.01,
@@ -853,12 +853,13 @@ export default class GameScene extends Phaser.Scene {
       ease: 'Back.easeIn'
     });
 
-    this.time.delayedCall(spinUpDuration, () => {
+    this._jumpVisTimer = this.time.delayedCall(spinUpDuration, () => {
+      this._jumpVisTimer = null;
       this.player.sprite.setVisible(false);
-      
+
       const flash = this.add.image(gate.x, gate.y, 'glow')
         .setDepth(50).setTint(0x8fe6ff).setScale(0.1).setAlpha(1).setBlendMode('ADD');
-      
+
       this.tweens.add({
         targets: flash,
         scaleX: 25,
@@ -870,7 +871,8 @@ export default class GameScene extends Phaser.Scene {
       });
     });
 
-    this.time.delayedCall(totalDuration, () => {
+    this._jumpTravelTimer = this.time.delayedCall(totalDuration, () => {
+      this._jumpTravelTimer = null;
       this.player.lockedRotation = false;
       this.travelTo(gate.target);
     });
@@ -1905,6 +1907,12 @@ export default class GameScene extends Phaser.Scene {
     if (this.playerRespawning) return;
     this.playerRespawning = true;
     this.jumping = false;
+    this.player.lockedRotation = false;
+    // Cancel any in-progress jump animation so it doesn't hide/teleport the player after respawn
+    if (this._jumpScaleTween) { this._jumpScaleTween.stop(); this._jumpScaleTween = null; }
+    if (this._jumpVisTimer)   { this._jumpVisTimer.remove(false);   this._jumpVisTimer = null; }
+    if (this._jumpTravelTimer){ this._jumpTravelTimer.remove(false); this._jumpTravelTimer = null; }
+    this.player.sprite.setScale(1);
     const deathX = this.player.x, deathY = this.player.y;
     this.explosion(deathX, deathY, 1.1);
     this.log(i18n.t('log.you_died'));
