@@ -110,6 +110,6 @@ export function sectorAccess(key, pilotLevel, activeShip = 'wisp', premium = fal
   if (s.premium && !premium)                    return { ok: false, reason: 'нужен Premium' };
   if (pilotLevel < s.lvlMin)                    return { ok: false, reason: `нужен ур. ${s.lvlMin}` };
   if (s.pvp     && pilotLevel > s.lvlMax + 5)  return { ok: false, reason: `только до ур. ${s.lvlMax + 5}` };
-  if (s.isDungeon && pilotLevel >= s.lvlMax + 10) return { ok: false, reason: `только до ур. ${s.lvlMax + 9}` };
+  if (s.isDungeon && pilotLevel > s.lvlMax) return { ok: false, reason: `только до ур. ${s.lvlMax}` };
   return { ok: true };
 }
