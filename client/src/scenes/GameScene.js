@@ -650,8 +650,8 @@ export default class GameScene extends Phaser.Scene {
       add('pirate_01', rnd(Lmin, Lmax), 1800, 0, {});
       add('pirate_03', rnd(Lmin, Lmax), -1800, 0, {});
       add('pirate_02', rnd(Lmin, Lmax), 0, 900, { patrolRadius: 400 });
-      add('pirate_04', rnd(Lmin, Lmax), 2000, -800, {});
-      add('pirate_01', rnd(Lmin, Lmax), -2000, 800, {});
+      add('pirate_04', rnd(Lmin, Lmax), 2000, 0, {});
+      add('pirate_01', rnd(Lmin, Lmax), -2000, 0, {});
       add('pirate_07', Lmax, 2200, 0, { behavior: 'guard', patrolRadius: 250, leash: 600 });
       add('pirate_07', Lmax, -2200, 0, { behavior: 'guard', patrolRadius: 250, leash: 600 });
       const d1boss = add('pirate_09', Lmax, 0, -2200, { behavior: 'guard', patrolRadius: 180, leash: 450 });
@@ -2632,12 +2632,15 @@ export default class GameScene extends Phaser.Scene {
 
     // ── Wall layout per dungeon ───────────────────────────────────────────────
     if (galaxy.current === 'dungeon_1') {
-      // Хаб + крест: 4 угловых блока → коридоры N/S/E/W; комната босса за северным барьером
-      addWall(cx - 1700, cy - 1100, 2200, 1400);   // NW
-      addWall(cx + 1700, cy - 1100, 2200, 1400);   // NE
-      addWall(cx - 1700, cy + 1100, 2200, 1400);   // SW
-      addWall(cx + 1700, cy + 1100, 2200, 1400);   // SE
-      addBossDoor(cx, cy - 1750, 1200, 300);
+      // Хаб + крест: 4 угловых блока → коридоры 600px N/S/E/W; бутылочное горлышко в N-рукаве → узкая дверь
+      addWall(cx - 1400, cy - 1000, 2200, 1400);   // NW (коридоры 600px)
+      addWall(cx + 1400, cy - 1000, 2200, 1400);   // NE
+      addWall(cx - 1400, cy + 1000, 2200, 1400);   // SW
+      addWall(cx + 1400, cy + 1000, 2200, 1400);   // SE
+      // горлышко: 200px проход у верха N-рукава
+      addWall(cx - 200, cy - 1450, 200, 500);       // лев. стена горлышка
+      addWall(cx + 200, cy - 1450, 200, 500);       // прав. стена горлышка
+      addBossDoor(cx, cy - 1750, 200, 300);
 
     } else if (galaxy.current === 'dungeon_2') {
       // Z-маршрут: юг→полоса1→(поворот E)→полоса2→(поворот W)→полоса3→сев-вост комната
