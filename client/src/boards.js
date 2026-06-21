@@ -1,11 +1,20 @@
-// Expansion board system — cut-edge PCB puzzle.
-// Power flows from src nodes through uncut edges to reach buf/deb/con nodes.
-// Players click edges to cut them, preventing debuffs while keeping buffs powered.
-//
-// Board format:
-//   nodes:  [{ id: number, col, row, type: 'src'|'con'|'buf'|'deb', stat?, value? }]
-//   edges:  [[idA, idB], ...]
-//   cuts:   [[idA, idB], ...]   (initially empty; player-set)
+// Expansion board system — graph-based pipe routing.
+// Boards have pre-drawn tracks (edges) between nodes.
+// Junction nodes (type:'junc') get connector items from inventory.
+// The connector's shape/rotation determines which directions power flows through it.
+// Effect magnitude = sum of connector % values on BFS path from source to that effect.
+
+// ── Side bitmasks ─────────────────────────────────────────────────────────────
+export const DIR = { T: 1, R: 2, B: 4, L: 8 };
+
+// ── Connector shapes ──────────────────────────────────────────────────────────
+export const CONNECTOR_SHAPES = {
+  end:      { mask: DIR.T,                          maxRot: 4, label: 'Заглушка' },
+  straight: { mask: DIR.T | DIR.B,                 maxRot: 2, label: 'Прямой'   },
+  corner:   { mask: DIR.T | DIR.R,                 maxRot: 4, label: 'Угол'     },
+  tee:      { mask: DIR.T | DIR.R | DIR.B,         maxRot: 4, label: 'Тройник'  },
+  cross:    { mask: DIR.T | DIR.R | DIR.B | DIR.L, maxRot: 1, label: 'Крест'    },
+};
 
 // ── Stats ─────────────────────────────────────────────────────────────────────
 export const STAT_META = {
@@ -20,191 +29,328 @@ export const STAT_META = {
 };
 const ALL_STATS = Object.keys(STAT_META);
 
-// ── Board templates ───────────────────────────────────────────────────────────
-// stat: null on buf/deb = assigned randomly at rollBoard().
-// value: null = assigned randomly at rollBoard() within tier ranges.
-const BOARD_TEMPLATES = [
-  // ── T1 ──────────────────────────────────────────────────────────────────────
-  // SRC(1)—CON(2)—BUF(3)          Cut [2,4] to avoid deb, lose nothing.
-  //              \                  Cut [2,3] to avoid buf (bad). Trivial intro layout.
-  //              DEB(4)
-  { tier: 1, nodes: [
-    { id:1, col:0, row:1, type:'src' },
-    { id:2, col:1, row:1, type:'con', stat:null, value:null },
-    { id:3, col:2, row:0, type:'buf', stat:null, value:null },
-    { id:4, col:2, row:2, type:'deb', stat:null, value:null },
-  ], edges: [[1,2],[2,3],[2,4]] },
-
-  // SRC(1)—BUF(2)—CON(3)—BUF(4)   Cut [3,5] avoids deb but loses BUF(4) (tradeoff).
-  //                    \
-  //                    DEB(5)
-  { tier: 1, nodes: [
-    { id:1, col:0, row:1, type:'src' },
-    { id:2, col:1, row:1, type:'buf', stat:null, value:null },
-    { id:3, col:2, row:1, type:'con', stat:null, value:null },
-    { id:4, col:3, row:0, type:'buf', stat:null, value:null },
-    { id:5, col:3, row:2, type:'deb', stat:null, value:null },
-  ], edges: [[1,2],[2,3],[3,4],[3,5]] },
-
-  // ── T2 ──────────────────────────────────────────────────────────────────────
-  //           BUF(2)
-  //            |
-  // SRC(1)—CON(3)—BUF(4)—BUF(5)   Cut [3,6] avoids deb, keeps all bufs. Good player wins.
-  //            |                    Cut [4,5] avoids nothing, loses BUF(5). Bad.
-  //           DEB(6)—CON(7)—BUF(8)  Cut [6,7] avoids BUF(8) but deb still active!
-  { tier: 2, nodes: [
-    { id:1, col:0, row:1, type:'src' },
-    { id:2, col:1, row:0, type:'buf', stat:null, value:null },
-    { id:3, col:1, row:1, type:'con', stat:null, value:null },
-    { id:4, col:2, row:1, type:'buf', stat:null, value:null },
-    { id:5, col:3, row:1, type:'buf', stat:null, value:null },
-    { id:6, col:1, row:2, type:'deb', stat:null, value:null },
-    { id:7, col:2, row:2, type:'con', stat:null, value:null },
-    { id:8, col:3, row:2, type:'buf', stat:null, value:null },
-  ], edges: [[1,3],[3,2],[3,4],[4,5],[3,6],[6,7],[7,8]] },
-
-  // SRC(1)—CON(2)—BUF(3)    DEB(4)—CON(5)—BUF(6)
-  //         |                 |
-  //         +-----------------+        Two sources share a con node.
-  // SRC(7)—CON(8)—DEB(9)              Cut [2,4] to keep both srcs' bufs, avoid DEB(4).
-  //         |                          Cut [8,9] to avoid DEB(9). Two separate decisions.
-  //        BUF(10)
-  { tier: 2, nodes: [
-    { id:1,  col:0, row:0, type:'src' },
-    { id:2,  col:1, row:0, type:'con', stat:null, value:null },
-    { id:3,  col:2, row:0, type:'buf', stat:null, value:null },
-    { id:4,  col:1, row:1, type:'deb', stat:null, value:null },
-    { id:5,  col:2, row:1, type:'con', stat:null, value:null },
-    { id:6,  col:3, row:1, type:'buf', stat:null, value:null },
-    { id:7,  col:0, row:2, type:'src' },
-    { id:8,  col:1, row:2, type:'con', stat:null, value:null },
-    { id:9,  col:2, row:2, type:'deb', stat:null, value:null },
-    { id:10, col:1, row:3, type:'buf', stat:null, value:null },
-  ], edges: [[1,2],[2,3],[2,4],[4,5],[5,6],[7,8],[8,9],[8,10]] },
-
-  // ── T3 ──────────────────────────────────────────────────────────────────────
-  // Two-source diamond with multiple cut decisions.
-  // SRC(1)—CON(2)—BUF(3)—CON(4)—BUF(5)
-  //         |              |
-  //        DEB(6)         DEB(7)—CON(8)—BUF(9)
-  //                        |
-  // SRC(10)—CON(11)—BUF(12)+
-  //                  |
-  //                 BUF(13)
-  { tier: 3, nodes: [
-    { id:1,  col:0, row:0, type:'src' },
-    { id:2,  col:1, row:0, type:'con', stat:null, value:null },
-    { id:3,  col:2, row:0, type:'buf', stat:null, value:null },
-    { id:4,  col:3, row:0, type:'con', stat:null, value:null },
-    { id:5,  col:4, row:0, type:'buf', stat:null, value:null },
-    { id:6,  col:1, row:1, type:'deb', stat:null, value:null },
-    { id:7,  col:3, row:1, type:'deb', stat:null, value:null },
-    { id:8,  col:4, row:1, type:'con', stat:null, value:null },
-    { id:9,  col:5, row:1, type:'buf', stat:null, value:null },
-    { id:10, col:0, row:2, type:'src' },
-    { id:11, col:1, row:2, type:'con', stat:null, value:null },
-    { id:12, col:2, row:2, type:'buf', stat:null, value:null },
-    { id:13, col:2, row:3, type:'buf', stat:null, value:null },
-  ], edges: [[1,2],[2,3],[3,4],[4,5],[2,6],[4,7],[7,8],[8,9],[10,11],[11,12],[12,13],[11,7]] },
-
-  // Three-source web. Many paths, many tradeoffs.
-  // SRC(1)—CON(2)—BUF(3)   SRC(4)—CON(5)—BUF(6)
-  //         |    \                   |
-  //        DEB(7) CON(8)—BUF(9)   DEB(10)
-  //                |
-  // SRC(11)—BUF(12)+—DEB(13)—CON(14)—BUF(15)
-  //                |
-  //               BUF(16)
-  { tier: 3, nodes: [
-    { id:1,  col:0, row:0, type:'src' },
-    { id:2,  col:1, row:0, type:'con', stat:null, value:null },
-    { id:3,  col:2, row:0, type:'buf', stat:null, value:null },
-    { id:4,  col:4, row:0, type:'src' },
-    { id:5,  col:5, row:0, type:'con', stat:null, value:null },
-    { id:6,  col:6, row:0, type:'buf', stat:null, value:null },
-    { id:7,  col:1, row:1, type:'deb', stat:null, value:null },
-    { id:8,  col:3, row:1, type:'con', stat:null, value:null },
-    { id:9,  col:4, row:1, type:'buf', stat:null, value:null },
-    { id:10, col:5, row:1, type:'deb', stat:null, value:null },
-    { id:11, col:0, row:2, type:'src' },
-    { id:12, col:2, row:2, type:'buf', stat:null, value:null },
-    { id:13, col:3, row:2, type:'deb', stat:null, value:null },
-    { id:14, col:4, row:2, type:'con', stat:null, value:null },
-    { id:15, col:5, row:2, type:'buf', stat:null, value:null },
-    { id:16, col:2, row:3, type:'buf', stat:null, value:null },
-  ], edges: [[1,2],[2,3],[2,7],[2,8],[4,5],[5,6],[5,10],[8,9],[8,12],[11,12],[12,13],[12,16],[13,14],[14,15]] },
-];
-
-// ── BFS: powered nodes ────────────────────────────────────────────────────────
-export function getPoweredNodes(board) {
-  if (!board?.nodes) return new Set();
-  const adj = {};
-  for (const n of board.nodes) adj[n.id] = [];
-  const cutSet = new Set(
-    (board.cuts || []).map(([a, b]) => `${Math.min(a,b)}-${Math.max(a,b)}`)
-  );
-  for (const [a, b] of (board.edges || [])) {
-    if (!cutSet.has(`${Math.min(a,b)}-${Math.max(a,b)}`)) {
-      adj[a].push(b);
-      adj[b].push(a);
-    }
-  }
-  const powered = new Set();
-  const queue = board.nodes.filter(n => n.type === 'src').map(n => n.id);
-  queue.forEach(id => powered.add(id));
-  for (let i = 0; i < queue.length; i++) {
-    for (const nb of adj[queue[i]] || []) {
-      if (!powered.has(nb)) { powered.add(nb); queue.push(nb); }
-    }
-  }
-  return powered;
+// ── Mask helpers ──────────────────────────────────────────────────────────────
+export function rotateMask(mask, n = 1) {
+  let m = mask; n = ((n % 4) + 4) % 4;
+  for (let i = 0; i < n; i++) m = ((m << 1) | (m >> 3)) & 0xF;
+  return m;
 }
 
-// ── Stat effects (used by Player.recomputeStats) ──────────────────────────────
-export function getBoardEffects(board) {
-  if (!board?.nodes) return {};
-  const powered = getPoweredNodes(board);
+export function effectiveMask(conn) {
+  if (!conn) return 0;
+  return rotateMask(CONNECTOR_SHAPES[conn.shape]?.mask ?? 0, conn.rotation ?? 0);
+}
+
+// For an edge {a, b} return which DIR side each endpoint uses.
+export function edgeSides(na, nb) {
+  const dc = nb.col - na.col, dr = nb.row - na.row;
+  if (dr === 0 && dc !== 0) return { sideA: dc > 0 ? DIR.R : DIR.L, sideB: dc > 0 ? DIR.L : DIR.R };
+  if (dc === 0 && dr !== 0) return { sideA: dr > 0 ? DIR.B : DIR.T, sideB: dr > 0 ? DIR.T : DIR.B };
+  return { sideA: 0, sideB: 0 };
+}
+
+// Open-sides bitmask for a board node.
+// src / buf / deb = 0xF (always fully open, relay power through).
+// junc = connector mask if placed, 0 if empty.
+export function nodeMask(board, allConns, nodeId) {
+  const node = (board.nodes || []).find(n => n.id === nodeId);
+  if (!node) return 0;
+  if (node.type !== 'junc') return 0xF;
+  const cid = board.placements?.[nodeId];
+  if (!cid) return 0;
+  const conn = allConns[cid];
+  return conn ? effectiveMask(conn) : 0;
+}
+
+// ── BFS ───────────────────────────────────────────────────────────────────────
+// Returns { powered: Set<nodeId>, parent: Map<nodeId, nodeId|null> }
+export function bfsPowered(board, allConns) {
+  const powered = new Set(), parent = new Map(), q = [];
+  const nm = Object.fromEntries((board.nodes || []).map(n => [n.id, n]));
+
+  for (const n of (board.nodes || [])) {
+    if (n.type !== 'src') continue;
+    powered.add(n.id); parent.set(n.id, null); q.push(n.id);
+  }
+
+  while (q.length) {
+    const nid = q.shift();
+    const m   = nodeMask(board, allConns, nid);
+    const nd  = nm[nid];
+
+    for (const e of (board.edges || [])) {
+      let oid, sme, sot;
+      if (e.a === nid) {
+        oid = e.b;
+        const { sideA, sideB } = edgeSides(nd, nm[e.b]);
+        sme = sideA; sot = sideB;
+      } else if (e.b === nid) {
+        oid = e.a;
+        const { sideA, sideB } = edgeSides(nm[e.a], nd);
+        sme = sideB; sot = sideA;
+      } else continue;
+
+      if (powered.has(oid)) continue;
+      if (!(m & sme)) continue;
+      if (!(nodeMask(board, allConns, oid) & sot)) continue;
+      powered.add(oid); parent.set(oid, nid); q.push(oid);
+    }
+  }
+  return { powered, parent };
+}
+
+// ── Effects ───────────────────────────────────────────────────────────────────
+// Returns { stat: pctDelta } — positive for buf, negative for deb.
+export function getBoardEffects(board, allConns = {}) {
+  if (!board) return {};
+  const { powered, parent } = bfsPowered(board, allConns);
   const effects = {};
-  for (const n of board.nodes) {
-    if (!n.stat || !n.value || !powered.has(n.id)) continue;
-    if (n.type === 'buf') effects[n.stat] = (effects[n.stat] || 0) + n.value;
-    if (n.type === 'deb') effects[n.stat] = (effects[n.stat] || 0) - n.value;
+
+  for (const n of (board.nodes || [])) {
+    if (n.type !== 'buf' && n.type !== 'deb') continue;
+    if (!powered.has(n.id)) continue;
+    // Sum connector values along the BFS path from source to this node.
+    let sum = 0, nid = n.id;
+    while (nid != null) {
+      const cid = board.placements?.[nid];
+      if (cid && allConns[cid]) sum += allConns[cid].value || 0;
+      nid = parent.get(nid);
+    }
+    if (!sum) continue;
+    const delta = n.type === 'buf' ? sum : -sum;
+    effects[n.stat] = (effects[n.stat] || 0) + delta;
   }
   return effects;
 }
+
+// ── Board templates ───────────────────────────────────────────────────────────
+// nodes: { id, col, row, type: 'src'|'buf'|'deb'|'junc', stat? }
+//   stat: null = assigned randomly at rollBoard()
+// edges: { a: nodeId, b: nodeId }  — pre-drawn tracks
+// maxConn: how many connector items can be placed on this board.
+//
+// Design rule: at least one junction node has BOTH a buf branch and a deb branch
+// reachable from it. The correct connector shape/rotation avoids powering the deb.
+// Debuffs live at dead ends (leaves) so they're never required to route through.
+
+const BOARD_TEMPLATES = [
+  // ── T1 ──────────────────────────────────────────────────────────────────────
+  // "Омега": central 4-way junction j1; dead-end deb branch via j2.
+  // Optimal: TEE(L+T+R) at j1 → 3 bufs, j2 isolated, deb safe.
+  // Trap:    CROSS at j1 → j2 gets power → wrong corner at j2 → deb active.
+  {
+    tier: 1, name: 'Омега', maxConn: 2,
+    nodes: [
+      { id:'src', col:0, row:1, type:'src'  },
+      { id:'j1',  col:1, row:1, type:'junc' },  // key junction: L,T,R,B edges
+      { id:'j2',  col:1, row:2, type:'junc' },  // trap branch
+      { id:'b0',  col:1, row:0, type:'buf',  stat: null },
+      { id:'b1',  col:2, row:1, type:'buf',  stat: null },
+      { id:'b2',  col:3, row:1, type:'buf',  stat: null },
+      { id:'d0',  col:2, row:2, type:'deb',  stat: null },
+    ],
+    edges: [
+      { a:'src', b:'j1'  },
+      { a:'j1',  b:'b0'  },   // up
+      { a:'j1',  b:'b1'  },   // right
+      { a:'b1',  b:'b2'  },   // pass-through
+      { a:'j1',  b:'j2'  },   // down → trap branch
+      { a:'j2',  b:'d0'  },   // dead-end deb
+    ],
+  },
+
+  // "Сигма": fork at j1 — one branch up (buf), one right (more), one down (TRAP deb).
+  // Optimal: TEE(L+T+R) at j1, any connector at j2 with L+R open.
+  {
+    tier: 1, name: 'Сигма', maxConn: 2,
+    nodes: [
+      { id:'src', col:0, row:1, type:'src'  },
+      { id:'j1',  col:1, row:1, type:'junc' },  // fork: down=trap
+      { id:'j2',  col:2, row:1, type:'junc' },
+      { id:'b0',  col:1, row:0, type:'buf',  stat: null },
+      { id:'b1',  col:3, row:1, type:'buf',  stat: null },
+      { id:'b2',  col:3, row:0, type:'buf',  stat: null },
+      { id:'d0',  col:2, row:2, type:'deb',  stat: null },
+    ],
+    edges: [
+      { a:'src', b:'j1' },
+      { a:'j1',  b:'b0' },   // up buf
+      { a:'j1',  b:'j2' },   // right chain
+      { a:'j1',  b:'d0' },   // down trap!
+      { a:'j2',  b:'b1' },
+      { a:'b1',  b:'b2' },
+    ],
+  },
+
+  // ── T2 ──────────────────────────────────────────────────────────────────────
+  // "Пульсар": two sources feed a vertical spine (j1-j2-j3); lateral bufs off each.
+  // j4 is a "poison junction" — both its non-input edges go to debs.
+  // Optimal: END or wrong-shape at j4 = no debs. Or just don't fill j4.
+  {
+    tier: 2, name: 'Пульсар', maxConn: 4,
+    nodes: [
+      { id:'src1', col:0, row:0, type:'src'  },
+      { id:'src2', col:0, row:2, type:'src'  },
+      { id:'j1',   col:1, row:0, type:'junc' },
+      { id:'j2',   col:1, row:1, type:'junc' },
+      { id:'j3',   col:1, row:2, type:'junc' },
+      { id:'b0',   col:2, row:0, type:'buf',  stat: null },
+      { id:'b1',   col:2, row:1, type:'buf',  stat: null },
+      { id:'b2',   col:2, row:2, type:'buf',  stat: null },
+      { id:'j4',   col:3, row:1, type:'junc' },
+      { id:'b3',   col:4, row:1, type:'buf',  stat: null },
+      { id:'d0',   col:3, row:0, type:'deb',  stat: null },
+      { id:'d1',   col:3, row:2, type:'deb',  stat: null },
+    ],
+    edges: [
+      { a:'src1', b:'j1' }, { a:'src2', b:'j3' },
+      { a:'j1', b:'j2'  }, { a:'j2', b:'j3'  },
+      { a:'j1', b:'b0'  }, { a:'j2', b:'b1'  }, { a:'j3', b:'b2' },
+      { a:'b1', b:'j4'  }, { a:'j4', b:'b3'  },
+      { a:'j4', b:'d0'  }, { a:'j4', b:'d1'  },  // both debs off j4
+    ],
+  },
+
+  // "Нова": single source, hub with two trap arms then further bufs.
+  {
+    tier: 2, name: 'Нова', maxConn: 3,
+    nodes: [
+      { id:'src', col:0, row:1, type:'src'  },
+      { id:'j1',  col:1, row:1, type:'junc' },  // hub: traps up/down, bufs right
+      { id:'j2',  col:2, row:0, type:'junc' },
+      { id:'j3',  col:2, row:2, type:'junc' },
+      { id:'b0',  col:2, row:1, type:'buf',  stat: null },
+      { id:'b1',  col:3, row:0, type:'buf',  stat: null },
+      { id:'b2',  col:3, row:1, type:'buf',  stat: null },
+      { id:'b3',  col:3, row:2, type:'buf',  stat: null },
+      { id:'d0',  col:1, row:0, type:'deb',  stat: null },
+      { id:'d1',  col:1, row:2, type:'deb',  stat: null },
+    ],
+    edges: [
+      { a:'src', b:'j1' },
+      { a:'j1',  b:'b0' }, { a:'j1', b:'d0' }, { a:'j1', b:'d1' },
+      { a:'b0',  b:'j2' }, { a:'b0', b:'j3' }, { a:'b0', b:'b2' },
+      { a:'j2',  b:'b1' }, { a:'j3', b:'b3' },
+    ],
+  },
+
+  // ── T3 ──────────────────────────────────────────────────────────────────────
+  // "Нексус": two sources, vertical spines, secondary stage with 3 trap branches.
+  {
+    tier: 3, name: 'Нексус', maxConn: 7,
+    nodes: [
+      { id:'src1', col:0, row:0, type:'src'  },
+      { id:'src2', col:0, row:3, type:'src'  },
+      { id:'j1',   col:1, row:0, type:'junc' },
+      { id:'j2',   col:1, row:1, type:'junc' },
+      { id:'j3',   col:1, row:2, type:'junc' },
+      { id:'j4',   col:1, row:3, type:'junc' },
+      { id:'b0',   col:2, row:0, type:'buf',  stat: null },
+      { id:'b1',   col:2, row:1, type:'buf',  stat: null },
+      { id:'b2',   col:2, row:2, type:'buf',  stat: null },
+      { id:'b3',   col:2, row:3, type:'buf',  stat: null },
+      { id:'j5',   col:3, row:1, type:'junc' },
+      { id:'j6',   col:3, row:2, type:'junc' },
+      { id:'b4',   col:4, row:1, type:'buf',  stat: null },
+      { id:'d0',   col:3, row:0, type:'deb',  stat: null },
+      { id:'d1',   col:4, row:2, type:'deb',  stat: null },
+      { id:'d2',   col:3, row:3, type:'deb',  stat: null },
+    ],
+    edges: [
+      { a:'src1', b:'j1' }, { a:'src2', b:'j4' },
+      { a:'j1', b:'j2'  }, { a:'j2', b:'j3'   }, { a:'j3', b:'j4' },
+      { a:'j1', b:'b0'  }, { a:'j2', b:'b1'   }, { a:'j3', b:'b2' }, { a:'j4', b:'b3' },
+      { a:'b1', b:'j5'  }, { a:'b2', b:'j6'   },
+      { a:'j5', b:'b4'  }, { a:'j5', b:'d0'   },
+      { a:'j6', b:'d1'  }, { a:'j6', b:'d2'   },
+    ],
+  },
+
+  // "Матриця": single source, cross-linked 3×2 grid of junctions, 5 bufs, 3 traps.
+  {
+    tier: 3, name: 'Матриця', maxConn: 8,
+    nodes: [
+      { id:'src',  col:0, row:1, type:'src'  },
+      { id:'j1',   col:1, row:0, type:'junc' },
+      { id:'j2',   col:1, row:1, type:'junc' },
+      { id:'j3',   col:1, row:2, type:'junc' },
+      { id:'j4',   col:2, row:0, type:'junc' },
+      { id:'j5',   col:2, row:1, type:'junc' },
+      { id:'j6',   col:2, row:2, type:'junc' },
+      { id:'b0',   col:3, row:0, type:'buf',  stat: null },
+      { id:'b1',   col:3, row:1, type:'buf',  stat: null },
+      { id:'b2',   col:3, row:2, type:'buf',  stat: null },
+      { id:'b3',   col:4, row:0, type:'buf',  stat: null },
+      { id:'b4',   col:4, row:2, type:'buf',  stat: null },
+      { id:'d0',   col:0, row:0, type:'deb',  stat: null },
+      { id:'d1',   col:0, row:2, type:'deb',  stat: null },
+      { id:'d2',   col:4, row:1, type:'deb',  stat: null },
+    ],
+    edges: [
+      { a:'src', b:'j2' }, { a:'src', b:'d0' }, { a:'src', b:'d1' },
+      { a:'j2',  b:'j1' }, { a:'j2', b:'j3'  },
+      { a:'j1',  b:'j4' }, { a:'j2', b:'j5'  }, { a:'j3', b:'j6' },
+      { a:'j4',  b:'j5' }, { a:'j5', b:'j6'  },
+      { a:'j4',  b:'b0' }, { a:'j5', b:'b1'  }, { a:'j6', b:'b2' },
+      { a:'b0',  b:'b3' }, { a:'b2', b:'b4'  },
+      { a:'b1',  b:'d2' },
+    ],
+  },
+];
 
 // ── Roll helpers ──────────────────────────────────────────────────────────────
 export function rollBoard(tier) {
   const tpls = BOARD_TEMPLATES.filter(t => t.tier === tier);
   const tpl  = tpls[Math.floor(Math.random() * tpls.length)];
 
-  const [bufLo, bufHi, debLo, debHi, conLo, conHi] =
-    tier === 1 ? [8,  12,  5,  8,  3, 5] :
-    tier === 2 ? [12, 18,  8, 13,  5, 8] :
-                 [18, 26, 12, 18,  7, 11];
-
-  const rng    = (lo, hi) => Math.round(lo + Math.random() * (hi - lo));
-  const stats  = [...ALL_STATS].sort(() => Math.random() - 0.5);
+  const shuffled = [...ALL_STATS].sort(() => Math.random() - 0.5);
   let si = 0;
-
-  const nodes = tpl.nodes.map(n => {
-    const node = { ...n };
-    if (n.type === 'buf') { node.stat = stats[si++ % stats.length]; node.value = rng(bufLo, bufHi); }
-    if (n.type === 'deb') { node.stat = stats[si++ % stats.length]; node.value = rng(debLo, debHi); }
-    if (n.type === 'con') { node.value = rng(conLo, conHi); }
-    return node;
+  const nodes = (tpl.nodes || []).map(n => {
+    if ((n.type === 'buf' || n.type === 'deb') && n.stat === null)
+      return { ...n, stat: shuffled[si++ % shuffled.length] };
+    return { ...n };
   });
 
   return {
-    id:    `b${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`,
+    id:        `b${Date.now().toString(36)}${Math.random().toString(36).slice(2,5)}`,
     tier,
+    name:      tpl.name,
+    maxConn:   tpl.maxConn,
     nodes,
-    edges: tpl.edges.map(e => [e[0], e[1]]),
-    cuts:  [],
+    edges:     tpl.edges.map(e => ({ ...e })),
+    placements: {},   // nodeId → connectorId
   };
 }
 
-// ── UI helpers ────────────────────────────────────────────────────────────────
+export function rollConnector(tier) {
+  const byTier = [
+    ['end', 'straight', 'corner'],
+    ['end', 'straight', 'corner', 'tee'],
+    ['straight', 'corner', 'tee', 'cross'],
+  ];
+  const avail = byTier[Math.min(tier, 3) - 1];
+  const shape = avail[Math.floor(Math.random() * avail.length)];
+  const [lo, hi] = tier === 1 ? [1, 3] : tier === 2 ? [2, 5] : [4, 7];
+  const value = Math.floor(Math.random() * (hi - lo + 1)) + lo;
+  return {
+    id:       `c${Date.now().toString(36)}${Math.random().toString(36).slice(2,5)}`,
+    type:     'connector',
+    tier,
+    shape,
+    rotation: 0,
+    value,
+  };
+}
+
+export function placedCount(board) {
+  return Object.keys(board.placements || {}).length;
+}
+
+// Powered node ids (BFS with no connectors placed — all junc nodes block until equipped).
+export function getPoweredNodes(board, allConns = {}) {
+  return bfsPowered(board, allConns).powered;
+}
+
 export function boardTierLabel(tier) {
   return `ПЛАТА  ТИР ${tier}`;
 }
@@ -213,10 +359,16 @@ export function boardPreviewStats(board) {
   if (!board?.nodes) return '—';
   const parts = [];
   for (const n of board.nodes) {
-    if (!n.stat || !n.value) continue;
+    if (!n.stat) continue;
     const meta = STAT_META[n.stat];
     if (!meta) continue;
-    parts.push(`${meta.label} ${n.type === 'buf' ? '+' : '−'}${n.value}%`);
+    parts.push(`${meta.label} ${n.type === 'buf' ? '+' : '−'}`);
   }
   return parts.join(' · ') || '—';
+}
+
+export function connectorLabel(conn) {
+  if (!conn) return '';
+  const s = CONNECTOR_SHAPES[conn.shape];
+  return `${s?.label ?? conn.shape} +${conn.value}%`;
 }
