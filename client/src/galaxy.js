@@ -13,8 +13,8 @@ export const SECTORS = {
 
   dungeon_1: { name: 'Заброшенная Шахта',      map: 'D1', lvlMin: 5,  lvlMax: 15, sx: 0, sy: -1, isDungeon: true },
   dungeon_2: { name: 'Логово Контрабандистов', map: 'D2', lvlMin: 15, lvlMax: 25, sx: 1, sy: -1, isDungeon: true },
-  dungeon_3: { name: 'Забытый Форпост',        map: 'D3', lvlMin: 25, lvlMax: 40, sx: 2, sy: -1, isDungeon: true },
-  dungeon_4: { name: 'Обломки Станции',        map: 'D4', lvlMin: 35, lvlMax: 50, sx: 3, sy: -1, isDungeon: true },
+  dungeon_3: { name: 'Забытый Форпост',        map: 'D3', lvlMin: 25, lvlMax: 35, sx: 2, sy: -1, isDungeon: true },
+  dungeon_4: { name: 'Обломки Станции',        map: 'D4', lvlMin: 35, lvlMax: 45, sx: 3, sy: -1, isDungeon: true },
   dungeon_5: { name: 'Хранилище Древних',      map: 'D5', lvlMin: 45, lvlMax: 50, sx: 4, sy: -1, isDungeon: true },
 
   // ══════════════════════════════════════════════════════════════════════
@@ -49,7 +49,7 @@ export const SECTORS = {
   tides_4: { name: 'Бездонный Риф',        map: 'HM4', lvlMin: 30, lvlMax: 40, sx: 3, sy: 2 },
   tides_5: { name: 'Предел Горизонта',     map: 'HM5', lvlMin: 40, lvlMax: 50, sx: 4, sy: 2 },
 
-  tides_d4: { name: 'Лабиринт Тьмы',      map: 'D-prem', lvlMin: 35, lvlMax: 50, sx: 3, sy: 3, isDungeon: true, premium: true },
+  tides_d4: { name: 'Лабиринт Тьмы',      map: 'D-prem', lvlMin: 40, lvlMax: 50, sx: 3, sy: 3, isDungeon: true, premium: true },
 };
 
 // Связи (двусторонние) — где есть джапгейт между секторами.

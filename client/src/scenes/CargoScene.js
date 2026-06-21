@@ -53,18 +53,21 @@ export default class CargoScene extends Phaser.Scene {
 
     const panel = this.add.graphics();
     panel.fillStyle(0x080e1a, 0.97); panel.fillRoundedRect(px, py, pw, ph, 12);
-    panel.lineStyle(2, COLORS.primary, 0.7); panel.strokeRoundedRect(px, py, pw, ph, 12);
 
     const title = atBase ? 'СКЛАД' : 'ТРЮМ';
-    this.add.text(px + 22, py + 16, title, this.O('20px', '#4dd0e1'));
-    this.add.text(px + pw - 20, py + 20, 'C / ESC', this.F('11px', '#445566')).setOrigin(1, 0);
+    this.add.text(px + 22, py + 16, title, this.O('20px', '#4dd0e1')).setDepth(14);
+    this.add.text(px + pw - 20, py + 20, 'C / ESC', this.F('11px', '#445566')).setOrigin(1, 0).setDepth(14);
 
     const cargoMax = this._cargoMax(), whMax = this._whMax();
     const cargoCount = (this.gs.inventory || []).length;
     const statsLine = atBase
       ? `ТРЮМ ${cargoCount}/${cargoMax}  ·  СКЛАД ${(this.gs.warehouse||[]).length}/${whMax}`
       : `ТРЮМ КОРАБЛЯ  ${cargoCount} / ${cargoMax}`;
-    this.add.text(px + 22, py + 46, statsLine, this.F('12px', '#4a6678'));
+    this.add.text(px + 22, py + 46, statsLine, this.F('12px', '#4a6678')).setDepth(14);
+
+    // Panel border above items/cover strips
+    const panelBorder = this.add.graphics().setDepth(15);
+    panelBorder.lineStyle(2, COLORS.primary, 0.7); panelBorder.strokeRoundedRect(px, py, pw, ph, 12);
 
     this.panelBox = { px, py, pw, ph };
 
@@ -75,10 +78,10 @@ export default class CargoScene extends Phaser.Scene {
       const colW = Math.max(290, Math.floor((pw - 36) / 2));
       this._renderSlotGrid(px + 12, py + 72, colW, gridH, this.gs.inventory || [], cargoMax, 'cargo');
       this._renderSlotGrid(px + colW + 24, py + 72, colW, gridH, this.gs.warehouse || [], whMax, 'warehouse');
-      // Column headers
-      this.add.text(px + 12 + colW / 2, py + 58, 'ТРЮМ КОРАБЛЯ', this.O('12px', '#2a5a70')).setOrigin(0.5, 0);
+      // Column headers (depth 14 — above cover strips / mask)
+      this.add.text(px + 12 + colW / 2, py + 58, 'ТРЮМ КОРАБЛЯ', this.O('12px', '#2a5a70')).setOrigin(0.5, 0).setDepth(14);
       this.add.text(px + colW + 24 + colW / 2, py + 58, `СКЛАД  ${(this.gs.warehouse||[]).length}/${whMax}`,
-        this.O('12px', '#2a5a30')).setOrigin(0.5, 0);
+        this.O('12px', '#2a5a30')).setOrigin(0.5, 0).setDepth(14);
       // Global guild mode checkbox — right of warehouse column, above header
       if (typeof this.gs._whGuildMode !== 'boolean') this.gs._whGuildMode = false;
       const gMode = !!this.gs._whGuildMode;
@@ -139,7 +142,7 @@ export default class CargoScene extends Phaser.Scene {
         });
       }
     } else {
-      this._renderSlotGrid(px + 12, py + 72, pw - 24, ph - 90, this.gs.inventory || [], cargoMax, 'cargo_nosell');
+      this._renderSlotGrid(px + 12, py + 72, pw - 24, ph - 90, this.gs.inventory || [], cargoMax, 'cargo_nosell', undefined, 6);
     }
 
     const gs2 = this.gs;
@@ -175,10 +178,17 @@ export default class CargoScene extends Phaser.Scene {
   }
 
   // Слот-сетка: type = 'cargo' | 'cargo_nosell' | 'warehouse'
-  _renderSlotGrid(ax, ay, aw, ah, items, maxSlots, type, clipBotH) {
+  _renderSlotGrid(ax, ay, aw, ah, items, maxSlots, type, clipBotH, cols = 4) {
     const gs = this.gs;
-    const SZ = 68, GAP = 6, COLS = 4;
+    const SZ = 68, GAP = 6, COLS = cols;
     const container = this.add.container(ax, ay);
+
+    // Clip container to the visible grid area (prevents scroll overflow top/bottom)
+    const maskGfx = this.add.graphics();
+    maskGfx.fillStyle(0xffffff, 1);
+    maskGfx.fillRect(ax, ay, aw, ah);
+    container.setMask(maskGfx.createGeometryMask());
+
     const displaySlots = Math.max(items.length, maxSlots);
 
     for (let i = 0; i < displaySlots; i++) {
