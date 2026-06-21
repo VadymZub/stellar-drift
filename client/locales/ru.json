@@ -68,6 +68,7 @@
 
   "garage.tab_ships": "КОРАБЛИ",
   "garage.tab_equip": "ОБОРУДОВАНИЕ",
+  "garage.tab_boards": "ПЛАТЫ",
   "garage.active": "АКТИВЕН",
   "garage.owned": "в ангаре",
   "garage.select": "ВЫБРАТЬ",
@@ -186,6 +187,8 @@
   "log.boost_no_shield": "Форсаж недоступен: щит на нуле.",
   "log.boss_aoe": "⚠ Страж заряжает залп — уходи из круга!",
   "log.boss_enrage": "{name} в ЯРОСТИ! Атаки усилились.",
+  "log.boss_door_open": "ВСЕ УГРОЗЫ УСТРАНЕНЫ — ПРОХОД К БОССУ ОТКРЫТ!",
+  "hud.boss_room": "🔒 BOSS ROOM",
   "log.stargold": "+{amount} ⭐ Звёздное золото",
   "log.levelup": "ПОВЫШЕНИЕ! Уровень пилота {lvl}",
   "log.entered": "Сектор: {sector}",

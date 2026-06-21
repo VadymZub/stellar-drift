@@ -9,6 +9,7 @@ import Loot from '../entities/Loot.js';
 import Movement from '../systems/Movement.js';
 import { EXP_CLASSES } from './BootScene.js'; 
 import { rollLootForMob, dropChance, itemName, rollStarGold, starterCannon, starterShield, rollCannon, rollShield, rollEngine, rollLaser, rollApophisLoot, PLASMATE_PER_SLOT, PLASMATE_DAILY_MAX, addPlasmateToInventory, totalPlasmateInInventory, removePlasmateFromInventory, CONSUMABLES, addConsumableToInventory, countConsumableInInventory, removeConsumableFromInventory, rollConsumableDrop } from '../items.js';
+import { rollBoard } from '../boards.js';
 import PlasmateDeposit from '../entities/PlasmateDeposit.js';
 import { rollPerk, perkBonus } from '../perks.js';
 import { levelInfo, xpToNext, MAX_LEVEL } from '../leveling.js';
@@ -179,8 +180,10 @@ export default class GameScene extends Phaser.Scene {
     this.credits  = this.credits  ?? (tp ? tp.credits  : DEV_MODE ? 3000000 : 0);
     this.starGold = this.starGold ?? (tp ? tp.starGold : DEV_MODE ? 20000   : 0);
 
-    this.ownedShips = this.ownedShips || new Set(['wisp']);
-    this.activeShip = this.activeShip || 'wisp';
+    this.ownedShips     = this.ownedShips     || new Set(['wisp']);
+    this.activeShip     = this.activeShip     || 'wisp';
+    this.boardInventory = this.boardInventory ?? [];
+    this.equippedBoard  = this.equippedBoard  ?? null;
     
     if (DEV_MODE) {
       this.input.keyboard.on('keydown-EIGHT', () => {
@@ -337,6 +340,7 @@ export default class GameScene extends Phaser.Scene {
     this.createJumpgates();
     this.createDungeonWalls();
     this.spawnPlasmateDeposits();
+    this.spawnDungeonDeposits();
     this.setupInput();
     this.keyJ = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.J);
     this.keyCtrl = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.CTRL);
@@ -604,6 +608,7 @@ export default class GameScene extends Phaser.Scene {
     if (galaxy.current === 'R-1-boss') {
       // Специальный спавн для босс-уровня Алгол: Зов Апофиса
       const apophis = add('apophis', 50, 0, 0, { behavior: 'guard', patrolRadius: 100, leash: Infinity });
+      apophis.isDungeonBoss = true;
       const ring = [[720, 720], [-720, 720], [720, -720], [-720, -720]];
       ring.forEach(o => add('ancient_06', 50, o[0], o[1], { behavior: 'guard', patrolRadius: 300, bossRef: apophis }));
       return;
@@ -612,18 +617,24 @@ export default class GameScene extends Phaser.Scene {
     // Home sectors (lvlMin 1) — мобы пассивны, не атакуют первыми
     const isHomeSector = sec.lvlMin === 1 && !sec.isDungeon && !sec.pvp;
 
-    if (galaxy.current === 'dungeon_5') {
+    if (galaxy.current === 'dungeon_1') {
+      pool = ['pirate_01', 'pirate_02', 'pirate_03', 'pirate_04', 'pirate_05']; boss = 'pirate_09';
+    } else if (galaxy.current === 'dungeon_2') {
+      pool = ['syndicate_01', 'syndicate_02', 'syndicate_04', 'syndicate_03']; boss = 'syndicate_06';
+    } else if (galaxy.current === 'dungeon_3') {
+      pool = ['confed_01', 'confed_02', 'syndicate_04', 'confed_06']; boss = 'confed_09';
+    } else if (galaxy.current === 'dungeon_4') {
+      pool = ['ancient_01', 'ancient_02', 'ancient_03', 'ancient_04']; boss = 'ancient_06';
+    } else if (galaxy.current === 'dungeon_5') {
       pool = ['ancient_03', 'ancient_04', 'ancient_05', 'ancient_01', 'ancient_02'];
       boss = 'ancient_06';
+    } else if (galaxy.current === 'tides_d4') {
+      pool = ['ancient_01', 'ancient_02', 'ancient_04', 'confed_06']; boss = 'ancient_06';
     } else if (galaxy.current === 'helios_5') {
       // Бастион Конфедерации — дезертиры и элита
       pool = ['confed_01', 'confed_02', 'confed_06', 'syndicate_05', 'confed_01'];
       boss = 'confed_09';
-    } else if (galaxy.current === 'dungeon_2') {
-      // Логово контрабандистов — чисто Синдикат
-      pool = ['syndicate_01', 'syndicate_02', 'syndicate_04', 'syndicate_03'];
-      boss = 'syndicate_06';
-    } else if (Lmax <= 20) { 
+    } else if (Lmax <= 20) {
       pool = ['pirate_01', 'pirate_02', 'pirate_03', 'pirate_04', 'pirate_05', 'pirate_06', 'pirate_07']; boss = 'pirate_09'; 
     } else if (Lmax <= 35) { 
       // Мид-гейм: Синдикат + Безопасность
@@ -633,15 +644,72 @@ export default class GameScene extends Phaser.Scene {
       pool = ['ancient_01', 'ancient_02', 'ancient_04', 'confed_06', 'ancient_03']; boss = 'ancient_06'; 
     }
     
-    if (galaxy.current === 'dungeon_5') {
-      // Плотный спавн для Хранилища Древних
+    if (galaxy.current === 'dungeon_1') {
+      // D1: пираты в крестообразных коридорах; мини-боссы на E/W; босс за северной дверью
+      add('pirate_02', rnd(Lmin, Lmax), 0, -900, { patrolRadius: 350 });
+      add('pirate_01', rnd(Lmin, Lmax), 1800, 0, {});
+      add('pirate_03', rnd(Lmin, Lmax), -1800, 0, {});
+      add('pirate_02', rnd(Lmin, Lmax), 0, 900, { patrolRadius: 400 });
+      add('pirate_04', rnd(Lmin, Lmax), 2000, -800, {});
+      add('pirate_01', rnd(Lmin, Lmax), -2000, 800, {});
+      add('pirate_07', Lmax, 2200, 0, { behavior: 'guard', patrolRadius: 250, leash: 600 });
+      add('pirate_07', Lmax, -2200, 0, { behavior: 'guard', patrolRadius: 250, leash: 600 });
+      const d1boss = add('pirate_09', Lmax, 0, -2200, { behavior: 'guard', patrolRadius: 180, leash: 450 });
+      d1boss.isDungeonBoss = true;
+
+    } else if (galaxy.current === 'dungeon_2') {
+      // D2: Синдикат по Z-маршруту; мини-боссы в тупиках; босс в сев-вост комнате
+      add('syndicate_01', rnd(Lmin, Lmax), -1800, 1000, {});
+      add('syndicate_02', rnd(Lmin, Lmax), 0, 1200, {});
+      add('syndicate_03', rnd(Lmin, Lmax), 0, 0, {});
+      add('syndicate_04', rnd(Lmin, Lmax), -800, -300, {});
+      add('syndicate_02', rnd(Lmin, Lmax), 1500, 0, {});
+      add('syndicate_05', Lmax, 1900, 1100, { behavior: 'guard', patrolRadius: 200, leash: 550 });
+      add('syndicate_05', Lmax, -1900, -200, { behavior: 'guard', patrolRadius: 200, leash: 550 });
+      const d2boss = add('syndicate_06', Lmax, 1800, -1800, { behavior: 'guard', patrolRadius: 180, leash: 480 });
+      d2boss.isDungeonBoss = true;
+
+    } else if (galaxy.current === 'dungeon_3') {
+      // D3: конфедераты в военной сетке; мини-боссы на постах; босс в верхне-правой комнате
+      add('confed_01', rnd(Lmin, Lmax), -1650, -1000, {});
+      add('confed_02', rnd(Lmin, Lmax), 0, -1000, {});
+      add('confed_01', rnd(Lmin, Lmax), -1650, 900, {});
+      add('confed_06', rnd(Lmin, Lmax), 0, 900, {});
+      add('syndicate_04', rnd(Lmin, Lmax), 1200, 500, {});
+      add('confed_06', Lmax, -1650, -300, { behavior: 'guard', patrolRadius: 200, leash: 500 });
+      add('confed_06', Lmax, 0, -300, { behavior: 'guard', patrolRadius: 200, leash: 500 });
+      const d3boss = add('confed_09', Lmax, 1650, -1800, { behavior: 'guard', patrolRadius: 180, leash: 420 });
+      d3boss.isDungeonBoss = true;
+
+    } else if (galaxy.current === 'dungeon_4') {
+      // D4: Древние среди обломков; мини-боссы у кластеров; босс в юго-вост углу
+      const d4pts = [[500,-900], [-700,-600], [1200,200], [-900,600], [400,1000], [-500,-1200]];
+      d4pts.forEach(([ox, oy], i) => add(pool[i % pool.length], rnd(Lmin, Lmax), ox, oy, {}));
+      add('ancient_05', Lmax, 1200, -1200, { behavior: 'guard', patrolRadius: 280, leash: 650 });
+      add('ancient_05', Lmax, -900, 900, { behavior: 'guard', patrolRadius: 280, leash: 650 });
+      add('ancient_03', Lmax, 1400, 900, { behavior: 'guard', patrolRadius: 250, leash: 600 });
+      const d4boss = add('ancient_06', Lmax, 2200, 1600, { behavior: 'guard', patrolRadius: 180, leash: 420 });
+      d4boss.isDungeonBoss = true;
+
+    } else if (galaxy.current === 'dungeon_5') {
+      // D5: три кольца обороны; босс в центральной арене (за северной дверью)
+      // Охранники снаружи — убить всех, чтобы открыть дверь в арену
       const pts = [[960, 960], [-960, 960], [960, -960], [-960, -960], [0, 1800], [0, -1800], [2160, 0], [-2160, 0]];
       pts.forEach((o, i) => add(pool[i % pool.length], rnd(Lmin, Lmax), o[0], o[1], { patrolRadius: 400 }));
-      // Босс в центре (где обычно база)
       const dungeon5boss = add(boss, Lmax, 0, 0, { behavior: 'guard', patrolRadius: 300, leash: 900 });
-      // Охранники вокруг босса данжа
-      [[-340, -150], [350, -120], [-120, 340]].forEach(([ox, oy]) =>
-        add(pool[0], rnd(Lmin, Lmax), ox, oy, { patrolRadius: 160, bossRef: dungeon5boss }));
+      dungeon5boss.isDungeonBoss = true;
+
+    } else if (galaxy.current === 'tides_d4') {
+      // tides_d4: Лабиринт Тьмы — Древние и конфедераты; мини-боссы в тупиках; босс за юго-вост дверью
+      const tdpts = [[-1800,-1300], [600,-1200], [-400,-500], [1200,-500], [-800,300], [1600,900]];
+      tdpts.forEach(([ox, oy], i) => add(pool[i % pool.length], rnd(Lmin, Lmax), ox, oy, {}));
+      add('ancient_05', Lmax, 0, -1800, { behavior: 'guard', patrolRadius: 250, leash: 580 });
+      add('ancient_05', Lmax, -1800, 200, { behavior: 'guard', patrolRadius: 250, leash: 580 });
+      add('ancient_03', Lmax, 800, 1400, { behavior: 'guard', patrolRadius: 250, leash: 580 });
+      add('ancient_05', Lmax, -800, 1600, { behavior: 'guard', patrolRadius: 250, leash: 580 });
+      const tdboss = add('ancient_06', Lmax, 2300, 1900, { behavior: 'guard', patrolRadius: 180, leash: 420 });
+      tdboss.isDungeonBoss = true;
+
     } else {
       const ring = [[1200, -360], [-1320, 480], [480, 1260], [-1020, -840], [1800, 624], [-1800, -180]];
       ring.forEach((o, i) => add(pool[i % pool.length], rnd(Lmin, Lmax), o[0], o[1], isHomeSector ? { passive: true } : {}));
@@ -985,7 +1053,10 @@ export default class GameScene extends Phaser.Scene {
         this._tryAddToAmmoSlots('ammo_plasma', 5000);
         for (let i = 0; i < 3; i++) this.inventory.push(rollLaser(4, 50));
         for (let i = 0; i < 3; i++) this.inventory.push(rollCannon(4, 50));
-        this.log('DEV: +1M кр, +500 ⭐, патроны (лазер+плазма), 3×лазер T4, 3×пушка T4');
+        // DEV: add one board of each tier
+        this.boardInventory = this.boardInventory ?? [];
+        this.boardInventory.push(rollBoard(1), rollBoard(2), rollBoard(3));
+        this.log('DEV: +1M кр, +500 ⭐, патроны (лазер+плазма), 3×лазер T4, 3×пушка T4, 3 платы');
       });
     }
   }
@@ -1656,6 +1727,18 @@ export default class GameScene extends Phaser.Scene {
       const ox = Phaser.Math.Between(-24, 24), oy = Phaser.Math.Between(-24, 24);
       this.loot.push(new Loot(this, mob.x + ox, mob.y + oy, consDrop, 'common'));
     }
+    // Board drop: 10% from regular mobs, 35% from bosses (dungeon/boss mobs give T2-T3)
+    const boardChance = mob.isBoss ? 0.35 : 0.10;
+    if (Phaser.Math.FloatBetween(0, 1) < boardChance) {
+      const sec = SECTORS[galaxy.current];
+      const isDung = sec?.isDungeon;
+      const boardTier = mob.isBoss ? (isDung ? 3 : 2) : (isDung ? 2 : Math.max(1, Math.min(2, Math.ceil(mob.level / 20))));
+      const board = rollBoard(boardTier);
+      this.boardInventory = this.boardInventory ?? [];
+      this.boardInventory.push(board);
+      const tierLabel = boardTier === 1 ? 'T1' : boardTier === 2 ? 'T2' : 'T3';
+      this.log(`📋 Найдена плата расширения ${tierLabel}`);
+    }
     if (!mob.noRespawn && !SECTORS[galaxy.current]?.isDungeon) {
       this.time.delayedCall(RESPAWN_MS, () => { if (!mob.alive) { mob.respawn(); this.log(i18n.t('log.respawn', { name, lvl })); } });
     }
@@ -1675,6 +1758,7 @@ export default class GameScene extends Phaser.Scene {
       // Future PvP: honor scales with victim level
       this.gainHonor(Math.round(mob.level * HONOR_PER_LVL50 / 50));
     }
+    if (sec?.isDungeon) this._checkDungeonBossDoor();
   }
 
   // ── Mission system ───────────────────────────────────────────────────────
@@ -2414,11 +2498,12 @@ export default class GameScene extends Phaser.Scene {
     const sec = SECTORS[galaxy.current];
     if (!sec.isDungeon) return;
 
+    this.dungeonBossDoor    = null;
+    this.dungeonBossDoorVis = null;
     this.walls = this.physics.add.staticGroup();
-    const g = this.add.graphics().setDepth(1);
+    const g  = this.add.graphics().setDepth(1);
     const cx = this.worldWidth / 2, cy = this.worldHeight / 2;
 
-    // Visual style per dungeon map
     const WALL_STYLES = {
       dungeon_1:  { type: 'asteroid', fill: 0x2a1206, fillA: 0.92, edge: 0x8b3a1a },
       dungeon_2:  { type: 'metal',    fill: 0x0e1e0e, fillA: 0.92, edge: 0x3a6a3a },
@@ -2430,26 +2515,12 @@ export default class GameScene extends Phaser.Scene {
     };
     const ws = WALL_STYLES[galaxy.current] ?? WALL_STYLES['dungeon_5'];
 
-    const addWall = (x, y, w, h) => {
-      if (Phaser.Math.Distance.Between(x, y, cx, cy) < 650) return;
-      if (this.gates) {
-        for (const gate of this.gates) {
-          if (Phaser.Math.Distance.Between(x, y, gate.x, gate.y) < 650) return;
-        }
-      }
-
-      const wall = this.add.rectangle(x, y, w, h, 0x000000, 0);
-      this.physics.add.existing(wall, true);
-      this.walls.add(wall);
-
-      const x0 = x - w / 2, y0 = y - h / 2;
-
+    const drawWallVisual = (x0, y0, w, h) => {
       g.fillStyle(ws.fill, ws.fillA);
       g.fillRect(x0, y0, w, h);
 
       if (ws.type === 'asteroid') {
-        // Трещины — случайные, seed по позиции стены
-        const rng = new Phaser.Math.RandomDataGenerator([`${x}|${y}`]);
+        const rng = new Phaser.Math.RandomDataGenerator([`${x0}|${y0}`]);
         g.lineStyle(1, 0x6b2e0e, 0.45);
         for (let k = 0; k < 3; k++) {
           const ax = x0 + rng.between(12, w - 12), ay = y0 + rng.between(12, h - 12);
@@ -2461,7 +2532,6 @@ export default class GameScene extends Phaser.Scene {
         g.lineStyle(1, ws.edge, 0.22); g.strokeRect(x0 + 4, y0 + 4, w - 8, h - 8);
 
       } else if (ws.type === 'metal') {
-        // Горизонтальные швы обшивки + заклёпки
         const seams = Math.max(1, Math.floor(h / 120));
         g.lineStyle(1, 0x2a5a2a, 0.38);
         for (let k = 1; k <= seams; k++) {
@@ -2475,25 +2545,20 @@ export default class GameScene extends Phaser.Scene {
         g.lineStyle(1, ws.edge, 0.18); g.strokeRect(x0 + 2, y0 + 2, w - 4, h - 4);
 
       } else if (ws.type === 'stone') {
-        // Кирпичная кладка со смещением через строку
         const rowH = 90, colW = 160;
         g.lineStyle(1, 0x404068, 0.32);
         let row = 0;
-        for (let gy = y0 + rowH; gy < y0 + h; gy += rowH, row++) {
-          g.lineBetween(x0, gy, x0 + w, gy);
-        }
+        for (let gy2 = y0 + rowH; gy2 < y0 + h; gy2 += rowH, row++) g.lineBetween(x0, gy2, x0 + w, gy2);
         row = 0;
-        for (let gy = y0; gy < y0 + h; gy += rowH, row++) {
+        for (let gy2 = y0; gy2 < y0 + h; gy2 += rowH, row++) {
           const off = (row % 2) * (colW / 2);
-          for (let gx = x0 + colW - off; gx < x0 + w; gx += colW) {
-            g.lineBetween(gx, gy, gx, Math.min(y0 + h, gy + rowH));
-          }
+          for (let gx2 = x0 + colW - off; gx2 < x0 + w; gx2 += colW)
+            g.lineBetween(gx2, gy2, gx2, Math.min(y0 + h, gy2 + rowH));
         }
         g.lineStyle(2, ws.edge, 0.78); g.strokeRect(x0, y0, w, h);
 
       } else if (ws.type === 'debris') {
-        // Диагональные разрывы — металлолом
-        const rng3 = new Phaser.Math.RandomDataGenerator([`${x}|${y}`]);
+        const rng3 = new Phaser.Math.RandomDataGenerator([`${x0}|${y0}`]);
         g.lineStyle(1, 0x2a4a2a, 0.38);
         for (let k = 0; k < 3; k++) {
           const ax = x0 + rng3.between(0, w);
@@ -2503,17 +2568,14 @@ export default class GameScene extends Phaser.Scene {
         g.lineStyle(1, ws.edge, 0.18); g.strokeRect(x0 + 3, y0 + 3, w - 6, h - 6);
 
       } else if (ws.type === 'energy') {
-        // Энергобарьер — свечение многослойными обводками
-        g.lineStyle(8, ws.edge, 0.04); g.strokeRect(x0 - 4, y0 - 4, w + 8,  h + 8);
-        g.lineStyle(4, ws.edge, 0.13); g.strokeRect(x0 - 2, y0 - 2, w + 4,  h + 4);
+        g.lineStyle(8, ws.edge, 0.04); g.strokeRect(x0 - 4, y0 - 4, w + 8, h + 8);
+        g.lineStyle(4, ws.edge, 0.13); g.strokeRect(x0 - 2, y0 - 2, w + 4, h + 4);
         g.lineStyle(2, ws.edge, 0.88); g.strokeRect(x0, y0, w, h);
         g.lineStyle(1, ws.edge, 0.05);
-        const step = 80;
-        for (let i = step; i < w; i += step) g.lineBetween(x0 + i, y0, x0 + i, y0 + h);
-        for (let j = step; j < h; j += step) g.lineBetween(x0, y0 + j, x0 + w, y0 + j);
+        for (let i = 80; i < w; i += 80) g.lineBetween(x0 + i, y0, x0 + i, y0 + h);
+        for (let j = 80; j < h; j += 80) g.lineBetween(x0, y0 + j, x0 + w, y0 + j);
 
       } else if (ws.type === 'void') {
-        // Тёмная материя — фиолетовое свечение + диагональные искажения
         g.lineStyle(10, ws.edge, 0.03); g.strokeRect(x0 - 5, y0 - 5, w + 10, h + 10);
         g.lineStyle(5,  ws.edge, 0.09); g.strokeRect(x0 - 2, y0 - 2, w + 4,  h + 4);
         g.lineStyle(2,  ws.edge, 0.82); g.strokeRect(x0, y0, w, h);
@@ -2527,9 +2589,8 @@ export default class GameScene extends Phaser.Scene {
         }
 
       } else {
-        // boss / кристалл — золотое свечение + диагональные грани
-        g.lineStyle(8, ws.edge, 0.05); g.strokeRect(x0 - 4, y0 - 4, w + 8,  h + 8);
-        g.lineStyle(3, ws.edge, 0.20); g.strokeRect(x0 - 1, y0 - 1, w + 2,  h + 2);
+        g.lineStyle(8, ws.edge, 0.05); g.strokeRect(x0 - 4, y0 - 4, w + 8, h + 8);
+        g.lineStyle(3, ws.edge, 0.20); g.strokeRect(x0 - 1, y0 - 1, w + 2, h + 2);
         g.lineStyle(2, ws.edge, 0.88); g.strokeRect(x0, y0, w, h);
         g.lineStyle(1, ws.edge, 0.10);
         g.lineBetween(x0, y0, x0 + w, y0 + h);
@@ -2537,67 +2598,186 @@ export default class GameScene extends Phaser.Scene {
       }
     };
 
-    // ── Расстановка стен по данжу ────────────────────────────────────
-    if (galaxy.current === 'dungeon_1') {
-      // D1: Хаб + 4 луча — четыре угловых блока, крестообразные коридоры
-      // Коридоры: N/S шириной 1200, E/W высотой 800, хаб в центре
-      addWall(cx - 1700, cy - 1100, 2200, 1400);  // NW
-      addWall(cx + 1700, cy - 1100, 2200, 1400);  // NE
-      addWall(cx - 1700, cy + 1100, 2200, 1400);  // SW
-      addWall(cx + 1700, cy + 1100, 2200, 1400);  // SE
-    } else if (galaxy.current === 'dungeon_2') {
-      // D2: Шахматные блоки
-      for (let x = -2000; x <= 2000; x += 600) {
-        for (let y = -1200; y <= 1200; y += 600) {
-          if ((x + y) % 1200 === 0) addWall(cx + x, cy + y, 350, 350);
+    const addWall = (x, y, w, h, force = false) => {
+      if (!force && Phaser.Math.Distance.Between(x, y, cx, cy) < 650) return;
+      if (!force && this.gates) {
+        for (const gate of this.gates) {
+          if (Phaser.Math.Distance.Between(x, y, gate.x, gate.y) < 650) return;
         }
       }
+      const wall = this.add.rectangle(x, y, w, h, 0x000000, 0);
+      this.physics.add.existing(wall, true);
+      this.walls.add(wall);
+      drawWallVisual(x - w / 2, y - h / 2, w, h);
+    };
+
+    const addBossDoor = (x, y, w, h) => {
+      const door = this.add.rectangle(x, y, w, h, 0x000000, 0);
+      this.physics.add.existing(door, true);
+      this.walls.add(door);
+      const dg = this.add.graphics().setDepth(3);
+      const x0 = x - w / 2, y0 = y - h / 2;
+      dg.fillStyle(0x550000, 0.60); dg.fillRect(x0, y0, w, h);
+      dg.lineStyle(3, 0xff3333, 0.90); dg.strokeRect(x0, y0, w, h);
+      dg.lineStyle(2, 0xff6666, 0.35);
+      dg.lineBetween(x0, y0, x0 + w, y0 + h);
+      dg.lineBetween(x0 + w, y0, x0, y0 + h);
+      const dtxt = this.add.text(x, y0 - 18, i18n.t('hud.boss_room'), {
+        fontFamily: 'Orbitron, sans-serif', fontSize: '13px', color: '#ff5555',
+        resolution: UI_RES, stroke: '#200000', strokeThickness: 4,
+      }).setOrigin(0.5, 1).setDepth(4);
+      this.dungeonBossDoor    = door;
+      this.dungeonBossDoorVis = [dg, dtxt];
+    };
+
+    // ── Wall layout per dungeon ───────────────────────────────────────────────
+    if (galaxy.current === 'dungeon_1') {
+      // Хаб + крест: 4 угловых блока → коридоры N/S/E/W; комната босса за северным барьером
+      addWall(cx - 1700, cy - 1100, 2200, 1400);   // NW
+      addWall(cx + 1700, cy - 1100, 2200, 1400);   // NE
+      addWall(cx - 1700, cy + 1100, 2200, 1400);   // SW
+      addWall(cx + 1700, cy + 1100, 2200, 1400);   // SE
+      addBossDoor(cx, cy - 1750, 1200, 300);
+
+    } else if (galaxy.current === 'dungeon_2') {
+      // Z-маршрут: юг→полоса1→(поворот E)→полоса2→(поворот W)→полоса3→сев-вост комната
+      addWall(cx - 2700, cy - 350, 300, 3700);     // левая граница
+      addWall(cx + 2700, cy - 350, 300, 3700);     // правая граница
+      addWall(cx, cy - 2100, 5700, 300);            // верхняя граница
+      addWall(cx - 750, cy + 700, 3900, 300);       // делитель A — проход справа
+      addWall(cx + 1950, cy + 1350, 1500, 300);    // тупик с лутом (юго-восток)
+      addWall(cx + 750, cy - 700, 3900, 300);       // делитель B — проход слева
+      addWall(cx - 1950, cy - 100, 1500, 300);     // тупик с лутом (запад)
+      addBossDoor(cx + 1000, cy - 1450, 300, 1300);
+
     } else if (galaxy.current === 'dungeon_3') {
-      // D3: Зигзаг-линии
-      for (let i = -2000; i <= 2000; i += 500) {
-        const ox = i % 1000 === 0 ? 400 : -400;
-        addWall(cx + i, cy + ox, 150, 800);
-      }
+      // Военная сетка: 3×2 комнаты с коридорными проходами
+      addWall(cx, cy - 2000, 5400, 300);                      // верх
+      addWall(cx - 2700, cy - 250, 300, 3500);                // лево
+      addWall(cx + 2700, cy - 250, 300, 3500);                // право
+      addWall(cx - 800, cy - 1075, 300, 1850);                // лев колонна, верх
+      addWall(cx - 800, cy + 1050, 300, 1800);                // лев колонна, низ
+      addWall(cx + 800, cy - 1075, 300, 1850);                // прав колонна, верх
+      addWall(cx + 800, cy + 1050, 300, 1800);                // прав колонна, низ
+      addWall(cx - 1875, cy + 100, 1650, 300);                // горизонт. ряд, лево
+      addWall(cx, cy + 100, 1100, 300);                       // горизонт. ряд, центр
+      addWall(cx + 1875, cy + 100, 1650, 300);                // горизонт. ряд, право
+      addBossDoor(cx + 1650, cy - 1600, 1600, 300);           // верхне-правая комната
+
     } else if (galaxy.current === 'dungeon_4') {
-      // D4: Обломки — seed из имени сектора, одинаково при каждом входе
+      // Поле обломков: фиксированные осколки с небольшим jitter
       const rnd4 = new Phaser.Math.RandomDataGenerator([galaxy.current]);
-      for (let i = 0; i < 25; i++) {
-        const rx = rnd4.between(-2800, 2800);
-        const ry = rnd4.between(-1600, 1600);
-        addWall(cx + rx, cy + ry, rnd4.between(200, 500), rnd4.between(100, 300));
-      }
+      const CHUNKS = [
+        [ 500, -1300, 480, 260], [-900, -900, 380, 240], [1500, -700, 320, 200],
+        [-1600, -500, 420, 180], [ 900,  300, 360, 220], [-300,  900, 500, 200],
+        [1600,  900, 340, 190], [-1200, 1100, 280, 260], [ 400, -500, 260, 300],
+        [-500, -1500, 300, 200], [1900,  100, 260, 340], [-1900, 700, 300, 280],
+        [-400, 1400, 440, 200], [1300, 1300, 360, 200], [ 800, -1700, 280, 240],
+        [-1100,  300, 200, 380], [ 200, 1700, 300, 200], [-1600, -1300, 260, 200],
+      ];
+      CHUNKS.forEach(([ox, oy, w, h]) => {
+        const jx = rnd4.between(-40, 40), jy = rnd4.between(-30, 30);
+        addWall(cx + ox + jx, cy + oy + jy, w, h);
+      });
+      addBossDoor(cx + 1900, cy + 1100, 300, 1000);           // юго-восточный угол
+
     } else if (galaxy.current === 'dungeon_5') {
-      // D5: Арена с энергоколоннами
-      const sz = 2000;
-      [[sz,sz],[-sz,sz],[sz,-sz],[-sz,-sz],[sz,0],[-sz,0],[0,sz],[0,-sz]]
-        .forEach(p => addWall(cx + p[0], cy + p[1], 400, 400));
+      // Три кольца обороны: внешнее (N/S/E/W проходы), среднее (крест-бары), внутреннее (арена)
+      addWall(cx - 1700, cy - 1200, 2200, 1400);
+      addWall(cx + 1700, cy - 1200, 2200, 1400);
+      addWall(cx - 1700, cy + 1200, 2200, 1400);
+      addWall(cx + 1700, cy + 1200, 2200, 1400);
+      addWall(cx, cy - 1500, 800, 300);
+      addWall(cx, cy + 1500, 800, 300);
+      addWall(cx - 1500, cy, 300, 800);
+      addWall(cx + 1500, cy, 300, 800);
+      addWall(cx, cy + 600, 1400, 250, true);      // юж. стена арены (force — близко к центру)
+      addWall(cx - 700, cy, 250, 1200, true);      // зап. стена арены
+      addWall(cx + 700, cy, 250, 1200, true);      // вост. стена арены
+      addBossDoor(cx, cy - 600, 1400, 250);         // сев. стена арены = boss door
+
     } else if (galaxy.current === 'tides_d4') {
-      // D-prem: Лабиринт Тьмы — снейк через 4 барьера из тёмной материи
-      // Барьер 1 (y=-1600): щель на правом краю x=[cx+200, cx+800]
-      addWall(cx - 1400, cy - 1600, 3200, 200);  // [cx-3000 .. cx+200]
-      addWall(cx + 1900, cy - 1600, 2200, 200);  // [cx+800  .. cx+3000]
-      // Барьер 2 (y=-800): щель на левом краю x=[cx-3000, cx-2400]
-      addWall(cx + 300,  cy - 800,  5400, 200);  // [cx-2400 .. cx+3000]
-      // Барьер 3 (y=+800): щель на правом краю x=[cx+2400, cx+3000]
-      addWall(cx - 300,  cy + 800,  5400, 200);  // [cx-3000 .. cx+2400]
-      // Барьер 4 (y=+1600): щель на левом краю x=[cx-3000, cx-2400]
-      addWall(cx + 300,  cy + 1600, 5400, 200);  // [cx-2400 .. cx+3000]
-      // Вертикальные перегородки — ложные пути и тупики с лутом
-      addWall(cx + 800,  cy - 1200, 200, 800);
-      addWall(cx - 800,  cy + 1200, 200, 800);
-      addWall(cx - 1800, cy - 1200, 200, 700);
-      addWall(cx + 1800, cy + 1200, 200, 700);
-      addWall(cx + 2400, cy - 400,  200, 1400);
-      addWall(cx - 2400, cy + 400,  200, 1400);
+      // Лабиринт Тьмы: плотная Z-сеть из тёмной материи (вход с севера)
+      addWall(cx - 2700, cy + 300, 300, 4200);     // левая граница
+      addWall(cx + 2700, cy + 300, 300, 4200);     // правая граница
+      addWall(cx, cy + 2100, 5700, 300);            // нижняя граница
+      addWall(cx - 1300, cy - 1600, 2900, 250);    // L1: проход cx+200..cx+700
+      addWall(cx + 1450, cy - 1600, 2500, 250);
+      addWall(cx + 450, cy - 1900, 500, 250);      // тупик с лутом у входа
+      addWall(cx + 400, cy - 900, 4900, 250);      // L2: проход cx-2700..cx-2100
+      addWall(cx + 1600, cy - 1250, 250, 450);     // перегородки L1-L2
+      addWall(cx + 700,  cy - 1250, 250, 450);
+      addWall(cx - 400, cy - 200, 4900, 250);      // L3: проход cx+2100..cx+2700
+      addWall(cx - 1600, cy - 600, 250, 450);      // перегородки L2-L3
+      addWall(cx - 700,  cy - 600, 250, 450);
+      addWall(cx + 1200, cy - 550, 1100, 250);
+      addWall(cx + 400, cy + 600, 4900, 250);      // L4: проход cx-2700..cx-2100
+      addWall(cx + 1600, cy + 200, 250, 450);      // перегородки L3-L4
+      addWall(cx - 300,  cy + 200, 250, 600);
+      addWall(cx - 1800, cy + 200, 1100, 250);
+      addWall(cx - 400, cy + 1300, 4900, 250);     // L5: проход cx+2100..cx+2700
+      addWall(cx - 1600, cy + 900, 250, 450);      // перегородки L4-L5
+      addWall(cx + 800,  cy + 950, 250, 450);
+      // Дно лабиринта: барьер с боссовой дверью в правой части (вход в боссовую комнату)
+      addWall(cx - 225, cy + 1650, 4950, 250);     // cx-2700..cx+2250 (проход cx+2250..cx+2700)
+      addBossDoor(cx + 2475, cy + 1650, 450, 250); // горизонтальный boss door в восточном проходе
+
     } else if (galaxy.current === 'R-1-boss') {
-      // Boss: Кристальные колонны алтаря
-      const sz = 2200;
-      [[sz,sz],[-sz,sz],[sz,-sz],[-sz,-sz],[sz,0],[-sz,0],[0,sz],[0,-sz]]
-        .forEach(p => addWall(cx + p[0], cy + p[1], 500, 500));
+      // Алтарь: 5 пар колонн создают 5 коридоров-подходов к центральной арене
+      addWall(cx + 2200, cy - 700, 600, 600);
+      addWall(cx + 2200, cy + 700, 600, 600);
+      addWall(cx + 1100, cy - 1950, 600, 600);
+      addWall(cx + 2100, cy - 1400, 600, 600);
+      addWall(cx - 1100, cy - 1950, 600, 600);
+      addWall(cx - 2100, cy - 1400, 600, 600);
+      addWall(cx - 1100, cy + 1950, 600, 600);
+      addWall(cx - 2100, cy + 1400, 600, 600);
+      addWall(cx + 1100, cy + 1950, 600, 600);
+      addWall(cx + 2100, cy + 1400, 600, 600);
     }
 
     this.physics.add.collider(this.player.sprite, this.walls);
     this.mobs.forEach(m => this.physics.add.collider(m.sprite, this.walls));
+  }
+
+  _checkDungeonBossDoor() {
+    if (!this.dungeonBossDoor) return;
+    const remaining = this.mobs.filter(m => m.alive && !m.isDungeonBoss).length;
+    if (remaining === 0) this._openDungeonBossDoor();
+  }
+
+  _openDungeonBossDoor() {
+    if (!this.dungeonBossDoor) return;
+    this.walls.remove(this.dungeonBossDoor, true, true);
+    this.dungeonBossDoor = null;
+    if (this.dungeonBossDoorVis) {
+      for (const obj of this.dungeonBossDoorVis) obj.destroy();
+      this.dungeonBossDoorVis = null;
+    }
+    this.log(i18n.t('log.boss_door_open'));
+  }
+
+  spawnDungeonDeposits() {
+    if (!SECTORS[galaxy.current]?.isDungeon) return;
+    const cx = this.worldWidth / 2, cy = this.worldHeight / 2;
+    const CONFIGS = {
+      dungeon_1: [[2200, 0, 320], [-2200, 0, 320]],
+      dungeon_2: [[1900, 1100, 380], [-1900, -200, 380], [1800, -1800, 480]],
+      dungeon_3: [[-1650, -1000, 450], [1650, -1000, 450], [-1650, 900, 400], [0, 900, 400]],
+      dungeon_4: [[1200, -1200, 500], [-900, 900, 500], [1400, 900, 550]],
+      dungeon_5: [[0, -1800, 650], [1800, 0, 650], [-1800, 0, 650], [0, 1800, 650]],
+      tides_d4:  [[0, -1800, 750], [-1800, 200, 750], [800, 1400, 850], [-800, 1600, 850]],
+      'R-1-boss': [[1500, 0, 950], [-1500, 0, 950]],
+    };
+    const entries = CONFIGS[galaxy.current];
+    if (!entries) return;
+    const RESPAWN_MS = 24 * 60 * 60 * 1000;
+    for (const [ox, oy, amount] of entries) {
+      const x = cx + ox, y = cy + oy;
+      this.plasmateDeposits.push(
+        new PlasmateDeposit(this, x, y, amount, { xMin: x - 80, xMax: x + 80, yMin: y - 80, yMax: y + 80 }, RESPAWN_MS),
+      );
+    }
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
