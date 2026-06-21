@@ -603,6 +603,7 @@ export default class HudScene extends Phaser.Scene {
     const gs = this.gs;
     const r = minimapRect(this, getMinimapDims(loadSettings().minimapSize));
     const ww = gs.worldWidth, wh = gs.worldHeight;
+    const mmScale = Math.min(r.w / ww, r.h / wh);
 
     // Панель + рамка с техно-углами
     g.fillStyle(0x03090f, 0.9); g.fillRect(r.x, r.y, r.w, r.h);
@@ -678,7 +679,6 @@ export default class HudScene extends Phaser.Scene {
     // Скан-радиус: враги/лут видны только в радиусе сканирования
     const sr = gs.scanRadius ?? BASE_SCAN_RADIUS;
     const px2 = gs.player?.x ?? ww / 2, py2 = gs.player?.y ?? wh / 2;
-    const mmScale = Math.min(r.w / ww, r.h / wh);
     // Кольцо радиуса сканирования
     const pCenter = worldToMinimap(px2, py2, r, ww, wh);
     g.lineStyle(1, 0x4de1aa, 0.3);
