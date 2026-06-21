@@ -1,6 +1,6 @@
-// Галактика прототипа: 3 корпорации (Helios / Karax / Tides) с симметричной структурой.
-// Каждая корп: 5 домашних секторов (1-10…40-50) + 5 данжей + выходы в общие PvP-зоны.
-// sx/sy — позиция на схеме (экран M).  map — ключ фоновой текстуры.
+// Галактика: 3 корпорации + 6 общих данжей + PvP-зоны + босс-карта.
+// Данжи общие для всех корп — доступны через панель на карте (M).
+// sx/sy — позиция на схеме (экран M). map — ключ фоновой текстуры.
 export const SECTORS = {
   // ══════════════════════════════════════════════════════════════════════
   // HELIOS  (sy = 0, данжи sy = -1)
@@ -31,7 +31,7 @@ export const SECTORS = {
   shadow_arena: { name: 'Арена Теней', map: 'helios_1', lvlMin: 1, lvlMax: 50, sx: -99, sy: -99, personal: true },
 
   // ══════════════════════════════════════════════════════════════════════
-  // KARAX  — голубые карты  (sy = -2, данжи sy = -3)
+  // KARAX  (sy = -2)
   // ══════════════════════════════════════════════════════════════════════
   karax_1: { name: 'Литейные Заводы Karax', map: 'kar_1', lvlMin: 1,  lvlMax: 10, sx: 0, sy: -2 },
   karax_2: { name: 'Магма-Прайм',           map: 'kar_2', lvlMin: 10, lvlMax: 20, sx: 1, sy: -2 },
@@ -39,14 +39,9 @@ export const SECTORS = {
   karax_4: { name: 'Железный Узел',         map: 'kar_4', lvlMin: 30, lvlMax: 40, sx: 3, sy: -2 },
   karax_5: { name: 'Сердце Karax',          map: 'kar_5', lvlMin: 40, lvlMax: 50, sx: 4, sy: -2 },
 
-  karax_d1: { name: 'Руинные Шахты',    map: 'Arena-1', lvlMin: 5,  lvlMax: 15, sx: 0, sy: -3, isDungeon: true },
-  karax_d2: { name: 'Котельный Отсек',  map: 'Arena-2', lvlMin: 15, lvlMax: 25, sx: 1, sy: -3, isDungeon: true },
-  karax_d3: { name: 'Завод Теней',      map: 'Arena-3', lvlMin: 25, lvlMax: 40, sx: 2, sy: -3, isDungeon: true },
-  karax_d4: { name: 'Арена Прото',      map: 'D4',      lvlMin: 35, lvlMax: 50, sx: 3, sy: -3, isDungeon: true },
-  karax_d5: { name: 'Ядро Расплава',    map: 'D5',      lvlMin: 45, lvlMax: 50, sx: 4, sy: -3, isDungeon: true },
 
   // ══════════════════════════════════════════════════════════════════════
-  // TIDES  — зелёные карты  (sy = 2, данжи sy = 3)
+  // TIDES  (sy = 2)
   // ══════════════════════════════════════════════════════════════════════
   tides_1: { name: 'Лазурные Рифы',        map: 'HM1', lvlMin: 1,  lvlMax: 10, sx: 0, sy: 2 },
   tides_2: { name: 'Туманность Омут',      map: 'HM2', lvlMin: 10, lvlMax: 20, sx: 1, sy: 2 },
@@ -54,11 +49,7 @@ export const SECTORS = {
   tides_4: { name: 'Бездонный Риф',        map: 'HM4', lvlMin: 30, lvlMax: 40, sx: 3, sy: 2 },
   tides_5: { name: 'Предел Горизонта',     map: 'HM5', lvlMin: 40, lvlMax: 50, sx: 4, sy: 2 },
 
-  tides_d1: { name: 'Водяные Катакомбы',   map: 'D1',     lvlMin: 5,  lvlMax: 15, sx: 0, sy: 3, isDungeon: true },
-  tides_d2: { name: 'Станция-Призрак',     map: 'D2',     lvlMin: 15, lvlMax: 25, sx: 1, sy: 3, isDungeon: true },
-  tides_d3: { name: 'Могила Рифа',         map: 'D3',     lvlMin: 25, lvlMax: 40, sx: 2, sy: 3, isDungeon: true },
-  tides_d4: { name: 'Лабиринт Тьмы',      map: 'D-prem', lvlMin: 35, lvlMax: 50, sx: 3, sy: 3, isDungeon: true },
-  tides_d5: { name: 'Предбездна',          map: 'D5',     lvlMin: 45, lvlMax: 50, sx: 4, sy: 3, isDungeon: true },
+  tides_d4: { name: 'Лабиринт Тьмы',      map: 'D-prem', lvlMin: 35, lvlMax: 50, sx: 3, sy: 3, isDungeon: true, premium: true },
 };
 
 // Связи (двусторонние) — где есть джапгейт между секторами.
@@ -73,22 +64,19 @@ export const EDGES = [
 
   // Karax — цепочка
   ['karax_1', 'karax_2'], ['karax_2', 'karax_3'], ['karax_3', 'karax_4'], ['karax_4', 'karax_5'],
-  // Karax — данжи
-  ['karax_1', 'karax_d1'], ['karax_2', 'karax_d2'], ['karax_3', 'karax_d3'],
-  ['karax_4', 'karax_d4'], ['karax_5', 'karax_d5'],
   // Karax → PvP (со второго сектора)
   ['karax_2', 'pvp_1'], ['karax_3', 'pvp_2'], ['karax_4', 'pvp_3'], ['karax_5', 'pvp_4'],
 
   // Tides — цепочка
   ['tides_1', 'tides_2'], ['tides_2', 'tides_3'], ['tides_3', 'tides_4'], ['tides_4', 'tides_5'],
-  // Tides — данжи
-  ['tides_1', 'tides_d1'], ['tides_2', 'tides_d2'], ['tides_3', 'tides_d3'],
-  ['tides_4', 'tides_d4'], ['tides_5', 'tides_d5'],
   // Tides → PvP (со второго сектора)
   ['tides_2', 'pvp_1'], ['tides_3', 'pvp_2'], ['tides_4', 'pvp_3'], ['tides_5', 'pvp_4'],
 
   // PvP — внутренняя цепочка
   ['pvp_4', 'pvp_5'], ['pvp_5', 'R-1-boss'],
+
+  // Лабиринт Тьмы — выход через helios_4 (единственный физический джампгейт)
+  ['helios_4', 'tides_d4'],
 ];
 
 // Текущий сектор (мутабельно; переживает scene.restart при прыжке).
@@ -110,8 +98,8 @@ export function edgeDir(fromKey, toKey) {
   return { dx: Math.sign(t.sx - f.sx), dy: Math.sign(t.sy - f.sy) };
 }
 
-// Доступ по уровню пилота: рано (ниже lvlMin) — закрыт; PvP — закрыт, если перерос (> lvlMax+5).
-export function sectorAccess(key, pilotLevel, activeShip = 'wisp') {
+// Доступ по уровню пилота. PvP закрыт выше lvlMax+5. Данжи закрыты выше lvlMax+10. Premium — только с подпиской.
+export function sectorAccess(key, pilotLevel, activeShip = 'wisp', premium = false) {
   const s = SECTORS[key];
 
   if (activeShip === 'argus') {
@@ -119,7 +107,9 @@ export function sectorAccess(key, pilotLevel, activeShip = 'wisp') {
     return { ok: true };
   }
 
-  if (pilotLevel < s.lvlMin) return { ok: false, reason: `нужен ур. ${s.lvlMin}` };
-  if (s.pvp && pilotLevel > s.lvlMax + 5) return { ok: false, reason: `только до ур. ${s.lvlMax + 5}` };
+  if (s.premium && !premium)                    return { ok: false, reason: 'нужен Premium' };
+  if (pilotLevel < s.lvlMin)                    return { ok: false, reason: `нужен ур. ${s.lvlMin}` };
+  if (s.pvp     && pilotLevel > s.lvlMax + 5)  return { ok: false, reason: `только до ур. ${s.lvlMax + 5}` };
+  if (s.isDungeon && pilotLevel > s.lvlMax + 10) return { ok: false, reason: `только до ур. ${s.lvlMax + 10}` };
   return { ok: true };
 }

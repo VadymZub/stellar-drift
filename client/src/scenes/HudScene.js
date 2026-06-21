@@ -627,6 +627,24 @@ export default class HudScene extends Phaser.Scene {
       g.fillStyle(COLORS.primary, 0.9); g.fillCircle(base.x, base.y, 3);
     }
 
+    // Стены данжа на миникарте — всегда видны, цвет по типу
+    if (sec.isDungeon && gs.walls) {
+      const DUNGEON_WALL_COLOR = {
+        dungeon_1: 0x8b3a1a, dungeon_2: 0x3a6a3a, dungeon_3: 0x505080,
+        dungeon_4: 0x3a5a3a, dungeon_5: 0x4dd0e1, tides_d4: 0x9c27b0, 'R-1-boss': 0xc8a800,
+      };
+      const wc = DUNGEON_WALL_COLOR[galaxy.current] ?? 0x4dd0e1;
+      g.fillStyle(wc, 0.35);
+      g.lineStyle(0.5, wc, 0.7);
+      for (const wall of gs.walls.getChildren()) {
+        const wp = worldToMinimap(wall.x, wall.y, r, ww, wh);
+        const sw = wall.width * mmScale;
+        const sh = wall.height * mmScale;
+        g.fillRect(wp.x - sw / 2, wp.y - sh / 2, sw, sh);
+        g.strokeRect(wp.x - sw / 2, wp.y - sh / 2, sw, sh);
+      }
+    }
+
     // Домашні бази — завжди видні (без обмеження scan radius)
     if (gs.homeBases) {
       const CORP_HUE = { helios: 0xffb74d, karax: 0xef5350, tides: 0x4dd0e1 };

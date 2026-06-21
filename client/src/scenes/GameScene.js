@@ -698,7 +698,7 @@ export default class GameScene extends Phaser.Scene {
       const ring = this.add.image(gx, gy, 'jumpgate_ring').setDepth(4).setDisplaySize(260, 260);
       if (isDungeon) ring.setTint(0xffe0b2);
 
-      const lock = sectorAccess(t, this.pilotLevel, this.activeShip).ok ? '' : ' 🔒';
+      const lock = sectorAccess(t, this.pilotLevel, this.activeShip, this.premium).ok ? '' : ' 🔒';
       const label = this.add.text(gx, gy - 135,
         `${sec.name}${lock}\n${i18n.t('mob.level')}${sec.lvlMin}–${sec.lvlMax}`,
         { 
@@ -739,7 +739,7 @@ export default class GameScene extends Phaser.Scene {
   startJumpSequence(gate) {
     if (this.jumping) return;
     
-    const acc = sectorAccess(gate.target, this.pilotLevel, this.activeShip);
+    const acc = sectorAccess(gate.target, this.pilotLevel, this.activeShip, this.premium);
     if (!acc.ok) {
       this.log(i18n.t('log.jump_locked', { reason: acc.reason }));
       return;
@@ -820,7 +820,7 @@ export default class GameScene extends Phaser.Scene {
   }
 
   travelTo(key) {
-    const acc = sectorAccess(key, this.pilotLevel, this.activeShip);
+    const acc = sectorAccess(key, this.pilotLevel, this.activeShip, this.premium);
     if (!acc.ok) { this.jumping = false; this.player.sprite.setVisible(true).setScale(1); return; }
     
     const fromKey = galaxy.current;
@@ -1656,7 +1656,7 @@ export default class GameScene extends Phaser.Scene {
       const ox = Phaser.Math.Between(-24, 24), oy = Phaser.Math.Between(-24, 24);
       this.loot.push(new Loot(this, mob.x + ox, mob.y + oy, consDrop, 'common'));
     }
-    if (!mob.noRespawn) {
+    if (!mob.noRespawn && !SECTORS[galaxy.current]?.isDungeon) {
       this.time.delayedCall(RESPAWN_MS, () => { if (!mob.alive) { mob.respawn(); this.log(i18n.t('log.respawn', { name, lvl })); } });
     }
     // Mission hooks
@@ -2418,69 +2418,184 @@ export default class GameScene extends Phaser.Scene {
     const g = this.add.graphics().setDepth(1);
     const cx = this.worldWidth / 2, cy = this.worldHeight / 2;
 
-    const addWall = (x, y, w, h) => {
-      // 1. Проверка близости к спавну (центру) — должен быть всегда свободен
-      if (Phaser.Math.Distance.Between(x, y, cx, cy) < 650) return;
+    // Visual style per dungeon map
+    const WALL_STYLES = {
+      dungeon_1:  { type: 'asteroid', fill: 0x2a1206, fillA: 0.92, edge: 0x8b3a1a },
+      dungeon_2:  { type: 'metal',    fill: 0x0e1e0e, fillA: 0.92, edge: 0x3a6a3a },
+      dungeon_3:  { type: 'stone',    fill: 0x1c1c2e, fillA: 0.92, edge: 0x505080 },
+      dungeon_4:  { type: 'debris',   fill: 0x0e180e, fillA: 0.92, edge: 0x3a5a3a },
+      dungeon_5:  { type: 'energy',   fill: 0x020c14, fillA: 0.80, edge: 0x4dd0e1 },
+      tides_d4:   { type: 'void',     fill: 0x0e0520, fillA: 0.88, edge: 0x9c27b0 },
+      'R-1-boss': { type: 'boss',     fill: 0x060a06, fillA: 0.88, edge: 0xc8a800 },
+    };
+    const ws = WALL_STYLES[galaxy.current] ?? WALL_STYLES['dungeon_5'];
 
-      // 2. Проверка близости к джампгейтам — стены не должны их перекрывать
+    const addWall = (x, y, w, h) => {
+      if (Phaser.Math.Distance.Between(x, y, cx, cy) < 650) return;
       if (this.gates) {
         for (const gate of this.gates) {
           if (Phaser.Math.Distance.Between(x, y, gate.x, gate.y) < 650) return;
         }
       }
 
-      const wall = this.add.rectangle(x, y, w, h, 0x000000, 0); 
+      const wall = this.add.rectangle(x, y, w, h, 0x000000, 0);
       this.physics.add.existing(wall, true);
       this.walls.add(wall);
-      
-      g.lineStyle(2, 0x4dd0e1, 0.7);
-      g.strokeRect(x - w/2, y - h/2, w, h);
-      g.fillStyle(0x0d47a1, 0.25);
-      g.fillRect(x - w/2, y - h/2, w, h);
-      
-      g.lineStyle(1, 0x4dd0e1, 0.15);
-      const step = 60;
-      for(let i=step; i<w; i+=step) g.lineBetween(x - w/2 + i, y - h/2, x - w/2 + i, y + h/2);
-      for(let j=step; j<h; j+=step) g.lineBetween(x - w/2, y - h/2 + j, x + w/2, y - h/2 + j);
+
+      const x0 = x - w / 2, y0 = y - h / 2;
+
+      g.fillStyle(ws.fill, ws.fillA);
+      g.fillRect(x0, y0, w, h);
+
+      if (ws.type === 'asteroid') {
+        // Трещины — случайные, seed по позиции стены
+        const rng = new Phaser.Math.RandomDataGenerator([`${x}|${y}`]);
+        g.lineStyle(1, 0x6b2e0e, 0.45);
+        for (let k = 0; k < 3; k++) {
+          const ax = x0 + rng.between(12, w - 12), ay = y0 + rng.between(12, h - 12);
+          const bx = Phaser.Math.Clamp(ax + rng.between(-90, 90), x0, x0 + w);
+          const by = Phaser.Math.Clamp(ay + rng.between(-90, 90), y0, y0 + h);
+          g.lineBetween(ax, ay, bx, by);
+        }
+        g.lineStyle(2, ws.edge, 0.85); g.strokeRect(x0, y0, w, h);
+        g.lineStyle(1, ws.edge, 0.22); g.strokeRect(x0 + 4, y0 + 4, w - 8, h - 8);
+
+      } else if (ws.type === 'metal') {
+        // Горизонтальные швы обшивки + заклёпки
+        const seams = Math.max(1, Math.floor(h / 120));
+        g.lineStyle(1, 0x2a5a2a, 0.38);
+        for (let k = 1; k <= seams; k++) {
+          const sy = y0 + k * h / (seams + 1);
+          g.lineBetween(x0 + 6, sy, x0 + w - 6, sy);
+          g.fillStyle(0x3a6a3a, 0.55);
+          g.fillRect(x0 + 10, sy - 2, 4, 4);
+          g.fillRect(x0 + w - 14, sy - 2, 4, 4);
+        }
+        g.lineStyle(2, ws.edge, 0.82); g.strokeRect(x0, y0, w, h);
+        g.lineStyle(1, ws.edge, 0.18); g.strokeRect(x0 + 2, y0 + 2, w - 4, h - 4);
+
+      } else if (ws.type === 'stone') {
+        // Кирпичная кладка со смещением через строку
+        const rowH = 90, colW = 160;
+        g.lineStyle(1, 0x404068, 0.32);
+        let row = 0;
+        for (let gy = y0 + rowH; gy < y0 + h; gy += rowH, row++) {
+          g.lineBetween(x0, gy, x0 + w, gy);
+        }
+        row = 0;
+        for (let gy = y0; gy < y0 + h; gy += rowH, row++) {
+          const off = (row % 2) * (colW / 2);
+          for (let gx = x0 + colW - off; gx < x0 + w; gx += colW) {
+            g.lineBetween(gx, gy, gx, Math.min(y0 + h, gy + rowH));
+          }
+        }
+        g.lineStyle(2, ws.edge, 0.78); g.strokeRect(x0, y0, w, h);
+
+      } else if (ws.type === 'debris') {
+        // Диагональные разрывы — металлолом
+        const rng3 = new Phaser.Math.RandomDataGenerator([`${x}|${y}`]);
+        g.lineStyle(1, 0x2a4a2a, 0.38);
+        for (let k = 0; k < 3; k++) {
+          const ax = x0 + rng3.between(0, w);
+          g.lineBetween(ax, y0, ax - rng3.between(20, 60), y0 + h);
+        }
+        g.lineStyle(2, ws.edge, 0.75); g.strokeRect(x0, y0, w, h);
+        g.lineStyle(1, ws.edge, 0.18); g.strokeRect(x0 + 3, y0 + 3, w - 6, h - 6);
+
+      } else if (ws.type === 'energy') {
+        // Энергобарьер — свечение многослойными обводками
+        g.lineStyle(8, ws.edge, 0.04); g.strokeRect(x0 - 4, y0 - 4, w + 8,  h + 8);
+        g.lineStyle(4, ws.edge, 0.13); g.strokeRect(x0 - 2, y0 - 2, w + 4,  h + 4);
+        g.lineStyle(2, ws.edge, 0.88); g.strokeRect(x0, y0, w, h);
+        g.lineStyle(1, ws.edge, 0.05);
+        const step = 80;
+        for (let i = step; i < w; i += step) g.lineBetween(x0 + i, y0, x0 + i, y0 + h);
+        for (let j = step; j < h; j += step) g.lineBetween(x0, y0 + j, x0 + w, y0 + j);
+
+      } else if (ws.type === 'void') {
+        // Тёмная материя — фиолетовое свечение + диагональные искажения
+        g.lineStyle(10, ws.edge, 0.03); g.strokeRect(x0 - 5, y0 - 5, w + 10, h + 10);
+        g.lineStyle(5,  ws.edge, 0.09); g.strokeRect(x0 - 2, y0 - 2, w + 4,  h + 4);
+        g.lineStyle(2,  ws.edge, 0.82); g.strokeRect(x0, y0, w, h);
+        g.lineStyle(1, ws.edge, 0.06);
+        for (let d = -(h + 10); d < w + h; d += 120) {
+          const ax = x0 + d, bx = x0 + d + h;
+          g.lineBetween(
+            Phaser.Math.Clamp(ax, x0, x0 + w), ax < x0 ? y0 + (x0 - ax) : y0,
+            Phaser.Math.Clamp(bx, x0, x0 + w), bx > x0 + w ? y0 + h - (bx - x0 - w) : y0 + h,
+          );
+        }
+
+      } else {
+        // boss / кристалл — золотое свечение + диагональные грани
+        g.lineStyle(8, ws.edge, 0.05); g.strokeRect(x0 - 4, y0 - 4, w + 8,  h + 8);
+        g.lineStyle(3, ws.edge, 0.20); g.strokeRect(x0 - 1, y0 - 1, w + 2,  h + 2);
+        g.lineStyle(2, ws.edge, 0.88); g.strokeRect(x0, y0, w, h);
+        g.lineStyle(1, ws.edge, 0.10);
+        g.lineBetween(x0, y0, x0 + w, y0 + h);
+        g.lineBetween(x0 + w, y0, x0, y0 + h);
+      }
     };
 
+    // ── Расстановка стен по данжу ────────────────────────────────────
     if (galaxy.current === 'dungeon_1') {
-      // D1: "Разорванная спираль"
-      for (let i = 1; i <= 4; i++) {
-        const s = i * 500;
-        addWall(cx + 300, cy - s, s, 100);
-        addWall(cx - 300, cy + s, s, 100);
-        addWall(cx - s, cy - 300, 100, s);
-        addWall(cx + s, cy + 300, 100, s);
-      }
+      // D1: Хаб + 4 луча — четыре угловых блока, крестообразные коридоры
+      // Коридоры: N/S шириной 1200, E/W высотой 800, хаб в центре
+      addWall(cx - 1700, cy - 1100, 2200, 1400);  // NW
+      addWall(cx + 1700, cy - 1100, 2200, 1400);  // NE
+      addWall(cx - 1700, cy + 1100, 2200, 1400);  // SW
+      addWall(cx + 1700, cy + 1100, 2200, 1400);  // SE
     } else if (galaxy.current === 'dungeon_2') {
-      // D2: "Шахматные блоки"
+      // D2: Шахматные блоки
       for (let x = -2000; x <= 2000; x += 600) {
         for (let y = -1200; y <= 1200; y += 600) {
           if ((x + y) % 1200 === 0) addWall(cx + x, cy + y, 350, 350);
         }
       }
     } else if (galaxy.current === 'dungeon_3') {
-      // D3: "Зигзаг-линии"
+      // D3: Зигзаг-линии
       for (let i = -2000; i <= 2000; i += 500) {
         const ox = i % 1000 === 0 ? 400 : -400;
         addWall(cx + i, cy + ox, 150, 800);
       }
     } else if (galaxy.current === 'dungeon_4') {
-      // D4: "Обломки" — seed из имени сектора, раскладка одинакова при каждом входе
+      // D4: Обломки — seed из имени сектора, одинаково при каждом входе
       const rnd4 = new Phaser.Math.RandomDataGenerator([galaxy.current]);
       for (let i = 0; i < 25; i++) {
         const rx = rnd4.between(-2800, 2800);
         const ry = rnd4.between(-1600, 1600);
         addWall(cx + rx, cy + ry, rnd4.between(200, 500), rnd4.between(100, 300));
       }
-    } else if (galaxy.current === 'dungeon_5' || galaxy.current === 'R-1-boss') {
-      // D5 & Boss: "Арена с колоннами"
+    } else if (galaxy.current === 'dungeon_5') {
+      // D5: Арена с энергоколоннами
       const sz = 2000;
-      const pts = [[sz, sz], [-sz, sz], [sz, -sz], [-sz, -sz], [sz, 0], [-sz, 0], [0, sz], [0, -sz]];
-      pts.forEach(p => addWall(cx + p[0], cy + p[1], 400, 400));
+      [[sz,sz],[-sz,sz],[sz,-sz],[-sz,-sz],[sz,0],[-sz,0],[0,sz],[0,-sz]]
+        .forEach(p => addWall(cx + p[0], cy + p[1], 400, 400));
+    } else if (galaxy.current === 'tides_d4') {
+      // D-prem: Лабиринт Тьмы — снейк через 4 барьера из тёмной материи
+      // Барьер 1 (y=-1600): щель на правом краю x=[cx+200, cx+800]
+      addWall(cx - 1400, cy - 1600, 3200, 200);  // [cx-3000 .. cx+200]
+      addWall(cx + 1900, cy - 1600, 2200, 200);  // [cx+800  .. cx+3000]
+      // Барьер 2 (y=-800): щель на левом краю x=[cx-3000, cx-2400]
+      addWall(cx + 300,  cy - 800,  5400, 200);  // [cx-2400 .. cx+3000]
+      // Барьер 3 (y=+800): щель на правом краю x=[cx+2400, cx+3000]
+      addWall(cx - 300,  cy + 800,  5400, 200);  // [cx-3000 .. cx+2400]
+      // Барьер 4 (y=+1600): щель на левом краю x=[cx-3000, cx-2400]
+      addWall(cx + 300,  cy + 1600, 5400, 200);  // [cx-2400 .. cx+3000]
+      // Вертикальные перегородки — ложные пути и тупики с лутом
+      addWall(cx + 800,  cy - 1200, 200, 800);
+      addWall(cx - 800,  cy + 1200, 200, 800);
+      addWall(cx - 1800, cy - 1200, 200, 700);
+      addWall(cx + 1800, cy + 1200, 200, 700);
+      addWall(cx + 2400, cy - 400,  200, 1400);
+      addWall(cx - 2400, cy + 400,  200, 1400);
+    } else if (galaxy.current === 'R-1-boss') {
+      // Boss: Кристальные колонны алтаря
+      const sz = 2200;
+      [[sz,sz],[-sz,sz],[sz,-sz],[-sz,-sz],[sz,0],[-sz,0],[0,sz],[0,-sz]]
+        .forEach(p => addWall(cx + p[0], cy + p[1], 500, 500));
     }
-    
+
     this.physics.add.collider(this.player.sprite, this.walls);
     this.mobs.forEach(m => this.physics.add.collider(m.sprite, this.walls));
   }

@@ -60,10 +60,11 @@ export default class MapScene extends Phaser.Scene {
 
     const pos = (s) => ({ x: s.sx * colSpacing, y: s.sy * rowSpacing });
 
-    // Связи-линии
+    // Связи-линии (данжи исключены из основной карты)
     const lg = this.add.graphics();
     this.mapContainer.add(lg);
     for (const [a, b] of EDGES) {
+      if (SECTORS[a]?.isDungeon || SECTORS[b]?.isDungeon) continue;
       const pa = pos(SECTORS[a]), pb = pos(SECTORS[b]);
       const sa = SECTORS[a], sb = SECTORS[b];
       const hot = (a === cur || b === cur);
@@ -106,11 +107,16 @@ export default class MapScene extends Phaser.Scene {
 
     const missionTargets = getActiveMissionSectorTargets(this.gs.missionState, this.gs.playerCorp ?? 'helios');
 
-    // Узлы
+    // Узлы (данжи — только в боковой панели)
     for (const key of Object.keys(SECTORS)) {
-      const s = SECTORS[key], p = pos(s);
+      const s = SECTORS[key];
+      if (s.isDungeon || s.personal) continue;
+      const p = pos(s);
       this.node(p.x, p.y, nodeW, nodeH, key, s, cur, nb, lvl, playerCorp, missionTargets);
     }
+
+    // Боковая панель данжей (фиксированная, не прокручивается)
+    this._drawDungeonPanel(W, H, lvl, cur);
 
     // Перетаскивание
     this.input.on('pointermove', (pointer) => {
@@ -146,7 +152,7 @@ export default class MapScene extends Phaser.Scene {
 
   node(cx, cy, w, h, key, s, cur, nb, lvl, playerCorp, missionTargets) {
     const isCur      = key === cur;
-    const acc        = sectorAccess(key, lvl, this.gs.activeShip);
+    const acc        = sectorAccess(key, lvl, this.gs.activeShip, this.gs.premium);
     const isNeighbor = nb.includes(key);
     const canJump    = isNeighbor && acc.ok;
     const sc         = sectorCorp(key);           // 'karax' | 'tides' | null
@@ -228,5 +234,76 @@ export default class MapScene extends Phaser.Scene {
         this.gs.travelTo(key);
       });
     }
+  }
+
+  _drawDungeonPanel(W, H, lvl, cur) {
+    const DUNGEON_KEYS = ['dungeon_1','dungeon_2','dungeon_3','dungeon_4','dungeon_5','tides_d4','R-1-boss'];
+    const pW = 194, pX = W - pW - 12;
+    const nodeH = 66, gap = 5;
+    const headerH = 30;
+    const totalH = headerH + DUNGEON_KEYS.length * (nodeH + gap) + 8;
+    const pY = Math.round((H - totalH) / 2);
+    const D = 110; // base depth for panel elements
+
+    // Фон панели
+    this.add.rectangle(pX, pY, pW, totalH, 0x020810, 0.93)
+      .setOrigin(0).setDepth(D).setStrokeStyle(1, 0x1a2a40, 0.8);
+    // Разделитель слева
+    this.add.rectangle(pX, pY, 2, totalH, 0x7e57c2, 0.6).setOrigin(0).setDepth(D + 1);
+    this.add.text(pX + pW / 2, pY + 8, '⚔  ДАНЖИ', {
+      fontFamily: 'Orbitron, sans-serif', fontSize: '12px', color: '#bb86fc', resolution: UI_RES,
+    }).setOrigin(0.5, 0).setDepth(D + 1);
+
+    DUNGEON_KEYS.forEach((key, i) => {
+      const s = SECTORS[key];
+      if (!s) return;
+      const ny = pY + headerH + i * (nodeH + gap);
+      const acc = sectorAccess(key, lvl, this.gs.activeShip, this.gs.premium);
+      const ok = acc.ok;
+      const isCur = key === cur;
+      const isPrem = !!s.premium;
+      const isBoss = key === 'R-1-boss';
+
+      const bgColor   = isBoss ? 0x1a0a0a : isPrem ? 0x100520 : 0x0a0818;
+      const edgeColor = isBoss ? 0xc82828 : isPrem ? 0x7c27a0 : (ok ? 0x5e3e9a : 0x2a1a3a);
+      const nameColor = isCur ? '#ffb74d' : (ok ? '#cfe9ee' : '#5a4a5a');
+
+      this.add.rectangle(pX + 5, ny, pW - 10, nodeH, bgColor, 0.95)
+        .setOrigin(0).setDepth(D + 1)
+        .setStrokeStyle(isCur ? 2 : 1.5, isCur ? 0xffb74d : edgeColor, isCur ? 1 : (ok ? 0.85 : 0.4));
+
+      this.add.text(pX + pW / 2, ny + 7, s.name, {
+        fontFamily: 'Orbitron, sans-serif', fontSize: '11px', color: nameColor,
+        wordWrap: { width: pW - 18 }, align: 'center', resolution: UI_RES,
+      }).setOrigin(0.5, 0).setDepth(D + 2);
+
+      this.add.text(pX + pW / 2, ny + nodeH - 31, `ур. ${s.lvlMin}–${s.lvlMax}`, {
+        fontFamily: 'Inter, sans-serif', fontSize: '10px', color: '#7090a0', resolution: UI_RES,
+      }).setOrigin(0.5, 0).setDepth(D + 2);
+
+      const btnLabel = isCur   ? '● ЗДЕСЬ'
+                     : !ok     ? `🔒 ${acc.reason}`
+                     : isBoss  ? '☠ ВОЙТИ'
+                     : isPrem  ? '★ ВОЙТИ'
+                     : '▶ ВОЙТИ';
+      const btnColor = isCur ? '#ffb74d' : !ok ? '#6a5060' : isBoss ? '#ef5350' : isPrem ? '#ce93d8' : '#66bb6a';
+
+      const btn = this.add.text(pX + pW / 2, ny + nodeH - 16, btnLabel, {
+        fontFamily: 'Inter, sans-serif', fontSize: '10px', color: btnColor, resolution: UI_RES,
+      }).setOrigin(0.5, 0).setDepth(D + 2);
+
+      if (ok && !isCur) {
+        const hit = this.add.rectangle(pX + 5, ny, pW - 10, nodeH, 0, 0)
+          .setOrigin(0).setDepth(D + 3).setInteractive({ useHandCursor: true });
+        hit.on('pointerover',  () => btn.setStyle({ color: '#ffffff' }));
+        hit.on('pointerout',   () => btn.setStyle({ color: btnColor }));
+        hit.on('pointerdown',  (ptr, lx, ly, ev) => {
+          if (ev) ev.stopPropagation();
+          galaxy.current = key;
+          this.scene.stop();
+          this.gs.scene.restart();
+        });
+      }
+    });
   }
 }
