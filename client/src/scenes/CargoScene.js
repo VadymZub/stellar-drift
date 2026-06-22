@@ -439,33 +439,52 @@ export default class CargoScene extends Phaser.Scene {
 
       if (rarHex) {
         const dg = this.add.graphics();
-        dg.fillStyle(rarHex, 1); dg.fillCircle(sx + SZ - 6, sy + 6, 4);
+        dg.setPosition(sx, sy); // y must reflect row for visibility grouping
+        dg.fillStyle(rarHex, 1); dg.fillCircle(SZ - 6, 6, 4);
         container.add(dg);
       }
       if (overflow) {
         const dg = this.add.graphics();
-        dg.fillStyle(0xffa000, 0.85); dg.fillTriangle(sx, sy, sx + 14, sy, sx, sy + 14);
+        dg.setPosition(sx, sy);
+        dg.fillStyle(0xffa000, 0.85); dg.fillTriangle(0, 0, 14, 0, 0, 14);
         container.add(dg);
       }
     }
 
-    // ── Cover strips: hide overflow above/below the visible grid ─────────────
-    // Full panel width so covers match the panel visually (no narrow strips on bg).
-    // Items that scroll beyond panel bounds in extreme inventories remain exposed —
-    // that is the scroll constraint: minY is not clamped to panel top.
+    // ── Row-visibility (virtual scroll): hide rows outside [ay, ay+ah] ────────
+    // Group container children by row via their local y inside the container.
+    // All item parts for row R have y in [R*(SZ+GAP), R*(SZ+GAP)+SZ-1], so
+    // Math.floor(obj.y / (SZ+GAP)) == R reliably (Graphics are repositioned above).
     const pbox = this.panelBox;
     const totalH = Math.ceil(displaySlots / COLS) * (SZ + GAP);
 
+    const rowObjs = {}; // row → [GameObject]
+    container.list.forEach(obj => {
+      const r = Math.max(0, Math.floor(obj.y / (SZ + GAP)));
+      (rowObjs[r] = rowObjs[r] || []).push(obj);
+    });
+
+    const updateVisibility = (cY) => {
+      Object.entries(rowObjs).forEach(([rStr, objs]) => {
+        const r = +rStr;
+        const wY = cY + r * (SZ + GAP); // world-y of row top
+        const vis = wY < ay + ah && wY + SZ > ay;
+        objs.forEach(o => { o.setVisible(vis); if (o.input) o.input.enabled = vis; });
+      });
+    };
+    updateVisibility(ay); // initial pass — container starts at ay
+
+    // ── Inner panel covers: hide partial rows at grid edges (depth 12) ────────
     if (pbox) {
       const bg = 0x080e1a;
-      // Top: full panel width, panel-top → grid-top
-      if (ay > pbox.py) this.add.rectangle(pbox.px, pbox.py, pbox.pw, ay - pbox.py, bg).setOrigin(0, 0).setDepth(12);
-      // Bottom: full panel width, grid-bot → panel-bot
+      if (ay > pbox.py)
+        this.add.rectangle(pbox.px, pbox.py, pbox.pw, ay - pbox.py, bg).setOrigin(0, 0).setDepth(12);
       const botH = pbox.py + pbox.ph - ay - ah;
-      if (botH > 0) this.add.rectangle(pbox.px, ay + ah, pbox.pw, botH, bg).setOrigin(0, 0).setDepth(12);
-      // Thin right strip between grid right edge and panel right edge (≤ 20 px gap)
+      if (botH > 0)
+        this.add.rectangle(pbox.px, ay + ah, pbox.pw, botH, bg).setOrigin(0, 0).setDepth(12);
       const rW = pbox.px + pbox.pw - ax - aw;
-      if (rW > 0 && rW <= 20) this.add.rectangle(ax + aw, ay, rW, ah, bg).setOrigin(0, 0).setDepth(12);
+      if (rW > 0 && rW <= 20)
+        this.add.rectangle(ax + aw, ay, rW, ah, bg).setOrigin(0, 0).setDepth(12);
     }
 
     // ── Wheel scroll + scrollbar ───────────────────────────────────────────
@@ -483,6 +502,7 @@ export default class CargoScene extends Phaser.Scene {
         if (p.x < ax || p.x > ax + aw || p.y < ay || p.y > ay + ah) return;
         container.y = Phaser.Math.Clamp(container.y - dy * 0.5, minY, startY);
         updateSB();
+        updateVisibility(container.y);
       });
     }
   }

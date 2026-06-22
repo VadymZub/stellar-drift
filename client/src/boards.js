@@ -37,17 +37,17 @@ export const STAT_META = {
   creditBonus:     { label: 'Кредиты с мобов',     color: '#ffd700' },
   xpBonus:         { label: 'Опыт пилота',         color: '#66ffff' },
   repairCost:      { label: 'Цена ремонта',        color: '#99ffbb' },
-  shopDiscount:    { label: 'Цены в магазине',     color: '#ffaaff' },
+  shopDiscount:    { label: 'Скидка в магазине',    color: '#ffaaff' },
   // QoL — buf only; deb version would be pointless
-  autoAmmo:        { label: 'Авто-патроны',        color: '#ff8844', bufOnly: true },
-  autoConsumables: { label: 'Авто-расходники',     color: '#88ffaa', bufOnly: true },
+  autoAmmo:        { label: 'Авто-патроны',        color: '#ff8844', bufOnly: true, isBool: true },
+  autoConsumables: { label: 'Авто-расходники',     color: '#88ffaa', bufOnly: true, isBool: true },
   scanRadius:      { label: 'Радиус сканера',      color: '#44ffff' },
   cargoBonus:      { label: 'Вместимость трюма',   color: '#ffcc66' },
 };
 // Pool for deb nodes (no QoL-only stats that make no sense as debuffs)
 const ALL_STATS = Object.keys(STAT_META).filter(s => !STAT_META[s].bufOnly);
 // Buf nodes may get any stat including QoL-only
-const BUF_STATS = Object.keys(STAT_META);
+export const BUF_STATS = Object.keys(STAT_META);
 
 // ── Mask helpers ──────────────────────────────────────────────────────────────
 export function rotateMask(mask, n = 1) {
@@ -85,13 +85,25 @@ export function nodeMask(board, allConns, nodeId) {
   return conn ? effectiveMask(conn) : 0;
 }
 
+// ── Active node/edge helpers (respects nodeUpgLevel lock) ────────────────────
+export function activeNodes(board) {
+  const lvl = board.nodeUpgLevel ?? 0;
+  return (board.nodes || []).filter(n => !n.minUpg || n.minUpg <= lvl);
+}
+export function activeEdges(board) {
+  const lvl = board.nodeUpgLevel ?? 0;
+  return (board.edges || []).filter(e => !e.minUpg || e.minUpg <= lvl);
+}
+
 // ── BFS ───────────────────────────────────────────────────────────────────────
 // Returns { powered: Set<nodeId>, parent: Map<nodeId, nodeId|null> }
 export function bfsPowered(board, allConns) {
   const powered = new Set(), parent = new Map(), q = [];
-  const nm = Object.fromEntries((board.nodes || []).map(n => [n.id, n]));
+  const nodes = activeNodes(board);
+  const edges = activeEdges(board);
+  const nm = Object.fromEntries(nodes.map(n => [n.id, n]));
 
-  for (const n of (board.nodes || [])) {
+  for (const n of nodes) {
     if (n.type !== 'src') continue;
     powered.add(n.id); parent.set(n.id, null); q.push(n.id);
   }
@@ -101,7 +113,7 @@ export function bfsPowered(board, allConns) {
     const m   = nodeMask(board, allConns, nid);
     const nd  = nm[nid];
 
-    for (const e of (board.edges || [])) {
+    for (const e of edges) {
       let oid, sme, sot;
       if (e.a === nid) {
         oid = e.b;
@@ -114,6 +126,7 @@ export function bfsPowered(board, allConns) {
       } else continue;
 
       if (powered.has(oid)) continue;
+      if (!nm[oid]) continue;
       if (!(m & sme)) continue;
       if (!(nodeMask(board, allConns, oid) & sot)) continue;
       powered.add(oid); parent.set(oid, nid); q.push(oid);
@@ -129,7 +142,7 @@ export function getBoardEffects(board, allConns = {}) {
   const { powered, parent } = bfsPowered(board, allConns);
   const effects = {};
 
-  for (const n of (board.nodes || [])) {
+  for (const n of activeNodes(board)) {
     if (n.type !== 'buf' && n.type !== 'deb') continue;
     if (!powered.has(n.id)) continue;
     // Sum connector values along the BFS path from source to this node.
@@ -142,10 +155,29 @@ export function getBoardEffects(board, allConns = {}) {
       }
       nid = parent.get(nid);
     }
-    if (!sum) continue;
-    const delta = n.type === 'buf' ? sum : -sum;
+    if (!sum && !n.upgBonus) continue;
+    const delta = n.type === 'buf' ? sum + (n.upgBonus ?? 0) : -sum;
     effects[n.stat] = (effects[n.stat] || 0) + delta;
   }
+
+  // upgStat on junc nodes: sum all connector values along path from source to this node
+  for (const n of activeNodes(board)) {
+    if (n.type !== 'junc' || !n.upgStat) continue;
+    if (!powered.has(n.id)) continue;
+    const placed = board.placements?.[n.id];
+    if (!placed) continue;
+    let sum = 0, nid = n.id;
+    while (nid != null) {
+      const p = board.placements?.[nid];
+      if (p) {
+        const c = typeof p === 'string' ? (allConns?.[p] ?? null) : p;
+        if (c) sum += c.value || 0;
+      }
+      nid = parent.get(nid);
+    }
+    if (sum) effects[n.upgStat] = (effects[n.upgStat] || 0) + sum;
+  }
+
   return effects;
 }
 
@@ -357,14 +389,59 @@ export function rollBoard(tier) {
     return { ...n };
   });
 
+  // Generate 2 extra node pairs (jex1/bex1 and jex2/bex2) for node upgrades.
+  // Extra1 (minUpg:1): extends left from first src.
+  // Extra2 (minUpg:2): extends up-left from first src (or left from second src for multi-src boards).
+  const occupied = new Set(nodes.map(n => `${n.col},${n.row}`));
+  const srcNodes = nodes.filter(n => n.type === 'src');
+  const extraNodes = [], extraEdges = [];
+
+  const addExtra = (src, jcol, jrow, bcol, brow, lvl) => {
+    const jk = `${jcol},${jrow}`, bk = `${bcol},${brow}`;
+    if (occupied.has(jk) || occupied.has(bk)) return false;
+    occupied.add(jk); occupied.add(bk);
+    const bexStat = shuffledBuf[bi++ % shuffledBuf.length];
+    extraNodes.push(
+      { id: `jex${lvl}`, col: jcol, row: jrow, type: 'junc', minUpg: lvl },
+      { id: `bex${lvl}`, col: bcol, row: brow, type: 'buf', stat: bexStat, minUpg: lvl }
+    );
+    extraEdges.push(
+      { a: src.id, b: `jex${lvl}`, minUpg: lvl },
+      { a: `jex${lvl}`, b: `bex${lvl}`, minUpg: lvl }
+    );
+    return true;
+  };
+
+  // T1 only: add new jex/bex physical nodes (T2/T3 use upgBonus on existing bufs instead)
+  if (tier === 1) {
+    const s0 = srcNodes[0], s1 = srcNodes[1] ?? s0;
+    // Try horizontal (left), fall back to vertical (above/below) if occupied
+    const tryAdd = (src, lvl) => {
+      if (addExtra(src, src.col - 1, src.row, src.col - 2, src.row, lvl)) return;
+      if (addExtra(src, src.col, src.row - 1, src.col, src.row - 2, lvl)) return;
+      addExtra(src, src.col, src.row + 1, src.col, src.row + 2, lvl);
+    };
+    tryAdd(s0, 1);
+    if (srcNodes.length > 1) {
+      tryAdd(s1, 2);
+    } else {
+      // Single-src: second extra goes above src (different position from first)
+      if (!addExtra(s0, s0.col, s0.row - 1, s0.col - 1, s0.row - 1, 2)) {
+        addExtra(s0, s0.col, s0.row + 1, s0.col - 1, s0.row + 1, 2);
+      }
+    }
+  }
+
   return {
-    id:        `b${Date.now().toString(36)}${Math.random().toString(36).slice(2,5)}`,
+    id:           `b${Date.now().toString(36)}${Math.random().toString(36).slice(2,5)}`,
     tier,
-    name:      tpl.name,
-    maxConn:   tpl.maxConn,
-    nodes,
-    edges:     tpl.edges.map(e => ({ ...e })),
-    placements: {},   // nodeId → connectorId
+    name:         tpl.name,
+    maxConn:      tpl.maxConn,
+    connUpgLevel: 0,
+    nodeUpgLevel: 0,
+    nodes:        [...nodes, ...extraNodes],
+    edges:        [...tpl.edges.map(e => ({ ...e })), ...extraEdges],
+    placements:   {},
   };
 }
 
@@ -376,7 +453,7 @@ export function rollConnector(tier) {
   ];
   const avail = byTier[Math.min(tier, 3) - 1];
   const shape = avail[Math.floor(Math.random() * avail.length)];
-  const [lo, hi] = tier === 1 ? [1, 3] : tier === 2 ? [2, 5] : [4, 7];
+  const [lo, hi] = tier === 1 ? [1, 2] : tier === 2 ? [2, 4] : [4, 6];
   const value = Math.floor(Math.random() * (hi - lo + 1)) + lo;
   return {
     id:       `c${Date.now().toString(36)}${Math.random().toString(36).slice(2,5)}`,
@@ -404,7 +481,7 @@ export function boardTierLabel(tier) {
 export function boardPreviewStats(board) {
   if (!board?.nodes) return '—';
   const parts = [];
-  for (const n of board.nodes) {
+  for (const n of activeNodes(board)) {
     if (!n.stat) continue;
     const meta = STAT_META[n.stat];
     if (!meta) continue;

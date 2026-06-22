@@ -184,6 +184,7 @@ export default class GameScene extends Phaser.Scene {
     this.activeShip     = this.activeShip     || 'wisp';
     this.boardInventory     = this.boardInventory ?? [];
     this.connectorInventory = this.connectorInventory ?? [];
+    this.chips              = this.chips ?? 0;
     this.equippedBoard      = this.equippedBoard  ?? null;
     
     if (DEV_MODE) {
@@ -296,6 +297,21 @@ export default class GameScene extends Phaser.Scene {
         if ((this.credits || 0) < cost) continue;
         this.credits -= cost;
         slot.count += need;
+      }
+    }
+
+    // autoConsumables skill: auto-purchase one pack of each buyable consumable if low
+    if (this.player?.autoConsumables) {
+      const _disc = this.player.shopDiscountMod ?? 1;
+      const _cargoMax = this._cargoMax();
+      for (const [type, def] of Object.entries(CONSUMABLES)) {
+        if (!def.canBuy || def.category !== 'consumable') continue;
+        const have = countConsumableInInventory(this.inventory, type);
+        if (have >= 1000) continue;
+        const price = Math.round(def.price * _disc);
+        if ((this.credits || 0) < price) continue;
+        this.credits -= price;
+        addConsumableToInventory(this.inventory, type, 1000, _cargoMax);
       }
     }
 
@@ -1081,10 +1097,13 @@ export default class GameScene extends Phaser.Scene {
         this._tryAddToAmmoSlots('ammo_plasma', 5000);
         for (let i = 0; i < 3; i++) this.inventory.push(rollLaser(4, 50));
         for (let i = 0; i < 3; i++) this.inventory.push(rollCannon(4, 50));
-        // DEV: add one board of each tier
+        // DEV: add boards, connectors, chips
         this.boardInventory = this.boardInventory ?? [];
         this.boardInventory.push(rollBoard(1), rollBoard(2), rollBoard(3));
-        this.log('DEV: +1M кр, +500 ⭐, патроны (лазер+плазма), 3×лазер T4, 3×пушка T4, 3 платы');
+        this.connectorInventory = this.connectorInventory ?? [];
+        for (let t = 1; t <= 3; t++) for (let k = 0; k < 6; k++) this.connectorInventory.push(rollConnector(t));
+        this.chips = (this.chips ?? 0) + 20;
+        this.log('DEV: +1M кр, +500 ⭐, патроны (лазер+плазма), 3×лазер T4, 3×пушка T4, 3 платы, 18 коннекторов, 20 чипов');
       });
     }
   }

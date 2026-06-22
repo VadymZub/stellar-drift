@@ -219,6 +219,8 @@ export default class Player {
     this.dropChanceMult       = 1 + sl('salvager')    * 0.10;
     this.repairCostMult       = Math.max(0.30, 1 - sl('merchants_eye') * 0.15);
     this.scene.scanRadius     = Math.round(BASE_SCAN_RADIUS * (1 + sl('scanner_boost') * 0.20));
+    if (sl('auto_ammo')        > 0) this.autoAmmo        = true;
+    if (sl('auto_consumables') > 0) this.autoConsumables = true;
 
     // ── Perk bonuses — cannon perks affect cannonDamage, laser perks affect laserDamage ──
     let cannonPerkMult = 1;

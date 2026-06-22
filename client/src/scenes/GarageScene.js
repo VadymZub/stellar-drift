@@ -7,7 +7,7 @@ import { itemName, itemStats, itemSellPrice, itemIconKey, SLOT_KEY, creditUpgrad
 import { SHIPS, SHIP_BY_KEY, purchaseState, shipLevelCost, shipLevelCostGold, SHIP_MAX_LEVEL } from '../ships.js';
 import { PERK_MAP, RARITY_COLOR, RARITY_LABEL, rollPerk, perkBonus, creditUpgCost, starUpgCost, PERK_CREDIT_COST, PERK_STAR_COST, PERK_REROLL_BASE } from '../perks.js';
 import { prerenderTex } from '../utils/prerenderTex.js';
-import { rollBoard, rollConnector, CONNECTOR_SHAPES, getPoweredNodes, getBoardEffects, STAT_META, boardTierLabel, boardPreviewStats, bfsPowered, placedCount } from '../boards.js';
+import { rollBoard, rollConnector, CONNECTOR_SHAPES, getPoweredNodes, getBoardEffects, STAT_META, BUF_STATS, boardTierLabel, boardPreviewStats, bfsPowered, placedCount, effectiveMask, rotateMask, edgeSides, activeNodes, activeEdges } from '../boards.js';
 
 // Гараж (хоткей G). Два таба:
 //  • КОРАБЛИ — витрина всего модельного ряда. Купленные активны, остальные серые,
@@ -577,28 +577,44 @@ export default class GarageScene extends Phaser.Scene {
       // Rarity dot (top-right corner)
       if (rarHex) {
         const dg = this.add.graphics();
-        dg.fillStyle(rarHex, 1); dg.fillCircle(sx + SZ - 6, sy + 6, 4);
+        dg.setPosition(sx, sy); // y must reflect row for visibility grouping
+        dg.fillStyle(rarHex, 1); dg.fillCircle(SZ - 6, 6, 4);
         container.add(dg);
       }
       // Overflow indicator: янтарный треугольник в верхнем левом углу (премиум истёк)
       if (overflow) {
         const dg = this.add.graphics();
-        dg.fillStyle(0xffa000, 0.85); dg.fillTriangle(sx, sy, sx + 14, sy, sx, sy + 14);
+        dg.setPosition(sx, sy);
+        dg.fillStyle(0xffa000, 0.85); dg.fillTriangle(0, 0, 14, 0, 0, 14);
         container.add(dg);
       }
     }
 
-    // ── Cover strips: full panel width, within panel bounds only ─────────────
+    // ── Row-visibility (virtual scroll): hide rows outside [ay, ay+ah] ────────
     const { py: _py, ph: _ph, px: _px, pw: _pw } = this.box;
     const totalH = Math.ceil(displaySlots / COLS) * (SZ + GAP);
-    const bg = 0x080e1a;
 
-    // Top: full panel width, panel-top → grid-top (no strip outside panel)
+    const rowObjs = {};
+    container.list.forEach(obj => {
+      const r = Math.max(0, Math.floor(obj.y / (SZ + GAP)));
+      (rowObjs[r] = rowObjs[r] || []).push(obj);
+    });
+
+    const updateVisibility = (cY) => {
+      Object.entries(rowObjs).forEach(([rStr, objs]) => {
+        const r = +rStr;
+        const wY = cY + r * (SZ + GAP);
+        const vis = wY < ay + ah && wY + SZ > ay;
+        objs.forEach(o => { o.setVisible(vis); if (o.input) o.input.enabled = vis; });
+      });
+    };
+    updateVisibility(ay);
+
+    // ── Inner panel covers: clip partial rows at grid edges (depth 12) ────────
+    const bg = 0x080e1a;
     if (ay > _py) this.add.rectangle(_px, _py, _pw, ay - _py, bg).setOrigin(0, 0).setDepth(12);
-    // Bottom: full panel width, grid-bot → panel-bot
     const botH = _py + _ph - ay - ah;
     if (botH > 0) this.add.rectangle(_px, ay + ah, _pw, botH, bg).setOrigin(0, 0).setDepth(12);
-    // Right strip: gap between grid right edge and panel right edge
     const rW = Math.max(0, _px + _pw - ax - aw);
     if (rW > 0) this.add.rectangle(ax + aw, ay, rW, ah, bg).setOrigin(0, 0).setDepth(12);
 
@@ -617,6 +633,7 @@ export default class GarageScene extends Phaser.Scene {
         if (p.x < ax || p.x > ax + aw || p.y < ay || p.y > ay + ah) return;
         container.y = Phaser.Math.Clamp(container.y - dy * 0.5, minY, startY);
         updateSB();
+        updateVisibility(container.y);
       });
     }
   }
@@ -1617,15 +1634,51 @@ export default class GarageScene extends Phaser.Scene {
         this.F('12px', '#1a3040')).setOrigin(0.5).setDepth(14);
     }
 
-    this._pcbObjs  = [];
-    this._effObjs  = [];
-    this._listObjs = [];
-    this._connObjs = [];
+    this._pcbObjs     = [];
+    this._effObjs     = [];
+    this._listObjs    = [];
+    this._connObjs    = [];
+    this._confirmObjs = [];
 
     this._drawBoardList();
     const selBoard = gs.boardInventory[gs._boardViewIdx] ?? null;
     this._drawPCB(selBoard);
     this._drawConnPanel(selBoard);
+  }
+
+  _showConfirm(message, onConfirm) {
+    (this._confirmObjs || []).forEach(o => o?.destroy());
+    this._confirmObjs = [];
+    const W = this.scale.width, H = this.scale.height;
+    const dw = 360, dh = 110;
+    const dx = W / 2, dy = H / 2;
+    const _close = () => {
+      (this._confirmObjs || []).forEach(o => o?.destroy());
+      this._confirmObjs = [];
+    };
+    const overlay = this.add.rectangle(W / 2, H / 2, W, H, 0x000000, 0.55)
+      .setDepth(49).setInteractive();
+    const dlg = this.add.rectangle(dx, dy, dw, dh, 0x060e1c, 1)
+      .setStrokeStyle(1, 0x2a5a8a, 1).setDepth(50);
+    const msg = this.add.text(dx, dy - dh / 2 + 12, message,
+      { ...this.F('11px', '#aaccee'), wordWrap: { width: dw - 24 }, align: 'center' })
+      .setOrigin(0.5, 0).setDepth(51);
+    const btnW = 120, btnH = 26;
+    const cfmBg = this.add.rectangle(dx - 75, dy + 30, btnW, btnH, 0x0a2010, 1)
+      .setStrokeStyle(1, 0x44bb66, 1).setDepth(50).setInteractive({ useHandCursor: true });
+    const cfmT = this.add.text(dx - 75, dy + 30, 'Подтвердить',
+      this.F('11px', '#44bb66')).setOrigin(0.5).setDepth(51);
+    cfmBg.on('pointerover', () => cfmBg.setAlpha(0.7));
+    cfmBg.on('pointerout',  () => cfmBg.setAlpha(1));
+    cfmBg.on('pointerdown', () => { _close(); onConfirm(); });
+    const cnlBg = this.add.rectangle(dx + 75, dy + 30, btnW, btnH, 0x18060a, 1)
+      .setStrokeStyle(1, 0x995544, 1).setDepth(50).setInteractive({ useHandCursor: true });
+    const cnlT = this.add.text(dx + 75, dy + 30, 'Отмена',
+      this.F('11px', '#aa6655')).setOrigin(0.5).setDepth(51);
+    cnlBg.on('pointerover', () => cnlBg.setAlpha(0.7));
+    cnlBg.on('pointerout',  () => cnlBg.setAlpha(1));
+    cnlBg.on('pointerdown', _close);
+    this._confirmObjs.push(overlay, dlg, msg, cfmBg, cfmT, cnlBg, cnlT);
   }
 
   _drawBoardList() {
@@ -1637,7 +1690,8 @@ export default class GarageScene extends Phaser.Scene {
     const lw       = this._boardListW, lh = this._boardListH;
     const ITEM_H   = 68;
     const SCROLL_W = 8;
-    const listAreaH = lh - 44;
+    const BOTTOM_H  = 110;
+    const listAreaH = lh - BOTTOM_H;
     const maxScroll = Math.max(0, inv.length * ITEM_H - listAreaH);
     gs._boardListScroll = Math.min(gs._boardListScroll ?? 0, maxScroll);
 
@@ -1646,8 +1700,8 @@ export default class GarageScene extends Phaser.Scene {
     for (let i = 0; i < inv.length; i++) {
       const board = inv[i];
       const iy    = ly + i * ITEM_H - gs._boardListScroll;
-      // Skip items entirely outside the scrollable area
-      if (iy + ITEM_H <= ly || iy >= ly + listAreaH) continue;
+      // Skip items that extend outside the scrollable area (strict: no partial rendering)
+      if (iy < ly || iy + ITEM_H > ly + listAreaH) continue;
 
       const isSelected = i === gs._boardViewIdx;
       const isEquipped = gs.equippedBoard?.id === board.id;
@@ -1708,14 +1762,15 @@ export default class GarageScene extends Phaser.Scene {
       this._boardWheelBound = true;
       this.input.on('wheel', (ptr, _go, _dx, dy) => {
         if (ptr.x >= (this._boardConnX ?? Infinity)) {
-          const ci  = gs.connectorInventory ?? [];
-          const vH  = 4 * 44;
-          const mSc = Math.max(0, Math.ceil(ci.length / 4) * 44 - vH);
-          gs._connScroll = Math.max(0, Math.min(mSc, (gs._connScroll ?? 0) + dy * 0.5));
+          const ci    = gs.connectorInventory ?? [];
+          const CARD  = 42, ROWS = 6, vH = ROWS * CARD;
+          const mSc   = Math.max(0, Math.ceil(ci.length / 4) * CARD - vH);
+          const raw   = Math.max(0, Math.min(mSc, (gs._connScroll ?? 0) + Math.sign(dy) * CARD));
+          gs._connScroll = Math.round(raw / CARD) * CARD;
           const cur = (gs.boardInventory ?? [])[gs._boardViewIdx ?? 0] ?? null;
           this._drawConnPanel(cur);
         } else {
-          const aH  = (this._boardListH ?? 0) - 44;
+          const aH  = (this._boardListH ?? 0) - 110;
           const mSc = Math.max(0, gs.boardInventory.length * ITEM_H - aH);
           gs._boardListScroll = Math.max(0, Math.min(mSc, (gs._boardListScroll ?? 0) + dy * 0.5));
           this._drawBoardList();
@@ -1723,29 +1778,121 @@ export default class GarageScene extends Phaser.Scene {
       });
     }
 
-    // Upgrade button fixed at bottom of list panel
-    const selBoard = gs.boardInventory[gs._boardViewIdx] ?? null;
-    const upgY     = ly + lh - 36;
-    const upgCost  = selBoard ? selBoard.tier * 10 : 0;
-    const canUpg   = !!(selBoard && gs.starGold >= upgCost);
-    const upgBg    = this.add.rectangle(lx + lw / 2, upgY, lw - 4, 30,
-      canUpg ? 0x0a1a30 : 0x080d18, 0.9)
-      .setStrokeStyle(1, canUpg ? 0xcc44ff : 0x223344, 0.8).setDepth(15);
-    const upgT = this.add.text(lx + lw / 2, upgY,
-      selBoard ? `УЛУЧШИТЬ  ${upgCost} ⭐` : 'УЛУЧШИТЬ',
-      this.F('10px', canUpg ? '#cc44ff' : '#2a4a5a')).setOrigin(0.5).setDepth(16);
-    this._listObjs.push(upgBg, upgT);
+    // ─── Separator + cover for bottom panel ───
+    const sepG = this.add.graphics().setDepth(15);
+    sepG.lineStyle(1, 0x1a3a5a, 0.7);
+    sepG.lineBetween(lx, ly + listAreaH, lx + lw, ly + listAreaH);
+    const botCover = this.add.rectangle(lx + lw / 2, ly + listAreaH + (lh - listAreaH) / 2,
+      lw, lh - listAreaH, 0x060c14, 1.0).setDepth(14.5);
+    this._listObjs.push(sepG, botCover);
 
-    if (canUpg && selBoard) {
-      upgBg.setInteractive({ useHandCursor: true });
-      upgBg.on('pointerover', () => upgBg.setAlpha(0.7));
-      upgBg.on('pointerout',  () => upgBg.setAlpha(1));
-      upgBg.on('pointerdown', () => {
-        gs.starGold -= upgCost;
-        selBoard.maxConn = (selBoard.maxConn || 0) + 1;
-        selBoard.upgradeLevel = (selBoard.upgradeLevel ?? 0) + 1;
+    // ─── Bottom: chip counter + upgrade buttons + board disassemble ───
+    const selBoard = gs.boardInventory[gs._boardViewIdx] ?? null;
+    gs.chips = gs.chips ?? 0;
+
+    let bY = ly + listAreaH + 6;
+
+    // Chip display
+    const chipT = this.add.text(lx + lw / 2, bY + 7, `🔩 Чипов: ${gs.chips}`,
+      this.F('10px', '#aaddff')).setOrigin(0.5).setDepth(15);
+    this._listObjs.push(chipT);
+    bY += 18;
+
+    const _upgBtn = (label, enabled, color, onClick) => {
+      const bg = this.add.rectangle(lx + lw / 2, bY + 11, lw - 6, 22,
+        enabled ? 0x0a1826 : 0x070c12, 0.92)
+        .setStrokeStyle(1, enabled ? color : 0x1a2a3a, 0.75).setDepth(15);
+      const bt = this.add.text(lx + lw / 2, bY + 11, label,
+        this.F('9px', enabled ? `#${color.toString(16).padStart(6,'0')}` : '#1e3040'))
+        .setOrigin(0.5).setDepth(16);
+      this._listObjs.push(bg, bt);
+      if (enabled) {
+        bg.setInteractive({ useHandCursor: true });
+        bg.on('pointerover', () => bg.setAlpha(0.7));
+        bg.on('pointerout',  () => bg.setAlpha(1));
+        bg.on('pointerdown', onClick);
+      }
+      bY += 24;
+    };
+
+    if (selBoard) {
+      const t = selBoard.tier;
+      // ─ Connector slot upgrade ─
+      const cUpgLvl = selBoard.connUpgLevel ?? 0;
+      const cUpgDelta = [1, 2, 3][t - 1] ?? 1;        // T1:+1, T2:+2, T3:+3 per level
+      const cUpgCost  = [[1,2],[2,3],[4,5]][t-1]?.[cUpgLvl] ?? 99;
+      const cCanUpg   = cUpgLvl < 2 && gs.chips >= cUpgCost;
+      const cLabel    = cUpgLvl < 2
+        ? `Слоты +${cUpgDelta}  [${cUpgCost} чип]  (${cUpgLvl}/2)`
+        : `Слоты МАКС (${cUpgLvl}/2)`;
+      _upgBtn(cLabel, cCanUpg, 0x44aaff, () => {
+        gs.chips -= cUpgCost;
+        selBoard.maxConn = (selBoard.maxConn || 0) + cUpgDelta;
+        selBoard.connUpgLevel = cUpgLvl + 1;
         this._drawBoardList();
         this._drawConnPanel(selBoard);
+      });
+
+      // ─ Node upgrade ─
+      const nUpgLvl  = selBoard.nodeUpgLevel ?? 0;
+      const nUpgCost = [[3,4],[4,5],[5,6]][t-1]?.[nUpgLvl] ?? 99;
+      const isT1 = t === 1;
+      // T2/T3: pick a random free junc node to assign a random stat
+      const eligibleJuncs = !isT1
+        ? (selBoard.nodes || []).filter(n => n.type === 'junc' && !n.upgStat && !n.minUpg)
+        : [];
+      const nCanUpg = nUpgLvl < 2 && gs.chips >= nUpgCost && (isT1 || eligibleJuncs.length > 0);
+      const nLabel  = nUpgLvl < 2
+        ? (isT1
+            ? `Узлы +1  [${nUpgCost} чип]  (${nUpgLvl}/2)`
+            : `Узел+свойство  [${nUpgCost} чип]  (${nUpgLvl}/2)`)
+        : (isT1 ? `Узлы МАКС (${nUpgLvl}/2)` : `Узел МАКС (${nUpgLvl}/2)`);
+      _upgBtn(nLabel, nCanUpg, 0x44ff88, () => {
+        gs.chips -= nUpgCost;
+        selBoard.nodeUpgLevel = nUpgLvl + 1;
+        if (!isT1 && eligibleJuncs.length > 0) {
+          const target = eligibleJuncs[Math.floor(Math.random() * eligibleJuncs.length)];
+          // Pick a stat not already on this board
+          const usedStats = new Set((selBoard.nodes || []).flatMap(n => [n.stat, n.upgStat]).filter(Boolean));
+          const avail = BUF_STATS.filter(s => !usedStats.has(s));
+          target.upgStat = avail.length > 0
+            ? avail[Math.floor(Math.random() * avail.length)]
+            : BUF_STATS[Math.floor(Math.random() * BUF_STATS.length)];
+        }
+        this._drawBoardList();
+        const b = gs.boardInventory[gs._boardViewIdx];
+        this._drawPCB(b);
+        this._drawConnPanel(b);
+      });
+
+      // ─ Board disassemble ─
+      const dChips = [3, 4, 5][t - 1] ?? 3;
+      const placed = placedCount(selBoard);
+      const inv = gs.connectorInventory ?? [];
+      const noRoom = inv.length + placed > 24;
+      const disLabel = noRoom
+        ? `РАЗОБРАТЬ (нет места!)`
+        : `РАЗОБРАТЬ → ${dChips} чип`;
+      _upgBtn(disLabel, !noRoom, 0xff6655, () => {
+        const msg = `Разборка платы T${t} "${selBoard.name}".\nВы получите ${dChips} чипов.`;
+        this._showConfirm(msg, () => {
+          for (const [nodeId, conn] of Object.entries(selBoard.placements || {})) {
+            inv.push({ ...(typeof conn === 'object' ? conn : { id: conn }) });
+            delete selBoard.placements[nodeId];
+          }
+          gs.chips += dChips;
+          const idx = gs._boardViewIdx ?? 0;
+          gs.boardInventory.splice(idx, 1);
+          if (gs.equippedBoard?.id === selBoard.id) {
+            gs.equippedBoard = null;
+            gs.player?.recomputeStats?.();
+          }
+          gs._boardViewIdx = Math.min(idx, Math.max(0, gs.boardInventory.length - 1));
+          this._drawBoardList();
+          const nb = gs.boardInventory[gs._boardViewIdx] ?? null;
+          this._drawPCB(nb);
+          this._drawConnPanel(nb);
+        });
       });
     }
   }
@@ -1768,21 +1915,25 @@ export default class GarageScene extends Phaser.Scene {
       this.O('13px', TIER_COL[board.tier] || '#ffffff')).setOrigin(0.5, 0).setDepth(16);
     this._pcbObjs.push(tt);
 
-    const cols = board.nodes.map(n => n.col);
-    const rows = board.nodes.map(n => n.row);
+    const visNodes = activeNodes(board);
+    const visEdges = activeEdges(board);
+
+    const cols = visNodes.map(n => n.col);
+    const rows = visNodes.map(n => n.row);
     const minC = Math.min(...cols), maxC = Math.max(...cols);
     const minR = Math.min(...rows), maxR = Math.max(...rows);
     const spanC = Math.max(1, maxC - minC);
     const spanR = Math.max(1, maxR - minR);
 
-    const CELL = Math.min(102, Math.floor(Math.min(maxW / spanC, maxH / spanR)));
+    // Subtract 40px total padding so node circles (radius ≈ CELL*0.28) don't clip panel edges
+    const CELL = Math.min(102, Math.floor(Math.min((maxW - 40) / spanC, (maxH - 40) / spanR)));
     const NR   = Math.round(CELL * 0.28);
     const ox   = cx - spanC * CELL / 2;
     const oy   = cy - spanR * CELL / 2 + 16;
     const npos = n => ({ x: ox + (n.col - minC) * CELL, y: oy + (n.row - minR) * CELL });
 
     const { powered } = bfsPowered(board, {});
-    const posMap = Object.fromEntries(board.nodes.map(n => [n.id, npos(n)]));
+    const posMap = Object.fromEntries(visNodes.map(n => [n.id, npos(n)]));
 
     const C_SRC_ON   = 0xffffff;
     const C_JUNC_ON  = 0x00ccff;
@@ -1791,12 +1942,13 @@ export default class GarageScene extends Phaser.Scene {
     const C_CONN_COL = 0xffcc44;
     const C_DIM_BLUE = 0x2a5060;   // visible dim for junc/buf
     const C_DEB_DIM  = 0x6a2222;   // visible dim for deb
-    const SHAPE_SYM  = { end: '╸', straight: '━', corner: '┛', tee: '┫', cross: '╋' };
+    // mask → box-drawing symbol (T=1,R=2,B=4,L=8)
+    const MASK_SYM = { 1:'╵',2:'╶',4:'╷',8:'╴', 5:'┃',10:'━', 3:'┗',6:'┏',12:'┓',9:'┛', 7:'├',14:'┬',13:'┤',11:'┴', 15:'┼' };
 
     // Edges — depth 13 (drawn below nodes)
     const ge = this.add.graphics().setDepth(13);
     this._pcbObjs.push(ge);
-    for (const e of board.edges) {
+    for (const e of visEdges) {
       const pa = posMap[e.a], pb = posMap[e.b];
       if (!pa || !pb) continue;
       const bothPow = powered.has(e.a) && powered.has(e.b);
@@ -1809,7 +1961,7 @@ export default class GarageScene extends Phaser.Scene {
     this._pcbObjs.push(gn);
 
     // Per-node text and zones — depth 16+ (always above circles and edges)
-    for (const n of board.nodes) {
+    for (const n of visNodes) {
       const { x, y } = posMap[n.id];
       const isPow  = powered.has(n.id);
       // NOTE: conn/hasCon captured at render time for drawing only.
@@ -1834,7 +1986,7 @@ export default class GarageScene extends Phaser.Scene {
       // Icon — depth 16
       let icon = '';
       if      (n.type === 'src')  icon = '⚡';
-      else if (hasCon)            icon = SHAPE_SYM[conn.shape] ?? '?';
+      else if (hasCon)            icon = MASK_SYM[effectiveMask(conn)] ?? '?';
       else if (n.type === 'junc') icon = '+';
       else if (n.type === 'buf')  icon = '○';
       else                        icon = '✕';
@@ -1844,6 +1996,17 @@ export default class GarageScene extends Phaser.Scene {
       const it  = this.add.text(x, y, icon, this.F(sz, fcS)).setOrigin(0.5).setDepth(16);
       this._pcbObjs.push(it);
 
+      // Dark background panel behind labels
+      const hasStatLabel = n.stat && STAT_META[n.stat];
+      const hasUpgStat   = !!(n.type === 'junc' && n.upgStat && STAT_META[n.upgStat]);
+      if (hasCon || hasStatLabel || hasUpgStat) {
+        const bgH = (hasCon ? 13 : 0) + (hasStatLabel ? 12 : 0) + (hasUpgStat ? 12 : 0) + 5;
+        const bgY = y + r + 1;
+        const lbg = this.add.rectangle(x, bgY + bgH / 2, 52, bgH, 0x040c18, 0.88)
+          .setOrigin(0.5).setDepth(15.5);
+        this._pcbObjs.push(lbg);
+      }
+
       // Value label under node — depth 16
       if (hasCon) {
         const vt = this.add.text(x, y + r + 3, `+${conn.value}%`,
@@ -1852,12 +2015,25 @@ export default class GarageScene extends Phaser.Scene {
       }
 
       // Stat label — depth 16
-      if (n.stat && STAT_META[n.stat]) {
+      if (hasStatLabel) {
         const lbl  = STAT_META[n.stat].label.split(' ')[0];
         const lCol = isPow ? STAT_META[n.stat].color : fcS;
         const lt   = this.add.text(x, y + r + (hasCon ? 14 : 4), lbl,
           this.F('9px', lCol)).setOrigin(0.5, 0).setDepth(16);
         this._pcbObjs.push(lt);
+      }
+
+      // upgStat on junc nodes — thin dim gold when not powered, bright thick gold when powered+connector
+      if (hasUpgStat) {
+        const ugLbl  = STAT_META[n.upgStat].label.split(' ')[0];
+        const ugLblY = y + r + (hasCon ? 14 : 4) + (hasStatLabel ? 12 : 0);
+        const ugPow  = isPow && hasCon;
+        const ugt = ugPow
+          ? this.add.text(x, ugLblY, ugLbl, this.O('9px', '#ffcc00'))
+              .setOrigin(0.5, 0).setDepth(16).setStroke('#aa7700', 2)
+          : this.add.text(x, ugLblY, ugLbl, this.F('8px', '#7a6010'))
+              .setOrigin(0.5, 0).setDepth(16);
+        this._pcbObjs.push(ugt);
       }
 
       // Interactive zone — depth 17, reads live state on every click
@@ -1879,9 +2055,23 @@ export default class GarageScene extends Phaser.Scene {
             const si = gs._selectedConnIdx ?? -1;
             const ci = gs.connectorInventory ?? [];
             if (si >= 0 && si < ci.length && placedCount(board) < board.maxConn) {
-              board.placements[n.id] = { ...ci[si] };
+              const placed = { ...ci[si] };
+              // Auto-rotate to best fit for connected edges
+              const nodeMap = Object.fromEntries((board.nodes || []).map(nd => [nd.id, nd]));
+              const neededSides = (board.edges || [])
+                .filter(e => e.a === n.id || e.b === n.id)
+                .map(e => { const { sideA, sideB } = edgeSides(nodeMap[e.a], nodeMap[e.b]); return e.a === n.id ? sideA : sideB; });
+              const shape = CONNECTOR_SHAPES[placed.shape];
+              let bestRot = 0, bestScore = -1;
+              for (let r = 0; r < (shape?.maxRot ?? 4); r++) {
+                const m = rotateMask(shape?.mask ?? 0, r);
+                const score = neededSides.reduce((a, s) => a + ((m & s) ? 1 : 0), 0);
+                if (score > bestScore) { bestScore = score; bestRot = r; }
+              }
+              placed.rotation = bestRot;
+              board.placements[n.id] = placed;
               ci.splice(si, 1);
-              gs._selectedConnIdx = -1;  // deselect after placing
+              gs._selectedConnIdx = -1;
             }
           }
           if (gs.equippedBoard?.id === board.id) {
@@ -1896,10 +2086,13 @@ export default class GarageScene extends Phaser.Scene {
       }
     }
 
-    const hint = this.add.text(cx, this._boardConnY + this._boardConnH - 8,
+    const hintY = this._boardConnY + this._boardConnH - 6;
+    const hintBg = this.add.rectangle(cx, hintY - 9, 290, 18, 0x020810, 0.80)
+      .setOrigin(0.5, 1).setDepth(15.5);
+    const hint = this.add.text(cx, hintY,
       'ЛКМ: поставить / повернуть   ПКМ: убрать',
-      this.F('9px', '#1a4a3a')).setOrigin(0.5, 1).setDepth(16);
-    this._pcbObjs.push(hint);
+      this.F('10px', '#4a9a7a')).setOrigin(0.5, 1).setDepth(16);
+    this._pcbObjs.push(hintBg, hint);
   }
 
   _drawConnPanel(board) {
@@ -1915,26 +2108,28 @@ export default class GarageScene extends Phaser.Scene {
     const ch   = this._boardConnH;
     const inv  = gs.connectorInventory ?? [];
 
-    const title = this.add.text(cx + cw / 2, cy + 8, 'КОННЕКТОРЫ',
-      this.O('12px', '#4dd0e1')).setOrigin(0.5, 0).setDepth(14);
-    this._connObjs.push(title);
-
-    // ─── Connector grid (4 cols × 4 rows visible) ───
+    // ─── Connector grid (4 cols × 6 rows, max 24 connectors) ───
+    const MAX_CONN_INV = 24;
     const COLS   = 4;
     const CARD_W = Math.floor((cw - 14) / COLS);
-    const CARD_H = 44;
+    const CARD_H = 42;
     const gridY  = cy + 28;
-    const maxRows = 4;
+    const maxRows = 6;
     const visH   = maxRows * CARD_H;
 
     gs._connScroll  = gs._connScroll ?? 0;
     const totalRows = Math.ceil(inv.length / COLS);
     const maxScroll = Math.max(0, totalRows * CARD_H - visH);
-    gs._connScroll  = Math.min(gs._connScroll, maxScroll);
+    // Snap scroll to row boundaries to prevent partial cards
+    gs._connScroll  = Math.round(Math.min(gs._connScroll, maxScroll) / CARD_H) * CARD_H;
 
-    // No geometry mask (WebGL unsupported) — enforce hard clip by position
+    // Title — depth 15 (above card backgrounds at 14)
+    const title2 = this.add.text(cx + cw / 2, cy + 8, 'КОННЕКТОРЫ',
+      this.O('12px', '#4dd0e1')).setOrigin(0.5, 0).setDepth(15);
+    this._connObjs.push(title2);
+
     const TIER_COLS = [0, 0x44ff88, 0x44aaff, 0xcc44ff];
-    const SHAPE_SYM = { end: '╸', straight: '━', corner: '┛', tee: '┫', cross: '╋' };
+    const MASK_SYM  = { 1:'╵',2:'╶',4:'╷',8:'╴', 5:'┃',10:'━', 3:'┗',6:'┏',12:'┓',9:'┛', 7:'├',14:'┬',13:'┤',11:'┴', 15:'┼' };
 
     for (let i = 0; i < inv.length; i++) {
       const conn  = inv[i];
@@ -1942,8 +2137,8 @@ export default class GarageScene extends Phaser.Scene {
       const ri    = Math.floor(i / COLS);
       const cardX = cx + 7 + ci * CARD_W;
       const cardY = gridY + ri * CARD_H - gs._connScroll;
-      // Strict clip: only show cards fully inside the visible area
-      if (cardY + CARD_H <= gridY || cardY >= gridY + visH) continue;
+      // Strict clip: only fully-inside cards render
+      if (cardY < gridY || cardY + CARD_H > gridY + visH) continue;
 
       const isSel = i === (gs._selectedConnIdx ?? -1);
       const tc    = TIER_COLS[conn.tier] || 0xffffff;
@@ -1952,7 +2147,7 @@ export default class GarageScene extends Phaser.Scene {
         .setStrokeStyle(isSel ? 2 : 1, tc, isSel ? 0.9 : 0.35)
         .setDepth(14);
       const sym = this.add.text(cardX + CARD_W / 2, cardY + 7,
-        SHAPE_SYM[conn.shape] ?? '?',
+        MASK_SYM[effectiveMask(conn)] ?? '?',
         this.O('12px', `#${tc.toString(16).padStart(6, '0')}`))
         .setOrigin(0.5, 0).setDepth(15);
       const vt = this.add.text(cardX + CARD_W / 2, cardY + 26,
@@ -1984,11 +2179,16 @@ export default class GarageScene extends Phaser.Scene {
       this._connObjs.push(sbg, sth);
     }
 
-    // ─── Separator ───
-    let btnY = gridY + visH + 10;
+    // ─── Connector count + separator ───
+    let btnY = gridY + visH + 6;
+    const cntCol = inv.length >= MAX_CONN_INV ? '#ff8866' : '#5a9aaa';
+    const cntT = this.add.text(cx + cw / 2, btnY, `${inv.length} / ${MAX_CONN_INV} коннекторов`,
+      this.F('9px', cntCol)).setOrigin(0.5, 0).setDepth(14);
+    this._connObjs.push(cntT);
+    btnY += 12;
     const sg1 = this.add.graphics().setDepth(14);
     sg1.lineStyle(1, 0x1a3a5a, 0.5);
-    sg1.lineBetween(cx, btnY - 4, cx + cw - 8, btnY - 4);
+    sg1.lineBetween(cx, btnY - 2, cx + cw - 8, btnY - 2);
     this._connObjs.push(sg1);
 
     // ─── Craft / disassemble buttons ───
@@ -2014,7 +2214,20 @@ export default class GarageScene extends Phaser.Scene {
       btnY += 30;
     };
 
-    _btn(`3×T1 → T2  (есть: ${t1Count})`, t1Count >= 3, () => {
+    // Craft preview hint — shape is random, show value range
+    const craftBg = this.add.rectangle(cx + cw / 2, btnY + 14, cw - 10, 32, 0x030a14, 0.85)
+      .setStrokeStyle(1, 0x1a5a6a, 0.5).setOrigin(0.5, 0).setDepth(14);
+    const craftHintT = this.add.text(cx + cw / 2, btnY + 4,
+      'КРАФТ (форма рандом):',
+      this.F('10px', '#5abccc')).setOrigin(0.5, 0).setDepth(14);
+    const rangeT = this.add.text(cx + cw / 2, btnY + 17,
+      'T1:+1-2%  T2:+2-4%  T3:+4-6%',
+      this.F('9px', '#4a99aa')).setOrigin(0.5, 0).setDepth(14);
+    this._connObjs.push(craftBg, craftHintT, rangeT);
+    btnY += 34;
+
+    const canCraft = inv.length < MAX_CONN_INV;
+    _btn(`3×T1 → T2  (есть: ${t1Count})`, t1Count >= 3 && canCraft, () => {
       let n = 3;
       for (let i = inv.length - 1; i >= 0 && n > 0; i--) {
         if (inv[i].tier === 1) { inv.splice(i, 1); n--; }
@@ -2024,7 +2237,7 @@ export default class GarageScene extends Phaser.Scene {
       this._drawConnPanel(board);
     });
 
-    _btn(`4×T2 → T3  (есть: ${t2Count})`, t2Count >= 4, () => {
+    _btn(`4×T2 → T3  (есть: ${t2Count})`, t2Count >= 4 && canCraft, () => {
       let n = 4;
       for (let i = inv.length - 1; i >= 0 && n > 0; i--) {
         if (inv[i].tier === 2) { inv.splice(i, 1); n--; }
@@ -2034,17 +2247,22 @@ export default class GarageScene extends Phaser.Scene {
       this._drawConnPanel(board);
     });
 
+    // Disassemble connector → chips (T1:1, T2:2, T3:3)
+    const chipYield = selConn ? selConn.tier : 0;
     const disLabel = selConn
-      ? `РАЗОБРАТЬ T${selConn.tier}${selConn.tier >= 2 ? ' → 2×T' + (selConn.tier - 1) : ''}`
+      ? `РАЗОБРАТЬ T${selConn.tier} → ${chipYield} чип`
       : 'РАЗОБРАТЬ';
     _btn(disLabel, !!selConn, () => {
       if (!selConn) return;
-      if (selConn.tier >= 2) {
-        inv.push(rollConnector(selConn.tier - 1), rollConnector(selConn.tier - 1));
-      }
-      inv.splice(selIdx, 1);
-      gs._selectedConnIdx = Math.min(selIdx, inv.length - 1);
-      this._drawConnPanel(board);
+      const shapeName = CONNECTOR_SHAPES[selConn.shape]?.label ?? selConn.shape;
+      const msg = `Разборка коннектора T${selConn.tier} "${shapeName}".\nВы получите ${chipYield} чипа.`;
+      this._showConfirm(msg, () => {
+        gs.chips = (gs.chips ?? 0) + chipYield;
+        inv.splice(selIdx, 1);
+        gs._selectedConnIdx = Math.min(selIdx, inv.length - 1);
+        this._drawConnPanel(board);
+        this._drawBoardList();  // refresh chip count
+      });
     });
 
     // ─── Separator ───
@@ -2058,20 +2276,21 @@ export default class GarageScene extends Phaser.Scene {
     if (board) {
       const effects = getBoardEffects(board, {});
       const effT = this.add.text(cx, btnY, 'ЭФФЕКТЫ',
-        this.F('10px', '#2a6a7a')).setDepth(14);
+        this.F('10px', '#5abccc')).setDepth(14);
       this._connObjs.push(effT);
       btnY += 14;
 
       for (const [stat, eff] of Object.entries(effects)) {
         const meta = STAT_META[stat];
         if (!meta) continue;
-        const sign = eff >= 0 ? '+' : '';
         const col  = eff >= 0 ? '#44ff88' : '#ff5555';
+        const valStr = meta.isBool
+          ? (eff > 0 ? 'Включено' : 'Выкл.')
+          : `${eff >= 0 ? '+' : ''}${Math.round(eff)}%`;
         const lbl  = this.add.text(cx, btnY, meta.label,
           this.F('9px', '#8abccc')).setDepth(14);
         const vt   = this.add.text(cx + cw - 4, btnY,
-          `${sign}${Math.round(eff)}%`,
-          this.F('9px', col)).setOrigin(1, 0).setDepth(14);
+          valStr, this.F('9px', col)).setOrigin(1, 0).setDepth(14);
         this._connObjs.push(lbl, vt);
         btnY += 13;
         if (btnY > cy + ch - 50) break;
