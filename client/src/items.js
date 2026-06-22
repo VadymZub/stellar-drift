@@ -155,6 +155,11 @@ export const CONSUMABLES = {
   biomech_core:    { category: 'material',   maxPerSlot:   5,   canBuy: false, price: 0,    sell: 0   },
   quantum_crystal: { category: 'material',   maxPerSlot:   5,   canBuy: false, price: 0,    sell: 0   },
   plasma_coil:     { category: 'material',   maxPerSlot:   5,   canBuy: false, price: 0,    sell: 0   },
+  // Boosters — temporary stat multipliers
+  damage_booster: { category: 'consumable', maxPerSlot: 10, canBuy: true,  price: 8000,  sell: 500 },
+  hull_booster:   { category: 'consumable', maxPerSlot: 10, canBuy: true,  price: 6000,  sell: 500 },
+  shield_booster: { category: 'consumable', maxPerSlot: 10, canBuy: true,  price: 6000,  sell: 500 },
+  xp_booster:     { category: 'consumable', maxPerSlot: 10, canBuy: true,  price: 10000, sell: 500 },
   // Ammo — auto-consumed on fire; max 10000 per ammo slot
   ammo_plasma:       { category: 'ammo', maxPerSlot: 10000, canBuy: true,  price: 100, sell: 50  },
   ammo_plasma_elite: { category: 'ammo', maxPerSlot: 10000, canBuy: true,  price: 200, sell: 100 },
@@ -228,6 +233,7 @@ export function itemIconKey(item) {
   if (item.type === 'cannon') return `mod_plasma_t${t}`;
   if (item.type === 'shield') return `mod_shield_t${t}`;
   if (item.type === 'engine') return `mod_engine_t${t}`;
+  if (item.type === 'armor')  return `mod_armor_t${t}`;
   return null;
 }
 
@@ -290,8 +296,8 @@ function tierForLevel(L) { return L >= 31 ? 4 : L >= 21 ? 3 : L >= 11 ? 2 : 1; }
 export function rollLootForMob(mob) {
   let tier = tierForLevel(mob.level);
   if ((mob.isBoss || mob.tpl.elite) && tier < 4 && Phaser.Math.Between(0, 99) < 30) tier++;
-  const r = Phaser.Math.Between(0, 99);          // 45% пушка / 35% щит / 20% двигатель
-  const maker = r < 45 ? rollCannon : r < 80 ? rollShield : rollEngine;
+  const r = Phaser.Math.Between(0, 99);          // 40% пушка / 30% щит / 20% двигатель / 10% броня
+  const maker = r < 40 ? rollCannon : r < 70 ? rollShield : r < 90 ? rollEngine : rollArmor;
   return maker(tier, mob.level);
 }
 
@@ -300,7 +306,10 @@ export function itemName(item) {
   if (item.type === 'plasmate') return `${i18n.t('item.plasmate')} ×${item.amount}`;
   if (CONSUMABLES[item.type])  return `${i18n.t(`item.${item.type}`)} ×${item.amount}`;
   if (item.type === 'laser') return i18n.t('item.laser');
-  const key = item.type === 'cannon' ? 'item.cannon' : item.type === 'shield' ? 'item.shield' : 'item.engine';
+  const key = item.type === 'cannon' ? 'item.cannon'
+            : item.type === 'shield' ? 'item.shield'
+            : item.type === 'armor'  ? 'item.armor'
+            : 'item.engine';
   return `${i18n.t(key)} T${item.tier}`;
 }
 
@@ -317,6 +326,9 @@ export function itemStats(item) {
   }
   if (item.type === 'engine') {
     return `${i18n.t('stat.speed')} +${Math.round(item.speed * k)}${up}`;
+  }
+  if (item.type === 'armor') {
+    return `${i18n.t('stat.hull')} +${Math.round(item.hullBonus * k)}${up}`;
   }
   return `${i18n.t('stat.durability')} ${Math.round(item.durability * k)}   ·   ${i18n.t('stat.regen')} ${Math.round(item.regen * k)}/${i18n.t('unit.sec')}   ·   ${i18n.t('stat.evasion')} ${Math.round(item.evasion * k * 100)}%${up}`;
 }

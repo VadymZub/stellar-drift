@@ -7,11 +7,12 @@ import { prerenderTex } from '../utils/prerenderTex.js';
 const GOLD_PACK = 10;
 
 const BOOSTERS = [
-  { key: 'boost_damage', label: 'Усилитель урона',   desc: '+10% к урону',         color: 0xff6d00, icon: '⚔' },
-  { key: 'boost_hull',   label: 'Усилитель брони',   desc: '+20% к прочности',     color: 0x4fc3f7, icon: '🛡' },
-  { key: 'boost_shield', label: 'Усилитель щита',    desc: '+20% к щиту',          color: 0x4db6ac, icon: '💠' },
-  { key: 'boost_xp',    label: 'Усилитель опыта',    desc: '+25% к получению XP',  color: 0xffd54f, icon: '⚡' },
+  { key: 'boost_damage', consumableKey: 'damage_booster', label: 'Усилитель урона',  desc: '+10% к урону',        color: 0xff6d00, icon: '⚔' },
+  { key: 'boost_hull',   consumableKey: 'hull_booster',   label: 'Усилитель брони',  desc: '+20% к прочности',    color: 0x4fc3f7, icon: '🛡' },
+  { key: 'boost_shield', consumableKey: 'shield_booster', label: 'Усилитель щита',   desc: '+20% к щиту',         color: 0x4db6ac, icon: '💠' },
+  { key: 'boost_xp',    consumableKey: 'xp_booster',      label: 'Усилитель опыта',  desc: '+25% к получению XP', color: 0xffd54f, icon: '⚡' },
 ];
+const BOOSTER_CONSUMABLE_TYPES = new Set(BOOSTERS.map(b => b.consumableKey));
 
 const WEAPON_PLACEHOLDERS = [
   { label: 'Плазменная пушка T1', desc: 'Стандартное вооружение' },
@@ -130,7 +131,7 @@ export default class ShopScene extends Phaser.Scene {
     ob.push(this.add.text(px + 34, cy0 + 4, 'РАСХОДНИКИ', this.O('12px', '#4dd0e1')));
 
     const buyable = Object.entries(CONSUMABLES)
-      .filter(([, d]) => d.canBuy && d.category !== 'ammo')
+      .filter(([type, d]) => d.canBuy && d.category !== 'ammo' && !BOOSTER_CONSUMABLE_TYPES.has(type))
       .map(([type, def]) => ({ type, ...def }));
 
     const COLS = 4, CW = 220, CH = 270, GAP = 18;
@@ -368,9 +369,12 @@ export default class ShopScene extends Phaser.Scene {
     gfx.lineStyle(2, b.color, 0.7); gfx.strokeRoundedRect(cx, cy, cw, ch, 10);
     ob.push(gfx);
 
-    // Icon (canvas with emoji)
-    const texKey = this._ensureBoosterTex(b.key, b.color, b.icon);
-    ob.push(this.add.image(cx + cw / 2, cy + 68, texKey).setDisplaySize(115, 115).setOrigin(0.5));
+    // Icon — real PNG if loaded, canvas fallback otherwise
+    const pngKey = `consumable_${b.consumableKey}`;
+    const iconKey = this.textures.exists(pngKey)
+      ? prerenderTex(this, pngKey, 115, 115)
+      : this._ensureBoosterTex(b.key, b.color, b.icon);
+    ob.push(this.add.image(cx + cw / 2, cy + 68, iconKey).setDisplaySize(115, 115).setOrigin(0.5));
 
     // Name
     ob.push(this.add.text(cx + cw / 2, cy + 132, b.label,

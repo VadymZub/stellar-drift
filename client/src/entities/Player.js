@@ -237,15 +237,23 @@ export default class Player {
       return a + Math.round(base * (1 + upgF + platF));
     }, 0);
 
-    // ── Step 6: Booster % for speed (consumed-item buffs from GameScene) ─────
+    // ── Step 6: Active booster % (shop purchases, keyed by expiry timestamp) ───
+    const _ab  = this.scene.activeBoosters || {};
+    const _now = Date.now();
+    const boostDmg    = _ab.boost_damage > _now ? 0.10 : 0;
+    const boostHull   = _ab.boost_hull   > _now ? 0.20 : 0;
+    const boostShield = _ab.boost_shield > _now ? 0.20 : 0;
+    const boostXp     = _ab.boost_xp    > _now ? 0.25 : 0;
+    // Consumed-item speed multipliers (speed_boost consumable, stealth)
     const speedBoostPct = (this.scene._speedBoostMult ?? 1.0) * (this.scene._stealthMult ?? 1.0) - 1.0;
 
     // ── Step 7: FINAL STATS — BASE × (1 + Σ all % sources) ──────────────────
-    // Formula per stat: BASE × (1 + upgPct + skillPct + perkPct + boardPct + boosterPct)
-    this.cannonDamage = Math.round(BASE_cannon * (1 + cannonUpgPct + sl('heavy_caliber') * 0.06 + cannonPerkPct + BF('cannonDmg')));
-    this.laserDamage  = Math.round(BASE_laser  * (1 + laserUpgPct  + sl('heavy_caliber') * 0.06 + BF('laserDmg')));
-    this.maxHull      = Math.round(BASE_hull   * (1 + sl('reinforced_hull') * 0.06 + BF('hullMax'))) + armorHullFlat;
-    this.maxShield    = Math.round(BASE_shield  * (1 + shieldUpgPct + sl('shield_optimizer') * 0.05 + BF('shieldMax')));
+    // Boosters are additive with upgPct/skillPct/perkPct/boardPct — applied to the same
+    // BASE that already includes ship-level upgrades (user intent: "базовые = с апгрейдом").
+    this.cannonDamage = Math.round(BASE_cannon * (1 + cannonUpgPct + sl('heavy_caliber') * 0.06 + cannonPerkPct + BF('cannonDmg') + boostDmg));
+    this.laserDamage  = Math.round(BASE_laser  * (1 + laserUpgPct  + sl('heavy_caliber') * 0.06 + BF('laserDmg') + boostDmg));
+    this.maxHull      = Math.round(BASE_hull   * (1 + sl('reinforced_hull') * 0.06 + BF('hullMax') + boostHull)) + armorHullFlat;
+    this.maxShield    = Math.round(BASE_shield  * (1 + shieldUpgPct + sl('shield_optimizer') * 0.05 + BF('shieldMax') + boostShield));
     this.baseSpeed    = Math.round(BASE_speed   * (1 + speedUpgPct  + engineThrustPct + BF('speed') + speedBoostPct));
     this.shieldRegenPerSec = Math.round(BASE_regen * (1 + regenUpgPct + regenPerkPct + BF('shieldRegen')));
 
@@ -278,7 +286,7 @@ export default class Player {
     this.lootPickupRadiusMult = 1 + sl('loot_magnet') * 0.30;
     this.dropChanceMult       = 1.0 + BF('lootBonus')    + sl('salvager') * 0.10;
     this.creditBonusMod       = Math.max(0.1, 1.0 + BF('creditBonus'));
-    this.xpBonusMod           = Math.max(0.1, 1.0 + BF('xpBonus'));
+    this.xpBonusMod           = Math.max(0.1, 1.0 + BF('xpBonus') + boostXp);
     this.repairCostMult       = Math.max(0.10, 1.0 - BF('repairCost')    - sl('merchants_eye') * 0.15);
     this.shopDiscountMod      = Math.max(0.10, 1.0 - BF('shopDiscount'));
     this.cargoBonusMod        = BF('cargoBonus');

@@ -59,6 +59,33 @@ sci-fi UI badge icon for spaceship engine perk "Shadow Drive", ghostly transpare
 
 ---
 
+## Armor Perks
+
+| Перк | Rarity | Color | Метафора |
+|---|---|---|---|
+| **Armor Plating** | 🟢 common | green | thick reinforced metal plate with hexagonal rivet pattern |
+| **Nimble** | 🟣 uncommon | teal | sleek silhouette with blurred motion arc trails |
+| **Kinetic Absorb** | 🟡 rare | amber | incoming projectile dissolving into radiating shockwave rings |
+| **Bulwark** | 🔴 jackpot | red-orange | massive fortress wall with radiating force field |
+
+```
+sci-fi UI badge icon for spaceship armor perk "Armor Plating", thick reinforced metal plate with hexagonal rivet pattern and layered plating segments, simple silhouette design with single dominant element, painterly stylized game UI icon, AAA mobile MMO inventory perk badge, vibrant green color theme, centered composition with circular border ring, isolated on pure black transparent background, no characters, no text, no letters, no words, easy-to-read silhouette at small size --ar 1:1 --stylize 650
+```
+
+```
+sci-fi UI badge icon for spaceship armor perk "Nimble", sleek angular silhouette with curved motion arc blur trails suggesting rapid evasive movement, simple silhouette design with single dominant element, painterly stylized game UI icon, AAA mobile MMO inventory perk badge, vibrant teal cyan color theme, centered composition with circular border ring, isolated on pure black transparent background, no characters, no text, no letters, no words, easy-to-read silhouette at small size --ar 1:1 --stylize 650
+```
+
+```
+sci-fi UI badge icon for spaceship armor perk "Kinetic Absorb", incoming projectile impact dissolving and dispersing into radiating concentric shockwave rings being absorbed by hull, simple silhouette design with single dominant element, painterly stylized game UI icon, AAA mobile MMO inventory perk badge, amber gold color theme, centered composition with circular border ring, isolated on pure black transparent background, no characters, no text, no letters, no words, easy-to-read silhouette at small size --ar 1:1 --stylize 650
+```
+
+```
+sci-fi UI badge icon for spaceship armor perk "Bulwark", massive impenetrable fortress wall with radiating force field energy barrier and reinforced battlements, simple silhouette design with single dominant element, painterly stylized game UI icon, AAA mobile MMO inventory perk badge, blazing red-orange color theme, centered composition with circular border ring, isolated on pure black transparent background, no characters, no text, no letters, no words, easy-to-read silhouette at small size --ar 1:1 --stylize 650
+```
+
+---
+
 ## Спецификация экспорта
 - **Размер:** 512×512, белый или прозрачный фон.
 - **Имена файлов:** точно как в `perks.js` поле `imgFile`:
@@ -68,6 +95,10 @@ sci-fi UI badge icon for spaceship engine perk "Shadow Drive", ghostly transpare
   - `Engine Thrust.png`
   - `Engine Agility.png`
   - `Engine Boost.png`
+  - `Armor Plating.png`
+  - `Nimble.png`
+  - `Kinetic Absorb.png`
+  - `Bulwark.png`
 - **Папка:** `client/assets/perks/`
 
 

@@ -8,7 +8,7 @@ import Projectile from '../entities/Projectile.js';
 import Loot from '../entities/Loot.js';       
 import Movement from '../systems/Movement.js';
 import { EXP_CLASSES } from './BootScene.js'; 
-import { rollLootForMob, dropChance, itemName, rollStarGold, starterCannon, starterShield, rollCannon, rollShield, rollEngine, rollLaser, rollApophisLoot, PLASMATE_PER_SLOT, PLASMATE_DAILY_MAX, addPlasmateToInventory, totalPlasmateInInventory, removePlasmateFromInventory, CONSUMABLES, addConsumableToInventory, countConsumableInInventory, removeConsumableFromInventory, rollConsumableDrop } from '../items.js';
+import { rollLootForMob, dropChance, itemName, rollStarGold, starterCannon, starterShield, rollCannon, rollShield, rollEngine, rollLaser, rollArmor, rollApophisLoot, PLASMATE_PER_SLOT, PLASMATE_DAILY_MAX, addPlasmateToInventory, totalPlasmateInInventory, removePlasmateFromInventory, CONSUMABLES, addConsumableToInventory, countConsumableInInventory, removeConsumableFromInventory, rollConsumableDrop } from '../items.js';
 import { rollBoard, rollConnector } from '../boards.js';
 import PlasmateDeposit from '../entities/PlasmateDeposit.js';
 import { rollPerk, perkBonus } from '../perks.js';
@@ -1097,13 +1097,14 @@ export default class GameScene extends Phaser.Scene {
         this._tryAddToAmmoSlots('ammo_plasma', 5000);
         for (let i = 0; i < 3; i++) this.inventory.push(rollLaser(4, 50));
         for (let i = 0; i < 3; i++) this.inventory.push(rollCannon(4, 50));
+        for (let i = 0; i < 2; i++) this.inventory.push(rollArmor(4, 50));
         // DEV: add boards, connectors, chips
         this.boardInventory = this.boardInventory ?? [];
         this.boardInventory.push(rollBoard(1), rollBoard(2), rollBoard(3));
         this.connectorInventory = this.connectorInventory ?? [];
         for (let t = 1; t <= 3; t++) for (let k = 0; k < 6; k++) this.connectorInventory.push(rollConnector(t));
         this.chips = (this.chips ?? 0) + 20;
-        this.log('DEV: +1M кр, +500 ⭐, патроны (лазер+плазма), 3×лазер T4, 3×пушка T4, 3 платы, 18 коннекторов, 20 чипов');
+        this.log('DEV: +1M кр, +500 ⭐, патроны (лазер+плазма), 3×лазер T4, 3×пушка T4, 2×броня T4, 3 платы, 18 коннекторов, 20 чипов');
       });
     }
   }

@@ -611,10 +611,11 @@ export default class GarageScene extends Phaser.Scene {
     updateVisibility(ay);
 
     // ── Inner panel covers: clip partial rows at grid edges (depth 12) ────────
+    // Covers span only the grid column (ax…ax+aw) so the ship image on the left is untouched.
     const bg = 0x080e1a;
-    if (ay > _py) this.add.rectangle(_px, _py, _pw, ay - _py, bg).setOrigin(0, 0).setDepth(12);
+    if (ay > _py) this.add.rectangle(ax, _py, aw, ay - _py, bg).setOrigin(0, 0).setDepth(12);
     const botH = _py + _ph - ay - ah;
-    if (botH > 0) this.add.rectangle(_px, ay + ah, _pw, botH, bg).setOrigin(0, 0).setDepth(12);
+    if (botH > 0) this.add.rectangle(ax, ay + ah, aw, botH, bg).setOrigin(0, 0).setDepth(12);
     const rW = Math.max(0, _px + _pw - ax - aw);
     if (rW > 0) this.add.rectangle(ax + aw, ay, rW, ah, bg).setOrigin(0, 0).setDepth(12);
 
