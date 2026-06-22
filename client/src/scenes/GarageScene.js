@@ -492,8 +492,10 @@ export default class GarageScene extends Phaser.Scene {
             .setStrokeStyle(2, hexC, 0.8);
           let iconEl;
           if (info) {
-            iconEl = this.add.text(sx + SZ / 2, sy + BODY_H / 2 - 5, info.icon ?? '?',
-              this.O('14px', clrS)).setOrigin(0.5);
+            const isz = 36;
+            iconEl = this.textures.exists(item.type)
+              ? this.add.image(sx + SZ / 2, sy + BODY_H / 2 - 5, prerenderTex(this, item.type, isz, isz)).setDisplaySize(isz, isz).setOrigin(0.5)
+              : this.add.text(sx + SZ / 2, sy + BODY_H / 2 - 5, info.icon ?? '?', this.O('14px', clrS)).setOrigin(0.5);
           } else {
             const iconK = `consumable_${item.type}`;
             const isz = 36;
@@ -1082,9 +1084,15 @@ export default class GarageScene extends Phaser.Scene {
 
       if (!isEmpty) {
         if (ammoInfo) {
-          const clrS = `#${hexC.toString(16).padStart(6, '0')}`;
-          this.add.text(sx + sz / 2, sy + sz / 2 - 4, ammoInfo.icon ?? '?',
-            this.O('12px', clrS)).setOrigin(0.5);
+          const tsz = sz - 14;
+          if (this.textures.exists(slot.type)) {
+            this.add.image(sx + sz / 2, sy + sz / 2 - 4, prerenderTex(this, slot.type, tsz, tsz))
+              .setDisplaySize(tsz, tsz).setOrigin(0.5);
+          } else {
+            const clrS = `#${hexC.toString(16).padStart(6, '0')}`;
+            this.add.text(sx + sz / 2, sy + sz / 2 - 4, ammoInfo.icon ?? '?',
+              this.O('12px', clrS)).setOrigin(0.5);
+          }
         } else {
           const iconK = `consumable_${slot.type}`;
           const tsz = sz - 12;

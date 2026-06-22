@@ -205,6 +205,10 @@ export default class BootScene extends Phaser.Scene {
     // Perk images (slot perks for weapon/shield modules)
     for (const p of PERK_DEFS) this.load.image(p.key, `assets/perks/${p.imgFile}`);
 
+    // Ammo icons (key = item type name)
+    for (const type of ['ammo_plasma', 'ammo_plasma_elite', 'ammo_laser'])
+      this.load.image(type, `assets/ammo/${type}.png`);
+
     // Mining base sprites
     for (const key of ['base_destroyed', 'base_building', 'base_helios', 'base_karax', 'base_tides', 'base_neutral']) {
       this.load.image(key, `assets/bases/${key}.png`);
@@ -357,6 +361,9 @@ export default class BootScene extends Phaser.Scene {
     _prepShipTex(this, 'lootbox',       68);
     // Plasmate icon: 1024×1536 displayed at 48×48 in cargo — pre-process to 96px (2× display).
     _prepShipTex(this, 'plasmate_icon', 96);
+    // Ammo icons: displayed up to 115px (shop) — pre-process to 230px (2× display).
+    for (const type of ['ammo_plasma', 'ammo_plasma_elite', 'ammo_laser'])
+      _prepShipTex(this, type, 230);
 
     // Set LINEAR filter on all ship/mob textures (no mipmap sampling for non-POT assets).
     const LINEAR = 0;

@@ -154,6 +154,7 @@ export default class CargoScene extends Phaser.Scene {
   // ── Ammo texture for inventory display ───────────────────────────────────
 
   _ensureAmmoTex(type) {
+    if (this.textures.exists(type)) return type; // PNG loaded in BootScene
     const key = `__amtex_${type}`;
     if (this.textures.exists(key)) return key;
     const info = AMMO_ICON[type];
@@ -325,7 +326,9 @@ export default class CargoScene extends Phaser.Scene {
           .setStrokeStyle(2, borderColor, 0.8);
         let iconImg = null;
         if (isAmmo) {
-          const ammoTex = this._ensureAmmoTex(item.type);
+          const ammoTex = this.textures.exists(item.type)
+            ? prerenderTex(this, item.type, iconSz, iconSz)
+            : this._ensureAmmoTex(item.type);
           iconImg = this.add.image(sx + SZ / 2, sy + boxH / 2 - 5, ammoTex).setDisplaySize(iconSz, iconSz).setOrigin(0.5);
         } else {
           const iconK = itemIconKey(item);

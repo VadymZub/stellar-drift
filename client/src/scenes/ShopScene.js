@@ -425,6 +425,7 @@ export default class ShopScene extends Phaser.Scene {
 
   // ── Texture helpers ───────────────────────────────────────────────────────
   _ensureAmmoTex(type, sz = 96) {
+    if (this.textures.exists(type)) return prerenderTex(this, type, sz, sz);
     const key = `__amtex_${type}_${sz}`;
     if (this.textures.exists(key)) return key;
     const info = AMMO_ICON[type];
