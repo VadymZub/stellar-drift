@@ -318,9 +318,20 @@ export default class Player {
     }
 
     // ── Expansion board effects ────────────────────────────────────────────
+    // Reset board-derived fields before applying (recomputed every call)
+    this.critMult        = 2.0;
+    this.aggroRadiusMod  = 1.0;
+    this.creditBonusMod  = 1.0;
+    this.xpBonusMod      = 1.0;
+    this.shopDiscountMod = 1.0;
+    this.cargoBonusMod   = 0.0;
+    this.autoAmmo        = false;
+    this.autoConsumables = false;
+
     const boardFx = getBoardEffects(this.scene.equippedBoard);
     for (const [stat, pct] of Object.entries(boardFx)) {
       const f = pct / 100;
+      // Combat
       if (stat === 'cannonDmg')   { this.cannonDamage = Math.round(this.cannonDamage * (1 + f)); }
       if (stat === 'laserDmg')    { this.laserDamage  = Math.round(this.laserDamage  * (1 + f)); }
       if (stat === 'piercing')    { this.weaponPenetration = Math.min(0.40, this.weaponPenetration + f); }
@@ -329,6 +340,22 @@ export default class Player {
       if (stat === 'hullMax')     { this.maxHull   = Math.round(this.maxHull   * (1 + f)); this.hull = Math.min(this.hull, this.maxHull); }
       if (stat === 'speed')       { this.baseSpeed = Math.round(this.baseSpeed * (1 + f)); }
       if (stat === 'cooldown')    { this.activeCooldownMod = Math.max(0.10, this.activeCooldownMod - f); }
+      if (stat === 'critChance')  { this.critChance     = Math.min(0.65, this.critChance + f); }
+      if (stat === 'critMult')    { this.critMult       = Math.min(4.0, this.critMult * (1 + f)); }
+      if (stat === 'evasion')     { this.evasion        = Math.min(0.30, (this.evasion ?? 0) + f); }
+      if (stat === 'shieldRegen') { this.shieldRegenPerSec = Math.round(this.shieldRegenPerSec * (1 + f)); }
+      if (stat === 'aggroRadius') { this.aggroRadiusMod  = Math.max(0.3, this.aggroRadiusMod - f); }
+      // Economy
+      if (stat === 'lootBonus')    { this.dropChanceMult  = Math.max(0, this.dropChanceMult * (1 + f)); }
+      if (stat === 'creditBonus')  { this.creditBonusMod  = Math.max(0.1, this.creditBonusMod + f); }
+      if (stat === 'xpBonus')      { this.xpBonusMod      = Math.max(0.1, this.xpBonusMod + f); }
+      if (stat === 'repairCost')   { this.repairCostMult  = Math.max(0.10, this.repairCostMult - f); }
+      if (stat === 'shopDiscount') { this.shopDiscountMod  = Math.max(0.10, this.shopDiscountMod - f); }
+      // QoL
+      if (stat === 'autoAmmo'        && f > 0) { this.autoAmmo        = true; }
+      if (stat === 'autoConsumables' && f > 0) { this.autoConsumables = true; }
+      if (stat === 'scanRadius')  { this.scene.scanRadius = Math.round(this.scene.scanRadius * (1 + f)); }
+      if (stat === 'cargoBonus')  { this.cargoBonusMod   += f; }
     }
     if (Object.keys(boardFx).length > 0) {
       this.weaponDamage = this.cannonDamage + this.laserDamage;

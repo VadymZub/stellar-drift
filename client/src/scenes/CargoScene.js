@@ -182,13 +182,6 @@ export default class CargoScene extends Phaser.Scene {
     const gs = this.gs;
     const SZ = 68, GAP = 6, COLS = cols;
     const container = this.add.container(ax, ay);
-
-    // Clip container to the visible grid area (prevents scroll overflow top/bottom)
-    const maskGfx = this.add.graphics();
-    maskGfx.fillStyle(0xffffff, 1);
-    maskGfx.fillRect(ax, ay, aw, ah);
-    container.setMask(maskGfx.createGeometryMask());
-
     const displaySlots = Math.max(items.length, maxSlots);
 
     for (let i = 0; i < displaySlots; i++) {
@@ -456,18 +449,27 @@ export default class CargoScene extends Phaser.Scene {
       }
     }
 
-    // ── Cover strips: clip overflow outside the visible grid area ─────────
+    // ── Cover strips: hide overflow above/below the visible grid ─────────────
+    // Full panel width so covers match the panel visually (no narrow strips on bg).
+    // Items that scroll beyond panel bounds in extreme inventories remain exposed —
+    // that is the scroll constraint: minY is not clamped to panel top.
     const pbox = this.panelBox;
-    const botH = clipBotH != null ? clipBotH : (pbox ? Math.max(4, pbox.py + pbox.ph - ay - ah) : 20);
-    if (botH > 0) this.add.rectangle(ax, ay + ah, aw, botH, 0x080e1a).setOrigin(0, 0).setDepth(12);
-    // Right strip: только малый отступ панели (≤20px), не покрывает соседние колонки
+    const totalH = Math.ceil(displaySlots / COLS) * (SZ + GAP);
+
     if (pbox) {
+      const bg = 0x080e1a;
+      // Top: full panel width, panel-top → grid-top
+      if (ay > pbox.py) this.add.rectangle(pbox.px, pbox.py, pbox.pw, ay - pbox.py, bg).setOrigin(0, 0).setDepth(12);
+      // Bottom: full panel width, grid-bot → panel-bot
+      const botH = pbox.py + pbox.ph - ay - ah;
+      if (botH > 0) this.add.rectangle(pbox.px, ay + ah, pbox.pw, botH, bg).setOrigin(0, 0).setDepth(12);
+      // Thin right strip between grid right edge and panel right edge (≤ 20 px gap)
       const rW = pbox.px + pbox.pw - ax - aw;
-      if (rW > 0 && rW <= 20) this.add.rectangle(ax + aw, ay, rW, ah, 0x080e1a).setOrigin(0, 0).setDepth(12);
+      if (rW > 0 && rW <= 20) this.add.rectangle(ax + aw, ay, rW, ah, bg).setOrigin(0, 0).setDepth(12);
     }
 
     // ── Wheel scroll + scrollbar ───────────────────────────────────────────
-    const totalH = Math.ceil(displaySlots / COLS) * (SZ + GAP);
+    // totalH already computed above
     if (totalH > ah) {
       const startY = ay, minY = ay - (totalH - ah);
       const SBW = 3, thumbH = Math.max(20, Math.round(ah * ah / totalH));

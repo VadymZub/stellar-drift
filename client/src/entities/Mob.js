@@ -217,9 +217,9 @@ export default class Mob {
       this.state = 'idle';
     } else if (this._returning) {
       this.state = 'idle'; // во время возврата игнорируем агро
-    } else if (dist < this.tpl.aggro) {
+    } else if (dist < this.tpl.aggro * (player.aggroRadiusMod ?? 1)) {
       if (!this.neutral) this.state = 'aggro';
-    } else if (dist > this.tpl.aggro * 1.6) {
+    } else if (dist > this.tpl.aggro * (player.aggroRadiusMod ?? 1) * 1.6) {
       this.state = 'idle';
     }
 

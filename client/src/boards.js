@@ -18,16 +18,36 @@ export const CONNECTOR_SHAPES = {
 
 // ── Stats ─────────────────────────────────────────────────────────────────────
 export const STAT_META = {
-  cannonDmg:   { label: 'Урон пушки',        color: '#ff9944' },
-  laserDmg:    { label: 'Урон лазера',        color: '#44aaff' },
-  piercing:    { label: 'Пробивание',          color: '#ffcc44' },
-  piercingRes: { label: 'Сопр. пробиванию',   color: '#88ff88' },
-  shieldMax:   { label: 'Макс. щит',          color: '#66aaff' },
-  hullMax:     { label: 'Макс. корпус',        color: '#66ffcc' },
-  speed:       { label: 'Скорость',            color: '#ffff66' },
-  cooldown:    { label: 'Откат навыков',       color: '#cc66ff' },
+  // Combat
+  cannonDmg:       { label: 'Урон пушки',        color: '#ff9944' },
+  laserDmg:        { label: 'Урон лазера',        color: '#44aaff' },
+  piercing:        { label: 'Пробивание',          color: '#ffcc44' },
+  piercingRes:     { label: 'Сопр. пробиванию',   color: '#88ff88' },
+  shieldMax:       { label: 'Макс. щит',          color: '#66aaff' },
+  hullMax:         { label: 'Макс. корпус',        color: '#66ffcc' },
+  speed:           { label: 'Скорость',            color: '#ffff66' },
+  cooldown:        { label: 'Откат навыков',       color: '#cc66ff' },
+  critChance:      { label: 'Шанс крита',          color: '#ffdd00' },
+  critMult:        { label: 'Урон крита',          color: '#ff8800' },
+  evasion:         { label: 'Уклонение',           color: '#aaffcc' },
+  shieldRegen:     { label: 'Реген щита',          color: '#4488ff' },
+  aggroRadius:     { label: 'Радиус агро',         color: '#ff66aa' },
+  // Economy
+  lootBonus:       { label: 'Шанс лута',           color: '#cc88ff' },
+  creditBonus:     { label: 'Кредиты с мобов',     color: '#ffd700' },
+  xpBonus:         { label: 'Опыт пилота',         color: '#66ffff' },
+  repairCost:      { label: 'Цена ремонта',        color: '#99ffbb' },
+  shopDiscount:    { label: 'Цены в магазине',     color: '#ffaaff' },
+  // QoL — buf only; deb version would be pointless
+  autoAmmo:        { label: 'Авто-патроны',        color: '#ff8844', bufOnly: true },
+  autoConsumables: { label: 'Авто-расходники',     color: '#88ffaa', bufOnly: true },
+  scanRadius:      { label: 'Радиус сканера',      color: '#44ffff' },
+  cargoBonus:      { label: 'Вместимость трюма',   color: '#ffcc66' },
 };
-const ALL_STATS = Object.keys(STAT_META);
+// Pool for deb nodes (no QoL-only stats that make no sense as debuffs)
+const ALL_STATS = Object.keys(STAT_META).filter(s => !STAT_META[s].bufOnly);
+// Buf nodes may get any stat including QoL-only
+const BUF_STATS = Object.keys(STAT_META);
 
 // ── Mask helpers ──────────────────────────────────────────────────────────────
 export function rotateMask(mask, n = 1) {
@@ -58,9 +78,10 @@ export function nodeMask(board, allConns, nodeId) {
   const node = (board.nodes || []).find(n => n.id === nodeId);
   if (!node) return 0;
   if (node.type === 'src' || node.type === 'deb') return 0xF;
-  const cid = board.placements?.[nodeId];
-  if (!cid) return 0;
-  const conn = allConns[cid];
+  const placed = board.placements?.[nodeId];
+  if (!placed) return 0;
+  // placed can be a string id (preview uses allConns lookup) or a connector object (game stores inline)
+  const conn = typeof placed === 'string' ? (allConns?.[placed] ?? null) : placed;
   return conn ? effectiveMask(conn) : 0;
 }
 
@@ -114,8 +135,11 @@ export function getBoardEffects(board, allConns = {}) {
     // Sum connector values along the BFS path from source to this node.
     let sum = 0, nid = n.id;
     while (nid != null) {
-      const cid = board.placements?.[nid];
-      if (cid && allConns[cid]) sum += allConns[cid].value || 0;
+      const placed = board.placements?.[nid];
+      if (placed) {
+        const conn = typeof placed === 'string' ? (allConns?.[placed] ?? null) : placed;
+        if (conn) sum += conn.value || 0;
+      }
       nid = parent.get(nid);
     }
     if (!sum) continue;
@@ -137,91 +161,91 @@ export function getBoardEffects(board, allConns = {}) {
 
 const BOARD_TEMPLATES = [
   // ── T1 ──────────────────────────────────────────────────────────────────────
-  // "Омега": j1 forks 3 ways. Down branch passes through deb to an extra buf.
-  // Safe:  TEE(L+T+R) at j1 → b0,b1,b2 with no deb.
-  // Risky: CROSS at j1 → also j1→d0→b3 (+1 buf, deb activates).
+  // "Омега": j1 splits right (j2→buf) and up (buf), risky down (deb→buf).
+  // Half the nodes are routing juncs. Safe: TEE(L+T+R) at j1, STRAIGHT at j2.
+  // Risky: open B at j1 → d0→b2 (+deb, +buf).
   {
     tier: 1, name: 'Омега', maxConn: 4,
-    nodes: [
-      { id:'src', col:0, row:1, type:'src'  },
-      { id:'j1',  col:1, row:1, type:'junc' },
-      { id:'b0',  col:1, row:0, type:'buf',  stat: null },
-      { id:'b1',  col:2, row:1, type:'buf',  stat: null },
-      { id:'b2',  col:3, row:1, type:'buf',  stat: null },
-      { id:'d0',  col:1, row:2, type:'deb',  stat: null },
-      { id:'b3',  col:2, row:2, type:'buf',  stat: null },
-    ],
-    edges: [
-      { a:'src', b:'j1' },
-      { a:'j1',  b:'b0' },
-      { a:'j1',  b:'b1' },
-      { a:'b1',  b:'b2' },
-      { a:'j1',  b:'d0' },   // deb passthrough: wrong rotation → deb activates but b3 gained
-      { a:'d0',  b:'b3' },
-    ],
-  },
-
-  // "Сигма": j1 forks 3 ways. Down branch: deb passthrough to extra buf.
-  // Safe:  TEE(L+T+R) at j1, any R-open connector at j2 → b0,b1,b2, no deb.
-  // Risky: CROSS at j1 → also d0→b3 (+1 buf, deb activates).
-  {
-    tier: 1, name: 'Сигма', maxConn: 4,
     nodes: [
       { id:'src', col:0, row:1, type:'src'  },
       { id:'j1',  col:1, row:1, type:'junc' },
       { id:'j2',  col:2, row:1, type:'junc' },
       { id:'b0',  col:1, row:0, type:'buf',  stat: null },
       { id:'b1',  col:3, row:1, type:'buf',  stat: null },
-      { id:'b2',  col:3, row:0, type:'buf',  stat: null },
       { id:'d0',  col:1, row:2, type:'deb',  stat: null },
-      { id:'b3',  col:2, row:2, type:'buf',  stat: null },
+      { id:'b2',  col:2, row:2, type:'buf',  stat: null },
+    ],
+    edges: [
+      { a:'src', b:'j1'  },
+      { a:'j1',  b:'b0'  },
+      { a:'j1',  b:'j2'  },
+      { a:'j2',  b:'b1'  },
+      { a:'j1',  b:'d0'  },
+      { a:'d0',  b:'b2'  },
+    ],
+  },
+
+  // "Сигма": j1 branches via j3 (up buf), j2 (right buf), deb (down risky).
+  // Three routing juncs, three bufs — half-half split.
+  {
+    tier: 1, name: 'Сигма', maxConn: 4,
+    nodes: [
+      { id:'src', col:0, row:1, type:'src'  },
+      { id:'j1',  col:1, row:1, type:'junc' },
+      { id:'j3',  col:1, row:0, type:'junc' },
+      { id:'j2',  col:2, row:1, type:'junc' },
+      { id:'b0',  col:2, row:0, type:'buf',  stat: null },
+      { id:'b1',  col:3, row:1, type:'buf',  stat: null },
+      { id:'d0',  col:1, row:2, type:'deb',  stat: null },
+      { id:'b2',  col:2, row:2, type:'buf',  stat: null },
     ],
     edges: [
       { a:'src', b:'j1' },
-      { a:'j1',  b:'b0' },
+      { a:'j1',  b:'j3' },
+      { a:'j3',  b:'b0' },
       { a:'j1',  b:'j2' },
       { a:'j2',  b:'b1' },
-      { a:'b1',  b:'b2' },
-      { a:'j1',  b:'d0' },   // deb passthrough
-      { a:'d0',  b:'b3' },
+      { a:'j1',  b:'d0' },
+      { a:'d0',  b:'b2' },
     ],
   },
 
   // ── T2 ──────────────────────────────────────────────────────────────────────
-  // "Пульсар": two sources, vertical spine j1-j2-j3, lateral bufs.
-  // j4 hub: safe path to b3 (STRAIGHT L+R). Risky: T side → d0→b4 OR B side → d1→b5.
-  // Debs are on parallel paths to extra bufs — player chooses which to activate.
+  // "Пульсар": single source, long routing chain j1-j2-j3, two side branches,
+  // two risky deb arms off j3. Five juncs, five bufs — half-half.
+  // Safe: fill j1+j2+j3+j4+j5 → reach b0,b1,b2 with no deb.
+  // Risky: activate d0 or d1 at j3 for extra bufs.
   {
-    tier: 2, name: 'Пульсар', maxConn: 6,
+    tier: 2, name: 'Пульсар', maxConn: 5,
     nodes: [
-      { id:'src1', col:0, row:0, type:'src'  },
-      { id:'src2', col:0, row:2, type:'src'  },
-      { id:'j1',   col:1, row:0, type:'junc' },
-      { id:'j2',   col:1, row:1, type:'junc' },
-      { id:'j3',   col:1, row:2, type:'junc' },
-      { id:'b0',   col:2, row:0, type:'buf',  stat: null },
-      { id:'b1',   col:2, row:1, type:'buf',  stat: null },
-      { id:'b2',   col:2, row:2, type:'buf',  stat: null },
-      { id:'j4',   col:3, row:1, type:'junc' },
-      { id:'b3',   col:4, row:1, type:'buf',  stat: null },
-      { id:'d0',   col:3, row:0, type:'deb',  stat: null },
-      { id:'d1',   col:3, row:2, type:'deb',  stat: null },
-      { id:'b4',   col:4, row:0, type:'buf',  stat: null },
-      { id:'b5',   col:4, row:2, type:'buf',  stat: null },
+      { id:'src', col:0, row:1, type:'src'  },
+      { id:'j1',  col:1, row:1, type:'junc' },
+      { id:'j2',  col:2, row:1, type:'junc' },
+      { id:'j3',  col:3, row:1, type:'junc' },
+      { id:'j4',  col:1, row:0, type:'junc' },
+      { id:'j5',  col:1, row:2, type:'junc' },
+      { id:'b0',  col:4, row:1, type:'buf',  stat: null },
+      { id:'b1',  col:2, row:0, type:'buf',  stat: null },
+      { id:'b2',  col:2, row:2, type:'buf',  stat: null },
+      { id:'d0',  col:3, row:0, type:'deb',  stat: null },
+      { id:'d1',  col:3, row:2, type:'deb',  stat: null },
+      { id:'b3',  col:4, row:0, type:'buf',  stat: null },
+      { id:'b4',  col:4, row:2, type:'buf',  stat: null },
     ],
     edges: [
-      { a:'src1', b:'j1' }, { a:'src2', b:'j3' },
-      { a:'j1', b:'j2'  }, { a:'j2', b:'j3'  },
-      { a:'j1', b:'b0'  }, { a:'j2', b:'b1'  }, { a:'j3', b:'b2' },
-      { a:'b1', b:'j4'  }, { a:'j4', b:'b3'  },
-      { a:'j4', b:'d0'  }, { a:'d0', b:'b4'  },   // risky up: deb→extra buf
-      { a:'j4', b:'d1'  }, { a:'d1', b:'b5'  },   // risky down: deb→extra buf
+      { a:'src', b:'j1'  },
+      { a:'j1',  b:'j2'  }, { a:'j2', b:'j3'  }, { a:'j3', b:'b0' },
+      { a:'j1',  b:'j4'  }, { a:'j4', b:'b1'  },
+      { a:'j1',  b:'j5'  }, { a:'j5', b:'b2'  },
+      { a:'j3',  b:'d0'  }, { a:'d0', b:'b3'  },
+      { a:'j3',  b:'d1'  }, { a:'d1', b:'b4'  },
     ],
   },
 
-  // "Нова": hub j1. Debs are ON the path to upper/lower junctions and their bufs.
-  // Safe:  STRAIGHT(L+R) at j1 → b0→b2 only.
-  // Risky: open T → d0→j2→b1 (+1 buf, d0 deb). Open B → d1→j3→b3 (+1 buf, d1 deb).
+  // "Нова": hub j1, debs on the path to upper/lower routing juncs and their bufs.
+  // Safe: STRAIGHT(L+R) at j1 → j4→b2 only.
+  // Risky: open T → d0→j2→b1 (+deb). Open B → d1→j3→b3 (+deb).
+  // Four routing juncs, three bufs — routing-heavy.
   {
     tier: 2, name: 'Нова', maxConn: 5,
     nodes: [
@@ -229,7 +253,7 @@ const BOARD_TEMPLATES = [
       { id:'j1',  col:1, row:1, type:'junc' },
       { id:'d0',  col:1, row:0, type:'deb',  stat: null },
       { id:'d1',  col:1, row:2, type:'deb',  stat: null },
-      { id:'b0',  col:2, row:1, type:'buf',  stat: null },
+      { id:'j4',  col:2, row:1, type:'junc' },
       { id:'j2',  col:2, row:0, type:'junc' },
       { id:'j3',  col:2, row:2, type:'junc' },
       { id:'b1',  col:3, row:0, type:'buf',  stat: null },
@@ -238,53 +262,52 @@ const BOARD_TEMPLATES = [
     ],
     edges: [
       { a:'src', b:'j1' },
-      { a:'j1',  b:'d0' }, { a:'d0', b:'j2' },   // deb is on path to j2→b1
-      { a:'j1',  b:'d1' }, { a:'d1', b:'j3' },   // deb is on path to j3→b3
-      { a:'j1',  b:'b0' }, { a:'b0', b:'b2' },
-      { a:'j2',  b:'b1' }, { a:'j3', b:'b3' },
+      { a:'j1',  b:'d0' }, { a:'d0', b:'j2' }, { a:'j2', b:'b1' },
+      { a:'j1',  b:'d1' }, { a:'d1', b:'j3' }, { a:'j3', b:'b3' },
+      { a:'j1',  b:'j4' }, { a:'j4', b:'b2' },
     ],
   },
 
   // ── T3 ──────────────────────────────────────────────────────────────────────
-  // "Нексус": two sources, vertical spine, secondary stage.
-  // Debs are passthroughs: j5→d0→b5 and j6→d1→b6, j6→d2→b7.
-  // Right connector at j5/j6 routes to safe bufs. Wrong → deb activates, extra buf gained.
+  // "Нексус": two sources, 2×4 routing grid, bufs only at the ends.
+  // Eight routing juncs, four bufs, two debs — heavily routing-focused.
+  // Cross-links j2↔j5 and j5↔j8 let both sources reach deb paths.
+  // d0 gates b2 (risky); d1 gates b3 (risky). b0/b1 always safely reachable.
   {
-    tier: 3, name: 'Нексус', maxConn: 9,
+    tier: 3, name: 'Нексус', maxConn: 8,
     nodes: [
       { id:'src1', col:0, row:0, type:'src'  },
       { id:'src2', col:0, row:3, type:'src'  },
       { id:'j1',   col:1, row:0, type:'junc' },
-      { id:'j2',   col:1, row:1, type:'junc' },
-      { id:'j3',   col:1, row:2, type:'junc' },
-      { id:'j4',   col:1, row:3, type:'junc' },
-      { id:'b0',   col:2, row:0, type:'buf',  stat: null },
-      { id:'b1',   col:2, row:1, type:'buf',  stat: null },
-      { id:'b2',   col:2, row:2, type:'buf',  stat: null },
-      { id:'b3',   col:2, row:3, type:'buf',  stat: null },
-      { id:'j5',   col:3, row:1, type:'junc' },
-      { id:'j6',   col:3, row:2, type:'junc' },
-      { id:'b4',   col:4, row:1, type:'buf',  stat: null },
-      { id:'d0',   col:3, row:0, type:'deb',  stat: null },
-      { id:'d1',   col:4, row:2, type:'deb',  stat: null },
-      { id:'d2',   col:3, row:3, type:'deb',  stat: null },
-      { id:'b5',   col:4, row:0, type:'buf',  stat: null },
-      { id:'b6',   col:5, row:2, type:'buf',  stat: null },
-      { id:'b7',   col:4, row:3, type:'buf',  stat: null },
+      { id:'j2',   col:2, row:0, type:'junc' },
+      { id:'j4',   col:1, row:1, type:'junc' },
+      { id:'j5',   col:2, row:1, type:'junc' },
+      { id:'j7',   col:1, row:2, type:'junc' },
+      { id:'j8',   col:2, row:2, type:'junc' },
+      { id:'j9',   col:1, row:3, type:'junc' },
+      { id:'j10',  col:2, row:3, type:'junc' },
+      { id:'b0',   col:3, row:0, type:'buf',  stat: null },
+      { id:'b1',   col:3, row:1, type:'buf',  stat: null },
+      { id:'d0',   col:3, row:2, type:'deb',  stat: null },
+      { id:'d1',   col:3, row:3, type:'deb',  stat: null },
+      { id:'b2',   col:4, row:2, type:'buf',  stat: null },
+      { id:'b3',   col:4, row:3, type:'buf',  stat: null },
     ],
     edges: [
-      { a:'src1', b:'j1' }, { a:'src2', b:'j4' },
-      { a:'j1', b:'j2'  }, { a:'j2', b:'j3'   }, { a:'j3', b:'j4' },
-      { a:'j1', b:'b0'  }, { a:'j2', b:'b1'   }, { a:'j3', b:'b2' }, { a:'j4', b:'b3' },
-      { a:'b1', b:'j5'  }, { a:'b2', b:'j6'   },
-      { a:'j5', b:'b4'  }, { a:'j5', b:'d0'   }, { a:'d0', b:'b5' },
-      { a:'j6', b:'d1'  }, { a:'d1', b:'b6'   },
-      { a:'j6', b:'d2'  }, { a:'d2', b:'b7'   },
+      { a:'src1', b:'j1'  }, { a:'src2', b:'j9'  },
+      { a:'j1',   b:'j2'  }, { a:'j2',  b:'b0'   },
+      { a:'j1',   b:'j4'  }, { a:'j4',  b:'j5'   }, { a:'j5', b:'b1' },
+      { a:'j4',   b:'j7'  }, { a:'j7',  b:'j8'   }, { a:'j8', b:'d0' }, { a:'d0', b:'b2' },
+      { a:'j9',   b:'j10' }, { a:'j10', b:'d1'   }, { a:'d1', b:'b3' },
+      { a:'j9',   b:'j7'  },
+      { a:'j2',   b:'j5'  },
+      { a:'j5',   b:'j8'  },
     ],
   },
 
-  // "Матриця": single source, 3×2 junc grid. Debs sit between junctions and their bufs.
-  // Safe middle: j5→b1. Risky upper: j4→d0→b0→b3. Risky lower: j6→d1→b2→b4.
+  // "Матриця": single source, 2×3 junc grid, debs gate the bufs.
+  // Six routing juncs, six bufs, three debs — half-half on juncs/bufs.
+  // Safe middle: j5→b1. Upper risky: j4→d0→b0→b3. Lower risky: j6→d1→b2→b4.
   // Further risky: b1→d2→b5.
   {
     tier: 3, name: 'Матриця', maxConn: 9,
@@ -296,24 +319,24 @@ const BOARD_TEMPLATES = [
       { id:'j4',   col:2, row:0, type:'junc' },
       { id:'j5',   col:2, row:1, type:'junc' },
       { id:'j6',   col:2, row:2, type:'junc' },
-      { id:'b1',   col:3, row:1, type:'buf',  stat: null },
       { id:'d0',   col:3, row:0, type:'deb',  stat: null },
+      { id:'b1',   col:3, row:1, type:'buf',  stat: null },
       { id:'d1',   col:3, row:2, type:'deb',  stat: null },
       { id:'b0',   col:4, row:0, type:'buf',  stat: null },
-      { id:'b2',   col:4, row:2, type:'buf',  stat: null },
       { id:'d2',   col:4, row:1, type:'deb',  stat: null },
+      { id:'b2',   col:4, row:2, type:'buf',  stat: null },
       { id:'b3',   col:5, row:0, type:'buf',  stat: null },
-      { id:'b4',   col:5, row:2, type:'buf',  stat: null },
       { id:'b5',   col:5, row:1, type:'buf',  stat: null },
+      { id:'b4',   col:5, row:2, type:'buf',  stat: null },
     ],
     edges: [
-      { a:'src', b:'j2' },
-      { a:'j2',  b:'j1' }, { a:'j2', b:'j3'  },
-      { a:'j1',  b:'j4' }, { a:'j2', b:'j5'  }, { a:'j3', b:'j6' },
-      { a:'j4',  b:'j5' }, { a:'j5', b:'j6'  },
-      { a:'j4',  b:'d0' }, { a:'d0', b:'b0'  }, { a:'b0', b:'b3' },
-      { a:'j5',  b:'b1' }, { a:'b1', b:'d2'  }, { a:'d2', b:'b5' },
-      { a:'j6',  b:'d1' }, { a:'d1', b:'b2'  }, { a:'b2', b:'b4' },
+      { a:'src', b:'j2'  },
+      { a:'j2',  b:'j1'  }, { a:'j2', b:'j3'  },
+      { a:'j1',  b:'j4'  }, { a:'j2', b:'j5'  }, { a:'j3', b:'j6' },
+      { a:'j4',  b:'j5'  }, { a:'j5', b:'j6'  },
+      { a:'j4',  b:'d0'  }, { a:'d0', b:'b0'  }, { a:'b0', b:'b3' },
+      { a:'j5',  b:'b1'  }, { a:'b1', b:'d2'  }, { a:'d2', b:'b5' },
+      { a:'j6',  b:'d1'  }, { a:'d1', b:'b2'  }, { a:'b2', b:'b4' },
     ],
   },
 ];
@@ -323,11 +346,14 @@ export function rollBoard(tier) {
   const tpls = BOARD_TEMPLATES.filter(t => t.tier === tier);
   const tpl  = tpls[Math.floor(Math.random() * tpls.length)];
 
-  const shuffled = [...ALL_STATS].sort(() => Math.random() - 0.5);
-  let si = 0;
+  const shuffledBuf = [...BUF_STATS].sort(() => Math.random() - 0.5);
+  const shuffledDeb = [...ALL_STATS].sort(() => Math.random() - 0.5);
+  let bi = 0, di = 0;
   const nodes = (tpl.nodes || []).map(n => {
-    if ((n.type === 'buf' || n.type === 'deb') && n.stat === null)
-      return { ...n, stat: shuffled[si++ % shuffled.length] };
+    if (n.stat === null) {
+      if (n.type === 'buf') return { ...n, stat: shuffledBuf[bi++ % shuffledBuf.length] };
+      if (n.type === 'deb') return { ...n, stat: shuffledDeb[di++ % shuffledDeb.length] };
+    }
     return { ...n };
   });
 

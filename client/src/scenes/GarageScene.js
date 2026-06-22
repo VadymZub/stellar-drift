@@ -7,7 +7,7 @@ import { itemName, itemStats, itemSellPrice, itemIconKey, SLOT_KEY, creditUpgrad
 import { SHIPS, SHIP_BY_KEY, purchaseState, shipLevelCost, shipLevelCostGold, SHIP_MAX_LEVEL } from '../ships.js';
 import { PERK_MAP, RARITY_COLOR, RARITY_LABEL, rollPerk, perkBonus, creditUpgCost, starUpgCost, PERK_CREDIT_COST, PERK_STAR_COST, PERK_REROLL_BASE } from '../perks.js';
 import { prerenderTex } from '../utils/prerenderTex.js';
-import { rollBoard, getPoweredNodes, getBoardEffects, STAT_META, boardTierLabel, boardPreviewStats } from '../boards.js';
+import { rollBoard, rollConnector, CONNECTOR_SHAPES, getPoweredNodes, getBoardEffects, STAT_META, boardTierLabel, boardPreviewStats, bfsPowered, placedCount } from '../boards.js';
 
 // Гараж (хоткей G). Два таба:
 //  • КОРАБЛИ — витрина всего модельного ряда. Купленные активны, остальные серые,
@@ -413,6 +413,7 @@ export default class GarageScene extends Phaser.Scene {
     const gs = this.gs;
     const SZ = 68, GAP = 6, COLS = 4;
     const container = this.add.container(ax, ay);
+
     // Показываем все предметы, даже если их больше лимита (премиум истёк).
     // Пустые ячейки сверх лимита не рисуем — они исчезают при уборке предмета.
     const displaySlots = Math.max(items.length, maxSlots);
@@ -587,17 +588,22 @@ export default class GarageScene extends Phaser.Scene {
       }
     }
 
-    // ── Cover strips: clip overflow outside the visible grid area ─────────
-    // Bottom strip: clipped to [clipBotH] or exactly to panel bottom (не заходит в следующую секцию)
+    // ── Cover strips: full panel width, within panel bounds only ─────────────
     const { py: _py, ph: _ph, px: _px, pw: _pw } = this.box;
-    const botH = clipBotH != null ? clipBotH : Math.max(4, _py + _ph - ay - ah);
-    if (botH > 0) this.add.rectangle(ax, ay + ah, aw, botH, 0x080e1a).setOrigin(0, 0).setDepth(12);
-    // Right strip: закрывает overflow ячеек вправо (от правого края сетки до края панели)
+    const totalH = Math.ceil(displaySlots / COLS) * (SZ + GAP);
+    const bg = 0x080e1a;
+
+    // Top: full panel width, panel-top → grid-top (no strip outside panel)
+    if (ay > _py) this.add.rectangle(_px, _py, _pw, ay - _py, bg).setOrigin(0, 0).setDepth(12);
+    // Bottom: full panel width, grid-bot → panel-bot
+    const botH = _py + _ph - ay - ah;
+    if (botH > 0) this.add.rectangle(_px, ay + ah, _pw, botH, bg).setOrigin(0, 0).setDepth(12);
+    // Right strip: gap between grid right edge and panel right edge
     const rW = Math.max(0, _px + _pw - ax - aw);
-    if (rW > 0) this.add.rectangle(ax + aw, ay, rW, ah, 0x080e1a).setOrigin(0, 0).setDepth(12);
+    if (rW > 0) this.add.rectangle(ax + aw, ay, rW, ah, bg).setOrigin(0, 0).setDepth(12);
 
     // ── Wheel scroll + scrollbar ───────────────────────────────────────────
-    const totalH = Math.ceil(displaySlots / COLS) * (SZ + GAP);
+    // totalH already computed above
     if (totalH > ah) {
       const startY = ay, minY = ay - (totalH - ah);
       const SBW = 3, thumbH = Math.max(20, Math.round(ah * ah / totalH));
@@ -951,7 +957,7 @@ export default class GarageScene extends Phaser.Scene {
     const gs = this.gs;
     const cargoMax = this._cargoMax();
     const whCount = (gs.warehouse || []).length, whMax = this._whMax();
-    this.add.text(rx, py + 60, `ТРЮМ  ${gs.inventory.length}/${cargoMax}`, this.O('15px', '#ffe0b2'));
+    this.add.text(rx, py + 60, `ТРЮМ  ${gs.inventory.length}/${cargoMax}`, this.O('15px', '#ffe0b2')).setDepth(14);
 
     // Инвентарь на всю доступную высоту (склад убран — отдельное окно C)
     const BTN_H = 34;
@@ -1572,366 +1578,533 @@ export default class GarageScene extends Phaser.Scene {
   renderBoardsTab() {
     const { px, py, pw, ph } = this.box;
     const gs = this.gs;
-    gs.boardInventory = gs.boardInventory ?? [];
-    gs.equippedBoard  = gs.equippedBoard  ?? null;
-    gs._boardViewIdx  = Math.min(gs._boardViewIdx ?? 0, Math.max(0, gs.boardInventory.length - 1));
+    gs.boardInventory     = gs.boardInventory ?? [];
+    gs.connectorInventory = gs.connectorInventory ?? [];
+    gs.equippedBoard      = gs.equippedBoard ?? null;
+    gs._boardViewIdx      = Math.min(gs._boardViewIdx ?? 0, Math.max(0, gs.boardInventory.length - 1));
+    gs._selectedConnIdx   = gs._selectedConnIdx ?? -1;
+
+    try { this.input.mouse?.disableContextMenu(); } catch (_) {}
 
     const contentY = py + 55;
     const contentH = ph - 67;
-    const listW    = 190;
-    const effW     = 195;
+    const listW    = 175;
+    const connW    = 182;
     const gap      = 8;
     const listX    = px + 14;
     const pcbX     = listX + listW + gap;
-    const pcbW     = pw - listW - effW - gap * 4 - 28;
-    const effX     = pcbX + pcbW + gap;
+    const pcbW     = pw - listW - connW - gap * 4 - 28;
+    const connX    = pcbX + pcbW + gap;
     const pcbCX    = pcbX + pcbW / 2;
     const pcbCY    = contentY + contentH / 2;
 
-    // Separators
+    this._boardListX = listX;   this._boardListY = contentY;
+    this._boardListW = listW;   this._boardListH = contentH;
+    this._boardPcbCX = pcbCX;   this._boardPcbCY = pcbCY;
+    this._boardPcbW  = pcbW;    this._boardPcbH  = contentH;
+    this._boardConnX = connX;   this._boardConnY = contentY;
+    this._boardConnW = connW;   this._boardConnH = contentH;
+
     const sg = this.add.graphics();
     sg.lineStyle(1, 0x1a3a5a, 0.6);
     sg.lineBetween(pcbX - 4, contentY, pcbX - 4, contentY + contentH);
-    sg.lineBetween(effX - 4, contentY, effX - 4, contentY + contentH);
+    sg.lineBetween(connX - 4, contentY, connX - 4, contentY + contentH);
 
-    // Empty state hint
     if (gs.boardInventory.length === 0) {
       this.add.text(pcbCX, pcbCY - 20, '[ Плат нет ]',
         this.F('16px', '#2a4a5a')).setOrigin(0.5).setDepth(14);
-      this.add.text(pcbCX, pcbCY + 14, 'Выбивают из мобов и данжей',
+      this.add.text(pcbCX, pcbCY + 14, 'Выпадают из мобов и данжей',
         this.F('12px', '#1a3040')).setOrigin(0.5).setDepth(14);
     }
 
     this._pcbObjs  = [];
     this._effObjs  = [];
     this._listObjs = [];
-
-    this._boardListX  = listX;
-    this._boardListY  = contentY;
-    this._boardListW  = listW;
-    this._boardListH  = contentH;
-    this._boardPcbCX  = pcbCX;
-    this._boardPcbCY  = pcbCY;
-    this._boardPcbW   = pcbW;
-    this._boardPcbH   = contentH;
-    this._boardEffX   = effX;
-    this._boardEffW   = effW;
-    this._boardEffY   = contentY;
-    this._boardEffH   = contentH;
+    this._connObjs = [];
 
     this._drawBoardList();
     const selBoard = gs.boardInventory[gs._boardViewIdx] ?? null;
-    this._drawPCBAndEffects(selBoard);
+    this._drawPCB(selBoard);
+    this._drawConnPanel(selBoard);
   }
 
   _drawBoardList() {
     (this._listObjs || []).forEach(o => o?.destroy());
     this._listObjs = [];
-    const gs  = this.gs;
-    const inv  = gs.boardInventory;
-    const lx   = this._boardListX, ly = this._boardListY;
-    const lw   = this._boardListW, lh = this._boardListH;
-    const ITEM_H = 70, SCROLL_W = 8;
-    const visH  = lh;
-    const maxScroll = Math.max(0, inv.length * ITEM_H - visH);
+    const gs       = this.gs;
+    const inv      = gs.boardInventory;
+    const lx       = this._boardListX, ly = this._boardListY;
+    const lw       = this._boardListW, lh = this._boardListH;
+    const ITEM_H   = 68;
+    const SCROLL_W = 8;
+    const listAreaH = lh - 44;
+    const maxScroll = Math.max(0, inv.length * ITEM_H - listAreaH);
     gs._boardListScroll = Math.min(gs._boardListScroll ?? 0, maxScroll);
 
-    const mask = this.add.graphics();
-    mask.fillStyle(0xffffff);
-    mask.fillRect(lx, ly, lw, lh);
-    const maskObj = mask.createGeometryMask();
-    this._listObjs.push(mask);
-
+    // No geometry mask (createGeometryMask not supported in WebGL) — clip by position only
     const TIER_COLOR = [0, 0x44ff88, 0x44aaff, 0xcc44ff];
     for (let i = 0; i < inv.length; i++) {
-      const board  = inv[i];
-      const iy     = ly + i * ITEM_H - gs._boardListScroll;
-      if (iy + ITEM_H < ly || iy > ly + lh) continue;
+      const board = inv[i];
+      const iy    = ly + i * ITEM_H - gs._boardListScroll;
+      // Skip items entirely outside the scrollable area
+      if (iy + ITEM_H <= ly || iy >= ly + listAreaH) continue;
 
       const isSelected = i === gs._boardViewIdx;
       const isEquipped = gs.equippedBoard?.id === board.id;
       const bgCol = isSelected ? 0x0e2a44 : 0x060f1a;
       const bg = this.add.rectangle(lx + lw / 2, iy + ITEM_H / 2, lw - 2, ITEM_H - 2, bgCol, 0.95)
-        .setDepth(14).setMask(maskObj);
+        .setDepth(14);
       if (isSelected) bg.setStrokeStyle(1, COLORS.primary, 0.8);
       this._listObjs.push(bg);
 
-      // Tier badge
-      const tc = TIER_COLOR[board.tier] || 0xffffff;
-      const tb = this.add.text(lx + 8, iy + 8, `T${board.tier}`,
-        this.O('11px', `#${tc.toString(16).padStart(6,'0')}`))
-        .setDepth(15).setMask(maskObj);
+      const tc    = TIER_COLOR[board.tier] || 0xffffff;
+      const ul    = board.upgradeLevel ?? 0;
+      const tb    = this.add.text(lx + 8, iy + 6,
+        `T${board.tier} ${board.name}${ul > 0 ? ' ↑' + ul : ''}`,
+        this.O('11px', `#${tc.toString(16).padStart(6, '0')}`)).setDepth(15);
       this._listObjs.push(tb);
 
-      // Preview stats
-      const preview = boardPreviewStats(board);
-      const pt = this.add.text(lx + 8, iy + 26, preview,
-        this.F('10px', '#8abccc')).setDepth(15).setMask(maskObj).setWordWrapWidth(lw - 16);
+      const placed = Object.keys(board.placements || {}).length;
+      const ci = this.add.text(lx + 8, iy + 22,
+        `Слоты: ${board.maxConn}  Занято: ${placed}`,
+        this.F('9px', '#5a8aaa')).setDepth(15);
+      this._listObjs.push(ci);
+
+      const preview = boardPreviewStats(board).split(' · ').slice(0, 2).join(' · ');
+      const pt = this.add.text(lx + 8, iy + 36, preview,
+        this.F('9px', '#8abccc')).setDepth(15).setWordWrapWidth(lw - 16);
       this._listObjs.push(pt);
 
       if (isEquipped) {
-        const et = this.add.text(lx + lw - 8, iy + 8, 'АКТИВНА',
-          this.F('10px', '#44ff88')).setOrigin(1, 0).setDepth(15).setMask(maskObj);
+        const et = this.add.text(lx + lw - 8, iy + 6, '✓ АКТИВНА',
+          this.F('9px', '#44ff88')).setOrigin(1, 0).setDepth(15);
         this._listObjs.push(et);
       }
 
-      // Click zone
       const zone = this.add.rectangle(lx + lw / 2, iy + ITEM_H / 2, lw - 2, ITEM_H - 2, 0, 0)
-        .setDepth(16).setInteractive({ useHandCursor: true }).setMask(maskObj);
+        .setDepth(16).setInteractive({ useHandCursor: true });
       zone.on('pointerdown', () => {
         gs._boardViewIdx = i;
         this._drawBoardList();
-        this._drawPCBAndEffects(gs.boardInventory[i]);
+        const b = gs.boardInventory[i];
+        this._drawPCB(b);
+        this._drawConnPanel(b);
       });
       this._listObjs.push(zone);
     }
 
     // Scrollbar
-    if (inv.length * ITEM_H > lh) {
-      const thumbH = Math.max(24, lh * (lh / (inv.length * ITEM_H)));
-      const thumbY = ly + (gs._boardListScroll / maxScroll) * (lh - thumbH);
-      const sbg = this.add.rectangle(lx + lw - 4, ly + lh / 2, SCROLL_W, lh, 0x0a1a28, 0.6).setDepth(15);
+    if (inv.length * ITEM_H > listAreaH) {
+      const thumbH = Math.max(24, listAreaH * (listAreaH / (inv.length * ITEM_H)));
+      const frac   = maxScroll > 0 ? gs._boardListScroll / maxScroll : 0;
+      const thumbY = ly + frac * (listAreaH - thumbH);
+      const sbg = this.add.rectangle(lx + lw - 4, ly + listAreaH / 2, SCROLL_W, listAreaH, 0x0a1a28, 0.6).setDepth(15);
       const sth = this.add.rectangle(lx + lw - 4, thumbY + thumbH / 2, SCROLL_W - 2, thumbH, 0x1e4a6a, 0.9).setDepth(15);
       this._listObjs.push(sbg, sth);
     }
 
-    // Wheel scroll
+    // Wheel scroll (shared: board list left, connector panel right)
     if (!this._boardWheelBound) {
       this._boardWheelBound = true;
-      this.input.on('wheel', (_p, _go, _dx, dy) => {
-        const maxSc = Math.max(0, (gs.boardInventory.length) * ITEM_H - lh);
-        gs._boardListScroll = Math.max(0, Math.min(maxSc, (gs._boardListScroll ?? 0) + dy * 0.5));
+      this.input.on('wheel', (ptr, _go, _dx, dy) => {
+        if (ptr.x >= (this._boardConnX ?? Infinity)) {
+          const ci  = gs.connectorInventory ?? [];
+          const vH  = 4 * 44;
+          const mSc = Math.max(0, Math.ceil(ci.length / 4) * 44 - vH);
+          gs._connScroll = Math.max(0, Math.min(mSc, (gs._connScroll ?? 0) + dy * 0.5));
+          const cur = (gs.boardInventory ?? [])[gs._boardViewIdx ?? 0] ?? null;
+          this._drawConnPanel(cur);
+        } else {
+          const aH  = (this._boardListH ?? 0) - 44;
+          const mSc = Math.max(0, gs.boardInventory.length * ITEM_H - aH);
+          gs._boardListScroll = Math.max(0, Math.min(mSc, (gs._boardListScroll ?? 0) + dy * 0.5));
+          this._drawBoardList();
+        }
+      });
+    }
+
+    // Upgrade button fixed at bottom of list panel
+    const selBoard = gs.boardInventory[gs._boardViewIdx] ?? null;
+    const upgY     = ly + lh - 36;
+    const upgCost  = selBoard ? selBoard.tier * 10 : 0;
+    const canUpg   = !!(selBoard && gs.starGold >= upgCost);
+    const upgBg    = this.add.rectangle(lx + lw / 2, upgY, lw - 4, 30,
+      canUpg ? 0x0a1a30 : 0x080d18, 0.9)
+      .setStrokeStyle(1, canUpg ? 0xcc44ff : 0x223344, 0.8).setDepth(15);
+    const upgT = this.add.text(lx + lw / 2, upgY,
+      selBoard ? `УЛУЧШИТЬ  ${upgCost} ⭐` : 'УЛУЧШИТЬ',
+      this.F('10px', canUpg ? '#cc44ff' : '#2a4a5a')).setOrigin(0.5).setDepth(16);
+    this._listObjs.push(upgBg, upgT);
+
+    if (canUpg && selBoard) {
+      upgBg.setInteractive({ useHandCursor: true });
+      upgBg.on('pointerover', () => upgBg.setAlpha(0.7));
+      upgBg.on('pointerout',  () => upgBg.setAlpha(1));
+      upgBg.on('pointerdown', () => {
+        gs.starGold -= upgCost;
+        selBoard.maxConn = (selBoard.maxConn || 0) + 1;
+        selBoard.upgradeLevel = (selBoard.upgradeLevel ?? 0) + 1;
         this._drawBoardList();
+        this._drawConnPanel(selBoard);
       });
     }
   }
 
-  _drawPCBAndEffects(board) {
-    (this._pcbObjs  || []).forEach(o => o?.destroy());
-    (this._effObjs  || []).forEach(o => o?.destroy());
+  _drawPCB(board) {
+    (this._pcbObjs || []).forEach(o => o?.destroy());
     this._pcbObjs = [];
-    this._effObjs = [];
     if (!board) return;
 
-    this._drawPCB(board);
-    this._drawEffectsPanel(board);
-  }
+    const gs   = this.gs;
+    const cx   = this._boardPcbCX;
+    const cy   = this._boardPcbCY;
+    const maxW = this._boardPcbW - 20;
+    const maxH = this._boardPcbH - 90;
 
-  _drawPCB(board) {
-    const gs     = this.gs;
-    const cx     = this._boardPcbCX;
-    const cy     = this._boardPcbCY;
-    const maxW   = this._boardPcbW - 20;
-    const maxH   = this._boardPcbH - 80;
-
-    // Tier title
     const TIER_COL = ['', '#44ff88', '#44aaff', '#cc44ff'];
-    const tt = this.add.text(cx, this._boardEffY + 10, boardTierLabel(board.tier),
-      this.O('13px', TIER_COL[board.tier] || '#ffffff')).setOrigin(0.5, 0).setDepth(14);
+    const placed   = Object.keys(board.placements || {}).length;
+    const tt = this.add.text(cx, this._boardConnY + 10,
+      `${board.name}  T${board.tier}  [${placed} / ${board.maxConn}]`,
+      this.O('13px', TIER_COL[board.tier] || '#ffffff')).setOrigin(0.5, 0).setDepth(16);
     this._pcbObjs.push(tt);
 
-    // Compute node pixel positions
-    const cols  = board.nodes.map(n => n.col);
-    const rows  = board.nodes.map(n => n.row);
-    const minC  = Math.min(...cols), maxC = Math.max(...cols);
-    const minR  = Math.min(...rows), maxR = Math.max(...rows);
+    const cols = board.nodes.map(n => n.col);
+    const rows = board.nodes.map(n => n.row);
+    const minC = Math.min(...cols), maxC = Math.max(...cols);
+    const minR = Math.min(...rows), maxR = Math.max(...rows);
     const spanC = Math.max(1, maxC - minC);
     const spanR = Math.max(1, maxR - minR);
 
-    const CELL = Math.min(90, Math.floor(Math.min(maxW / spanC, maxH / spanR)));
-    const NR   = Math.round(CELL * 0.24);
+    const CELL = Math.min(102, Math.floor(Math.min(maxW / spanC, maxH / spanR)));
+    const NR   = Math.round(CELL * 0.28);
     const ox   = cx - spanC * CELL / 2;
     const oy   = cy - spanR * CELL / 2 + 16;
-
     const npos = n => ({ x: ox + (n.col - minC) * CELL, y: oy + (n.row - minR) * CELL });
 
-    const powered  = getPoweredNodes(board);
-    const cutSet   = new Set((board.cuts || []).map(([a,b]) => `${Math.min(a,b)}-${Math.max(a,b)}`));
-    const nodeMap  = Object.fromEntries(board.nodes.map(n => [n.id, n]));
-    const posMap   = Object.fromEntries(board.nodes.map(n => [n.id, npos(n)]));
+    const { powered } = bfsPowered(board, {});
+    const posMap = Object.fromEntries(board.nodes.map(n => [n.id, npos(n)]));
 
-    // Colors
-    const C_TRACK_ON  = 0x00ee66;
-    const C_TRACK_CUT = 0x2a1010;
-    const C_TRACK_DIM = 0x1a3a2a;
-    const C_SRC       = 0xffffff;
-    const C_CON_ON    = 0x00ccff;
-    const C_BUF_ON    = 0x00dd66;
-    const C_DEB_ON    = 0xff4444;
-    const C_DIM       = 0x223322;
-    const C_DEB_DIM   = 0x442222;
+    const C_SRC_ON   = 0xffffff;
+    const C_JUNC_ON  = 0x00ccff;
+    const C_BUF_ON   = 0x00dd66;
+    const C_DEB_ON   = 0xff4444;
+    const C_CONN_COL = 0xffcc44;
+    const C_DIM_BLUE = 0x2a5060;   // visible dim for junc/buf
+    const C_DEB_DIM  = 0x6a2222;   // visible dim for deb
+    const SHAPE_SYM  = { end: '╸', straight: '━', corner: '┛', tee: '┫', cross: '╋' };
 
-    const g = this.add.graphics().setDepth(14);
-    this._pcbObjs.push(g);
-
-    // Draw edges
-    for (const [a, b] of board.edges) {
-      const pa = posMap[a], pb = posMap[b];
+    // Edges — depth 13 (drawn below nodes)
+    const ge = this.add.graphics().setDepth(13);
+    this._pcbObjs.push(ge);
+    for (const e of board.edges) {
+      const pa = posMap[e.a], pb = posMap[e.b];
       if (!pa || !pb) continue;
-      const key = `${Math.min(a,b)}-${Math.max(a,b)}`;
-      const isCut    = cutSet.has(key);
-      const bothPow  = powered.has(a) && powered.has(b);
-      const col = isCut ? C_TRACK_CUT : bothPow ? C_TRACK_ON : C_TRACK_DIM;
-      g.lineStyle(isCut ? 2 : 4, col, isCut ? 0.5 : 0.9);
-      g.lineBetween(pa.x, pa.y, pb.x, pb.y);
-      if (isCut) {
-        // X marker at midpoint
-        const mx = (pa.x + pb.x) / 2, my = (pa.y + pb.y) / 2, sz = 5;
-        g.lineStyle(2, 0xff2222, 0.8);
-        g.lineBetween(mx - sz, my - sz, mx + sz, my + sz);
-        g.lineBetween(mx + sz, my - sz, mx - sz, my + sz);
+      const bothPow = powered.has(e.a) && powered.has(e.b);
+      ge.lineStyle(bothPow ? 4 : 2, bothPow ? 0x00ee66 : 0x2a5040, bothPow ? 1.0 : 0.75);
+      ge.lineBetween(pa.x, pa.y, pb.x, pb.y);
+    }
+
+    // Node circles — depth 14 (covers edge ends cleanly)
+    const gn = this.add.graphics().setDepth(14);
+    this._pcbObjs.push(gn);
+
+    // Per-node text and zones — depth 16+ (always above circles and edges)
+    for (const n of board.nodes) {
+      const { x, y } = posMap[n.id];
+      const isPow  = powered.has(n.id);
+      // NOTE: conn/hasCon captured at render time for drawing only.
+      // The pointerdown handler always re-reads live state.
+      const conn   = board.placements?.[n.id] ?? null;
+      const hasCon = !!conn;
+
+      let fc;
+      if      (n.type === 'src')  fc = C_SRC_ON;
+      else if (n.type === 'junc') fc = isPow ? (hasCon ? C_CONN_COL : C_JUNC_ON) : C_DIM_BLUE;
+      else if (n.type === 'buf')  fc = isPow && hasCon ? C_BUF_ON : C_DIM_BLUE;
+      else                        fc = isPow ? C_DEB_ON : C_DEB_DIM;
+
+      const r = n.type === 'src' ? NR + 2 : NR;
+      gn.fillStyle(0x040c18, 1.0);
+      gn.fillCircle(x, y, r);
+      gn.lineStyle(hasCon ? 3 : 2, fc, isPow ? 1.0 : 0.65);
+      gn.strokeCircle(x, y, r);
+      gn.fillStyle(fc, isPow ? 0.22 : 0.14);
+      gn.fillCircle(x, y, r - 2);
+
+      // Icon — depth 16
+      let icon = '';
+      if      (n.type === 'src')  icon = '⚡';
+      else if (hasCon)            icon = SHAPE_SYM[conn.shape] ?? '?';
+      else if (n.type === 'junc') icon = '+';
+      else if (n.type === 'buf')  icon = '○';
+      else                        icon = '✕';
+
+      const fcS = `#${fc.toString(16).padStart(6, '0')}`;
+      const sz  = NR > 20 ? '12px' : '10px';
+      const it  = this.add.text(x, y, icon, this.F(sz, fcS)).setOrigin(0.5).setDepth(16);
+      this._pcbObjs.push(it);
+
+      // Value label under node — depth 16
+      if (hasCon) {
+        const vt = this.add.text(x, y + r + 3, `+${conn.value}%`,
+          this.F('9px', '#ffcc44')).setOrigin(0.5, 0).setDepth(16);
+        this._pcbObjs.push(vt);
       }
 
-      // Interactive hit zone at midpoint
-      const mx = (pa.x + pb.x) / 2, my = (pa.y + pb.y) / 2;
-      const isHoriz = Math.abs(pb.y - pa.y) < 4;
-      const zW = isHoriz ? Math.abs(pb.x - pa.x) - NR * 1.8 : NR * 1.6;
-      const zH = isHoriz ? NR * 1.6 : Math.abs(pb.y - pa.y) - NR * 1.8;
-      if (zW > 4 && zH > 4) {
-        const zone = this.add.rectangle(mx, my, zW, zH, 0xffffff, 0)
-          .setDepth(16).setInteractive({ useHandCursor: true });
-        zone.on('pointerover',  () => zone.setFillStyle(0xffffff, 0.07));
-        zone.on('pointerout',   () => zone.setFillStyle(0xffffff, 0));
-        zone.on('pointerdown',  () => {
-          const cuts = board.cuts || [];
-          const ck = `${Math.min(a,b)}-${Math.max(a,b)}`;
-          const idx = cuts.findIndex(([x,y]) => `${Math.min(x,y)}-${Math.max(x,y)}` === ck);
-          if (idx >= 0) cuts.splice(idx, 1); else cuts.push([a, b]);
-          board.cuts = cuts;
-          // Sync equippedBoard reference if same id
+      // Stat label — depth 16
+      if (n.stat && STAT_META[n.stat]) {
+        const lbl  = STAT_META[n.stat].label.split(' ')[0];
+        const lCol = isPow ? STAT_META[n.stat].color : fcS;
+        const lt   = this.add.text(x, y + r + (hasCon ? 14 : 4), lbl,
+          this.F('9px', lCol)).setOrigin(0.5, 0).setDepth(16);
+        this._pcbObjs.push(lt);
+      }
+
+      // Interactive zone — depth 17, reads live state on every click
+      if (n.type === 'junc' || n.type === 'buf') {
+        const zone = this.add.rectangle(x, y, NR * 2 + 6, NR * 2 + 6, 0, 0)
+          .setDepth(17).setInteractive({ useHandCursor: true });
+        zone.on('pointerdown', (ptr) => {
+          const liveConn = board.placements?.[n.id] ?? null;  // always fresh
+          const isRight  = ptr.rightButtonDown?.() || ptr.event?.button === 2;
+          if (isRight) {
+            if (liveConn) {
+              (gs.connectorInventory = gs.connectorInventory ?? []).push({ ...liveConn });
+              delete board.placements[n.id];
+            }
+          } else if (liveConn) {
+            const maxRot = CONNECTOR_SHAPES[liveConn.shape]?.maxRot ?? 4;
+            liveConn.rotation = ((liveConn.rotation ?? 0) + 1) % maxRot;
+          } else {
+            const si = gs._selectedConnIdx ?? -1;
+            const ci = gs.connectorInventory ?? [];
+            if (si >= 0 && si < ci.length && placedCount(board) < board.maxConn) {
+              board.placements[n.id] = { ...ci[si] };
+              ci.splice(si, 1);
+              gs._selectedConnIdx = -1;  // deselect after placing
+            }
+          }
           if (gs.equippedBoard?.id === board.id) {
             gs.equippedBoard = board;
             gs.player?.recomputeStats?.();
           }
-          this._drawPCBAndEffects(board);
+          this._drawPCB(board);
+          this._drawConnPanel(board);
           this._drawBoardList();
         });
         this._pcbObjs.push(zone);
       }
     }
 
-    // Draw nodes
-    for (const n of board.nodes) {
-      const { x, y } = posMap[n.id];
-      const isPow = powered.has(n.id);
-      let fillCol;
-      if      (n.type === 'src') fillCol = isPow ? C_SRC      : 0x555555;
-      else if (n.type === 'con') fillCol = isPow ? C_CON_ON   : C_DIM;
-      else if (n.type === 'buf') fillCol = isPow ? C_BUF_ON   : C_DIM;
-      else                       fillCol = isPow ? C_DEB_ON   : C_DEB_DIM;
-
-      const borderCol = isPow ? fillCol : 0x334433;
-      g.fillStyle(0x030a0f, 0.95);
-      g.fillCircle(x, y, NR);
-      g.lineStyle(2, borderCol, isPow ? 0.9 : 0.3);
-      g.strokeCircle(x, y, NR);
-      g.fillStyle(fillCol, isPow ? 0.25 : 0.08);
-      g.fillCircle(x, y, NR - 2);
-
-      // Icon / label
-      let icon = '';
-      if (n.type === 'src') icon = '⚡';
-      else if (n.type === 'con') icon = `+${n.value}`;
-      else if (n.stat) {
-        const sign = n.value > 0 ? '+' : '';
-        icon = `${sign}${n.value}%`;
-      }
-      const iconCol = isPow ? `#${fillCol.toString(16).padStart(6,'0')}` : '#334433';
-      const sz = NR > 18 ? '10px' : '9px';
-      const it = this.add.text(x, y, icon, this.F(sz, iconCol))
-        .setOrigin(0.5).setDepth(15);
-      this._pcbObjs.push(it);
-
-      // Stat name below node (for buf/deb)
-      if (n.stat && STAT_META[n.stat]) {
-        const label  = STAT_META[n.stat].label.split(' ')[0]; // first word only
-        const lCol   = isPow ? STAT_META[n.stat].color : '#334433';
-        const lt = this.add.text(x, y + NR + 4, label, this.F('8px', lCol))
-          .setOrigin(0.5, 0).setDepth(15);
-        this._pcbObjs.push(lt);
-      }
-    }
+    const hint = this.add.text(cx, this._boardConnY + this._boardConnH - 8,
+      'ЛКМ: поставить / повернуть   ПКМ: убрать',
+      this.F('9px', '#1a4a3a')).setOrigin(0.5, 1).setDepth(16);
+    this._pcbObjs.push(hint);
   }
 
-  _drawEffectsPanel(board) {
-    const ex  = this._boardEffX;
-    const ey  = this._boardEffY;
-    const ew  = this._boardEffW;
-    const eh  = this._boardEffH;
-    const gs  = this.gs;
+  _drawConnPanel(board) {
+    (this._connObjs || []).forEach(o => o?.destroy());
+    (this._effObjs  || []).forEach(o => o?.destroy());
+    this._connObjs = [];
+    this._effObjs  = [];
 
-    const title = this.add.text(ex, ey + 6, 'ЭФФЕКТЫ', this.O('12px', '#4dd0e1'))
-      .setDepth(14);
-    this._effObjs.push(title);
+    const gs   = this.gs;
+    const cx   = this._boardConnX;
+    const cy   = this._boardConnY;
+    const cw   = this._boardConnW;
+    const ch   = this._boardConnH;
+    const inv  = gs.connectorInventory ?? [];
 
-    const effects  = getBoardEffects(board);
-    const powered  = getPoweredNodes(board);
-    let row = 0;
+    const title = this.add.text(cx + cw / 2, cy + 8, 'КОННЕКТОРЫ',
+      this.O('12px', '#4dd0e1')).setOrigin(0.5, 0).setDepth(14);
+    this._connObjs.push(title);
 
-    // All nodes with stats (powered or not)
-    for (const n of board.nodes) {
-      if (!n.stat) continue;
-      const isPow  = powered.has(n.id);
-      const meta   = STAT_META[n.stat];
-      if (!meta) continue;
-      const eff    = effects[n.stat] ?? 0;
-      const sign   = eff >= 0 ? '+' : '';
-      const col    = !isPow ? '#2a4a3a' : eff >= 0 ? '#44ff88' : '#ff5555';
-      const label  = meta.label;
-      const valStr = isPow ? `${sign}${Math.round(eff)}%` : `+${Math.abs(n.value)}%`;
+    // ─── Connector grid (4 cols × 4 rows visible) ───
+    const COLS   = 4;
+    const CARD_W = Math.floor((cw - 14) / COLS);
+    const CARD_H = 44;
+    const gridY  = cy + 28;
+    const maxRows = 4;
+    const visH   = maxRows * CARD_H;
 
-      const ly = ey + 30 + row * 24;
-      const lt = this.add.text(ex, ly, label, this.F('11px', isPow ? '#8abccc' : '#2a5a4a'))
+    gs._connScroll  = gs._connScroll ?? 0;
+    const totalRows = Math.ceil(inv.length / COLS);
+    const maxScroll = Math.max(0, totalRows * CARD_H - visH);
+    gs._connScroll  = Math.min(gs._connScroll, maxScroll);
+
+    // No geometry mask (WebGL unsupported) — enforce hard clip by position
+    const TIER_COLS = [0, 0x44ff88, 0x44aaff, 0xcc44ff];
+    const SHAPE_SYM = { end: '╸', straight: '━', corner: '┛', tee: '┫', cross: '╋' };
+
+    for (let i = 0; i < inv.length; i++) {
+      const conn  = inv[i];
+      const ci    = i % COLS;
+      const ri    = Math.floor(i / COLS);
+      const cardX = cx + 7 + ci * CARD_W;
+      const cardY = gridY + ri * CARD_H - gs._connScroll;
+      // Strict clip: only show cards fully inside the visible area
+      if (cardY + CARD_H <= gridY || cardY >= gridY + visH) continue;
+
+      const isSel = i === (gs._selectedConnIdx ?? -1);
+      const tc    = TIER_COLS[conn.tier] || 0xffffff;
+      const bg    = this.add.rectangle(cardX + CARD_W / 2, cardY + CARD_H / 2,
+        CARD_W - 2, CARD_H - 2, isSel ? 0x0e2a44 : 0x050c14, 0.9)
+        .setStrokeStyle(isSel ? 2 : 1, tc, isSel ? 0.9 : 0.35)
         .setDepth(14);
-      const vt = this.add.text(ex + ew - 4, ly, valStr, this.F('11px', col))
-        .setOrigin(1, 0).setDepth(14);
-      this._effObjs.push(lt, vt);
-      row++;
+      const sym = this.add.text(cardX + CARD_W / 2, cardY + 7,
+        SHAPE_SYM[conn.shape] ?? '?',
+        this.O('12px', `#${tc.toString(16).padStart(6, '0')}`))
+        .setOrigin(0.5, 0).setDepth(15);
+      const vt = this.add.text(cardX + CARD_W / 2, cardY + 26,
+        `+${conn.value}%`, this.F('9px', '#8abccc'))
+        .setOrigin(0.5, 0).setDepth(15);
+      const zone = this.add.rectangle(cardX + CARD_W / 2, cardY + CARD_H / 2,
+        CARD_W - 2, CARD_H - 2, 0, 0)
+        .setDepth(16).setInteractive({ useHandCursor: true });
+      zone.on('pointerdown', () => {
+        gs._selectedConnIdx = isSel ? -1 : i;
+        this._drawConnPanel(board);
+      });
+      this._connObjs.push(bg, sym, vt, zone);
     }
 
-    // Separator
-    const sepY = ey + 32 + row * 24;
-    const sg = this.add.graphics().setDepth(14);
-    sg.lineStyle(1, 0x1a3a5a, 0.5);
-    sg.lineBetween(ex, sepY, ex + ew - 8, sepY);
-    this._effObjs.push(sg);
-
-    // Connector total
-    let conTotal = 0;
-    for (const n of board.nodes) {
-      if (n.type === 'con' && powered.has(n.id)) conTotal += n.value || 0;
-    }
-    if (conTotal > 0) {
-      const ct = this.add.text(ex, sepY + 6, `Коннекторы: +${conTotal}%`,
-        this.F('10px', '#00ccff')).setDepth(14);
-      this._effObjs.push(ct);
+    if (inv.length === 0) {
+      const empty = this.add.text(cx + cw / 2, gridY + visH / 2,
+        'Нет коннекторов', this.F('10px', '#1a3a2a')).setOrigin(0.5).setDepth(14);
+      this._connObjs.push(empty);
     }
 
-    // Equip / unequip button
-    const isEquipped = gs.equippedBoard?.id === board.id;
-    const btnY  = ey + eh - 44;
-    const btnW  = ew - 8;
-    const btnLabel = isEquipped ? 'СНЯТЬ' : 'УСТАНОВИТЬ';
-    const btnCol   = isEquipped ? 0x1a1010 : 0x081810;
-    const btnBord  = isEquipped ? 0xee4444 : 0x44ee88;
-    const btn = this.add.rectangle(ex + btnW / 2, btnY, btnW, 32, btnCol, 0.9)
-      .setStrokeStyle(1, btnBord, 0.8).setInteractive({ useHandCursor: true }).setDepth(14);
-    const btnT = this.add.text(ex + btnW / 2, btnY, btnLabel,
-      this.O('12px', `#${btnBord.toString(16).padStart(6,'0')}`)).setOrigin(0.5).setDepth(15);
-    btn.on('pointerover', () => btn.setAlpha(0.75));
-    btn.on('pointerout',  () => btn.setAlpha(1));
-    btn.on('pointerdown', () => {
-      gs.equippedBoard = isEquipped ? null : board;
-      gs.player?.recomputeStats?.();
-      this._drawPCBAndEffects(board);
-      this._drawBoardList();
+    // Connector scrollbar
+    if (totalRows * CARD_H > visH) {
+      const thumbH = Math.max(16, visH * (visH / (totalRows * CARD_H)));
+      const frac   = maxScroll > 0 ? gs._connScroll / maxScroll : 0;
+      const thumbY = gridY + frac * (visH - thumbH);
+      const sbg = this.add.rectangle(cx + cw - 3, gridY + visH / 2, 5, visH, 0x0a1a28, 0.6).setDepth(15);
+      const sth = this.add.rectangle(cx + cw - 3, thumbY + thumbH / 2, 3, thumbH, 0x1e4a6a, 0.9).setDepth(15);
+      this._connObjs.push(sbg, sth);
+    }
+
+    // ─── Separator ───
+    let btnY = gridY + visH + 10;
+    const sg1 = this.add.graphics().setDepth(14);
+    sg1.lineStyle(1, 0x1a3a5a, 0.5);
+    sg1.lineBetween(cx, btnY - 4, cx + cw - 8, btnY - 4);
+    this._connObjs.push(sg1);
+
+    // ─── Craft / disassemble buttons ───
+    const t1Count = inv.filter(c => c.tier === 1).length;
+    const t2Count = inv.filter(c => c.tier === 2).length;
+    const selIdx  = gs._selectedConnIdx ?? -1;
+    const selConn = selIdx >= 0 && selIdx < inv.length ? inv[selIdx] : null;
+
+    const _btn = (label, enabled, onClick) => {
+      const bw = cw - 14;
+      const bg = this.add.rectangle(cx + cw / 2, btnY + 13, bw, 26,
+        enabled ? 0x081820 : 0x060c10, 0.9)
+        .setStrokeStyle(1, enabled ? 0x44aaff : 0x1a3040, 0.7).setDepth(14);
+      const bt = this.add.text(cx + cw / 2, btnY + 13, label,
+        this.F('10px', enabled ? '#44aaff' : '#1a3a5a')).setOrigin(0.5).setDepth(15);
+      this._connObjs.push(bg, bt);
+      if (enabled) {
+        bg.setInteractive({ useHandCursor: true });
+        bg.on('pointerover', () => bg.setAlpha(0.7));
+        bg.on('pointerout',  () => bg.setAlpha(1));
+        bg.on('pointerdown', onClick);
+      }
+      btnY += 30;
+    };
+
+    _btn(`3×T1 → T2  (есть: ${t1Count})`, t1Count >= 3, () => {
+      let n = 3;
+      for (let i = inv.length - 1; i >= 0 && n > 0; i--) {
+        if (inv[i].tier === 1) { inv.splice(i, 1); n--; }
+      }
+      inv.push(rollConnector(2));
+      gs._selectedConnIdx = inv.length - 1;
+      this._drawConnPanel(board);
     });
-    this._effObjs.push(btn, btnT);
 
-    // Hint
-    const hint = this.add.text(ex + btnW / 2, btnY + 22,
-      'Кликни по дорожке чтобы разрезать',
-      this.F('9px', '#1a3a2a')).setOrigin(0.5, 0).setDepth(14);
-    this._effObjs.push(hint);
+    _btn(`4×T2 → T3  (есть: ${t2Count})`, t2Count >= 4, () => {
+      let n = 4;
+      for (let i = inv.length - 1; i >= 0 && n > 0; i--) {
+        if (inv[i].tier === 2) { inv.splice(i, 1); n--; }
+      }
+      inv.push(rollConnector(3));
+      gs._selectedConnIdx = inv.length - 1;
+      this._drawConnPanel(board);
+    });
+
+    const disLabel = selConn
+      ? `РАЗОБРАТЬ T${selConn.tier}${selConn.tier >= 2 ? ' → 2×T' + (selConn.tier - 1) : ''}`
+      : 'РАЗОБРАТЬ';
+    _btn(disLabel, !!selConn, () => {
+      if (!selConn) return;
+      if (selConn.tier >= 2) {
+        inv.push(rollConnector(selConn.tier - 1), rollConnector(selConn.tier - 1));
+      }
+      inv.splice(selIdx, 1);
+      gs._selectedConnIdx = Math.min(selIdx, inv.length - 1);
+      this._drawConnPanel(board);
+    });
+
+    // ─── Separator ───
+    const sg2 = this.add.graphics().setDepth(14);
+    sg2.lineStyle(1, 0x1a3a5a, 0.4);
+    sg2.lineBetween(cx, btnY + 2, cx + cw - 8, btnY + 2);
+    this._connObjs.push(sg2);
+    btnY += 10;
+
+    // ─── Active effects ───
+    if (board) {
+      const effects = getBoardEffects(board, {});
+      const effT = this.add.text(cx, btnY, 'ЭФФЕКТЫ',
+        this.F('10px', '#2a6a7a')).setDepth(14);
+      this._connObjs.push(effT);
+      btnY += 14;
+
+      for (const [stat, eff] of Object.entries(effects)) {
+        const meta = STAT_META[stat];
+        if (!meta) continue;
+        const sign = eff >= 0 ? '+' : '';
+        const col  = eff >= 0 ? '#44ff88' : '#ff5555';
+        const lbl  = this.add.text(cx, btnY, meta.label,
+          this.F('9px', '#8abccc')).setDepth(14);
+        const vt   = this.add.text(cx + cw - 4, btnY,
+          `${sign}${Math.round(eff)}%`,
+          this.F('9px', col)).setOrigin(1, 0).setDepth(14);
+        this._connObjs.push(lbl, vt);
+        btnY += 13;
+        if (btnY > cy + ch - 50) break;
+      }
+
+      if (Object.keys(effects).length === 0) {
+        const noEff = this.add.text(cx, btnY, 'нет активных',
+          this.F('9px', '#1a3a2a')).setDepth(14);
+        this._connObjs.push(noEff);
+      }
+    }
+
+    // ─── Equip / unequip button ───
+    if (board) {
+      const isEquipped = gs.equippedBoard?.id === board.id;
+      const ebY  = cy + ch - 34;
+      const ebW  = cw - 8;
+      const eBbr = isEquipped ? 0xee4444 : 0x44ee88;
+      const ebg  = this.add.rectangle(cx + ebW / 2, ebY, ebW, 30,
+        isEquipped ? 0x1a1010 : 0x081810, 0.9)
+        .setStrokeStyle(1, eBbr, 0.8).setInteractive({ useHandCursor: true }).setDepth(14);
+      const ebt  = this.add.text(cx + ebW / 2, ebY,
+        isEquipped ? 'СНЯТЬ' : 'УСТАНОВИТЬ',
+        this.O('12px', `#${eBbr.toString(16).padStart(6, '0')}`)).setOrigin(0.5).setDepth(15);
+      ebg.on('pointerover', () => ebg.setAlpha(0.75));
+      ebg.on('pointerout',  () => ebg.setAlpha(1));
+      ebg.on('pointerdown', () => {
+        gs.equippedBoard = isEquipped ? null : board;
+        gs.player?.recomputeStats?.();
+        this._drawConnPanel(board);
+        this._drawBoardList();
+      });
+      this._connObjs.push(ebg, ebt);
+    }
   }
 }

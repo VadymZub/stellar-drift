@@ -9,7 +9,7 @@ import Loot from '../entities/Loot.js';
 import Movement from '../systems/Movement.js';
 import { EXP_CLASSES } from './BootScene.js'; 
 import { rollLootForMob, dropChance, itemName, rollStarGold, starterCannon, starterShield, rollCannon, rollShield, rollEngine, rollLaser, rollApophisLoot, PLASMATE_PER_SLOT, PLASMATE_DAILY_MAX, addPlasmateToInventory, totalPlasmateInInventory, removePlasmateFromInventory, CONSUMABLES, addConsumableToInventory, countConsumableInInventory, removeConsumableFromInventory, rollConsumableDrop } from '../items.js';
-import { rollBoard } from '../boards.js';
+import { rollBoard, rollConnector } from '../boards.js';
 import PlasmateDeposit from '../entities/PlasmateDeposit.js';
 import { rollPerk, perkBonus } from '../perks.js';
 import { levelInfo, xpToNext, MAX_LEVEL } from '../leveling.js';
@@ -182,8 +182,9 @@ export default class GameScene extends Phaser.Scene {
 
     this.ownedShips     = this.ownedShips     || new Set(['wisp']);
     this.activeShip     = this.activeShip     || 'wisp';
-    this.boardInventory = this.boardInventory ?? [];
-    this.equippedBoard  = this.equippedBoard  ?? null;
+    this.boardInventory     = this.boardInventory ?? [];
+    this.connectorInventory = this.connectorInventory ?? [];
+    this.equippedBoard      = this.equippedBoard  ?? null;
     
     if (DEV_MODE) {
       this.input.keyboard.on('keydown-EIGHT', () => {
@@ -198,7 +199,17 @@ export default class GameScene extends Phaser.Scene {
         this.player.applyShip(SHIP_BY_KEY['argus']);
         this.player.hull = this.player.maxHull;
         this.player.shield = this.player.maxShield;
-        this.log('DEV: Argus Activated');
+        // DEV: add 2 boards of each tier + 20 random connectors
+        this.boardInventory = this.boardInventory ?? [];
+        this.connectorInventory = this.connectorInventory ?? [];
+        for (let t = 1; t <= 3; t++) {
+          this.boardInventory.push(rollBoard(t), rollBoard(t));
+        }
+        for (let i = 0; i < 20; i++) {
+          const tier = Math.ceil(Math.random() * 3);
+          this.connectorInventory.push(rollConnector(tier));
+        }
+        this.log('DEV: Argus + 6 плат + 20 коннекторов');
       });
       this.input.keyboard.on('keydown-NINE', () => {
         const laser = { type: 'laser', tier: 4, damage: 252, penetration: 0, fireRate: 1.0, starLvl: 5 };
@@ -271,6 +282,20 @@ export default class GameScene extends Phaser.Scene {
       const excess = this.ammoSlots.splice(_aSlotCount);
       for (const s of excess) {
         if (s.type && s.count > 0) addConsumableToInventory(this.inventory, s.type, s.count, this._cargoMax());
+      }
+    }
+
+    // autoAmmo board effect: auto-purchase ammo_plasma for occupied slots each sector entry
+    if (this.player?.autoAmmo) {
+      const _AMMO_PRICE_PER_UNIT = 10; // 10000 cr / 1000 units (matches ShopScene)
+      for (const slot of this.ammoSlots) {
+        if (slot.type !== 'ammo_plasma') continue;
+        const need = (CONSUMABLES[slot.type]?.maxPerSlot ?? 10000) - slot.count;
+        if (need <= 0) continue;
+        const cost = need * _AMMO_PRICE_PER_UNIT;
+        if ((this.credits || 0) < cost) continue;
+        this.credits -= cost;
+        slot.count += need;
       }
     }
 
@@ -504,7 +529,8 @@ export default class GameScene extends Phaser.Scene {
     const sl = (this.skillLevels?.cargo_expand || 0);
     const drover = this.activeShip === 'drover' ? 2 : 0;
     const prem   = this.premium ? (this.activeShip === 'drover' ? 6 : 8) : 0;
-    return 8 + drover + sl * (sl + 1) + prem;
+    const base   = 8 + drover + sl * (sl + 1) + prem;
+    return Math.round(base * (1 + (this.player?.cargoBonusMod ?? 0)));
   }
 
   createBaseAndSafeZone() {
@@ -1333,7 +1359,7 @@ export default class GameScene extends Phaser.Scene {
 
   gainXp(amount) {
     if (this.pilotLevel >= MAX_LEVEL || amount <= 0) return;
-    this.pilotXp += amount;
+    this.pilotXp += Math.round(amount * (this.player?.xpBonusMod ?? 1));
     const newLevel = levelInfo(this.pilotXp).level;
     while (newLevel > this.pilotLevel && this.pilotLevel < MAX_LEVEL) {
       this.pilotLevel++;
@@ -1497,7 +1523,7 @@ export default class GameScene extends Phaser.Scene {
 
     const isCrit    = p.critChance > 0 && Math.random() < p.critChance;
     const ammoMult  = this._consumeAmmo('cannon', cannonCount);
-    const dmg       = Math.round(p.cannonDamage * skillMult * ammoMult * (isCrit ? 2 : 1));
+    const dmg       = Math.round(p.cannonDamage * skillMult * ammoMult * (isCrit ? (p.critMult ?? 2) : 1));
     const color     = isOC ? 0xff8800 : ammoMult > 1 ? 0xff6d00 : isCrit ? 0xffee44 : PROJECTILE.playerColor;
     // Predictive aim: lead the target based on its current velocity.
     const aimPt = _leadTarget(p.x, p.y, t.x, t.y,
@@ -1533,7 +1559,7 @@ export default class GameScene extends Phaser.Scene {
     if (!hit) return;
 
     this._consumeAmmo('laser');
-    const dmg = Math.round(p.laserDamage * skillMult * (isCrit ? 2 : 1));
+    const dmg = Math.round(p.laserDamage * skillMult * (isCrit ? (p.critMult ?? 2) : 1));
     const opts = { shieldMult: p.weaponShieldMult ?? 0.90, hullMult: p.weaponHullMult ?? 1.30, ignoreMovEvasion: true };
     const res = t.takeDamage(dmg, p.weaponPenetration, opts);
 
@@ -1709,7 +1735,10 @@ export default class GameScene extends Phaser.Scene {
   onMobKilled(mob) {
     this.explosion(mob.x, mob.y, mob.isBoss ? 1.6 : 0.6);
     const name = i18n.t(mob.tpl.nameKey); const lvl = `${i18n.t('mob.level')}${mob.level}`;
-    const lvlScale = 1 + 0.5 * (mob.level - 1); const credits = Math.round(mob.tpl.credits * lvlScale); const xp = Math.round(mob.tpl.xp * lvlScale);
+    const lvlScale = 1 + 0.5 * (mob.level - 1);
+    const _credMult = this.player?.creditBonusMod ?? 1;
+    const credits = Math.round(mob.tpl.credits * lvlScale * _credMult);
+    const xp = Math.round(mob.tpl.xp * lvlScale);
     this.log(i18n.t('log.killed', { name, lvl })); this.log(i18n.t('log.reward', { credits, xp }));
     this.credits = (this.credits || 0) + credits; this.gainXp(xp);
     if (this.target === mob) {
@@ -1717,7 +1746,7 @@ export default class GameScene extends Phaser.Scene {
       if (this._targetFx?.active) { this.vfx?.stopLoop(this._targetFx); this._targetFx = null; }
     }
     const sg = rollStarGold(mob); if (sg > 0) { this.starGold = (this.starGold || 0) + sg; this.log(i18n.t('log.stargold', { amount: sg })); }
-    if (Phaser.Math.FloatBetween(0, 1) < dropChance(mob)) {
+    if (Phaser.Math.FloatBetween(0, 1) < dropChance(mob) * (this.player?.dropChanceMult ?? 1)) {
       const lootItem = mob.tpl.key === 'bigboss' ? rollApophisLoot() : rollLootForMob(mob);
       const isLegendary = mob.tpl.key === 'bigboss' || mob.tpl.key === 'argus'
         || (mob.isBoss && SECTORS[galaxy.current]?.isDungeon);

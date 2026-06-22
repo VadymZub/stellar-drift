@@ -307,7 +307,9 @@ export default class ShopScene extends Phaser.Scene {
       this.F('12px', '#4a7a90')).setOrigin(0.5, 0);
     ob.push(haveTxt);
 
-    const priceLabel = item.currency === 'gold' ? `${item.price} ⭐` : `${item.price.toLocaleString()} кр.`;
+    const _disc = (item.currency === 'credits') ? (gs?.player?.shopDiscountMod ?? 1) : 1;
+    const _effPrice = Math.round(item.price * _disc);
+    const priceLabel = item.currency === 'gold' ? `${item.price} ⭐` : `${_effPrice.toLocaleString()} кр.${_disc < 1 ? ' ✦' : ''}`;
     ob.push(this.add.text(cx + cw / 2, cy + 174,
       `пачка 1000 шт. — ${priceLabel}`,
       this.F('12px', '#4a6040')).setOrigin(0.5, 0));
@@ -339,14 +341,14 @@ export default class ShopScene extends Phaser.Scene {
         }
         gs.starGold -= item.price;
       } else {
-        if ((gs.credits || 0) < item.price) {
+        if ((gs.credits || 0) < _effPrice) {
           btn.setFillStyle(0x5a1010); this.time.delayedCall(300, () => btn.setFillStyle(btnBg)); return;
         }
         const space = this._freeConsumableSpace(inv, item.type, CONSUMABLES[item.type].maxPerSlot, cargoMax);
         if (space <= 0) {
           btnTxt.setText('ТРЮМ ПОЛОН'); this.time.delayedCall(1400, () => btnTxt.setText(`КУПИТЬ 1000  —  ${priceLabel}`)); return;
         }
-        gs.credits -= item.price;
+        gs.credits -= _effPrice;
       }
       addConsumableToInventory(inv, item.type, item.qty, cargoMax);
       gs._saveState?.();
