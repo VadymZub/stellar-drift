@@ -121,16 +121,16 @@ export function defaultLoadout(wSlots, sSlots, eSlots) {
 // item.type → ключ группы слотов на корабле
 export const SLOT_KEY = { cannon: 'weapon', laser: 'weapon', shield: 'shield', armor: 'shield', engine: 'engine' };
 
-// ── Апгрейд модулей: ДВА ВЗАИМОИСКЛЮЧАЮЩИХ пути (2026-06-04) ──
-//  • кредитный — дёшево, слабо: 5 уровней, +1.5%/ур → до +7.5%;
-//  • ⭐ Звёздное золото — дорого, сильно: 5 уровней, +9%/ур → до +45%.
+// ── Апгрейд модулей: ДВА ВЗАИМОИСКЛЮЧАЮЩИХ пути ──
+//  • кредитный — дёшево, слабо: 5 уровней, +1%/ур → до +5%;
+//  • ⭐ Звёздное золото — дорого, сильно: 5 уровней, +3%/ур → до +15%.
 // Пути НЕ складываются: старт ⭐-пути СБРАСЫВАЕТ кредитный прогресс (creditLvl→0). См. Гараж.
 export const CREDIT_UP_COST = [5000, 10000, 25000, 50000, 100000];  // кредиты за ур.1..5
 export const STAR_UP_COST = [25, 40, 60, 80, 100];                  // ⭐ за ур.1..5 (Σ=305)
 export const MOD_MAX_CREDIT_LVL = 5;
 export const MOD_MAX_STAR_LVL = 5;
 // Суммарный множитель статов модуля от обоих уровней (в норме активен только один путь).
-export function modMult(item) { return 1 + 0.015 * (item.creditLvl || 0) + 0.09 * (item.starLvl || 0); }
+export function modMult(item) { return 1 + 0.01 * (item.creditLvl || 0) + 0.03 * (item.starLvl || 0); }
 // Кредиты для следующего кредит-апгрейда; null если макс.
 export function creditUpgradeCost(item) {
   const lvl = item.creditLvl || 0;

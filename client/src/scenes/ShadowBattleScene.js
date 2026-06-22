@@ -23,6 +23,7 @@ export default class ShadowBattleScene extends Phaser.Scene {
       equipTier:  prev?.equipTier  ?? 2,
       weaponType: prev?.weaponType ?? 'plasma',
       pilotLevel: prev?.pilotLevel ?? 25,
+      boardTier:  prev?.boardTier  ?? 0,
     };
     this._buildConfigPanel();
   }
@@ -30,7 +31,7 @@ export default class ShadowBattleScene extends Phaser.Scene {
   _buildConfigPanel() {
     const W = this.scale.width, H = this.scale.height;
     const cx = W / 2, cy = H / 2;
-    const PW = 520, PH = 580;
+    const PW = 520, PH = 640;
     const px = cx - PW / 2, py = cy - PH / 2;
     const TF  = (sz, c) => ({ fontFamily: 'Orbitron, sans-serif', fontSize: sz, color: c, resolution: UI_RES });
     const TFI = (sz, c) => ({ fontFamily: 'Inter, sans-serif', fontSize: sz, color: c, resolution: UI_RES });
@@ -98,8 +99,21 @@ export default class ShadowBattleScene extends Phaser.Scene {
       return { btn, lbl, type: wt };
     });
 
+    // ── Плата (тир) ───────────────────────────────────────────────────────
+    const boardY = py + 410;
+    reg(this.add.text(px + 20, boardY, 'ПЛАТА', TFI('12px', '#446688')).setOrigin(0, 0.5));
+    this._boardBtns = [0, 1, 2, 3].map((t, i) => {
+      const bx = px + 20 + i * 116;
+      const btn = this.add.rectangle(bx + 44, boardY + 22, 88, 30, 0x081420)
+        .setStrokeStyle(1, 0x1e3a50).setInteractive({ useHandCursor: true });
+      const lbl = this.add.text(bx + 44, boardY + 22, t === 0 ? 'НЕТ' : `T${t}`, TF('13px', '#4dd0e1')).setOrigin(0.5);
+      btn.on('pointerdown', () => { this._cfg.boardTier = t; this._refreshBoardBtns(); this._refreshPreview(); });
+      reg(btn, lbl);
+      return { btn, lbl, tier: t };
+    });
+
     // ── Уровень пилота ────────────────────────────────────────────────────
-    const pLvlY = py + 410;
+    const pLvlY = py + 468;
     reg(this.add.text(px + 20, pLvlY, 'УРОВЕНЬ ПИЛОТА', TFI('12px', '#446688')).setOrigin(0, 0.5));
     this._pilotLvlTxt = reg(this.add.text(px + PW - 20, pLvlY, '', TF('14px', '#ccddff')).setOrigin(1, 0.5));
     this._makeSlider(reg, cx, pLvlY + 18, PW - 60, 1, 50, this._cfg.pilotLevel, v => {
@@ -107,7 +121,7 @@ export default class ShadowBattleScene extends Phaser.Scene {
     });
 
     // ── Стат-превью бота ─────────────────────────────────────────────────
-    this._statTxt = reg(this.add.text(cx, py + 466, '', TFI('12px', '#8899aa')).setOrigin(0.5));
+    this._statTxt = reg(this.add.text(cx, py + 524, '', TFI('12px', '#8899aa')).setOrigin(0.5));
 
     // ── Кнопки ────────────────────────────────────────────────────────────
     const startBtn = this.add.rectangle(cx - 86, py + PH - 36, 160, 44, 0x0a2a1a)
@@ -130,6 +144,7 @@ export default class ShadowBattleScene extends Phaser.Scene {
     this._refreshPreview();
     this._refreshTierBtns();
     this._refreshWepBtns();
+    this._refreshBoardBtns();
   }
 
   _refreshShipPreviewSprite() {
@@ -190,6 +205,14 @@ export default class ShadowBattleScene extends Phaser.Scene {
     });
   }
 
+  _refreshBoardBtns() {
+    this._boardBtns?.forEach(({ btn, lbl, tier }) => {
+      const on = tier === this._cfg.boardTier;
+      btn.setFillStyle(on ? 0x0d2a3a : 0x081420).setStrokeStyle(on ? 2 : 1, on ? COLORS.primary : 0x1e3a50);
+      lbl.setColor(on ? '#ffffff' : '#4dd0e1');
+    });
+  }
+
   _refreshPreview() {
     const cfg  = this._cfg;
     const ship = cfg.shipDef;
@@ -197,14 +220,29 @@ export default class ShadowBattleScene extends Phaser.Scene {
     if (this._shipTierTxt?.active) this._shipTierTxt.setText(`${ship.tier}`);
     if (this._shipLvlTxt?.active)  this._shipLvlTxt.setText(`${cfg.shipLevel}`);
     if (this._pilotLvlTxt?.active) this._pilotLvlTxt.setText(`${cfg.pilotLevel}`);
-    // Stаты бота (упрощённо) для отображения
+    // Stats preview — additive from base, same formula as _initBotPilot
     const m = shipLevelMods(cfg.shipLevel);
-    const hull = Math.round(ship.hullMax * m.hull);
-    const wSlots = Math.min(ship.wSlots, 4);
-    const dmgTbl = { 1: 40, 2: 75, 3: 130, 4: 210 };
-    const dmg = cfg.weaponType === 'laser' ? 252 * wSlots : (dmgTbl[cfg.equipTier] || 75) * wSlots;
+    const wSlots = Math.min(ship.wSlots, 4), sSlots = Math.min(ship.sSlots, 4);
+    const BOARD_BONUS = {
+      1: { hullMax: 6, cannonDmg: 5, laserDmg: 5, shieldMax: 5 },
+      2: { hullMax: 12, cannonDmg: 10, laserDmg: 10, shieldMax: 8, speed: 6 },
+      3: { hullMax: 20, cannonDmg: 17, laserDmg: 17, shieldMax: 14, speed: 10, shieldRegen: 8 },
+    };
+    const bb = BOARD_BONUS[cfg.boardTier] ?? {};
+    const BU_DMG = 0.15, BU_SHD = 0.13;
+    const skillHullPct = Math.min(0.30, (cfg.pilotLevel / 50) * 0.30);
+    const skillDmgPct  = Math.min(0.30, (cfg.pilotLevel / 50) * 0.30);
+    const skillShdPct  = Math.min(0.25, (cfg.pilotLevel / 50) * 0.25);
+    const SHIELD_DUR = { 1: 300, 2: 550, 3: 900, 4: 1500 };
+    const CANNON_DMG = { 1: 40, 2: 75, 3: 130, 4: 210 };
+    const hull     = Math.round(ship.hullMax * m.hull * (1 + skillHullPct + (bb.hullMax || 0) / 100));
+    const shld     = Math.round((ship.shieldBase + (SHIELD_DUR[cfg.equipTier] || 0) * sSlots) * m.shield * (1 + BU_SHD + skillShdPct + (bb.shieldMax || 0) / 100));
+    const baseDmg  = cfg.weaponType === 'laser' ? 252 * wSlots : (CANNON_DMG[cfg.equipTier] || 75) * wSlots;
+    const boardDmgPct = cfg.weaponType === 'laser' ? (bb.laserDmg || 0) : (bb.cannonDmg || 0);
+    const dmg = Math.round(baseDmg * (1 + BU_DMG + skillDmgPct + boardDmgPct / 100));
+    const boardStr = cfg.boardTier > 0 ? `  Плата T${cfg.boardTier}` : '';
     if (this._statTxt?.active)
-      this._statTxt.setText(`HP ${hull}  Урон ~${dmg}  Уровень пилота ${cfg.pilotLevel}`);
+      this._statTxt.setText(`HP ${hull}  Щит ${shld}  Урон ~${dmg}  Пилот ${cfg.pilotLevel}${boardStr}`);
   }
 
   _launch() {

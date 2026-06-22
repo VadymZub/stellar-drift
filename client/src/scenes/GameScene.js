@@ -332,10 +332,10 @@ export default class GameScene extends Phaser.Scene {
     this._overchargeActive = false;
     this._volleyBlastMult  = 0;
     this._berserkerBuff    = null;   // { endTime, mult } | null
-    this._stealthEndTime   = 0;
-    this._stealthOrigSpeed = 0;
-    this._speedBoostOrig   = null;
-    this._speedBoostTimer  = null;
+    this._stealthEndTime  = 0;
+    this._speedBoostMult  = 1.0;
+    this._stealthMult     = 1.0;
+    this._speedBoostTimer = null;
     this._scanPulseTimer   = null;
 
     this.playerName  = this.playerName  || getUsername();
@@ -1194,17 +1194,13 @@ export default class GameScene extends Phaser.Scene {
       case 'speed_boost': {
         const BUFF_DUR = 15000, CD_MS = this._skillCooldownMs(barKey);
         this._consBuffEndTimes[barKey] = now + BUFF_DUR;
-        this._speedBoostOrig = this.player.shipBaseSpeed;
-        this.player.shipBaseSpeed = Math.round(this._speedBoostOrig * 1.50);
+        this._speedBoostMult = 1.5;
         this.player.recomputeStats();
         this.log('⚡ Ускоритель: +50% скорость, 15с');
         this.muzzleFlash(this.player.x, this.player.y, 0xffee44);
         this._speedBoostTimer = this.time.delayedCall(BUFF_DUR, () => {
-          if (this.player?.alive) {
-            this.player.shipBaseSpeed = this._speedBoostOrig;
-            this.player.recomputeStats();
-          }
-          this._speedBoostOrig  = null;
+          this._speedBoostMult = 1.0;
+          if (this.player?.alive) this.player.recomputeStats();
           this._speedBoostTimer = null;
           this._consBuffEndTimes[barKey] = 0;
           this.skillCooldowns[barKey] = this.time.now + CD_MS;
@@ -1292,14 +1288,13 @@ export default class GameScene extends Phaser.Scene {
     const dur = Math.round(8000 * (this.player.stealthDurMult ?? 1));
     this._stealthEndTime = now + dur;
     this._consBuffEndTimes.stealth_sprint = now + dur;
-    this._stealthOrigSpeed = this.player.shipBaseSpeed;
-    this.player.shipBaseSpeed = Math.round(this.player.shipBaseSpeed * 1.30);
+    this._stealthMult = 1.30;
     this.player.recomputeStats();
     this.player.sprite.setAlpha(0.35);
     this.log(`👻 Стелс-рывок: +30% скорость, ${Math.round(dur / 1000)}с`);
     this.time.delayedCall(dur, () => {
+      this._stealthMult = 1.0;
       if (this.player?.alive) {
-        this.player.shipBaseSpeed = this._stealthOrigSpeed;
         this.player.recomputeStats();
         this.player.sprite.setAlpha(1.0);
       }
@@ -2878,63 +2873,86 @@ export default class GameScene extends Phaser.Scene {
     const cfg = this._shadowBattleCfg;
     const ship = cfg.shipDef;
 
-    // ── Compute stats ──────────────────────────────────────────────────────
+    // ── Compute stats — additive-from-base (same model as Player.recomputeStats) ──
     const CANNON_DMG = { 1: 40, 2: 75, 3: 130, 4: 210 };
     const SHIELD_DUR = { 1: 300, 2: 550, 3: 900, 4: 1500 };
     const SHIELD_REG = { 1: 30,  2: 45,  3: 70,  4: 100  };
     const ENGINE_SPD = { 1: 10,  2: 15,  3: 20,  4: 27   };
     const wSlots = Math.min(ship.wSlots, 4), sSlots = Math.min(ship.sSlots, 4), eSlots = ship.eSlots || 0;
     const m = shipLevelMods(cfg.shipLevel);
-    const skillHull = 1 + Math.min(0.30, (cfg.pilotLevel / 50) * 0.30);
-    const skillShd  = 1 + Math.min(0.25, (cfg.pilotLevel / 50) * 0.25);
-    const skillDmg  = 1 + Math.min(0.30, (cfg.pilotLevel / 50) * 0.30);
 
-    const maxHull   = Math.round(ship.hullMax * m.hull * skillHull);
-    const maxShield = Math.round((ship.shieldBase + SHIELD_DUR[cfg.equipTier] * sSlots) * m.shield * skillShd);
-    const shieldRegen = Math.round(SHIELD_REG[cfg.equipTier] * sSlots);
-    const speed     = Math.round((ship.baseSpeed + ENGINE_SPD[cfg.equipTier] * eSlots) * m.speed);
-    const baseDmg   = cfg.weaponType === 'laser' ? 252 * wSlots : CANNON_DMG[cfg.equipTier] * wSlots;
-    const weaponDmg = Math.round(baseDmg * skillDmg);
-    const weaponPen = cfg.weaponType === 'laser' ? 0 : 0.05;
-    const weaponTier = cfg.equipTier;
-    const fireRate  = cfg.weaponType === 'laser' ? 1.4 : 1.0;
+    // BASE values
+    const BASE_hull   = Math.round(ship.hullMax * m.hull);
+    const BASE_shield = Math.round((ship.shieldBase + SHIELD_DUR[cfg.equipTier] * sSlots) * m.shield);
+    const BASE_regen  = SHIELD_REG[cfg.equipTier] * sSlots;
+    const BASE_speed  = Math.round((ship.baseSpeed + ENGINE_SPD[cfg.equipTier] * eSlots) * m.speed);
+    const BASE_dmg    = cfg.weaponType === 'laser' ? 252 * wSlots : CANNON_DMG[cfg.equipTier] * wSlots;
 
-    // ── Ship passives ──────────────────────────────────────────────────────
-    const shipPassive   = ship.passives ?? {};
-    const shipDmgBonus  = shipPassive.damageBonus  ?? 0;
-    const shipHullRegen = shipPassive.hullRegen    ?? 0;
-    const shipEvasion   = shipPassive.evasionBonus ?? 0;
-    const shipShdBonus  = shipPassive.shieldBonus  ?? 0;
-    const maxShieldFinal = Math.round(maxShield * (1 + shipShdBonus));
-    const weaponDmgPassive = Math.round(weaponDmg * (1 + shipDmgBonus));
+    // Simulated module upgrade % — compensates for bot having no creditLvl/starLvl on gear.
+    // Values match what a player gets with max star upgrades (starLvl=5 → +15% on modules).
+    // Weapons: 100% from modules → +15%. Shield/regen: ~85% from modules → +13%.
+    // Speed: engines ≈ 60% of total at T4 → +9%. Hull has no modMult → 0%.
+    const BU_DMG = 0.15, BU_SHD = 0.13, BU_REG = 0.13, BU_SPD = 0.09;
 
-    // ── Перки снаряжения (случайные, уровень зависит от тира) ─────────────
+    // Board % bonuses per tier (typical average for a bot without a real board instance)
+    const BOT_BOARD = {
+      1: { hullMax: 6,  cannonDmg: 5,  laserDmg: 5,  shieldMax: 5 },
+      2: { hullMax: 12, cannonDmg: 10, laserDmg: 10, shieldMax: 8,  speed: 6 },
+      3: { hullMax: 20, cannonDmg: 17, laserDmg: 17, shieldMax: 14, speed: 10, shieldRegen: 8 },
+    };
+    const board = BOT_BOARD[cfg.boardTier ?? 0] ?? {};
+    const BB = s => (board[s] || 0) / 100;
+
+    // Skill % contributions
+    const skillHullPct = Math.min(0.30, (cfg.pilotLevel / 50) * 0.30);
+    const skillShdPct  = Math.min(0.25, (cfg.pilotLevel / 50) * 0.25);
+    const skillDmgPct  = Math.min(0.30, (cfg.pilotLevel / 50) * 0.30);
+
+    // Perk % contributions — all collected before applying to BASE
     const PERK_CL   = [0, 2, 3, 5][cfg.equipTier - 1] ?? 0;
     const PERK_SL   = [0, 0, 1, 3][cfg.equipTier - 1] ?? 0;
     const mkPerk    = (type) => ({ ...rollPerk(type), creditLvl: PERK_CL, starLvl: PERK_SL });
     const wPerkType = cfg.weaponType === 'laser' ? 'laser' : 'cannon';
-    let wDmgMult = 1.0, extraPen = 0, dmgResist = 0, shdRegenMult = 1.0, spdPerkMult = 1.0;
+    let wDmgPct = 0, extraPen = 0, dmgResistRed = 0, shdRegenPct = 0, spdPerkPct = 0;
     let weaponShieldMult = cfg.weaponType === 'laser' ? 0.90 : 1.0;
     let weaponHullMult   = cfg.weaponType === 'laser' ? 1.30 : 1.0;
     for (let i = 0; i < wSlots; i++) {
       const p = mkPerk(wPerkType); const pb = perkBonus(p);
-      if (p.key === 'perk_steady_aim')     wDmgMult     *= 1 + 0.10 * (1 + pb);
-      if (p.key === 'perk_hull_breaker')   extraPen       = Math.min(0.15, extraPen + 0.05 * (1 + pb));
+      if (p.key === 'perk_steady_aim')     wDmgPct   += 0.10 * (1 + pb);
+      if (p.key === 'perk_hull_breaker')   extraPen   = Math.min(0.15, extraPen + 0.05 * (1 + pb));
       if (p.key === 'perk_laser_shredder') weaponHullMult += 0.20 * (1 + pb);
     }
     for (let i = 0; i < sSlots; i++) {
       const p = mkPerk('shield'); const pb = perkBonus(p);
-      if (p.key === 'perk_hardened')  dmgResist    = Math.min(0.40, dmgResist + 0.10 * (1 + pb));
-      if (p.key === 'perk_resonance') shdRegenMult *= 1 + 0.12 * (1 + pb);
+      if (p.key === 'perk_hardened')  dmgResistRed += 0.10 * (1 + pb);
+      if (p.key === 'perk_resonance') shdRegenPct  += 0.12 * (1 + pb);
     }
     for (let i = 0; i < eSlots; i++) {
       const p = mkPerk('engine'); const pb = perkBonus(p);
-      if (p.key === 'perk_engine_thrust') spdPerkMult *= 1 + 0.10 * (1 + pb);
+      if (p.key === 'perk_engine_thrust') spdPerkPct += 0.10 * (1 + pb);
     }
-    const finalWeaponDmg   = Math.round(weaponDmgPassive * wDmgMult);
-    const finalWeaponPen   = Math.min(0.60, weaponPen + extraPen);
-    const finalShieldRegen = Math.round(shieldRegen * shdRegenMult);
-    const finalSpeed       = Math.round(speed * spdPerkMult);
+
+    // FINAL STATS — BASE × (1 + Σ all %)  BU_* компенсирует отсутствие modMult на снаряжении бота
+    const maxHull     = Math.round(BASE_hull   * (1 + skillHullPct + BB('hullMax')));
+    const maxShield   = Math.round(BASE_shield  * (1 + BU_SHD + skillShdPct  + BB('shieldMax')));
+    const shieldRegen = Math.round(BASE_regen   * (1 + BU_REG + shdRegenPct  + BB('shieldRegen')));
+    const speed       = Math.round(BASE_speed   * (1 + BU_SPD + spdPerkPct   + BB('speed')));
+    const dmgBoardKey = cfg.weaponType === 'laser' ? 'laserDmg' : 'cannonDmg';
+    const weaponDmg   = Math.round(BASE_dmg     * (1 + BU_DMG + skillDmgPct  + wDmgPct + BB(dmgBoardKey)));
+    const weaponPen   = cfg.weaponType === 'laser' ? 0 : 0.05;
+    const weaponTier  = cfg.equipTier;
+    const fireRate    = cfg.weaponType === 'laser' ? 1.4 : 1.0;
+
+    // Ship passives — applied on total (after all %)
+    const shipPassive    = ship.passives ?? {};
+    const maxShieldFinal = Math.round(maxShield * (1 + (shipPassive.shieldBonus  ?? 0)));
+    const finalWeaponDmg = Math.round(weaponDmg * (1 + (shipPassive.damageBonus  ?? 0)));
+    const shipHullRegen  = shipPassive.hullRegen    ?? 0;
+    const shipEvasion    = shipPassive.evasionBonus ?? 0;
+    const dmgResist      = Math.min(0.40, dmgResistRed);
+    const finalWeaponPen = Math.min(0.60, weaponPen + extraPen);
+    const finalShieldRegen = shieldRegen;
+    const finalSpeed       = speed;
 
     // ── Spawn position (правая сторона карты, зеркально игроку) ───────────
     const bx = Math.round(this.worldWidth * 0.8), by = Math.round(this.worldHeight * 0.5);
