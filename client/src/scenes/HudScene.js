@@ -250,15 +250,37 @@ export default class HudScene extends Phaser.Scene {
   _rebuildActionBarIcons() {
     if (!this._abSlots) return;
     const gs = this.gs;
+    const SHIP_ACCENT = {
+      'ship:helion_volley':        0xffb74d,
+      'ship:argosy_repair':        0x4fc3f7,
+      'ship:drifter_jump':         0x4db6ac,
+      'ship:stiletto_afterburner': 0x29b6f6,
+      'ship:anvil_lockdown':       0x90a4ae,
+      'ship:drover_scan':          0xab47bc,
+      'ship:aegis_dome':           0x42a5f5,
+      'ship:phantom_cloak':        0x9575cd,
+      'ship:wisp_recall':          0x66bb6a,
+    };
     this._abSlots.forEach((slot, i) => {
       const key = (gs.actionBar || [])[i] || null;
       slot._key = key;
       if (slot.iconImg) { slot.iconImg.destroy(); slot.iconImg = null; }
       if (slot._pickGfx) { slot._pickGfx.destroy(); slot._pickGfx = null; }
 
+      // Redraw slot border: accent color for ship abilities, default otherwise
+      slot.bg.clear();
+      slot.bg.fillStyle(0x0a1828, 0.92);
+      slot.bg.fillRoundedRect(slot.sx, slot.sy, slot.SW, slot.SH, 5);
+      const accent = key?.startsWith('ship:') ? (SHIP_ACCENT[key] ?? 0x4a7090) : null;
+      if (accent) {
+        slot.bg.lineStyle(2, accent, 0.85);
+      } else {
+        slot.bg.lineStyle(1, 0x1e4060, 1);
+      }
+      slot.bg.strokeRoundedRect(slot.sx, slot.sy, slot.SW, slot.SH, 5);
+
       const isConsumable = !!key?.startsWith('use:');
       if (isConsumable) {
-        // Shift icon up, leave room for count text at bottom
         slot.cdTxt.setPosition(slot.sx + slot.SW / 2, slot.sy + slot.SH - 2).setOrigin(0.5, 1);
         try { slot.cdTxt.setFontSize('10px'); } catch (_) {}
       } else {
@@ -269,14 +291,16 @@ export default class HudScene extends Phaser.Scene {
       if (!key) return;
       if (key.startsWith('ship:')) {
         const texKey = this._ensureShipSkillTex(key);
-        const iconSz = slot.SW - 4;
-        slot.iconImg = this.add.image(slot.sx + slot.SW / 2, slot.sy + slot.SH / 2, texKey)
+        const iconSz = slot.SW;
+        // PNG icons are 512×512 — step-halve for quality; skip for procedural canvas fallbacks (__ss_)
+        const renderKey = texKey.startsWith('__ss_') ? texKey : prerenderTex(this, texKey, iconSz, iconSz);
+        slot.iconImg = this.add.image(slot.sx + slot.SW / 2, slot.sy + slot.SH / 2, renderKey)
           .setDisplaySize(iconSz, iconSz).setDepth(102);
         return;
       }
       const texKey = isConsumable ? `consumable_${key.slice(4)}` : `skill_${key}`;
       if (!this.textures.exists(texKey)) return;
-      const iconSz  = isConsumable ? 40 : slot.SW - 4;
+      const iconSz  = isConsumable ? 40 : slot.SW;
       const iconY   = isConsumable ? slot.sy + slot.SH / 2 - 5 : slot.sy + slot.SH / 2;
       slot.iconImg = this.add.image(slot.sx + slot.SW / 2, iconY,
           prerenderTex(this, texKey, iconSz, iconSz))

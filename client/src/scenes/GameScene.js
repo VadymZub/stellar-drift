@@ -1432,6 +1432,7 @@ export default class GameScene extends Phaser.Scene {
     const p = this.player;
     if (!p?.alive) return;
     this.skillCooldowns['ship:drover_scan'] = now + cd;
+    this._consBuffEndTimes['ship:drover_scan'] = now + 30000;
     this._scannerActive = true;
 
     // Expanding pulse sweep — world-space graphics
@@ -1456,7 +1457,10 @@ export default class GameScene extends Phaser.Scene {
     });
     this.time.delayedCall(expandMs + 50, () => ring.destroy());
     this.log('🔍 Глубокий сканер (30 с)');
-    this.time.delayedCall(30000, () => { this._scannerActive = false; });
+    this.time.delayedCall(30000, () => {
+      this._scannerActive = false;
+      this._consBuffEndTimes['ship:drover_scan'] = 0;
+    });
   }
 
   _doShipWispRecall(now, cd) {
@@ -1484,42 +1488,53 @@ export default class GameScene extends Phaser.Scene {
     const p = this.player;
     if (!p?.alive) return;
     this.skillCooldowns['ship:stiletto_afterburner'] = now + cd;
+    this._consBuffEndTimes['ship:stiletto_afterburner'] = now + 4000;
     p.baseSpeed = Math.round(p.baseSpeed * 2);
     this.log('🔥 Форсаж! (+100% скорость, 4 с)');
-    this.time.delayedCall(4000, () => { if (p?.alive) p.recomputeStats(); });
+    this.time.delayedCall(4000, () => {
+      this._consBuffEndTimes['ship:stiletto_afterburner'] = 0;
+      if (p?.alive) p.recomputeStats();
+    });
   }
 
   _doShipAnvilLockdown(now, cd) {
     const p = this.player;
     if (!p?.alive) return;
     this.skillCooldowns['ship:anvil_lockdown'] = now + cd;
+    this._consBuffEndTimes['ship:anvil_lockdown'] = now + 10000;
     p._lockdownMult = 0.40;
     this.log('🛡 Уплотнение! (-60% урон, 10 с)');
-    this.time.delayedCall(10000, () => { if (p) p._lockdownMult = null; });
+    this.time.delayedCall(10000, () => {
+      this._consBuffEndTimes['ship:anvil_lockdown'] = 0;
+      if (p) p._lockdownMult = null;
+    });
   }
 
   _doShipAegisDome(now, cd) {
     const p = this.player;
     if (!p?.alive) return;
     this.skillCooldowns['ship:aegis_dome'] = now + cd;
-    // Восстанавливает щит до 100% и делает корпус неуязвимым на 6 с (весь урон в щит)
+    this._consBuffEndTimes['ship:aegis_dome'] = now + 6000;
     p.shield = p.maxShield;
     this._aegisDomeEndTime = now + 6000;
     this.log('⚡ Щитовой купол! (корпус защищён, 6 с)');
-    this.time.delayedCall(6000, () => { this._aegisDomeEndTime = 0; });
+    this.time.delayedCall(6000, () => {
+      this._consBuffEndTimes['ship:aegis_dome'] = 0;
+      this._aegisDomeEndTime = 0;
+    });
   }
 
   _doShipPhantomCloak(now, cd) {
     const p = this.player;
     if (!p?.alive) return;
-    // Требование: нет атак последние 3 секунды
     if (now - (p.lastAttackAt || 0) < 3000) {
       this.log('⚠ Маскировка: 3 с без атаки');
       return;
     }
     this.skillCooldowns['ship:phantom_cloak'] = now + cd;
+    this._consBuffEndTimes['ship:phantom_cloak'] = now + 10000;
     p.baseSpeed = Math.round(p.baseSpeed * 1.3);
-    p.sprite.setAlpha(0.12);
+    p.sprite.setAlpha(0.28);
     this._phantomCloakEndTime = now + 10000;
     this.log('👻 Маскировка! (+30% скорость, 10 с)');
     this.time.delayedCall(10000, () => this._breakPhantomCloak());
@@ -1528,6 +1543,7 @@ export default class GameScene extends Phaser.Scene {
   _breakPhantomCloak() {
     if (!this._phantomCloakEndTime) return;
     this._phantomCloakEndTime = 0;
+    this._consBuffEndTimes['ship:phantom_cloak'] = 0;
     const p = this.player;
     if (p?.alive) { p.sprite.setAlpha(1); p.recomputeStats(); }
     this.log('👁 Маскировка снята');

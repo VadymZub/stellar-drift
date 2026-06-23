@@ -114,9 +114,9 @@ sci-fi UI badge icon for spaceship ability "Shield Dome", glowing blue (#42a5f5)
 
 ### ship_phantom_cloak.png — Маскировка
 
-**Корабль:** Phantom (T4) · **Цвет:** тёмно-фиолетовый #7e57c2 · **КД:** 3 мин
+**Корабль:** Phantom (T4) · **Цвет:** электро-фиолетовый #b39ddb + белые вспышки · **КД:** 3 мин
 **Эффект:** невидимость + +30% скорость 10 с (требует 3 с без атаки; атака прерывает стелс)
 
 ```
-sci-fi UI badge icon for spaceship ability "Cloak", sleek spaceship silhouette fading and dissolving into dark purple (#7e57c2) shadow particles, ghostly transparent outline with only a faint shimmer remaining, stealth field distortion warping the space around it, vanishing into darkness, painterly stylized game UI icon, AAA mobile MMO ability badge, deep violet purple color theme, centered composition with circular border ring, isolated on transparent background, no characters, no text, no letters, no words, easy-to-read silhouette at small size --ar 1:1 --stylize 650
+sci-fi UI badge icon for spaceship ability "Stealth Cloak", sharp spaceship silhouette outlined in blazing neon violet-white (#b39ddb) electric light, cloaking field activation burst — intense chromatic aberration prismatic halo splitting into cyan and magenta fringes around the ship outline, crackling lightning-thin energy threads radiating outward from the hull, bright overexposed center glow with electric purple (#9575cd) and white hot core, high-contrast vivid colors against a near-black deep space background, bold readable silhouette, painterly stylized game UI icon, AAA mobile MMO ability badge, centered composition with circular border ring, isolated on transparent background, no characters, no text, no letters, no words, easy-to-read silhouette at small size --ar 1:1 --stylize 750
 ```

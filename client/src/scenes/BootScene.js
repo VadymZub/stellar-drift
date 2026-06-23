@@ -255,7 +255,7 @@ export default class BootScene extends Phaser.Scene {
     const SHIP_SKILL_KEYS = [
       'ship_helion_volley', 'ship_argosy_repair', 'ship_drifter_jump',
       'ship_stiletto_afterburner', 'ship_anvil_lockdown', 'ship_drover_scan',
-      'ship_aegis_dome', 'ship_phantom_cloak',
+      'ship_aegis_dome', 'ship_phantom_cloak', 'ship_wisp_recall',
     ];
     for (const k of SHIP_SKILL_KEYS) this.load.image(k, `assets/skills/${k}.png`);
 
