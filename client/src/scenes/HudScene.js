@@ -679,34 +679,47 @@ export default class HudScene extends Phaser.Scene {
     // Скан-радиус: враги/лут видны только в радиусе сканирования
     const sr = gs.scanRadius ?? BASE_SCAN_RADIUS;
     const px2 = gs.player?.x ?? ww / 2, py2 = gs.player?.y ?? wh / 2;
-    // Кольцо радиуса сканирования
-    const pCenter = worldToMinimap(px2, py2, r, ww, wh);
-    g.lineStyle(1, 0x4de1aa, 0.3);
-    g.strokeCircle(pCenter.x, pCenter.y, sr * mmScale);
+    const fullScan = gs._scannerActive === true;
+    // Кольцо радиуса сканирования (не рисуем, когда полный скан — видно всё)
+    if (!fullScan) {
+      const pCenter = worldToMinimap(px2, py2, r, ww, wh);
+      g.lineStyle(1, 0x4de1aa, 0.3);
+      g.strokeCircle(pCenter.x, pCenter.y, sr * mmScale);
+    } else {
+      // Лёгкое фиолетовое кольцо — индикатор активного сканера
+      const pCenter = worldToMinimap(px2, py2, r, ww, wh);
+      g.lineStyle(1.5, 0xab47bc, 0.55);
+      g.strokeCircle(pCenter.x, pCenter.y, r.w * 0.46);
+    }
 
     // Плазмит — точки, только в радиусе сканирования
     if (gs.plasmateDeposits) {
       g.fillStyle(0xaa66ff, 0.85);
       for (const d of gs.plasmateDeposits) {
         if (!d.alive) continue;
-        if (Phaser.Math.Distance.Between(px2, py2, d.x, d.y) > sr) continue;
+        if (!fullScan && Phaser.Math.Distance.Between(px2, py2, d.x, d.y) > sr) continue;
         const p = worldToMinimap(d.x, d.y, r, ww, wh);
         g.fillCircle(p.x, p.y, 1.8);
       }
     }
 
-    // Лут (янтарные точки) — только в радиусе скана
-    g.fillStyle(COLORS.amber, 0.9);
+    // Лут — только в радиусе скана (или везде при fullScan); jackpot — cyan с кольцом
     for (const l of gs.loot) {
       if (!l.alive) continue;
-      if (Phaser.Math.Distance.Between(px2, py2, l.x, l.y) > sr) continue;
-      const p = worldToMinimap(l.x, l.y, r, ww, wh); g.fillCircle(p.x, p.y, 1.6);
+      if (!fullScan && Phaser.Math.Distance.Between(px2, py2, l.x, l.y) > sr) continue;
+      const lp = worldToMinimap(l.x, l.y, r, ww, wh);
+      if (l.tier === 'jackpot') {
+        g.fillStyle(0x00e5ff, 1); g.fillCircle(lp.x, lp.y, 2.5);
+        g.lineStyle(1, 0x00e5ff, 0.7); g.strokeCircle(lp.x, lp.y, 4.5);
+      } else {
+        g.fillStyle(COLORS.amber, 0.9); g.fillCircle(lp.x, lp.y, 1.6);
+      }
     }
 
     // Мобы (красные; боссы крупнее/оранжевые) — только в радиусе скана
     for (const m of gs.mobs) {
       if (!m.alive) continue;
-      if (Phaser.Math.Distance.Between(px2, py2, m.x, m.y) > sr) continue;
+      if (!fullScan && Phaser.Math.Distance.Between(px2, py2, m.x, m.y) > sr) continue;
       const p = worldToMinimap(m.x, m.y, r, ww, wh);
       if (m.isBoss) { g.fillStyle(0xff7a6b, 1); g.fillCircle(p.x, p.y, 3.4); }
       else { g.fillStyle(COLORS.danger, 0.95); g.fillCircle(p.x, p.y, 2); }

@@ -543,8 +543,8 @@ export default class GameScene extends Phaser.Scene {
 
   _cargoMax() {
     const sl = (this.skillLevels?.cargo_expand || 0);
-    const drover = this.activeShip === 'drover' ? 2 : 0;
-    const prem   = this.premium ? (this.activeShip === 'drover' ? 6 : 8) : 0;
+    const drover = this.activeShip === 'drover' ? 4 : 0;
+    const prem   = this.premium ? 8 : 0;
     const base   = 8 + drover + sl * (sl + 1) + prem;
     return Math.round(base * (1 + (this.player?.cargoBonusMod ?? 0)));
   }
@@ -1116,7 +1116,12 @@ export default class GameScene extends Phaser.Scene {
     if (key.startsWith('use:')) return CONS_CD[key.slice(4)] ?? 60000;
     if (key.startsWith('ship:')) {
       const mod = this.player?.activeCooldownMod ?? 1;
-      const SHIP_CD = { 'ship:helion_volley': 40000, 'ship:argosy_repair': 55000, 'ship:drifter_jump': 60000 };
+      const SHIP_CD = {
+        'ship:helion_volley': 40000, 'ship:argosy_repair': 55000, 'ship:drifter_jump': 60000,
+        'ship:drover_scan': 90000,
+        'ship:stiletto_afterburner': 35000, 'ship:anvil_lockdown': 45000,
+        'ship:aegis_dome': 50000, 'ship:phantom_cloak': 45000,
+      };
       return Math.round((SHIP_CD[key] || 40000) * mod);
     }
     const lv  = Math.max(1, (this.skillLevels || {})[key] || 1);
@@ -1147,6 +1152,11 @@ export default class GameScene extends Phaser.Scene {
       if (key === 'ship:helion_volley') this._doShipVolleyBlast(now, cd);
       else if (key === 'ship:argosy_repair') this._doShipArgosyRepair(now, cd);
       else if (key === 'ship:drifter_jump')  this._doShipDrifterJump(now, cd);
+      else if (key === 'ship:drover_scan')          this._doShipDroverScan(now, cd);
+      else if (key === 'ship:stiletto_afterburner') this._doShipStilettoAfterburner(now, cd);
+      else if (key === 'ship:anvil_lockdown')       this._doShipAnvilLockdown(now, cd);
+      else if (key === 'ship:aegis_dome')           this._doShipAegisDome(now, cd);
+      else if (key === 'ship:phantom_cloak')        this._doShipPhantomCloak(now, cd);
       return;
     }
     const lv = (this.skillLevels || {})[key] || 0;
@@ -1370,6 +1380,80 @@ export default class GameScene extends Phaser.Scene {
       }
     });
     this.log('⇗ Фазовый прыжок!');
+  }
+
+  _doShipDroverScan(now, cd) {
+    const p = this.player;
+    if (!p?.alive) return;
+    this.skillCooldowns['ship:drover_scan'] = now + cd;
+    this._scannerActive = true;
+
+    // Expanding pulse sweep — world-space graphics
+    const ring = this.add.graphics().setDepth(60);
+    const snapX = p.sprite.x, snapY = p.sprite.y;
+    const maxR = Math.max(this.worldWidth, this.worldHeight);
+    let elapsed = 0;
+    const expandMs = 1000;
+    this.time.addEvent({
+      delay: 16, repeat: Math.ceil(expandMs / 16),
+      callback: () => {
+        elapsed += 16;
+        const frac = Math.min(1, elapsed / expandMs);
+        const r = frac * maxR;
+        const alpha = (1 - frac) * 0.75;
+        ring.clear();
+        ring.lineStyle(3, 0xab47bc, alpha);
+        ring.strokeCircle(snapX, snapY, r);
+        ring.lineStyle(1, 0xce93d8, alpha * 0.45);
+        ring.strokeCircle(snapX, snapY, r + 14);
+      }
+    });
+    this.time.delayedCall(expandMs + 50, () => ring.destroy());
+    this.log('🔍 Глубокий сканер (30 с)');
+    this.time.delayedCall(30000, () => { this._scannerActive = false; });
+  }
+
+  _doShipStilettoAfterburner(now, cd) {
+    const p = this.player;
+    if (!p?.alive) return;
+    this.skillCooldowns['ship:stiletto_afterburner'] = now + cd;
+    p.baseSpeed = Math.round(p.baseSpeed * 2);
+    this.log('🔥 Форсаж! (+100% скорость, 4 с)');
+    this.time.delayedCall(4000, () => { if (p?.alive) p.recomputeStats(); });
+  }
+
+  _doShipAnvilLockdown(now, cd) {
+    const p = this.player;
+    if (!p?.alive) return;
+    this.skillCooldowns['ship:anvil_lockdown'] = now + cd;
+    p._lockdownMult = 0.40;
+    this.log('🛡 Уплотнение! (-60% урон, 10 с)');
+    this.time.delayedCall(10000, () => { if (p) p._lockdownMult = null; });
+  }
+
+  _doShipAegisDome(now, cd) {
+    const p = this.player;
+    if (!p?.alive) return;
+    this.skillCooldowns['ship:aegis_dome'] = now + cd;
+    // Восстанавливает щит до 100% и делает корпус неуязвимым на 6 с (весь урон в щит)
+    p.shield = p.maxShield;
+    this._aegisDomeEndTime = now + 6000;
+    this.log('⚡ Щитовой купол! (корпус защищён, 6 с)');
+    this.time.delayedCall(6000, () => { this._aegisDomeEndTime = 0; });
+  }
+
+  _doShipPhantomCloak(now, cd) {
+    const p = this.player;
+    if (!p?.alive) return;
+    this.skillCooldowns['ship:phantom_cloak'] = now + cd;
+    p.baseSpeed = Math.round(p.baseSpeed * 1.5);
+    p.sprite.setAlpha(0.12);
+    this._phantomCloakEndTime = now + 6000;
+    this.log('👻 Маскировка! (+50% скорость, невидимость, 6 с)');
+    this.time.delayedCall(6000, () => {
+      if (p?.alive) { p.sprite.setAlpha(1); p.recomputeStats(); }
+      this._phantomCloakEndTime = 0;
+    });
   }
 
   gainXp(amount) {
@@ -1766,7 +1850,9 @@ export default class GameScene extends Phaser.Scene {
       const isLegendary = mob.tpl.key === 'bigboss' || mob.tpl.key === 'argus'
         || (mob.isBoss && SECTORS[galaxy.current]?.isDungeon);
       const lootTier = isLegendary ? 'legendary' : (mob.isBoss || mob.tpl.elite) ? 'boss' : 'common';
-      this.loot.push(new Loot(this, mob.x, mob.y, lootItem, lootTier));
+      const isPremium = lootItem.tier === 4 || lootItem.perk?.rarity === 'jackpot'
+        || lootItem.type === 'biomech_core' || lootItem.type === 'quantum_crystal' || lootItem.type === 'plasma_coil';
+      this.loot.push(new Loot(this, mob.x, mob.y, lootItem, isPremium ? 'jackpot' : lootTier));
     }
     const consDrop = rollConsumableDrop(mob);
     if (consDrop) {

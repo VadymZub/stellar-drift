@@ -335,6 +335,9 @@ export default class Player {
       }
       if (passives.hullRegen)    this.hullRegenPerSec = passives.hullRegen;
       if (passives.evasionBonus) this.evasion = Math.min(0.30, (this.evasion ?? 0) + passives.evasionBonus);
+      this.reflectChance = passives.reflectChance ?? 0;
+    } else {
+      this.reflectChance = 0;
     }
 
     // ── Corp prestige bonus — applied on total ────────────────────────────────
@@ -375,7 +378,9 @@ export default class Player {
     if (this.shield <= 0 && this.kineticAbsorbChance > 0 && Math.random() < this.kineticAbsorbChance) {
       return { shieldHit: 0, hullHit: 0, brokeShield: false, absorbed: true };
     }
-    amount = Math.round(amount * (this.damageResistMod ?? 1));
+    amount = Math.round(amount * (this.damageResistMod ?? 1) * (this._lockdownMult ?? 1));
+    // Aegis dome: hull is immune — all damage forced into shield
+    if ((this.scene._aegisDomeEndTime || 0) > this.scene.time.now) penetration = 0;
     this.lastDamageAt = this.scene.time.now;
 
     const direct       = amount * penetration;
@@ -395,6 +400,21 @@ export default class Player {
       hullHit = amount * hullMult;
     }
     this.hull -= hullHit;
+
+    // Aegis passive: 7% chance to reflect shield-absorbed damage to nearest mob
+    if (hadShield && this.reflectChance > 0 && Math.random() < this.reflectChance) {
+      const reflectDmg = Math.round(toShieldRaw * shieldMult * 0.30);
+      if (reflectDmg > 0) {
+        const mobs = this.scene.mobs ?? [];
+        let closest = null, bestD = 700;
+        for (const m of mobs) {
+          if (!m.alive) continue;
+          const d = Phaser.Math.Distance.Between(this.sprite.x, this.sprite.y, m.x, m.y);
+          if (d < bestD) { closest = m; bestD = d; }
+        }
+        if (closest) closest.takeDamage(reflectDmg, this.scene);
+      }
+    }
 
     const brokeShield = hadShield && this.shield <= 0;
     if (this.hull <= 0) { this.hull = 0; this.die(); }

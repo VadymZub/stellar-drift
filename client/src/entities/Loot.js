@@ -1,5 +1,5 @@
 // Коробка лута на месте смерти моба.
-// tier: 'common' | 'boss' | 'legendary'
+// tier: 'common' | 'boss' | 'legendary' | 'jackpot'
 export default class Loot {
   constructor(scene, x, y, item, tier = 'common') {
     this.scene  = scene;
@@ -9,12 +9,11 @@ export default class Loot {
     this.baseX  = x;
     this.baseY  = y;
 
-    const SIZE = { common: 34, boss: 42, legendary: 52 };
-    const TINT = { common: null, boss: 0xffb74d, legendary: 0xffd54f };
+    const SIZE = { common: 34, boss: 42, legendary: 52, jackpot: 52 };
+    const TINT = { common: null, boss: 0xffb74d, legendary: 0xffd54f, jackpot: 0x00e5ff };
     const size = SIZE[tier] ?? 34;
 
-    // Пульсирующее кольцо для legendary
-    if (tier === 'legendary') {
+    if (tier === 'legendary' || tier === 'jackpot') {
       this._ring = scene.add.graphics().setDepth(35);
     }
 
@@ -31,21 +30,38 @@ export default class Loot {
   update(now) {
     if (!this.alive) return;
     if (this._magnetPull) return; // magnet controls position
-    this.sprite.y = this.baseY + Math.sin(now * 0.004) * 4;
-    this.sprite.rotation = Math.sin(now * 0.002) * 0.2;
+
+    if (this.tier === 'jackpot') {
+      this.sprite.y = this.baseY + Math.sin(now * 0.007) * 5;
+      this.sprite.rotation = Math.sin(now * 0.005) * 0.25;
+    } else {
+      this.sprite.y = this.baseY + Math.sin(now * 0.004) * 4;
+      this.sprite.rotation = Math.sin(now * 0.002) * 0.2;
+    }
 
     if (this._ring) {
       const sx = this.sprite.x, sy = this.sprite.y;
-      const t = now * 0.004;
-      const r1 = 30 + 4 * Math.sin(t);
-      const a1 = 0.55 + 0.3 * Math.sin(t);
-      const r2 = r1 + 9;
-      const a2 = a1 * 0.45;
-      this._ring.clear();
-      this._ring.lineStyle(2.5, 0xffd54f, a1);
-      this._ring.strokeCircle(sx, sy, r1);
-      this._ring.lineStyle(1.5, 0xffa000, a2);
-      this._ring.strokeCircle(sx, sy, r2);
+      if (this.tier === 'jackpot') {
+        const t = now * 0.009;
+        const r1 = 28 + 5 * Math.sin(t);
+        const a1 = 0.65 + 0.3 * Math.sin(t);
+        this._ring.clear();
+        this._ring.lineStyle(3, 0x00e5ff, a1);
+        this._ring.strokeCircle(sx, sy, r1);
+        this._ring.lineStyle(1.5, 0xffffff, a1 * 0.45);
+        this._ring.strokeCircle(sx, sy, r1 + 9);
+        this._ring.lineStyle(1, 0x00e5ff, a1 * 0.25);
+        this._ring.strokeCircle(sx, sy, r1 + 18);
+      } else {
+        const t = now * 0.004;
+        const r1 = 30 + 4 * Math.sin(t);
+        const a1 = 0.55 + 0.3 * Math.sin(t);
+        this._ring.clear();
+        this._ring.lineStyle(2.5, 0xffd54f, a1);
+        this._ring.strokeCircle(sx, sy, r1);
+        this._ring.lineStyle(1.5, 0xffa000, a1 * 0.45);
+        this._ring.strokeCircle(sx, sy, r1 + 9);
+      }
     }
   }
 

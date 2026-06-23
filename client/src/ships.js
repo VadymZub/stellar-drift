@@ -22,16 +22,21 @@ export const SHIPS = [
   // Остальные корабли: арт нарисован носом ВНИЗ (как wisp) → artAngleOffset −π/2 (разворот 180°);
   // displaySize уменьшен ~25% (были крупнее виспа). Игровой спрайт ↔ orientation; в Гараже арт статичный.
   { key: 'stiletto', nameKey: 'ship.stiletto', descKey: 'shipdesc.stiletto', tier: 'T2',       levelGate: 10, price: 80000,  currency: 'credits', displaySize: 120, hullMax: 850,  shieldBase: 150, baseSpeed: 250, wSlots: 2, sSlots: 2, eSlots: 1, aSlots: 3, dmgMod: 1.00, garageKey: 'stiletto_g', artAngleOffset: -Math.PI / 2,
+    activeSkill: { key: 'ship:stiletto_afterburner', nameKey: 'skill.ship_stiletto_afterburner', icon: 'ФС', color: 0x29b6f6 },
     engines: [{ x: 0, y: 50 }] },
   { key: 'anvil',    nameKey: 'ship.anvil',    descKey: 'shipdesc.anvil',    tier: 'T2',       levelGate: 15, price: 120000, currency: 'credits', displaySize: 110, hullMax: 1300, shieldBase: 210, baseSpeed: 205, wSlots: 3, sSlots: 3, eSlots: 1, aSlots: 4, dmgMod: 1.00, garageKey: 'anvil_g',    artAngleOffset: -Math.PI / 2,
+    activeSkill: { key: 'ship:anvil_lockdown', nameKey: 'skill.ship_anvil_lockdown', icon: 'УП', color: 0x90a4ae },
     engines: [{ x: -13, y: 52 }, { x: 13, y: 52 }] },
   { key: 'drover',   nameKey: 'ship.drover',   descKey: 'shipdesc.drover',   tier: 'T3',       levelGate: 25, price: 230000, currency: 'credits', displaySize: 147, hullMax: 1400, shieldBase: 230, baseSpeed: 205, wSlots: 5, sSlots: 5, eSlots: 2, aSlots: 5, dmgMod: 1.00, garageKey: 'drover_g',   artAngleOffset: -Math.PI / 2,
-    cargoBonus: 2,
+    cargoBonus: 4,
+    activeSkill: { key: 'ship:drover_scan', nameKey: 'skill.ship_drover_scanner', icon: 'СК', color: 0xab47bc },
     engines: [{ x: -12, y: 62 }, { x: 12, y: 62 }] },
   { key: 'aegis',    nameKey: 'ship.aegis',    descKey: 'shipdesc.aegis',    tier: 'T3',       levelGate: 25, price: 260000, currency: 'credits', displaySize: 155, hullMax: 2500, shieldBase: 450, baseSpeed: 200, wSlots: 4, sSlots: 5, eSlots: 2, aSlots: 5, dmgMod: 1.00, garageKey: 'aegis_g',    artAngleOffset: -Math.PI / 2,
-    passives: { shieldBonus: 0.20, shieldPerAlly: 0.05 },
+    passives: { shieldBonus: 0.20, shieldPerAlly: 0.05, reflectChance: 0.07 },
+    activeSkill: { key: 'ship:aegis_dome', nameKey: 'skill.ship_aegis_dome', icon: 'ЩК', color: 0x42a5f5 },
     engines: [{ x: -12, y: 68 }, { x: 12, y: 68 }] },
   { key: 'phantom',  nameKey: 'ship.phantom',  descKey: 'shipdesc.phantom',  tier: 'T4',       levelGate: 40, price: 520000, currency: 'credits', displaySize: 147, hullMax: 1800, shieldBase: 400, baseSpeed: 235, wSlots: 6, sSlots: 6, eSlots: 2, aSlots: 6, dmgMod: 1.00, garageKey: 'phantom_g',  artAngleOffset: -Math.PI / 2,
+    activeSkill: { key: 'ship:phantom_cloak', nameKey: 'skill.ship_phantom_cloak', icon: 'МС', color: 0x7e57c2 },
     engines: [{ x: 0, y: 71 }] },
 
   // Prestige — за ⭐, гибрид-гейт. corp задаёт принадлежность (для текста требования).

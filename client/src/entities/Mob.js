@@ -210,7 +210,7 @@ export default class Mob {
     }
 
     const dist = Phaser.Math.Distance.Between(this.x, this.y, player.x, player.y);
-    const playerStealthed = (this.scene._stealthEndTime || 0) > now;
+    const playerStealthed = (this.scene._stealthEndTime || 0) > now || (this.scene._phantomCloakEndTime || 0) > now;
 
     // ── Смена состояний ───────────────────────────────────────────────────────
     if (this.passive || playerInSafeZone || !player.alive || playerStealthed) {
