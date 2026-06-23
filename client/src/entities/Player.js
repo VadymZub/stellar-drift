@@ -442,7 +442,6 @@ export default class Player {
     this.lockedRotation = false;
     this.sprite.body?.setVelocity(0, 0);
     this.sprite.setPosition(x, y);
-    this.sprite.setScale(1);
     this.sprite.setVisible(true);
     this._npIcon.setVisible(true);
     this._npText.setVisible(true);

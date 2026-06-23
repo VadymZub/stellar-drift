@@ -101,9 +101,12 @@ export default class GameScene extends Phaser.Scene {
     const tp  = getToken() ? null : (window.TEST_PROFILE ?? null);
     let sec = SECTORS[galaxy.current];
     if (!sec) { galaxy.current = 'helios_1'; sec = SECTORS['helios_1']; }
-    const isPvp = sec.pvp === true;
-    const scale = isPvp ? PVP_WORLD_SCALE : 1.0;
-    
+    const isPvp        = sec.pvp      === true;
+    const isDungeon    = sec.isDungeon === true;  // данжи + R-1-boss
+    const isPersonal   = sec.personal  === true;  // shadow_arena
+    // PvE-секторы (не данж, не PvP, не персональный) — +20% по каждой стороне
+    const scale = isPvp ? PVP_WORLD_SCALE : (isDungeon || isPersonal) ? 1.0 : 1.2;
+
     this.worldWidth = BASE_WORLD.width * (galaxy.current === 'shadow_arena' ? 0.5 : scale);
     this.worldHeight = BASE_WORLD.height * (galaxy.current === 'shadow_arena' ? 0.5 : scale);
     this.safeZoneRadius = BASE_WORLD.safeZoneRadius;

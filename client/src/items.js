@@ -7,10 +7,10 @@ import { rollPerk } from './perks.js';
 // roll: base × random(0.85, 1.15) × (1 + max(0, mob_lvl − tier_min)/50)
 
 const CANNON_TIERS = {
-  1: { min: 1,  dmg: 40,  pen: 0 },
-  2: { min: 11, dmg: 75,  pen: 0 },
-  3: { min: 21, dmg: 130, pen: 0 },
-  4: { min: 31, dmg: 210, pen: 0 },
+  1: { min: 1,  dmg: 20,  pen: 0 },
+  2: { min: 11, dmg: 38,  pen: 0 },
+  3: { min: 21, dmg: 65,  pen: 0 },
+  4: { min: 31, dmg: 105, pen: 0 },
 };
 
 const SHIELD_TIERS = {
@@ -43,7 +43,7 @@ const ENGINE_TIERS = {
 // Dmg = Plasma T4 × 1.32 (10% above T4 + elite ammo).
 // Drops only from Apophis (bigboss). Occupies a weapon slot.
 // Special: -20% dmg to shields, +50% dmg to bare hull, 70% base accuracy.
-const LASER_DMG = 252; // T4 plasma (210) × 1.20 — 20% stronger than base T4
+const LASER_DMG = 126; // T4 plasma (105) × 1.20 — 20% stronger than base T4
 
 const roll = () => Phaser.Math.FloatBetween(0.85, 1.15);
 
@@ -106,7 +106,7 @@ export function rollApophisLoot() {
 }
 
 // Стартовое снаряжение (фиксированное, чтобы корабль сразу был боеспособен).
-export function starterCannon() { return { type: 'cannon', tier: 1, damage: 42, penetration: 0.02, fireRate: 1.0 }; }
+export function starterCannon() { return { type: 'cannon', tier: 1, damage: 21, penetration: 0.02, fireRate: 1.0 }; }
 export function starterShield() { return { type: 'shield', tier: 1, durability: 320, regen: 30, evasion: 0.02 }; }
 
 // Дефолтный лоадаут корабля: слоты по типам, слот 0 оружия/щита засеян T1 (чтобы был боеспособен),
@@ -169,7 +169,7 @@ export const CONSUMABLES = {
 // Visual info for ammo types (canvas icon generation)
 export const AMMO_ICON = {
   ammo_plasma:       { icon: 'П',  color: 0xffb74d },
-  ammo_plasma_elite: { icon: 'ПЭ', color: 0xff6d00 },
+  ammo_plasma_elite: { icon: 'ПЭ', color: 0xe53935 },
   ammo_laser:        { icon: 'Л',  color: 0x7c4dff },
 };
 

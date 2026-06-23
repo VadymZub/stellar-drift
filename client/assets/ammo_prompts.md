@@ -7,7 +7,7 @@
 **Использование:** шапка секции БОЕПРИПАСЫ в Складе и Гараже · **Цвет:** серо-голубой #4a6a8a
 
 ```
-Square game UI icon, dark navy background (#080f1a),
+Square game UI icon, transparent background,
 sci-fi tactical ammo pouch / magazine holder panel,
 three glowing slot cells arranged in a horizontal row,
 each cell outlined with dim cyan light (#4a6a8a),
@@ -26,7 +26,7 @@ flat icon with depth, subtle inner glow, no text, 512x512
 Общий стиль:
 ```
 sci-fi game inventory icon, square format, flat icon with depth,
-dark navy background (#080f1a), subtle inner glow, no text, 512x512
+transparent background, subtle inner glow, no text, 512x512
 ```
 
 Для Midjourney добавить: `--ar 1:1 --style raw --stylize 300`
@@ -37,27 +37,22 @@ dark navy background (#080f1a), subtle inner glow, no text, 512x512
 
 **Цвет:** янтарный #ffb74d · Стандартные патроны для плазма-пушки
 
+**Форма:** одиночный округлый патрон — гладкая цилиндрическая капсула
+
 ```
-Square game inventory icon, dark navy background,
-plasma ammunition cartridge, glowing amber (#ffb74d) energy capsule
-with translucent shell showing swirling plasma inside,
-metallic casing with worn sci-fi texture, faint orange aura,
-flat icon with depth, no text, 512x512
+sci-fi game inventory icon, single smooth cylindrical plasma cartridge tilted 35 degrees to the right, diagonal orientation, tip pointing upper-right, rounded bullet shape, transparent amber (#ffb74d) glowing shell with calm swirling plasma gas inside, clean polished metallic base cap at lower-left, soft warm orange inner light, no cracks no sparks, sleek minimalist design, transparent background, flat icon with depth, no text, 512x512 --ar 1:1 --style raw --stylize 400
 ```
 
 ---
 
 ## ammo_plasma_elite.png — Элит-плазма (×1.2)
 
-**Цвет:** глубокий оранжевый #ff6d00 · Элитные патроны +20% урон
+**Цвет:** алый #e53935 (красный, НЕ оранжевый) · Элитные патроны +20% урон
+
+**Форма:** ДРУГАЯ — многосекционный угловой корпус с двойным ядром, НЕ капсула
 
 ```
-Square game inventory icon, dark navy background,
-elite plasma ammunition cartridge, supercharged deep-orange (#ff6d00)
-energy core with crackling lightning arcs around the shell,
-reinforced metallic casing with glowing seams,
-more intense glow and particles than standard,
-flat icon with depth, no text, 512x512
+sci-fi game inventory icon, elite plasma ammunition, dual-core hexagonal angular casing tilted 35 degrees to the right, diagonal orientation, tip pointing upper-right, two glowing crimson red (#e53935) energy chambers side by side inside reinforced dark metal housing, crackling scarlet plasma arcs between the twin cores, fractured glowing red seams on angular shell, volatile unstable energy, pure red color scheme no orange no yellow, transparent background, flat icon with depth, no text, 512x512 --ar 1:1 --style raw --stylize 400
 ```
 
 ---
