@@ -285,12 +285,21 @@ export default class HudScene extends Phaser.Scene {
   }
 
   _ensureShipSkillTex(key) {
-    const cacheKey = `__ss_${key.replace(':', '_')}`;
+    const pngKey = key.replace(':', '_');
+    if (this.textures.exists(pngKey)) return pngKey;
+
+    // Procedural fallback for missing PNGs
+    const cacheKey = `__ss_${pngKey}`;
     if (this.textures.exists(cacheKey)) return cacheKey;
     const INFO = {
-      'ship:helion_volley': { label: 'ЗП', bg: '#2a1508', fg: '#ffb74d', border: '#ffb74d' },
-      'ship:argosy_repair': { label: 'РМ', bg: '#081624', fg: '#4fc3f7', border: '#4fc3f7' },
-      'ship:drifter_jump':  { label: 'ПР', bg: '#071a18', fg: '#4db6ac', border: '#4db6ac' },
+      'ship:helion_volley':         { label: 'ЗП', bg: '#2a1508', fg: '#ffb74d', border: '#ffb74d' },
+      'ship:argosy_repair':         { label: 'РМ', bg: '#081624', fg: '#4fc3f7', border: '#4fc3f7' },
+      'ship:drifter_jump':          { label: 'ПР', bg: '#071a18', fg: '#4db6ac', border: '#4db6ac' },
+      'ship:stiletto_afterburner':  { label: 'ФС', bg: '#071420', fg: '#29b6f6', border: '#29b6f6' },
+      'ship:anvil_lockdown':        { label: 'УП', bg: '#141418', fg: '#90a4ae', border: '#90a4ae' },
+      'ship:drover_scan':           { label: 'СК', bg: '#140d1a', fg: '#ab47bc', border: '#ab47bc' },
+      'ship:aegis_dome':            { label: 'ЩК', bg: '#071020', fg: '#42a5f5', border: '#42a5f5' },
+      'ship:phantom_cloak':         { label: 'МС', bg: '#0d0a18', fg: '#7e57c2', border: '#7e57c2' },
     };
     const info = INFO[key] || { label: '??', bg: '#0a0a14', fg: '#7e9398', border: '#7e9398' };
     const sz = 48;

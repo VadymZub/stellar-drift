@@ -251,6 +251,14 @@ export default class BootScene extends Phaser.Scene {
     ];
     for (const k of SKILL_KEYS) this.load.image(`skill_${k}`, `assets/skills/${k}.png`);
 
+    // Ship ability icons
+    const SHIP_SKILL_KEYS = [
+      'ship_helion_volley', 'ship_argosy_repair', 'ship_drifter_jump',
+      'ship_stiletto_afterburner', 'ship_anvil_lockdown', 'ship_drover_scan',
+      'ship_aegis_dome', 'ship_phantom_cloak',
+    ];
+    for (const k of SHIP_SKILL_KEYS) this.load.image(k, `assets/skills/${k}.png`);
+
     // VFX manifest — frame sizes read in create() to load sprite sheets
     this.load.json('vfx_manifest', 'assets/vfx/vfx_manifest.json');
 
