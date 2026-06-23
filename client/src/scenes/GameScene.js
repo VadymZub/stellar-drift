@@ -326,6 +326,18 @@ export default class GameScene extends Phaser.Scene {
       this.actionBar[0] = null;
     }
 
+    // Auto-fill empty action bar slots 1-9 with learned active skills
+    const _ACTIVE_SKILL_ORDER = ['overcharge_shot', 'salvo', 'emergency_repair', 'shield_burst', 'stealth_sprint', 'berserker'];
+    const _usedKeys = new Set(this.actionBar.filter(Boolean));
+    for (const sk of _ACTIVE_SKILL_ORDER) {
+      if ((this.skillLevels[sk] || 0) === 0) continue;
+      if (_usedKeys.has(sk)) continue;
+      const slot = this.actionBar.findIndex((v, i) => i > 0 && v === null);
+      if (slot < 0) break;
+      this.actionBar[slot] = sk;
+      _usedKeys.add(sk);
+    }
+
     // Active skill runtime state (reset per session)
     this.skillCooldowns    = {};
     this._consBuffEndTimes = {};   // key → timestamp when buff/effect expires
@@ -934,23 +946,55 @@ export default class GameScene extends Phaser.Scene {
   travelTo(key) {
     const acc = sectorAccess(key, this.pilotLevel, this.activeShip, this.premium);
     if (!acc.ok) { this.jumping = false; this.player.sprite.setVisible(true).setScale(1); return; }
-    
+
     const fromKey = galaxy.current;
+    const targetSec = SECTORS[key];
+    if (targetSec?.lvlMin && targetSec.lvlMin > this.pilotLevel + 5) {
+      this._showJumpDangerWarning(key, targetSec.lvlMin, fromKey);
+      return;
+    }
+    this._execJump(key, fromKey);
+  }
+
+  _showJumpDangerWarning(key, recLevel, fromKey) {
+    const W = this.scale.width, H = this.scale.height;
+    const OW = 300, OH = 120, ox = (W - OW) / 2, oy = (H - OH) / 2;
+    const objs = [];
+    const bg = this.add.rectangle(ox, oy, OW, OH, 0x0e0608, 0.97)
+      .setOrigin(0, 0).setStrokeStyle(1.5, 0xef5350, 0.8).setDepth(200).setScrollFactor(0);
+    objs.push(bg);
+    objs.push(this.add.text(ox + OW / 2, oy + 18, '⚠ Опасный сектор', { fontFamily: 'Orbitron, sans-serif', fontSize: '14px', color: '#ef5350', resolution: 2 }).setOrigin(0.5).setDepth(201).setScrollFactor(0));
+    objs.push(this.add.text(ox + OW / 2, oy + 44, `Рекомендуемый уровень: ${recLevel}`, { fontFamily: 'Inter, sans-serif', fontSize: '12px', color: '#ccaaaa', resolution: 2 }).setOrigin(0.5).setDepth(201).setScrollFactor(0));
+    objs.push(this.add.text(ox + OW / 2, oy + 62, `Ваш уровень: ${this.pilotLevel}`, { fontFamily: 'Inter, sans-serif', fontSize: '11px', color: '#886666', resolution: 2 }).setOrigin(0.5).setDepth(201).setScrollFactor(0));
+
+    const btnY = oy + OH - 22;
+    const noBtn = this.add.rectangle(ox + OW / 2 - 65, btnY, 100, 28, 0x0d1e2c, 1)
+      .setStrokeStyle(1, 0x2a4a60, 0.8).setDepth(201).setScrollFactor(0).setInteractive({ useHandCursor: true });
+    noBtn.on('pointerdown', () => {
+      objs.forEach(o => o?.destroy());
+      this.jumping = false;
+      this.player.sprite.setVisible(true).setScale(1).setAlpha(1);
+    });
+    objs.push(noBtn);
+    objs.push(this.add.text(ox + OW / 2 - 65, btnY, 'НАЗАД', { fontFamily: 'Orbitron, sans-serif', fontSize: '11px', color: '#4dd0e1', resolution: 2 }).setOrigin(0.5).setDepth(202).setScrollFactor(0));
+
+    const yesBtn = this.add.rectangle(ox + OW / 2 + 65, btnY, 100, 28, 0x1a0808, 1)
+      .setStrokeStyle(1, 0xef5350, 0.8).setDepth(201).setScrollFactor(0).setInteractive({ useHandCursor: true });
+    yesBtn.on('pointerdown', () => { objs.forEach(o => o?.destroy()); this._execJump(key, fromKey); });
+    objs.push(yesBtn);
+    objs.push(this.add.text(ox + OW / 2 + 65, btnY, 'ВОЙТИ', { fontFamily: 'Orbitron, sans-serif', fontSize: '11px', color: '#ef9a9a', resolution: 2 }).setOrigin(0.5).setDepth(202).setScrollFactor(0));
+  }
+
+  _execJump(key, fromKey) {
     galaxy.current = key;
-
-    // Mission: sector arrival hooks
     if (key === 'R-1-boss') this.advanceMission('story_signal', 0);
-
-    // Координаты появления в новом секторе
     const nextPvp = SECTORS[key].pvp === true;
     const nextW = BASE_WORLD.width * (nextPvp ? PVP_WORLD_SCALE : 1.0);
     const nextH = BASE_WORLD.height * (nextPvp ? PVP_WORLD_SCALE : 1.0);
-
-    const { dx, dy } = edgeDir(key, fromKey); 
+    const { dx, dy } = edgeDir(key, fromKey);
     const mx = nextW / 2 - 320, my = nextH / 2 - 320;
     const startX = nextW / 2 + dx * mx;
     const startY = nextH / 2 + dy * my;
-
     this.scene.restart({ startX, startY });
   }
 
@@ -1121,6 +1165,7 @@ export default class GameScene extends Phaser.Scene {
         'ship:drover_scan': 120000,
         'ship:stiletto_afterburner': 50000, 'ship:anvil_lockdown': 90000,
         'ship:aegis_dome': 120000, 'ship:phantom_cloak': 180000,
+        'ship:wisp_recall': 180000,
       };
       return Math.round((SHIP_CD[key] || 40000) * mod);
     }
@@ -1157,6 +1202,7 @@ export default class GameScene extends Phaser.Scene {
       else if (key === 'ship:anvil_lockdown')       this._doShipAnvilLockdown(now, cd);
       else if (key === 'ship:aegis_dome')           this._doShipAegisDome(now, cd);
       else if (key === 'ship:phantom_cloak')        this._doShipPhantomCloak(now, cd);
+      else if (key === 'ship:wisp_recall')          this._doShipWispRecall(now, cd);
       return;
     }
     const lv = (this.skillLevels || {})[key] || 0;
@@ -1411,6 +1457,25 @@ export default class GameScene extends Phaser.Scene {
     this.time.delayedCall(expandMs + 50, () => ring.destroy());
     this.log('🔍 Глубокий сканер (30 с)');
     this.time.delayedCall(30000, () => { this._scannerActive = false; });
+  }
+
+  _doShipWispRecall(now, cd) {
+    const p = this.player;
+    if (!p?.alive) return;
+    const sec = SECTORS[galaxy.current];
+    if (sec?.isDungeon || sec?.pvp) { this.log('⚠ Телепорт недоступен в этом секторе'); return; }
+    if (!this.homeBases?.length)    { this.log('⚠ В секторе нет базы'); return; }
+    this.skillCooldowns['ship:wisp_recall'] = now + cd;
+    const base = this.homeBases[0];
+    const bx = base.x ?? this.worldWidth / 2;
+    const by = base.y ?? this.worldHeight / 2;
+    p.sprite.setAlpha(0);
+    p.sprite.setPosition(bx, by);
+    if (p.sprite.body) p.sprite.body.reset(bx, by);
+    p.waypoint = null; p.speed = 0;
+    this.cameras.main.centerOn(bx, by);
+    this.tweens.add({ targets: p.sprite, alpha: 1, duration: 350 });
+    this.log('⤴ Телепорт на базу!');
   }
 
   _doShipStilettoAfterburner(now, cd) {

@@ -18,6 +18,7 @@ export const SHIPS = [
   // Формула мировых координат: wx = px + x·sin(facing) − y·cos(facing)
   //                             wy = py − x·cos(facing) − y·sin(facing)
   { key: 'wisp',     nameKey: 'ship.wisp',     descKey: 'shipdesc.wisp',     tier: 'T1',       levelGate: 1,  price: 0,      currency: null,      displaySize: 77,  hullMax: 1000, shieldBase: 120, baseSpeed: 200, wSlots: 1, sSlots: 1, eSlots: 0, aSlots: 3, dmgMod: 1.00, garageKey: 'wisp_g', artAngleOffset: -Math.PI / 2,
+    activeSkill: { key: 'ship:wisp_recall', nameKey: 'skill.ship_wisp_recall', icon: 'БЗ', color: 0x66bb6a },
     engines: [{ x: -10, y: 28 }, { x: 10, y: 28 }] },
   // Остальные корабли: арт нарисован носом ВНИЗ (как wisp) → artAngleOffset −π/2 (разворот 180°);
   // displaySize уменьшен ~25% (были крупнее виспа). Игровой спрайт ↔ orientation; в Гараже арт статичный.

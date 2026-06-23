@@ -282,8 +282,8 @@ export default class GarageScene extends Phaser.Scene {
   _cargoMaxForShip(shipKey) {
     const gs = this.gs;
     const sl = gs.skillLevels?.cargo_expand || 0;
-    const drover = shipKey === 'drover' ? 2 : 0;
-    const prem   = gs.premium ? (shipKey === 'drover' ? 6 : 8) : 0;
+    const drover = shipKey === 'drover' ? 4 : 0;
+    const prem   = gs.premium ? 8 : 0;
     return 8 + drover + sl * (sl + 1) + prem;
   }
 
@@ -356,6 +356,18 @@ export default class GarageScene extends Phaser.Scene {
       gs.actionBar[0] = null;
     }
 
+    // Auto-fill empty slots 1-9 with learned active skills
+    const _ACTIVE_ORDER = ['overcharge_shot', 'salvo', 'emergency_repair', 'shield_burst', 'stealth_sprint', 'berserker'];
+    const _used = new Set(gs.actionBar.filter(Boolean));
+    for (const sk of _ACTIVE_ORDER) {
+      if ((gs.skillLevels?.[sk] || 0) === 0) continue;
+      if (_used.has(sk)) continue;
+      const slot = gs.actionBar.findIndex((v, i) => i > 0 && v === null);
+      if (slot < 0) break;
+      gs.actionBar[slot] = sk;
+      _used.add(sk);
+    }
+
     gs.log(i18n.t('garage.switched', { ship: i18n.t(ship.nameKey) }));
     gs._saveState?.();
     this.scene.restart();
@@ -402,8 +414,8 @@ export default class GarageScene extends Phaser.Scene {
   // type = 'inventory' (трюм, надеть/продать) | 'warehouse' (склад, → трюм)
   _cargoMax() {
     const gs = this.gs; const sl = gs.skillLevels?.cargo_expand || 0;
-    const drover = gs.activeShip === 'drover' ? 2 : 0;
-    const prem   = gs.premium ? (gs.activeShip === 'drover' ? 6 : 8) : 0;
+    const drover = gs.activeShip === 'drover' ? 4 : 0;
+    const prem   = gs.premium ? 8 : 0;
     return 8 + drover + sl * (sl + 1) + prem;
   }
   _whMax() { const gs = this.gs; const sl = gs.skillLevels?.cargo_expand || 0; return 8 + sl * (sl + 1) + (gs.premium ? 8 : 0); }

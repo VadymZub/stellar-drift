@@ -1,7 +1,7 @@
 import * as Phaser from 'https://cdn.jsdelivr.net/npm/phaser@4.1.0/dist/phaser.esm.js';
 import { COLORS, UI_RES } from '../constants.js';
 import { i18n } from '../i18n.js';
-import { itemName, itemStats, itemIconKey, PLASMATE_PER_SLOT, PLASMATE_GOLD_RATE, removePlasmateFromInventory, totalPlasmateInInventory, CONSUMABLES, AMMO_ICON, addConsumableToInventory } from '../items.js';
+import { itemName, itemStats, itemIconKey, itemSellPrice, PLASMATE_PER_SLOT, PLASMATE_GOLD_RATE, removePlasmateFromInventory, totalPlasmateInInventory, CONSUMABLES, AMMO_ICON, addConsumableToInventory } from '../items.js';
 import { prerenderTex } from '../utils/prerenderTex.js';
 import { PERK_MAP, RARITY_COLOR, perkBonus } from '../perks.js';
 
@@ -15,8 +15,8 @@ export default class CargoScene extends Phaser.Scene {
 
   _cargoMax() {
     const gs = this.gs; const sl = gs.skillLevels?.cargo_expand || 0;
-    const drover = gs.activeShip === 'drover' ? 2 : 0;
-    const prem   = gs.premium ? (gs.activeShip === 'drover' ? 6 : 8) : 0;
+    const drover = gs.activeShip === 'drover' ? 4 : 0;
+    const prem   = gs.premium ? 8 : 0;
     return 8 + drover + sl * (sl + 1) + prem;
   }
   _whMax() { const gs = this.gs; const sl = gs.skillLevels?.cargo_expand || 0; return 8 + sl * (sl + 1) + (gs.premium ? 8 : 0); }
@@ -73,7 +73,7 @@ export default class CargoScene extends Phaser.Scene {
 
     if (atBase) {
       const BTN_H = 32;
-      const gridH = ph - 90 - BTN_H - 10;
+      const gridH = ph - 90 - BTN_H * 2 - 14;
       // Минимум 290 px = ровно 4 колонки × 68 px + 3 зазора × 6 px
       const colW = Math.max(290, Math.floor((pw - 36) / 2));
       this._renderSlotGrid(px + 12, py + 72, colW, gridH, this.gs.inventory || [], cargoMax, 'cargo');
@@ -103,9 +103,38 @@ export default class CargoScene extends Phaser.Scene {
       if (_canGV) {
         _cbHit.on('pointerdown', () => { this.gs._whGuildMode = !gMode; this.scene.restart(); });
       }
-      // Нижние кнопки: ГАРАЖ + СКЛАД ГИЛЬДИИ
-      const btnY = py + 72 + gridH + 8;
+      // Утилитарные кнопки: СОРТИРОВАТЬ + ПРОДАТЬ COMMON
+      const utilY = py + 72 + gridH + 4;
       const bGap = 4, bW = Math.floor((pw - 28) / 2);
+
+      const bSort = this.add.rectangle(px + 12, utilY, bW, BTN_H, 0x0d1a2c, 0.95)
+        .setOrigin(0, 0).setStrokeStyle(1, 0x1a3a50, 0.7).setInteractive({ useHandCursor: true }).setDepth(15);
+      const bSortLbl = this.add.text(px + 12 + bW / 2, utilY + BTN_H / 2, '↕ Сортировать',
+        this.F('11px', '#4a8aaa')).setOrigin(0.5).setDepth(15);
+      bSort.on('pointerover', () => { bSort.setFillStyle(0x142838); bSortLbl.setColor('#7ab8d4'); });
+      bSort.on('pointerout',  () => { bSort.setFillStyle(0x0d1a2c); bSortLbl.setColor('#4a8aaa'); });
+      bSort.on('pointerdown', () => {
+        this._sortInventory(this.gs.inventory);
+        this.gs._saveState?.();
+        this.scene.restart();
+      });
+
+      const { count: sellCount, total: sellTotal } = this._calcSellCommon(this.gs.inventory || []);
+      const sellClr = sellCount > 0 ? '#88bb44' : '#2a3a1a';
+      const bSell = this.add.rectangle(px + 12 + bW + bGap, utilY, bW, BTN_H, sellCount > 0 ? 0x0d1a08 : 0x080e08, 0.95)
+        .setOrigin(0, 0).setStrokeStyle(1, sellCount > 0 ? 0x2a5018 : 0x141a10, 0.7)
+        .setInteractive({ useHandCursor: sellCount > 0 }).setDepth(15);
+      const bSellLbl = this.add.text(px + 12 + bW + bGap + bW / 2, utilY + BTN_H / 2,
+        sellCount > 0 ? `🗑 Продать common (${sellCount}) → ${sellTotal.toLocaleString()} кр.` : '🗑 Нет common для продажи',
+        this.F('10px', sellClr)).setOrigin(0.5).setDepth(15);
+      if (sellCount > 0) {
+        bSell.on('pointerover', () => { bSell.setFillStyle(0x182a10); bSellLbl.setColor('#aadd66'); });
+        bSell.on('pointerout',  () => { bSell.setFillStyle(0x0d1a08); bSellLbl.setColor(sellClr); });
+        bSell.on('pointerdown', () => this._showSellCommonConfirm(sellCount, sellTotal));
+      }
+
+      // Нижние кнопки навигации: ГАРАЖ + СКЛАД ГИЛЬДИИ
+      const btnY = utilY + BTN_H + bGap;
 
       // Кнопка 1: ГАРАЖ
       const b1x = px + 12;
@@ -610,6 +639,77 @@ export default class CargoScene extends Phaser.Scene {
     gs.dropItemAtPlayer?.(item);
     gs._saveState?.();
     this.scene.restart();
+  }
+
+  // ── Sell common + Sort ───────────────────────────────────────────────────
+
+  _isSellableCommon(item) {
+    const MODULE_TYPES = new Set(['cannon', 'laser', 'shield', 'engine', 'armor']);
+    if (!MODULE_TYPES.has(item.type)) return false;
+    if ((item.tier || 1) >= 4) return false;
+    if (item.perk?.rarity === 'jackpot') return false;
+    return true;
+  }
+
+  _calcSellCommon(inv) {
+    let count = 0, total = 0;
+    for (const item of inv) {
+      if (!this._isSellableCommon(item)) continue;
+      count++;
+      total += itemSellPrice(item);
+    }
+    return { count, total };
+  }
+
+  _showSellCommonConfirm(count, total) {
+    const W = this.scale.width, H = this.scale.height;
+    const OW = 320, OH = 110, ox = (W - OW) / 2, oy = (H - OH) / 2;
+    const objs = [];
+    const bg = this.add.rectangle(ox, oy, OW, OH, 0x060c14, 0.98)
+      .setOrigin(0, 0).setStrokeStyle(1, 0x88bb44, 0.7).setDepth(70);
+    objs.push(bg);
+    objs.push(this.add.text(ox + OW / 2, oy + 18, '🗑 Продать common-модули?', this.O('13px', '#88bb44')).setOrigin(0.5).setDepth(71));
+    objs.push(this.add.text(ox + OW / 2, oy + 42, `${count} предмет(ов)  →  +${total.toLocaleString()} кр.`, this.F('12px', '#ccddaa')).setOrigin(0.5).setDepth(71));
+    objs.push(this.add.text(ox + OW / 2, oy + 58, 'T4, jackpot-перки и расходники не затронуты', this.F('10px', '#4a6a3a')).setOrigin(0.5).setDepth(71));
+
+    const btnY = oy + OH - 20;
+    const noBtn = this.add.rectangle(ox + OW / 2 - 65, btnY, 100, 26, 0x0d1e2c, 1)
+      .setStrokeStyle(1, 0x2a4a60, 0.8).setDepth(71).setInteractive({ useHandCursor: true });
+    noBtn.on('pointerdown', () => objs.forEach(o => o?.destroy()));
+    objs.push(noBtn);
+    objs.push(this.add.text(ox + OW / 2 - 65, btnY, 'ОТМЕНА', this.O('11px', '#4dd0e1')).setOrigin(0.5).setDepth(72));
+
+    const yesBtn = this.add.rectangle(ox + OW / 2 + 65, btnY, 100, 26, 0x0d1a08, 1)
+      .setStrokeStyle(1, 0x4a8822, 0.8).setDepth(71).setInteractive({ useHandCursor: true });
+    yesBtn.on('pointerdown', () => {
+      const gs = this.gs;
+      const inv = gs.inventory || [];
+      let earned = 0;
+      for (let i = inv.length - 1; i >= 0; i--) {
+        if (!this._isSellableCommon(inv[i])) continue;
+        earned += itemSellPrice(inv[i]);
+        inv.splice(i, 1);
+      }
+      gs.credits = (gs.credits || 0) + earned;
+      gs.log?.(`Продано: ${count} модулей на ${earned.toLocaleString()} кр.`);
+      gs._saveState?.();
+      this.scene.restart();
+    });
+    objs.push(yesBtn);
+    objs.push(this.add.text(ox + OW / 2 + 65, btnY, 'ПРОДАТЬ', this.O('11px', '#88bb44')).setOrigin(0.5).setDepth(72));
+  }
+
+  _sortInventory(inv) {
+    const ORDER = { cannon: 0, laser: 1, shield: 2, armor: 3, engine: 4,
+      repair_pack: 5, speed_boost: 5, scanner_pulse: 5, emergency_warp: 5,
+      damage_booster: 5, hull_booster: 5, shield_booster: 5, xp_booster: 5,
+      ammo_plasma: 6, ammo_plasma_elite: 6,
+      biomech_core: 7, quantum_crystal: 7, plasma_coil: 7 };
+    inv.sort((a, b) => {
+      const ao = ORDER[a.type] ?? 8, bo = ORDER[b.type] ?? 8;
+      if (ao !== bo) return ao - bo;
+      return (b.tier || 0) - (a.tier || 0);
+    });
   }
 
   _showSellConfirm(gs, item, slotSx, slotSy, def) {

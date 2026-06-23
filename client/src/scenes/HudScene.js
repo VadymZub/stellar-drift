@@ -300,6 +300,7 @@ export default class HudScene extends Phaser.Scene {
       'ship:drover_scan':           { label: 'СК', bg: '#140d1a', fg: '#ab47bc', border: '#ab47bc' },
       'ship:aegis_dome':            { label: 'ЩК', bg: '#071020', fg: '#42a5f5', border: '#42a5f5' },
       'ship:phantom_cloak':         { label: 'МС', bg: '#0d0a18', fg: '#7e57c2', border: '#7e57c2' },
+      'ship:wisp_recall':           { label: 'БЗ', bg: '#081408', fg: '#66bb6a', border: '#66bb6a' },
     };
     const info = INFO[key] || { label: '??', bg: '#0a0a14', fg: '#7e9398', border: '#7e9398' };
     const sz = 48;
