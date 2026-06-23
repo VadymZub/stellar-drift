@@ -1120,7 +1120,7 @@ export default class GameScene extends Phaser.Scene {
         'ship:helion_volley': 40000, 'ship:argosy_repair': 55000, 'ship:drifter_jump': 60000,
         'ship:drover_scan': 120000,
         'ship:stiletto_afterburner': 50000, 'ship:anvil_lockdown': 90000,
-        'ship:aegis_dome': 120000, 'ship:phantom_cloak': 45000,
+        'ship:aegis_dome': 120000, 'ship:phantom_cloak': 180000,
       };
       return Math.round((SHIP_CD[key] || 40000) * mod);
     }
@@ -1445,15 +1445,25 @@ export default class GameScene extends Phaser.Scene {
   _doShipPhantomCloak(now, cd) {
     const p = this.player;
     if (!p?.alive) return;
+    // Требование: нет атак последние 3 секунды
+    if (now - (p.lastAttackAt || 0) < 3000) {
+      this.log('⚠ Маскировка: 3 с без атаки');
+      return;
+    }
     this.skillCooldowns['ship:phantom_cloak'] = now + cd;
-    p.baseSpeed = Math.round(p.baseSpeed * 1.5);
+    p.baseSpeed = Math.round(p.baseSpeed * 1.3);
     p.sprite.setAlpha(0.12);
-    this._phantomCloakEndTime = now + 6000;
-    this.log('👻 Маскировка! (+50% скорость, невидимость, 6 с)');
-    this.time.delayedCall(6000, () => {
-      if (p?.alive) { p.sprite.setAlpha(1); p.recomputeStats(); }
-      this._phantomCloakEndTime = 0;
-    });
+    this._phantomCloakEndTime = now + 10000;
+    this.log('👻 Маскировка! (+30% скорость, 10 с)');
+    this.time.delayedCall(10000, () => this._breakPhantomCloak());
+  }
+
+  _breakPhantomCloak() {
+    if (!this._phantomCloakEndTime) return;
+    this._phantomCloakEndTime = 0;
+    const p = this.player;
+    if (p?.alive) { p.sprite.setAlpha(1); p.recomputeStats(); }
+    this.log('👁 Маскировка снята');
   }
 
   gainXp(amount) {
@@ -2311,10 +2321,11 @@ export default class GameScene extends Phaser.Scene {
       const d = Phaser.Math.Distance.Between(this.player.x, this.player.y, this.target.x, this.target.y);
       if (d < this.player.weaponRange) {
         faceAngle = Phaser.Math.Angle.Between(this.player.x, this.player.y, this.target.x, this.target.y);
-        if (this.isFiring && time > this.player.fireCooldown) { 
-          this.firePlayerWeapon(); 
-          this.player.fireCooldown = time + 1000 / this.player.weaponFireRate; 
-          this.player.lastAttackAt = time; 
+        if (this.isFiring && time > this.player.fireCooldown) {
+          this.firePlayerWeapon();
+          if (this._phantomCloakEndTime > time) this._breakPhantomCloak();
+          this.player.fireCooldown = time + 1000 / this.player.weaponFireRate;
+          this.player.lastAttackAt = time;
         }
       }
     }
