@@ -1118,9 +1118,9 @@ export default class GameScene extends Phaser.Scene {
       const mod = this.player?.activeCooldownMod ?? 1;
       const SHIP_CD = {
         'ship:helion_volley': 40000, 'ship:argosy_repair': 55000, 'ship:drifter_jump': 60000,
-        'ship:drover_scan': 90000,
-        'ship:stiletto_afterburner': 35000, 'ship:anvil_lockdown': 45000,
-        'ship:aegis_dome': 50000, 'ship:phantom_cloak': 45000,
+        'ship:drover_scan': 120000,
+        'ship:stiletto_afterburner': 50000, 'ship:anvil_lockdown': 90000,
+        'ship:aegis_dome': 120000, 'ship:phantom_cloak': 45000,
       };
       return Math.round((SHIP_CD[key] || 40000) * mod);
     }
