@@ -1463,8 +1463,10 @@ export default class GameScene extends Phaser.Scene {
     const p = this.player;
     if (!p?.alive) return;
     const sec = SECTORS[galaxy.current];
-    if (sec?.isDungeon || sec?.pvp) { this.log('⚠ Телепорт недоступен в этом секторе'); return; }
-    if (!this.homeBases?.length)    { this.log('⚠ В секторе нет базы'); return; }
+    if (sec?.isDungeon) { this.log('⚠ Телепорт недоступен в данже'); return; }
+    if (!this.homeBases?.length) { this.log('⚠ В секторе нет базы'); return; }
+    const underPvpAttack = (this.mobs || []).some(m => m.alive && m.isPlayerMob && m.state !== 'idle');
+    if (underPvpAttack) { this.log('⚠ Телепорт заблокирован: атака противника'); return; }
     this.skillCooldowns['ship:wisp_recall'] = now + cd;
     const base = this.homeBases[0];
     const bx = base.x ?? this.worldWidth / 2;

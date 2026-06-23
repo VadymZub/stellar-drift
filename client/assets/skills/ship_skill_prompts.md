@@ -49,6 +49,21 @@ sci-fi UI badge icon for spaceship ability "Phase Jump", ghostly spaceship silho
 
 ---
 
+## СТАРТОВЫЙ КОРАБЛЬ
+
+---
+
+### ship_wisp_recall.png — Телепорт на базу
+
+**Корабль:** Wisp (T1) · **Цвет:** зелёный #66bb6a · **КД:** 3 мин
+**Эффект:** мгновенный телепорт к базе; в PvP-секторах блокируется если игрок под атакой; в данже не работает
+
+```
+sci-fi UI badge icon for spaceship ability "Base Recall", small agile scout ship dissolving into a swirling green (#66bb6a) teleportation vortex, bright emerald energy spiral pulling the ship upward toward a glowing home-base beacon above, streaks of green light converging into a central warp point, home-station silhouette faintly visible at the top of the energy beam, instant recall flash effect, painterly stylized game UI icon, AAA mobile MMO ability badge, vibrant green color theme, centered composition with circular border ring, isolated on transparent background, no characters, no text, no letters, no words, easy-to-read silhouette at small size --ar 1:1 --stylize 650
+```
+
+---
+
 ## НОВЫЕ (5 обычных кораблей)
 
 ---
