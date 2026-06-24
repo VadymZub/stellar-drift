@@ -5,6 +5,7 @@ import { SHIPS } from '../ships.js';
 import { SECTORS } from '../galaxy.js';
 import { PERK_DEFS } from '../perks.js';
 import { buildBitmapFont } from '../utils/buildBitmapFont.js';
+import { prerenderTex } from '../utils/prerenderTex.js';
 
 // Классы взрывов (px нативного кадра). Стек 28 кадров на класс — из design/slice_explosion24.py,
 // лежит в client/explosion24/<class>_sheet.png (игра берёт свежий стек оттуда).
@@ -382,8 +383,10 @@ export default class BootScene extends Phaser.Scene {
         this.textures.get(s.garageKey).setFilter(LINEAR);
     }
     for (const m of Object.values(MOBS)) {
-      if (!m.anim && this.textures.exists(m.key))
+      if (!m.anim && this.textures.exists(m.key)) {
         this.textures.get(m.key).setFilter(LINEAR);
+        m._prerenderKey = prerenderTex(this, m.key, m.displaySize, m.displaySize);
+      }
     }
 
     const loading = document.getElementById('loading');

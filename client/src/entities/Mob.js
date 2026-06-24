@@ -32,13 +32,15 @@ export default class Mob {
     this.hull      = this.maxHull;
     this.shield    = this.maxShield;
 
+    const mobTexKey = template._prerenderKey || template.key;
     this.sprite = template.anim
       ? scene.add.sprite(x, y, template.sheetKey).setDepth(40)
-      : scene.add.image(x, y, template.key).setDepth(40);
+      : scene.add.image(x, y, mobTexKey).setDepth(40);
     scene.physics.add.existing(this.sprite);
     if (template.anim) this.sprite.play(template.anim);
-    const natW = template.anim ? template.frameW : scene.textures.get(template.key).getSourceImage().width;
-    const natH = template.anim ? template.frameH : scene.textures.get(template.key).getSourceImage().height;
+    const src = template.anim ? null : scene.textures.get(mobTexKey).getSourceImage();
+    const natW = template.anim ? template.frameW : (src.naturalWidth ?? src.width);
+    const natH = template.anim ? template.frameH : (src.naturalHeight ?? src.height);
     const finalSize = template.displaySize * (this.scene.objScale || 1.0);
     const sc = finalSize / Math.max(natW, natH);
     this.sprite.setDisplaySize(natW * sc, natH * sc);
