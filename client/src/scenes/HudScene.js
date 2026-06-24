@@ -1,5 +1,5 @@
 import * as Phaser from 'https://cdn.jsdelivr.net/npm/phaser@4.1.0/dist/phaser.esm.js';
-import { COLORS, UI_RES, BASE_SCAN_RADIUS } from '../constants.js';
+import { COLORS, UI_RES, BASE_SCAN_RADIUS, DPR } from '../constants.js';
 import { i18n } from '../i18n.js';
 import { levelInfo, MAX_LEVEL } from '../leveling.js';
 import { minimapRect, worldToMinimap } from '../systems/minimap.js';
@@ -142,9 +142,12 @@ export default class HudScene extends Phaser.Scene {
 
   _buildActionBarHUD() {
     const W = this.scale.width, H = this.scale.height;
-    const SW = 52, SH = 52, GAP = 4, N = 10;
+    // DPR-adaptive: slot is 52 CSS px regardless of screen density
+    const SW = Math.round(52 * DPR), SH = SW;
+    const GAP = Math.round(4 * DPR), N = 10;
+    const R = Math.round(5 * DPR); // corner radius
     const startX = Math.round((W - (N * SW + (N - 1) * GAP)) / 2);
-    const barY   = H - SH - 10;
+    const barY   = H - SH - Math.round(10 * DPR);
 
     this._barEditMode  = false;
     this._barPickedIdx = null;
@@ -154,9 +157,9 @@ export default class HudScene extends Phaser.Scene {
 
       const bg = this.add.graphics().setDepth(101);
       bg.fillStyle(0x0a1828, 0.92);
-      bg.fillRoundedRect(sx, barY, SW, SH, 5);
-      bg.lineStyle(1, 0x1e4060, 1);
-      bg.strokeRoundedRect(sx, barY, SW, SH, 5);
+      bg.fillRoundedRect(sx, barY, SW, SH, R);
+      bg.lineStyle(Math.max(1, Math.round(DPR)), 0x1e4060, 1);
+      bg.strokeRoundedRect(sx, barY, SW, SH, R);
 
       // Hit zone: ЛКМ = активация / ПКМ = удалить / режим ↔ = перестановка
       const hitZone = this.add.rectangle(sx + SW / 2, barY + SH / 2, SW, SH)
@@ -198,21 +201,21 @@ export default class HudScene extends Phaser.Scene {
       });
 
       const cdGfx = this.add.graphics().setDepth(103);
-      const hkStyle = { fontFamily: 'Inter, sans-serif', fontSize: '9px', color: '#4a6680', resolution: UI_RES };
-      const hk = this.add.text(sx + 3, barY + 2, i < 9 ? `${i + 1}` : '0', hkStyle).setDepth(104);
-      const cdStyle = { fontFamily: 'Orbitron, sans-serif', fontSize: '12px', color: '#ffffff', resolution: UI_RES };
+      const hkStyle = { fontFamily: 'Inter, sans-serif', fontSize: `${Math.round(9 * DPR)}px`, color: '#4a6680', resolution: UI_RES };
+      const hk = this.add.text(sx + Math.round(3 * DPR), barY + Math.round(2 * DPR), i < 9 ? `${i + 1}` : '0', hkStyle).setDepth(104);
+      const cdStyle = { fontFamily: 'Orbitron, sans-serif', fontSize: `${Math.round(12 * DPR)}px`, color: '#ffffff', resolution: UI_RES };
       const cdTxt = this.add.text(sx + SW / 2, barY + SH / 2, '', cdStyle).setOrigin(0.5).setDepth(104);
 
-      return { sx, sy: barY, SW, SH, bg, cdGfx, hk, cdTxt, iconImg: null, _key: null, _pickGfx: null };
+      return { sx, sy: barY, SW, SH, R, bg, cdGfx, hk, cdTxt, iconImg: null, _key: null, _pickGfx: null };
     });
 
     // Edit mode toggle button — right of bar
-    const ebX = startX + N * (SW + GAP) + 6;
-    const ebW = 30, ebH = 30;
+    const ebX = startX + N * (SW + GAP) + Math.round(6 * DPR);
+    const ebW = Math.round(30 * DPR), ebH = Math.round(30 * DPR);
     this._editBtn = this.add.rectangle(ebX, barY + (SH - ebH) / 2, ebW, ebH, 0x0a1828, 0.88)
-      .setOrigin(0, 0).setStrokeStyle(1, 0x2a4060).setInteractive({ useHandCursor: true }).setDepth(105);
+      .setOrigin(0, 0).setStrokeStyle(Math.max(1, Math.round(DPR)), 0x2a4060).setInteractive({ useHandCursor: true }).setDepth(105);
     this._editBtnTxt = this.add.text(ebX + ebW / 2, barY + SH / 2, '↔',
-      { fontFamily: 'Inter, sans-serif', fontSize: '17px', color: '#3a5a70', resolution: UI_RES })
+      { fontFamily: 'Inter, sans-serif', fontSize: `${Math.round(17 * DPR)}px`, color: '#3a5a70', resolution: UI_RES })
       .setOrigin(0.5).setDepth(106);
     this._editBtn.on('pointerover', () => { if (!this._barEditMode) this._editBtn.setFillStyle(0x142030, 0.95); });
     this._editBtn.on('pointerout',  () => { if (!this._barEditMode) this._editBtn.setFillStyle(0x0a1828, 0.88); });
@@ -239,8 +242,8 @@ export default class HudScene extends Phaser.Scene {
     slot._pickGfx = null;
     if (on) {
       slot._pickGfx = this.add.graphics().setDepth(108);
-      slot._pickGfx.lineStyle(2.5, 0xffb74d, 1);
-      slot._pickGfx.strokeRoundedRect(slot.sx, slot.sy, slot.SW, slot.SH, 5);
+      slot._pickGfx.lineStyle(Math.round(2.5 * DPR), 0xffb74d, 1);
+      slot._pickGfx.strokeRoundedRect(slot.sx, slot.sy, slot.SW, slot.SH, slot.R ?? Math.round(5 * DPR));
       slot.iconImg?.setAlpha(0.45);
     } else {
       slot.iconImg?.setAlpha(1.0);
@@ -270,22 +273,23 @@ export default class HudScene extends Phaser.Scene {
       // Redraw slot border: accent color for ship abilities, default otherwise
       slot.bg.clear();
       slot.bg.fillStyle(0x0a1828, 0.92);
-      slot.bg.fillRoundedRect(slot.sx, slot.sy, slot.SW, slot.SH, 5);
+      const R = slot.R ?? Math.round(5 * DPR);
+      slot.bg.fillRoundedRect(slot.sx, slot.sy, slot.SW, slot.SH, R);
       const accent = key?.startsWith('ship:') ? (SHIP_ACCENT[key] ?? 0x4a7090) : null;
       if (accent) {
-        slot.bg.lineStyle(2, accent, 0.85);
+        slot.bg.lineStyle(Math.round(2 * DPR), accent, 0.85);
       } else {
-        slot.bg.lineStyle(1, 0x1e4060, 1);
+        slot.bg.lineStyle(Math.max(1, Math.round(DPR)), 0x1e4060, 1);
       }
-      slot.bg.strokeRoundedRect(slot.sx, slot.sy, slot.SW, slot.SH, 5);
+      slot.bg.strokeRoundedRect(slot.sx, slot.sy, slot.SW, slot.SH, R);
 
       const isConsumable = !!key?.startsWith('use:');
       if (isConsumable) {
-        slot.cdTxt.setPosition(slot.sx + slot.SW / 2, slot.sy + slot.SH - 2).setOrigin(0.5, 1);
-        try { slot.cdTxt.setFontSize('10px'); } catch (_) {}
+        slot.cdTxt.setPosition(slot.sx + slot.SW / 2, slot.sy + slot.SH - Math.round(2 * DPR)).setOrigin(0.5, 1);
+        try { slot.cdTxt.setFontSize(`${Math.round(10 * DPR)}px`); } catch (_) {}
       } else {
         slot.cdTxt.setPosition(slot.sx + slot.SW / 2, slot.sy + slot.SH / 2).setOrigin(0.5, 0.5);
-        try { slot.cdTxt.setFontSize('12px'); } catch (_) {}
+        try { slot.cdTxt.setFontSize(`${Math.round(12 * DPR)}px`); } catch (_) {}
       }
 
       if (!key) return;
@@ -300,8 +304,8 @@ export default class HudScene extends Phaser.Scene {
       }
       const texKey = isConsumable ? `consumable_${key.slice(4)}` : `skill_${key}`;
       if (!this.textures.exists(texKey)) return;
-      const iconSz  = isConsumable ? 40 : slot.SW;
-      const iconY   = isConsumable ? slot.sy + slot.SH / 2 - 5 : slot.sy + slot.SH / 2;
+      const iconSz  = isConsumable ? Math.round(40 * DPR) : slot.SW;
+      const iconY   = isConsumable ? slot.sy + slot.SH / 2 - Math.round(5 * DPR) : slot.sy + slot.SH / 2;
       slot.iconImg = this.add.image(slot.sx + slot.SW / 2, iconY,
           prerenderTex(this, texKey, iconSz, iconSz))
         .setDisplaySize(iconSz, iconSz).setDepth(102);
@@ -327,16 +331,17 @@ export default class HudScene extends Phaser.Scene {
       'ship:wisp_recall':           { label: 'БЗ', bg: '#081408', fg: '#66bb6a', border: '#66bb6a' },
     };
     const info = INFO[key] || { label: '??', bg: '#0a0a14', fg: '#7e9398', border: '#7e9398' };
-    const sz = 104; // 2× slot size — GPU downscales 2:1 for sharper text
+    const sz = Math.round(104 * DPR); // 2× physical slot size
+    const sw = Math.max(2, Math.round(4 * DPR));
     const ct = this.textures.createCanvas(cacheKey, sz, sz);
     const ctx = ct.getContext();
     ctx.fillStyle = info.bg;
     ctx.fillRect(0, 0, sz, sz);
     ctx.strokeStyle = info.border;
-    ctx.lineWidth = 4;
-    ctx.strokeRect(2, 2, sz - 4, sz - 4);
+    ctx.lineWidth = sw;
+    ctx.strokeRect(sw / 2, sw / 2, sz - sw, sz - sw);
     ctx.fillStyle = info.fg;
-    ctx.font = 'bold 32px Orbitron, monospace';
+    ctx.font = `bold ${Math.round(32 * DPR)}px Orbitron, monospace`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillText(info.label, sz / 2, sz / 2);
@@ -372,12 +377,12 @@ export default class HudScene extends Phaser.Scene {
         } else if (cdRem > 0) {
           const prog = cdRem / cdMs;
           slot.cdGfx.fillStyle(0x000000, 0.68);
-          slot.cdGfx.fillRoundedRect(slot.sx, slot.sy, slot.SW, Math.ceil(slot.SH * prog), 5);
+          slot.cdGfx.fillRoundedRect(slot.sx, slot.sy, slot.SW, Math.ceil(slot.SH * prog), slot.R ?? Math.round(5 * DPR));
           slot.cdTxt.setPosition(slot.sx + slot.SW / 2, slot.sy + slot.SH / 2).setOrigin(0.5, 0.5)
             .setColor('#ffffff').setText(`${Math.ceil(cdRem / 1000)}`);
           if (slot.iconImg) slot.iconImg.setAlpha(0.3);
         } else {
-          slot.cdTxt.setPosition(slot.sx + slot.SW / 2, slot.sy + slot.SH - 2).setOrigin(0.5, 1)
+          slot.cdTxt.setPosition(slot.sx + slot.SW / 2, slot.sy + slot.SH - Math.round(2 * DPR)).setOrigin(0.5, 1)
             .setColor('#ffffff').setText(total > 0 ? `${total}` : '');
           if (slot.iconImg) slot.iconImg.setAlpha(total > 0 ? 1.0 : 0.3);
         }
@@ -398,7 +403,7 @@ export default class HudScene extends Phaser.Scene {
       } else if (key && cdRem > 0) {
         const prog = cdRem / cdMs;
         slot.cdGfx.fillStyle(0x000000, 0.68);
-        slot.cdGfx.fillRoundedRect(slot.sx, slot.sy, slot.SW, Math.ceil(slot.SH * prog), 5);
+        slot.cdGfx.fillRoundedRect(slot.sx, slot.sy, slot.SW, Math.ceil(slot.SH * prog), slot.R ?? Math.round(5 * DPR));
         slot.cdTxt.setColor('#ffffff').setText(`${Math.ceil(cdRem / 1000)}`);
         if (slot.iconImg) slot.iconImg.setAlpha(lv === 0 ? 0.25 : 0.45);
       } else {

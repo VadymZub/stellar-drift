@@ -1,6 +1,6 @@
 import * as Phaser from 'https://cdn.jsdelivr.net/npm/phaser@4.1.0/dist/phaser.esm.js';
 import { i18n } from '../i18n.js';
-import { MOBS } from '../constants.js';
+import { MOBS, DPR } from '../constants.js';
 import { SHIPS } from '../ships.js';
 import { SECTORS } from '../galaxy.js';
 import { PERK_DEFS } from '../perks.js';
@@ -158,8 +158,7 @@ export default class BootScene extends Phaser.Scene {
       this.load.image(m.key, `assets/mobs/${m.key}.png`);
     }
     this.load.image('npc_transport', 'assets/mobs/transport.png');
-    // Апофис: тело + 3 вращающихся кольца
-    this.load.image('apophis_core',        'assets/mobs/ancient_12.png');
+    // Апофис: кольца (тело ancient_12 грузится через mob loop как 'ancient_12')
     this.load.image('ring_apophis_outer',  'assets/mobs/ring_apophis_outer.png');
     this.load.image('ring_apophis_mid',    'assets/mobs/ring_apophis_mid.png');
     this.load.image('ring_apophis_inner',  'assets/mobs/ring_apophis_inner.png');
@@ -307,6 +306,17 @@ export default class BootScene extends Phaser.Scene {
     for (const s of SHIPS) {
       _prepShipTex(this, s.key, s.displaySize * 2);
     }
+
+    // Mob sprites: same pipeline as ships (raw PNGs are displaySize×4).
+    // Deduplicate keys (confed_* reuse syndicate_* textures) — use max displaySize per key.
+    const _mobTexMax = new Map();
+    for (const m of Object.values(MOBS)) {
+      if (m.anim) continue;
+      if ((m.displaySize ?? 0) > (_mobTexMax.get(m.key) ?? 0)) _mobTexMax.set(m.key, m.displaySize);
+    }
+    for (const [key, ds] of _mobTexMax) {
+      if (this.textures.exists(key)) _prepShipTex(this, key, ds * 2);
+    }
     // Pre-process large garage hero images to 2× their display box (223px → 446px target)
     // so prerenderTex in GarageScene always gets a ≤2× source for its final drawImage.
     for (const key of ['drover_g', 'phantom_g', 'argosy_g', 'helion_g', 'drifter_g']) {
@@ -366,12 +376,12 @@ export default class BootScene extends Phaser.Scene {
       _prepShipTex(this, `skill_${k}`, 96);
     }
 
-    // Ship ability icons: 1024×1024 displayed at 52×52 — pre-process to 104px (2× slot size).
-    // GPU bilinear 2:1 downscale acts as SSAA → sharper than a canvas-only 52px render.
+    // Ship ability icons: 1024×1024 → pre-process to 2× physical slot size (52*DPR*2).
+    // HudScene displays at 52*DPR px → GPU 2:1 bilinear = SSAA-quality downscale.
     for (const k of ['ship_helion_volley','ship_argosy_repair','ship_drifter_jump',
                      'ship_stiletto_afterburner','ship_anvil_lockdown','ship_drover_scan',
                      'ship_aegis_dome','ship_phantom_cloak','ship_wisp_recall']) {
-      _prepShipTex(this, k, 104);
+      _prepShipTex(this, k, Math.round(104 * DPR));
     }
 
     // NPC transport: displayed at 96×120 — pre-process to 240px.
@@ -384,6 +394,9 @@ export default class BootScene extends Phaser.Scene {
     // Ammo icons: displayed up to 115px (shop) — pre-process to 230px (2× display).
     for (const type of ['ammo_plasma', 'ammo_plasma_elite', 'ammo_laser'])
       _prepShipTex(this, type, 230);
+    // Apophis rings: ~1024px square, displayed at 220–440px — pre-process to 880px (2× outer).
+    for (const key of ['ring_apophis_outer', 'ring_apophis_mid', 'ring_apophis_inner'])
+      _prepShipTex(this, key, 880);
 
     // Set LINEAR filter on all ship/mob textures (no mipmap sampling for non-POT assets).
     const LINEAR = 0;
