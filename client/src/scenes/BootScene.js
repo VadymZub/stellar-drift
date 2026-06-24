@@ -158,8 +158,11 @@ export default class BootScene extends Phaser.Scene {
       this.load.image(m.key, `assets/mobs/${m.key}.png`);
     }
     this.load.image('npc_transport', 'assets/mobs/transport.png');
-    // Большой босс (R1-тип): 6 кадров 306×419
-    this.load.spritesheet('bigboss', 'assets/mobs/bigboss_sheet.png', { frameWidth: 306, frameHeight: 419 });
+    // Апофис: тело + 3 вращающихся кольца
+    this.load.image('apophis_core',        'assets/mobs/ancient_12.png');
+    this.load.image('ring_apophis_outer',  'assets/mobs/ring_apophis_outer.png');
+    this.load.image('ring_apophis_mid',    'assets/mobs/ring_apophis_mid.png');
+    this.load.image('ring_apophis_inner',  'assets/mobs/ring_apophis_inner.png');
 
     // Иконки рангов (7 тиров)
     for (let t = 1; t <= 7; t++) this.load.image(`rank_tier${t}`, `assets/ranks/rank_tier${t}.png`);
@@ -363,6 +366,14 @@ export default class BootScene extends Phaser.Scene {
       _prepShipTex(this, `skill_${k}`, 96);
     }
 
+    // Ship ability icons: 1024×1024 displayed at 52×52 — pre-process to 104px (2× slot size).
+    // GPU bilinear 2:1 downscale acts as SSAA → sharper than a canvas-only 52px render.
+    for (const k of ['ship_helion_volley','ship_argosy_repair','ship_drifter_jump',
+                     'ship_stiletto_afterburner','ship_anvil_lockdown','ship_drover_scan',
+                     'ship_aegis_dome','ship_phantom_cloak','ship_wisp_recall']) {
+      _prepShipTex(this, k, 104);
+    }
+
     // NPC transport: displayed at 96×120 — pre-process to 240px.
     _prepShipTex(this, 'npc_transport', 240);
 
@@ -385,7 +396,13 @@ export default class BootScene extends Phaser.Scene {
     for (const m of Object.values(MOBS)) {
       if (!m.anim && this.textures.exists(m.key)) {
         this.textures.get(m.key).setFilter(LINEAR);
-        m._prerenderKey = prerenderTex(this, m.key, m.displaySize, m.displaySize);
+        const mSrc = this.textures.get(m.key).getSourceImage();
+        const mSrcW = mSrc.naturalWidth ?? mSrc.width;
+        const mSrcH = mSrc.naturalHeight ?? mSrc.height;
+        const mAR   = mSrcW / mSrcH;
+        const prH   = m.displaySize;
+        const prW   = Math.round(prH * mAR);
+        m._prerenderKey = prerenderTex(this, m.key, prW, prH);
       }
     }
 

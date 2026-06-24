@@ -292,9 +292,9 @@ export default class HudScene extends Phaser.Scene {
       if (key.startsWith('ship:')) {
         const texKey = this._ensureShipSkillTex(key);
         const iconSz = slot.SW;
-        // PNG icons are 512×512 — step-halve for quality; skip for procedural canvas fallbacks (__ss_)
-        const renderKey = texKey.startsWith('__ss_') ? texKey : prerenderTex(this, texKey, iconSz, iconSz);
-        slot.iconImg = this.add.image(slot.sx + slot.SW / 2, slot.sy + slot.SH / 2, renderKey)
+        // PNGs pre-processed to 104px (2× slot) in BootScene; procedural fallbacks (__ss_) also 2×.
+        // setDisplaySize at slot size → GPU bilinear 2:1 downscale = sharper than canvas-only render.
+        slot.iconImg = this.add.image(slot.sx + slot.SW / 2, slot.sy + slot.SH / 2, texKey)
           .setDisplaySize(iconSz, iconSz).setDepth(102);
         return;
       }
@@ -327,16 +327,16 @@ export default class HudScene extends Phaser.Scene {
       'ship:wisp_recall':           { label: 'БЗ', bg: '#081408', fg: '#66bb6a', border: '#66bb6a' },
     };
     const info = INFO[key] || { label: '??', bg: '#0a0a14', fg: '#7e9398', border: '#7e9398' };
-    const sz = 48;
+    const sz = 104; // 2× slot size — GPU downscales 2:1 for sharper text
     const ct = this.textures.createCanvas(cacheKey, sz, sz);
     const ctx = ct.getContext();
     ctx.fillStyle = info.bg;
     ctx.fillRect(0, 0, sz, sz);
     ctx.strokeStyle = info.border;
-    ctx.lineWidth = 2;
-    ctx.strokeRect(1, 1, sz - 2, sz - 2);
+    ctx.lineWidth = 4;
+    ctx.strokeRect(2, 2, sz - 4, sz - 4);
     ctx.fillStyle = info.fg;
-    ctx.font = 'bold 15px Orbitron, monospace';
+    ctx.font = 'bold 32px Orbitron, monospace';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillText(info.label, sz / 2, sz / 2);
