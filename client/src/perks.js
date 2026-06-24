@@ -230,7 +230,9 @@ export function rollPerk(slotType) {
 
 // Total bonus multiplier for a perk (used in tooltips/display)
 export function perkBonus(perk) {
-  return CREDIT_BONUS_PER_LVL[perk.creditLvl || 0] + STAR_BONUS_PER_LVL[perk.starLvl || 0];
+  const ci = Math.min(perk.creditLvl || 0, CREDIT_BONUS_PER_LVL.length - 1);
+  const si = Math.min(perk.starLvl   || 0, STAR_BONUS_PER_LVL.length   - 1);
+  return (CREDIT_BONUS_PER_LVL[ci] ?? 0) + (STAR_BONUS_PER_LVL[si] ?? 0);
 }
 
 // Credit upgrade cost to go from creditLvl → creditLvl+1

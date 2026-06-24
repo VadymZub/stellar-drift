@@ -156,6 +156,7 @@ export default class Mob {
     if (this._shieldAura) hullHit *= 0.7;
 
     this.hull -= hullHit;
+    if (isNaN(this.hull)) this.hull = 0;
     let killed = false;
     if (this.hull <= 0) { this.hull = 0; killed = true; this.die(); }
     return { shieldHit, hullHit, killed };

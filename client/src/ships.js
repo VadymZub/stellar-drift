@@ -56,8 +56,8 @@ export const SHIPS = [
     engines: [{ x: 0, y: 70 }] },
 
   // Admin Ship
-  { key: 'argus',    nameKey: 'ship.argus',    descKey: 'shipdesc.argus',    tier: 'ADMIN',    levelGate: 99, price: 0,      currency: null,      displaySize: 182, hullMax: 15000, shieldBase: 15000, baseSpeed: 450, wSlots: 10, sSlots: 10, eSlots: 10, aSlots: 6, dmgMod: 2.0, artAngleOffset: -Math.PI / 2,
-    engines: [{ x: -35, y: 72 }, { x: -12, y: 76 }, { x: 12, y: 76 }, { x: 35, y: 72 }] },
+  { key: 'argus',    nameKey: 'ship.argus',    descKey: 'shipdesc.argus',    tier: 'ADMIN',    levelGate: 99, price: 0,      currency: null,      displaySize: 182, hullMax: 15000, shieldBase: 15000, baseSpeed: 450, wSlots: 10, sSlots: 10, eSlots: 6, aSlots: 6, dmgMod: 2.0, artAngleOffset: -Math.PI / 2,
+    engines: [{ x: -35, y: 72 }, { x: -20, y: 74 }, { x: -7, y: 76 }, { x: 7, y: 76 }, { x: 20, y: 74 }, { x: 35, y: 72 }] },
 ];
 
 export const SHIP_BY_KEY = Object.fromEntries(SHIPS.map((s) => [s.key, s]));

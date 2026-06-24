@@ -7,11 +7,11 @@ import Mob from '../entities/Mob.js';
 import Projectile from '../entities/Projectile.js';
 import Loot from '../entities/Loot.js';       
 import Movement from '../systems/Movement.js';
-import { EXP_CLASSES } from './BootScene.js'; 
+import { EXP_CLASSES, MOD_ICON_FILES, NPC_PORTRAITS } from './BootScene.js'; 
 import { rollLootForMob, dropChance, itemName, rollStarGold, starterCannon, starterShield, rollCannon, rollShield, rollEngine, rollLaser, rollArmor, rollApophisLoot, PLASMATE_PER_SLOT, PLASMATE_DAILY_MAX, addPlasmateToInventory, totalPlasmateInInventory, removePlasmateFromInventory, CONSUMABLES, addConsumableToInventory, countConsumableInInventory, removeConsumableFromInventory, rollConsumableDrop } from '../items.js';
 import { rollBoard, rollConnector } from '../boards.js';
 import PlasmateDeposit from '../entities/PlasmateDeposit.js';
-import { rollPerk, perkBonus } from '../perks.js';
+import { rollPerk, perkBonus, PERK_DEFS } from '../perks.js';
 import { levelInfo, xpToNext, MAX_LEVEL } from '../leveling.js';
 import { SHIPS, SHIP_BY_KEY, shipLevelMods } from '../ships.js';
 import { SECTORS, galaxy, neighbors, edgeDir, sectorAccess } from '../galaxy.js';
@@ -22,6 +22,7 @@ import HomeBase from '../entities/HomeBase.js';
 import ArgusController from '../systems/ArgusController.js';
 import ConfedGuardSystem, { getLastResetTime } from '../systems/ConfedGuardSystem.js';
 import { getUsername, getToken, apiPut, apiGet } from '../api.js';
+import { prepShipTex, removeWhiteBg } from '../utils/prepShipTex.js';
 import { MISSIONS, getMissionSectorTarget } from '../data/missions.js';
 import EscortTransport, { ESCORT_SPEED, ESCORT_WAVE_AT } from '../entities/EscortTransport.js';
 import { loadSettings, getMinimapDims } from '../settings.js';
@@ -197,13 +198,18 @@ export default class GameScene extends Phaser.Scene {
         this.activeShip = 'argus';
         const maxCannon = { type: 'cannon', tier: 4, damage: 210, penetration: 0.20, fireRate: 1.0, starLvl: 5 };
         const maxShield = { type: 'shield', tier: 4, durability: 1500, regen: 100, evasion: 0.10, starLvl: 5 };
+        const maxArmor  = { type: 'armor',  tier: 4, hullBonus: 1350, starLvl: 5 };
         const maxEngine = { type: 'engine', tier: 4, speed: 27, starLvl: 5 };
         this.equipped.weapon = Array(10).fill(null).map(() => ({...maxCannon}));
-        this.equipped.shield = Array(10).fill(null).map(() => ({...maxShield}));
-        this.equipped.engine = Array(10).fill(null).map(() => ({...maxEngine}));
+        this.equipped.shield = [
+          ...Array(6).fill(null).map(() => ({...maxShield})),
+          ...Array(4).fill(null).map(() => ({...maxArmor})),
+        ];
+        this.equipped.engine = Array(6).fill(null).map(() => ({...maxEngine}));
         this.player.applyShip(SHIP_BY_KEY['argus']);
         this.player.hull = this.player.maxHull;
         this.player.shield = this.player.maxShield;
+        this.argusCtrl.attachToPlayer(this.player);
         // DEV: add 2 boards of each tier + 20 random connectors
         this.boardInventory = this.boardInventory ?? [];
         this.connectorInventory = this.connectorInventory ?? [];
@@ -218,12 +224,13 @@ export default class GameScene extends Phaser.Scene {
       });
       this.input.keyboard.on('keydown-NINE', () => {
         const laser = { type: 'laser', tier: 4, damage: 252, penetration: 0, fireRate: 1.0, starLvl: 5 };
-        this.equipped.weapon = Array(10).fill(null).map((_, i) => i === 0 ? { ...laser } : null);
+        this.equipped.weapon = Array(10).fill(null).map(() => ({ ...laser }));
         this.player.recomputeStats();
         this.player.hull = this.player.maxHull;
         this.player.shield = this.player.maxShield;
         this.log('DEV: Laser Cannon Equipped');
       });
+      this.input.keyboard.on('keydown-SEVEN', () => this._toggleTrainingDummies());
     }
 
     this.shipLevels = this.shipLevels || {};
@@ -329,6 +336,10 @@ export default class GameScene extends Phaser.Scene {
     } else if ((this.actionBar[0] + '').startsWith('ship:')) {
       this.actionBar[0] = null;
     }
+    // Clear argus abilities if not on argus ship
+    if (this.activeShip !== 'argus') {
+      this.actionBar = this.actionBar.map(k => (k + '').startsWith('argus:') ? null : k);
+    }
 
     // Auto-fill empty action bar slots 1-9 with learned active skills
     const _ACTIVE_SKILL_ORDER = ['overcharge_shot', 'salvo', 'emergency_repair', 'shield_burst', 'stealth_sprint', 'berserker'];
@@ -427,6 +438,70 @@ export default class GameScene extends Phaser.Scene {
     this.time.delayedCall(60, () => this.log(i18n.t('log.entered', { sector: SECTORS[galaxy.current].name })));
     // Auto-select bot target (vfx not ready during spawnMobs, defer one tick)
     if (this.botPilot) this.time.delayedCall(16, () => { if (this.botPilot?.alive) this.selectTarget(this.botPilot); });
+
+    // Background-load non-critical assets — delayed 4 s so the game renders smoothly first.
+    if (!this.textures.exists('bg_garage')) this.time.delayedCall(4000, () => this._bgPreloadDeferred());
+  }
+
+  _bgPreloadDeferred() {
+    // UI backgrounds (non-login)
+    for (const [key, file] of [
+      ['bg_garage',      'garage.png'],
+      ['bg_missions',    'missions.png'],
+      ['bg_shop',        'shop.png'],
+      ['bg_corp_helios', 'Corp_Hub_Helios.png'],
+      ['bg_corp_karaks', 'Corp_Hub_Karaks.png'],
+      ['bg_corp_tides',  'Corp_Hub_Tides.png'],
+    ]) {
+      if (!this.textures.exists(key))
+        this.load.image(key, `assets/UI BACKGROUNDS/${file}`);
+    }
+    // Module icons
+    for (const [key, file] of Object.entries(MOD_ICON_FILES)) {
+      if (!this.textures.exists(key))
+        this.load.image(key, `assets/modules/${encodeURIComponent(file)}`);
+    }
+    // Ammo icons
+    for (const type of ['ammo_plasma', 'ammo_plasma_elite', 'ammo_laser']) {
+      if (!this.textures.exists(type))
+        this.load.image(type, `assets/ammo/${type}.png`);
+    }
+    // Perk images
+    for (const p of PERK_DEFS) {
+      if (!this.textures.exists(p.key))
+        this.load.image(p.key, `assets/perks/${p.imgFile}`);
+    }
+    // NPC portraits
+    for (const [key, file] of NPC_PORTRAITS) {
+      if (!this.textures.exists(key))
+        this.load.image(key, `assets/npc/${file}`);
+    }
+    this.load.once('complete', () => {
+      // Process one job per idle slice — requestIdleCallback fires AFTER Phaser renders,
+      // so canvas ops never eat into the frame budget and cause stutter.
+      const jobs = [
+        ...Object.keys(MOD_ICON_FILES).map(key => () => prepShipTex(this, key, 96)),
+        ...['ammo_plasma', 'ammo_plasma_elite', 'ammo_laser'].map(t => () => prepShipTex(this, t, 230)),
+        ...PERK_DEFS.flatMap(p => [() => prepShipTex(this, p.key, 384), () => removeWhiteBg(this, p.key)]),
+        ...NPC_PORTRAITS.map(([key]) => () => prepShipTex(this, key, 432)),
+      ];
+      let i = 0;
+      const scheduleNext = () => {
+        if (i >= jobs.length) return;
+        if (typeof requestIdleCallback === 'function') {
+          requestIdleCallback(deadline => {
+            // Run as many jobs as fit in the idle slice (leave 1 ms margin)
+            while (i < jobs.length && deadline.timeRemaining() > 1) jobs[i++]();
+            scheduleNext();
+          }, { timeout: 10000 });
+        } else {
+          // Safari fallback: one job per setTimeout so it yields between calls
+          setTimeout(() => { jobs[i++](); scheduleNext(); }, 0);
+        }
+      };
+      scheduleNext();
+    });
+    this.load.start();
   }
 
   createSpaceDust() {
@@ -1077,9 +1152,13 @@ export default class GameScene extends Phaser.Scene {
   _execJump(key, fromKey) {
     galaxy.current = key;
     if (key === 'R-1-boss') this.advanceMission('story_signal', 0);
-    const nextPvp = SECTORS[key].pvp === true;
-    const nextW = BASE_WORLD.width * (nextPvp ? PVP_WORLD_SCALE : 1.0);
-    const nextH = BASE_WORLD.height * (nextPvp ? PVP_WORLD_SCALE : 1.0);
+    const nextSec = SECTORS[key];
+    const nextPvp = nextSec.pvp === true;
+    const nextDungeon = nextSec.isDungeon === true;
+    const nextPersonal = nextSec.personal === true;
+    const nextScale = nextPvp ? PVP_WORLD_SCALE : (nextDungeon || nextPersonal) ? 1.0 : 1.2;
+    const nextW = BASE_WORLD.width * nextScale;
+    const nextH = BASE_WORLD.height * nextScale;
     const { dx, dy } = edgeDir(key, fromKey);
     const mx = nextW / 2 - 320, my = nextH / 2 - 320;
     const startX = nextW / 2 + dx * mx;
@@ -1247,6 +1326,8 @@ export default class GameScene extends Phaser.Scene {
   _skillCooldownMs(key) {
     const CONS_CD = { repair_pack: 90000, speed_boost: 120000, scanner_pulse: 180000, emergency_warp: 600000 };
     if (key.startsWith('use:')) return CONS_CD[key.slice(4)] ?? 60000;
+    if (key === 'argus:pulsar') return 45000;
+    if (key === 'argus:cocoon') return 60000;
     if (key.startsWith('ship:')) {
       const mod = this.player?.activeCooldownMod ?? 1;
       const SHIP_CD = {
@@ -1278,6 +1359,15 @@ export default class GameScene extends Phaser.Scene {
     const key = (this.actionBar || [])[i];
     if (!key || !this.player?.alive) return;
     if (key.startsWith('use:')) { this._useConsumable(key.slice(4), this.time.now); return; }
+    if (key.startsWith('argus:')) {
+      const now = this.time.now;
+      const cdEnd = this.skillCooldowns[key] || 0;
+      if (now < cdEnd) { this.log(`⏳ КД: ${Math.ceil((cdEnd - now) / 1000)}с`); return; }
+      this.skillCooldowns[key] = now + this._skillCooldownMs(key);
+      if (key === 'argus:pulsar') this.argusCtrl?._activatePulsar();
+      else if (key === 'argus:cocoon') this.argusCtrl?._activateCocoon();
+      return;
+    }
     if (key.startsWith('ship:')) {
       const now = this.time.now;
       const cdEnd = this.skillCooldowns[key] || 0;
@@ -2028,8 +2118,8 @@ export default class GameScene extends Phaser.Scene {
     }
     const sg = rollStarGold(mob); if (sg > 0) { this.starGold = (this.starGold || 0) + sg; this.log(i18n.t('log.stargold', { amount: sg })); }
     if (Phaser.Math.FloatBetween(0, 1) < dropChance(mob) * (this.player?.dropChanceMult ?? 1)) {
-      const lootItem = mob.tpl.key === 'bigboss' ? rollApophisLoot() : rollLootForMob(mob);
-      const isLegendary = mob.tpl.key === 'bigboss' || mob.tpl.key === 'argus'
+      const lootItem = mob.tpl.key === 'ancient_12' ? rollApophisLoot() : rollLootForMob(mob);
+      const isLegendary = mob.tpl.key === 'ancient_12' || mob.tpl.key === 'argus_boss'
         || (mob.isBoss && SECTORS[galaxy.current]?.isDungeon);
       const lootTier = isLegendary ? 'legendary' : (mob.isBoss || mob.tpl.elite) ? 'boss' : 'common';
       const isPremium = lootItem.tier === 4 || lootItem.perk?.rarity === 'jackpot'
@@ -2064,7 +2154,7 @@ export default class GameScene extends Phaser.Scene {
     }
     // Honor hooks
     const sec = SECTORS[galaxy.current];
-    if (mob.tpl.key === 'bigboss') {
+    if (mob.tpl.key === 'ancient_12') {
       // Apophysis: each participant earns honor equal to 1× level-50 player kill
       this.gainHonor(HONOR_PER_LVL50);
     }
@@ -2277,10 +2367,12 @@ export default class GameScene extends Phaser.Scene {
       : null;
 
     // Compute corp-base position within the parent sector, mirroring _spawnHomeBase() logic.
-    const parentSec   = parentSecKey ? SECTORS[parentSecKey] : null;
-    const parentScale = parentSec?.pvp ? PVP_WORLD_SCALE : 1.0;
-    const parentW     = BASE_WORLD.width  * parentScale;
-    const parentH     = BASE_WORLD.height * parentScale;
+    const parentSec        = parentSecKey ? SECTORS[parentSecKey] : null;
+    const parentIsDung     = parentSec?.isDungeon === true;
+    const parentIsPersonal = parentSec?.personal === true;
+    const parentScale      = parentSec?.pvp ? PVP_WORLD_SCALE : (parentIsDung || parentIsPersonal) ? 1.0 : 1.2;
+    const parentW          = BASE_WORLD.width  * parentScale;
+    const parentH          = BASE_WORLD.height * parentScale;
 
     let baseX, baseY;
     if (isDungOrBoss) {
@@ -2383,7 +2475,8 @@ export default class GameScene extends Phaser.Scene {
     const total = Math.round((res.shieldHit || 0) + (res.hullHit || 0)); if (total <= 0) return;
     const toHull = (res.hullHit || 0) > 0;
     const txt = this.add.text(x + Phaser.Math.Between(-12, 12), y - 20, `-${total}`, { fontFamily: 'Orbitron', fontSize: toHull ? '20px' : '16px', color: toHull ? '#ef5350' : '#4dd0e1', fontStyle: 'bold', resolution: UI_RES, }).setOrigin(0.5).setDepth(70);
-    this.tweens.add({ targets: txt, y: y - 60, alpha: 0, duration: 700, ease: 'Quad.easeOut', onComplete: () => txt.destroy() });
+    this.tweens.add({ targets: txt, y: y - 60, duration: 1500, ease: 'Quad.easeOut', onComplete: () => txt.destroy() });
+    this.tweens.add({ targets: txt, alpha: 0, delay: 700, duration: 800 });
   }
   pingAt(x, y) {
     const ring = this.add.circle(x, y, 6, COLORS.primary, 0).setStrokeStyle(2, COLORS.primary, 0.9).setDepth(35);
@@ -3635,6 +3728,124 @@ export default class GameScene extends Phaser.Scene {
       + (this.pilotLevel || 1) * 60;
   }
 
+  // ── Training dummies [DEV key 7] ─────────────────────────────────────────
+  _toggleTrainingDummies() {
+    if (this._trainingDummies?.length) {
+      if (this._trainingDummies.includes(this.target)) this.selectTarget(null);
+      this._trainingDummies.forEach(d => {
+        d.destroy();
+        const i = this.mobs.indexOf(d);
+        if (i !== -1) this.mobs.splice(i, 1);
+      });
+      this._trainingDummies = [];
+      this.log('DEV: Тренажёры убраны');
+      return;
+    }
+    const p = this.player;
+    this._trainingDummies = [
+      this._makeTrainingDummy({ x: p.x + 380, y: p.y - 130, hull: 300000, shield: 0 }),
+      this._makeTrainingDummy({ x: p.x + 380, y: p.y + 130, hull: 150000, shield: 150000 }),
+    ];
+    this._trainingDummies.forEach(d => this.mobs.push(d));
+    this.log('DEV: Тренажёры [7] — корпус 30k | щит+корп 15k+15k');
+  }
+
+  _makeTrainingDummy({ x, y, hull, shield }) {
+    const scene = this;
+    const R = 28;
+    const hasShield = shield > 0;
+    const edgeClr   = hasShield ? 0x4dd0e1 : 0xef9a4a;
+
+    const bodyGfx = scene.add.graphics().setDepth(40);
+    bodyGfx.fillStyle(hasShield ? 0x091520 : 0x1a0a00, 0.90);
+    bodyGfx.fillCircle(x, y, R);
+    bodyGfx.lineStyle(3, edgeClr, 1);
+    bodyGfx.strokeCircle(x, y, R);
+    bodyGfx.lineStyle(1, edgeClr, 0.35);
+    bodyGfx.lineBetween(x - R, y, x + R, y);
+    bodyGfx.lineBetween(x, y - R, x, y + R);
+
+    const barGfx = scene.add.graphics().setDepth(42);
+    const lbl = scene.add.text(x, y - R - 20,
+      hasShield ? 'ЩИТ+КОР' : 'КОРПУС',
+      { fontFamily: 'Orbitron', fontSize: '11px', color: hasShield ? '#4dd0e1' : '#ef9a4a', resolution: 2 }
+    ).setOrigin(0.5).setDepth(43);
+
+    const dummy = {
+      isTrainingDummy: true,
+      alive: true,
+      maxHull: hull, hull,
+      maxShield: shield, shield,
+      evasion: 0,
+      neutral: true, passive: false,
+      group: [], leader: null,
+      lastDamageAt: 0,
+      _x: x, _y: y,
+      get x() { return this._x; },
+      get y() { return this._y; },
+      tpl: { displaySize: R * 2, key: '_dummy_', boss: false, nameKey: '' },
+      sprite: { x, y, body: { velocity: { x: 0, y: 0 } } },
+      bar:   { setVisible() {} },
+      label: { setVisible() {} },
+      update() {},
+    };
+
+    const drawBars = () => {
+      barGfx.clear();
+      const bw = 80, bx = x - bw / 2, by = y - R - 10;
+      barGfx.fillStyle(0x111a22, 0.9);
+      barGfx.fillRect(bx, by, bw, 5);
+      barGfx.fillStyle(0xef9a4a);
+      barGfx.fillRect(bx, by, bw * Math.max(0, dummy.hull / dummy.maxHull), 5);
+      if (dummy.maxShield > 0) {
+        barGfx.fillStyle(0x111a22, 0.9);
+        barGfx.fillRect(bx, by - 8, bw, 5);
+        barGfx.fillStyle(0x4dd0e1);
+        barGfx.fillRect(bx, by - 8, bw * Math.max(0, dummy.shield / dummy.maxShield), 5);
+      }
+    };
+
+    dummy.takeDamage = function(amount, penetration = 0, opts = {}) {
+      if (!this.alive) return { shieldHit: 0, hullHit: 0, killed: false };
+      this.lastDamageAt = scene.time.now;
+      const shieldMult  = opts.shieldMult ?? 1;
+      const hullMult    = opts.hullMult   ?? 1;
+      const direct      = amount * penetration;
+      const toShieldRaw = amount - direct;
+      let hullHit = 0, shieldHit = 0;
+      if (this.shield > 0) {
+        hullHit = direct * hullMult;
+        const toShield = toShieldRaw * shieldMult;
+        shieldHit = toShield;
+        if (toShield <= this.shield) { this.shield -= toShield; }
+        else { hullHit += (toShield - this.shield) * hullMult; this.shield = 0; }
+      } else {
+        hullHit = amount * hullMult;
+      }
+      this.hull = Math.max(0, this.hull - hullHit);
+      drawBars();
+      if (this.hull <= 0) {
+        scene.time.delayedCall(2500, () => {
+          if (!this.alive) return;
+          this.hull   = this.maxHull;
+          this.shield = this.maxShield;
+          drawBars();
+        });
+      }
+      return { shieldHit, hullHit, killed: false };
+    };
+
+    dummy.destroy = function() {
+      this.alive = false;
+      bodyGfx.destroy();
+      barGfx.destroy();
+      lbl.destroy();
+    };
+
+    drawBars();
+    return dummy;
+  }
+
   shutdown() {
     this._prevSector = galaxy.current;
     this._saveState();
@@ -3642,6 +3853,8 @@ export default class GameScene extends Phaser.Scene {
     this.escortTransport?.destroy();
     this.escortTransport = null;
     this._escortMobs = null;
+    this._trainingDummies?.forEach(d => d.destroy());
+    this._trainingDummies = null;
     this.argusCtrl?.destroy();
     this.argusCtrl = null;
     this.confedGuards?.destroy();

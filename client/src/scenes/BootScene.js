@@ -3,15 +3,14 @@ import { i18n } from '../i18n.js';
 import { MOBS, DPR } from '../constants.js';
 import { SHIPS } from '../ships.js';
 import { SECTORS } from '../galaxy.js';
-import { PERK_DEFS } from '../perks.js';
 import { buildBitmapFont } from '../utils/buildBitmapFont.js';
-import { prerenderTex } from '../utils/prerenderTex.js';
+import { prepShipTex, removeWhiteBg } from '../utils/prepShipTex.js';
 
 // Классы взрывов (px нативного кадра). Стек 28 кадров на класс — из design/slice_explosion24.py,
 // лежит в client/explosion24/<class>_sheet.png (игра берёт свежий стек оттуда).
 export const EXP_CLASSES = [['micro', 32], ['small', 64], ['medium', 128], ['large', 192], ['huge', 288], ['mega', 448]];
 
-const MOD_ICON_FILES = {
+export const MOD_ICON_FILES = {
   mod_plasma_t1: 'T1 Plasma Cannon.png', mod_plasma_t2: 'T2 Plasma Cannon.png',
   mod_plasma_t3: 'T3 Plasma Cannon.png', mod_plasma_t4: 'T4 Plasma Cannon.png',
   mod_shield_t1: 'T1 Shield Module.png', mod_shield_t2: 'T2 Shield Module.png',
@@ -23,69 +22,20 @@ const MOD_ICON_FILES = {
   mod_laser:     'laser_cannon.png',
 };
 
-// Replace a ship/mob texture with a Canvas 2D pre-render at targetMax pixels on longest side.
-// Current sprites come from resize_ships.py at displaySize×4 (designed for DPR=2+zoom=2).
-// For the actual game (no zoom), displaySize×2 is the sweet spot: clean 2× WebGL bilinear
-// downscale at any DPR, vs the current 4× which gives avoidable softness.
-// Canvas 2D drawImage with imageSmoothingQuality:'high' uses bicubic for best downscale quality.
-function _prepShipTex(scene, key, targetMax) {
-  const tex = scene.textures.get(key);
-  if (!tex) return;
-  const img = tex.getSourceImage();
-  if (!img) return;
-  const sw = img.naturalWidth  != null ? img.naturalWidth  : img.width;
-  const sh = img.naturalHeight != null ? img.naturalHeight : img.height;
-  if (!sw || !sh || Math.max(sw, sh) <= targetMax) return;
-
-  const scale = targetMax / Math.max(sw, sh);
-  const dw = Math.round(sw * scale);
-  const dh = Math.round(sh * scale);
-
-  // Step-halve until within 2× of target (quality equivalent to multi-pass Lanczos)
-  let src = img, cw = sw, ch = sh;
-  while (cw > dw * 2 || ch > dh * 2) {
-    const hw = Math.max(dw, Math.ceil(cw / 2));
-    const hh = Math.max(dh, Math.ceil(ch / 2));
-    const tmp = document.createElement('canvas');
-    tmp.width = hw; tmp.height = hh;
-    const c = tmp.getContext('2d');
-    c.imageSmoothingEnabled = true;
-    c.imageSmoothingQuality = 'high';
-    c.drawImage(src, 0, 0, hw, hh);
-    src = tmp; cw = hw; ch = hh;
-  }
-
-  scene.textures.remove(key);
-  const newTex = scene.textures.createCanvas(key, dw, dh);
-  const ctx = newTex.getContext();
-  ctx.imageSmoothingEnabled = true;
-  ctx.imageSmoothingQuality = 'high';
-  ctx.drawImage(src, 0, 0, dw, dh);
-  newTex.refresh();
-  newTex.setFilter(0); // FilterMode.LINEAR in Phaser 4
-}
-
-// Remove near-white background pixels from a canvas texture (for badge-style perk images
-// that ship with a white background instead of transparent). Threshold=240 keeps metallic
-// greys (~200) while removing the pure white margin outside the circular badge.
-function _removeWhiteBg(scene, key, threshold = 240) {
-  const tex = scene.textures.get(key);
-  if (!tex) return;
-  const ctx = tex.getContext?.();
-  if (!ctx) return;
-  const src = tex.getSourceImage();
-  const w = src.naturalWidth != null ? src.naturalWidth : src.width;
-  const h = src.naturalHeight != null ? src.naturalHeight : src.height;
-  if (!w || !h) return;
-  const imgData = ctx.getImageData(0, 0, w, h);
-  const d = imgData.data;
-  for (let i = 0; i < d.length; i += 4) {
-    if (d[i] > threshold && d[i + 1] > threshold && d[i + 2] > threshold) d[i + 3] = 0;
-  }
-  ctx.putImageData(imgData, 0, 0);
-  tex.refresh();
-}
-
+// NPC portraits for MissionsScene — lazy-loaded from GameScene after boot.
+export const NPC_PORTRAITS = [
+  ['npc_corvus',   'Бригадир Корвус.png'],
+  ['npc_lynx',     'Брокер Линкс.png'],
+  ['npc_ancient',  'голос Древних.png'],
+  ['npc_erixon',   'Доктор Эриксонpng.png'],
+  ['npc_morgan',   'Капитан Морган.png'],
+  ['npc_orion',    'Капитан Орион.png'],
+  ['npc_artemis',  'Командор Артемис.png'],
+  ['npc_terranov', 'Магнат Терранов.png'],
+  ['npc_siren',    'Сирена.png'],
+  ['npc_jakob',    'Старый Якоб.png'],
+  ['npc_hazard',   'Хазард.png'],
+];
 
 // ── Armor perk placeholder drawers ────────────────────────────────────────────
 // g = Phaser.GameObjects.Graphics (make.graphics), cx/cy = center, col = glow color
@@ -184,18 +134,8 @@ export default class BootScene extends Phaser.Scene {
       this.load.spritesheet(`exp_${name}`, `explosion24/${name}_sheet.png`, { frameWidth: px, frameHeight: px });
     }
 
-    // UI Backgrounds
-    this.load.image('bg_garage', 'assets/UI BACKGROUNDS/garage.png');
+    // UI Backgrounds — only login needed at boot; others deferred to GameScene._bgPreloadDeferred()
     this.load.image('bg_login', 'assets/UI BACKGROUNDS/login_main_menu.png');
-    this.load.image('bg_missions', 'assets/UI BACKGROUNDS/missions.png');
-    this.load.image('bg_shop', 'assets/UI BACKGROUNDS/shop.png');
-    this.load.image('bg_corp_helios', 'assets/UI BACKGROUNDS/Corp_Hub_Helios.png');
-    this.load.image('bg_corp_karaks', 'assets/UI BACKGROUNDS/Corp_Hub_Karaks.png');
-    this.load.image('bg_corp_tides', 'assets/UI BACKGROUNDS/Corp_Hub_Tides.png');
-
-    // Module icons (plasma cannons, shields, engines, laser)
-    for (const [key, file] of Object.entries(MOD_ICON_FILES))
-      this.load.image(key, `assets/modules/${encodeURIComponent(file)}`);
 
     // Loot and plasmate sprites
     this.load.image('lootbox',       'assets/modules/lootbox.png');
@@ -205,12 +145,7 @@ export default class BootScene extends Phaser.Scene {
     for (const type of ['repair_pack','speed_boost','scanner_pulse','emergency_warp','biomech_core','quantum_crystal','plasma_coil','damage_booster','hull_booster','shield_booster','xp_booster'])
       this.load.image(`consumable_${type}`, `assets/consumables/${type}.png`);
 
-    // Perk images (slot perks for weapon/shield modules)
-    for (const p of PERK_DEFS) this.load.image(p.key, `assets/perks/${p.imgFile}`);
-
-    // Ammo icons (key = item type name)
-    for (const type of ['ammo_plasma', 'ammo_plasma_elite', 'ammo_laser'])
-      this.load.image(type, `assets/ammo/${type}.png`);
+    // Perk images, module icons, ammo icons, NPC portraits — deferred to GameScene._bgPreloadDeferred()
 
     // Mining base sprites
     for (const key of ['base_destroyed', 'base_building', 'base_helios', 'base_karax', 'base_tides', 'base_neutral']) {
@@ -223,24 +158,6 @@ export default class BootScene extends Phaser.Scene {
     for (const corp of ['helios', 'karax', 'tides', 'neutral']) {
       this.load.image(`cannon1_${corp}`, `assets/bases/cannon1_${corp}.png`);
       this.load.image(`cannon2_${corp}`, `assets/bases/cannon2_${corp}.png`);
-    }
-
-    // NPC portraits for Missions scene (128×192 px, relative to client/)
-    const NPC_PORTRAITS = [
-      ['npc_corvus',   'Бригадир Корвус.png'],
-      ['npc_lynx',     'Брокер Линкс.png'],
-      ['npc_ancient',  'голос Древних.png'],
-      ['npc_erixon',   'Доктор Эриксонpng.png'],
-      ['npc_morgan',   'Капитан Морган.png'],
-      ['npc_orion',    'Капитан Орион.png'],
-      ['npc_artemis',  'Командор Артемис.png'],
-      ['npc_terranov', 'Магнат Терранов.png'],
-      ['npc_siren',    'Сирена.png'],
-      ['npc_jakob',    'Старый Якоб.png'],
-      ['npc_hazard',   'Хазард.png'],
-    ];
-    for (const [key, file] of NPC_PORTRAITS) {
-      this.load.image(key, `assets/npc/${file}`);
     }
 
     // Skill tree icons (20 skills, 128×128)
@@ -299,12 +216,11 @@ export default class BootScene extends Phaser.Scene {
     // Переливание cruise-стрелки (бесшовный цикл)
     this.anims.create({ key: 'cruise_flow', frames: this.anims.generateFrameNumbers('arrow_cruise_anim', { start: 0, end: 9 }), frameRate: 14, repeat: -1 });
 
-    // Большой босс: дыхание yoyo (6 кадров → 1→6→1), медленно и зловеще
-    this.anims.create({ key: 'bigboss_idle', frames: this.anims.generateFrameNumbers('bigboss', { start: 0, end: 5 }), frameRate: 6, yoyo: true, repeat: -1 });
+    // Апофис теперь статичный спрайт (ancient_12) + вращающиеся кольца — анимация не нужна
 
     // Pre-render ship game sprites at displaySize×2 (optimal for clean 2× WebGL bilinear).
     for (const s of SHIPS) {
-      _prepShipTex(this, s.key, s.displaySize * 2);
+      prepShipTex(this, s.key, s.displaySize * 2);
     }
 
     // Mob sprites: same pipeline as ships (raw PNGs are displaySize×4).
@@ -315,33 +231,19 @@ export default class BootScene extends Phaser.Scene {
       if ((m.displaySize ?? 0) > (_mobTexMax.get(m.key) ?? 0)) _mobTexMax.set(m.key, m.displaySize);
     }
     for (const [key, ds] of _mobTexMax) {
-      if (this.textures.exists(key)) _prepShipTex(this, key, ds * 2);
+      if (this.textures.exists(key)) prepShipTex(this, key, ds * 2);
     }
     // Pre-process large garage hero images to 2× their display box (223px → 446px target)
     // so prerenderTex in GarageScene always gets a ≤2× source for its final drawImage.
     for (const key of ['drover_g', 'phantom_g', 'argosy_g', 'helion_g', 'drifter_g']) {
-      _prepShipTex(this, key, 446);
-    }
-    // Pre-process NPC portraits: 941×1672 → 432px (2× the 216px portrait height)
-    // so prerenderTex in MissionsScene gets a clean ≤2× source.
-    for (const key of ['npc_corvus','npc_lynx','npc_ancient','npc_erixon','npc_morgan',
-                       'npc_orion','npc_artemis','npc_terranov','npc_siren','npc_jakob','npc_hazard']) {
-      _prepShipTex(this, key, 432);
+      prepShipTex(this, key, 446);
     }
     // Rank tier icons: 1024×1024 displayed at 22×22 — 46× downscale causes shimmer.
     // Pre-process to 44px (2× display size) for stable bilinear and no subpixel flicker.
-    for (let t = 1; t <= 7; t++) _prepShipTex(this, `rank_tier${t}`, 44);
+    for (let t = 1; t <= 7; t++) prepShipTex(this, `rank_tier${t}`, 44);
 
-    // Module icons: 1024px displayed at 48px in cargo slots — pre-process to 96px (2× display).
-    for (const key of Object.keys(MOD_ICON_FILES)) _prepShipTex(this, key, 96);
+    // Module icons, perk images — deferred to GameScene._bgPreloadDeferred()
 
-    // Perk images: displayed at 192px — pre-process to 384px (2× display) to normalize
-    // 1024×1024 and 1254×1254 sources to the same target size for consistent rendering.
-    // White background removal + badge normalization: removes white margins and scales
-    for (const p of PERK_DEFS) {
-      _prepShipTex(this, p.key, 384);
-      _removeWhiteBg(this, p.key);
-    }
     // Placeholder badges for armor perks (images not yet added to assets/perks/).
     // Each key that failed to load gets a procedural colored badge so the UI shows
     // something meaningful. Replace by dropping the real PNG into assets/perks/.
@@ -373,7 +275,7 @@ export default class BootScene extends Phaser.Scene {
                      'shield_burst','damage_resist','module_specialist',
                      'loot_magnet','salvager','merchants_eye','scanner_boost',
                      'cargo_expand','stealth_sprint']) {
-      _prepShipTex(this, `skill_${k}`, 96);
+      prepShipTex(this, `skill_${k}`, 96);
     }
 
     // Ship ability icons: 1024×1024 → pre-process to 2× physical slot size (52*DPR*2).
@@ -381,22 +283,19 @@ export default class BootScene extends Phaser.Scene {
     for (const k of ['ship_helion_volley','ship_argosy_repair','ship_drifter_jump',
                      'ship_stiletto_afterburner','ship_anvil_lockdown','ship_drover_scan',
                      'ship_aegis_dome','ship_phantom_cloak','ship_wisp_recall']) {
-      _prepShipTex(this, k, Math.round(104 * DPR));
+      prepShipTex(this, k, Math.round(104 * DPR));
     }
 
     // NPC transport: displayed at 96×120 — pre-process to 240px.
-    _prepShipTex(this, 'npc_transport', 240);
+    prepShipTex(this, 'npc_transport', 240);
 
     // Loot drop: 1024×1536 displayed at 34×34 — pre-process to 68px (2× display height).
-    _prepShipTex(this, 'lootbox',       68);
+    prepShipTex(this, 'lootbox',       68);
     // Plasmate icon: 1024×1536 displayed at 48×48 in cargo — pre-process to 96px (2× display).
-    _prepShipTex(this, 'plasmate_icon', 96);
-    // Ammo icons: displayed up to 115px (shop) — pre-process to 230px (2× display).
-    for (const type of ['ammo_plasma', 'ammo_plasma_elite', 'ammo_laser'])
-      _prepShipTex(this, type, 230);
+    prepShipTex(this, 'plasmate_icon', 96);
     // Apophis rings: ~1024px square, displayed at 220–440px — pre-process to 880px (2× outer).
     for (const key of ['ring_apophis_outer', 'ring_apophis_mid', 'ring_apophis_inner'])
-      _prepShipTex(this, key, 880);
+      prepShipTex(this, key, 880);
 
     // Set LINEAR filter on all ship/mob textures (no mipmap sampling for non-POT assets).
     const LINEAR = 0;

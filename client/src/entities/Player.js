@@ -167,7 +167,7 @@ export default class Player {
     const armorItems  = S.filter(s => s.type === 'armor');
     const cannonW = W.filter(w => w.type !== 'laser');
     const laserW  = W.filter(w => w.type === 'laser');
-    this.hasCannon = cannonW.length > 0 || isAdmin;
+    this.hasCannon = cannonW.length > 0 || (isAdmin && laserW.length === 0);
     this.hasLaser  = laserW.length > 0;
 
     const sl  = k => ((this.scene.skillLevels || {})[k] || 0);
@@ -175,7 +175,7 @@ export default class Player {
     const BF  = s => (boardFx[s] || 0) / 100;
 
     // ── Step 1: RAW module sums (without modMult) — item base ────────────────
-    const rawCannonSum = cannonW.reduce((a,w)=>a+w.damage, 0) || (isAdmin ? 500 : 0);
+    const rawCannonSum = cannonW.reduce((a,w)=>a+w.damage, 0) || (isAdmin && laserW.length === 0 ? 500 : 0);
     const rawLaserSum  = laserW.reduce((a,w)=>a+w.damage, 0);
     const rawDurSum    = shieldItems.reduce((a,s)=>a+s.durability, 0);
     const rawRegenSum  = shieldItems.reduce((a,s)=>a+s.regen, 0);

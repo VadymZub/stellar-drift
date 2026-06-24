@@ -9,6 +9,31 @@ import { countConsumableInInventory } from '../items.js';
 import { prerenderTex } from '../utils/prerenderTex.js';
 import { loadSettings, saveSettings, getMinimapDims } from '../settings.js';
 
+const AB_TIPS = {
+  'use:repair_pack':          { name: 'Ремонтный пакет',      desc: '+30% HP мгновенно\nКД 90с' },
+  'use:speed_boost':          { name: 'Ускоритель',            desc: '+50% скорость на 15с\nКД 120с' },
+  'use:scanner_pulse':        { name: 'Импульс сканера',       desc: 'Сканирует окружение в радиусе\nКД 180с' },
+  'use:emergency_warp':       { name: 'Аварийный варп',        desc: 'Мгновенный варп на ближайшую базу\nКД 10 мин' },
+  'use:ammo_plasma':          { name: 'Боеприпасы (плазма)',   desc: 'Стандартный боекомплект для пушек' },
+  'use:ammo_plasma_elite':    { name: 'Боеприпасы (элита)',    desc: '+50% урон пушек' },
+  'use:ammo_laser':           { name: 'Боеприпасы (лазер)',    desc: 'Боекомплект для лазеров' },
+  'overcharge_shot':          { name: 'Перегрузочный выстрел', desc: '×2.0 урон следующим выстрелом\nКД 25с' },
+  'salvo':                    { name: 'Залп',                  desc: '5 выстрелов подряд из всех орудий\nКД 55с' },
+  'berserker':                { name: 'Берсерк',               desc: '+25–60% урон при низком HP\nКД 60–90с' },
+  'emergency_repair':         { name: 'Аварийный ремонт',      desc: '+30% HP мгновенно\nКД 120с' },
+  'shield_burst':             { name: 'Всплеск щита',          desc: '+120% щит мгновенно\nКД 85с' },
+  'stealth_sprint':           { name: 'Скрытный рывок',        desc: '+35% скорость + стелс 8с\nКД 55с' },
+  'ship:helion_volley':        { name: 'Залповый огонь',        desc: 'Один залп с ×1.25 уроном\nКД 40с' },
+  'ship:argosy_repair':        { name: 'Аварийный ремонт',      desc: '+25% HP\nКД 55с' },
+  'ship:drifter_jump':         { name: 'Фазовый прыжок',        desc: 'Телепорт вперёд по курсу\nКД 60с' },
+  'ship:stiletto_afterburner': { name: 'Форсаж',                desc: '+100% скорость на 4с\nКД 50с' },
+  'ship:aegis_dome':           { name: 'Щитовой купол',         desc: 'Непробиваемый щит на 5с\nКД 90с' },
+  'ship:phantom_cloak':        { name: 'Маскировка',            desc: 'Стелс 10с, +30% скорость\nКД 3 мин' },
+  'ship:wisp_recall':          { name: 'Телепорт на базу',      desc: 'Мгновенный возврат на базу\nКД 3 мин' },
+  'argus:pulsar':              { name: 'Квантовый пульсар',     desc: '8 лучей · 300 урон/касание · 4с\nКД 45с' },
+  'argus:cocoon':              { name: 'Фазовый кокон',         desc: '+30% HP и щит + неуязвимость 2с\nВо время кокона пульсар урон не наносит\nКД 60с' },
+};
+
 // Оверлей-сцена HUD. Читает статы из GameScene, слушает события лога.
 export default class HudScene extends Phaser.Scene {
   constructor() { super({ key: 'HudScene', active: false }); }
@@ -142,12 +167,10 @@ export default class HudScene extends Phaser.Scene {
 
   _buildActionBarHUD() {
     const W = this.scale.width, H = this.scale.height;
-    // DPR-adaptive: slot is 52 CSS px regardless of screen density
-    const SW = Math.round(52 * DPR), SH = SW;
-    const GAP = Math.round(4 * DPR), N = 10;
-    const R = Math.round(5 * DPR); // corner radius
+    const SW = 52, SH = 52, GAP = 4, N = 10;
+    const R = 5;
     const startX = Math.round((W - (N * SW + (N - 1) * GAP)) / 2);
-    const barY   = H - SH - Math.round(10 * DPR);
+    const barY   = H - SH - 10;
 
     this._barEditMode  = false;
     this._barPickedIdx = null;
@@ -158,13 +181,14 @@ export default class HudScene extends Phaser.Scene {
       const bg = this.add.graphics().setDepth(101);
       bg.fillStyle(0x0a1828, 0.92);
       bg.fillRoundedRect(sx, barY, SW, SH, R);
-      bg.lineStyle(Math.max(1, Math.round(DPR)), 0x1e4060, 1);
+      bg.lineStyle(1, 0x1e4060, 1);
       bg.strokeRoundedRect(sx, barY, SW, SH, R);
 
       // Hit zone: ЛКМ = активация / ПКМ = удалить / режим ↔ = перестановка
       const hitZone = this.add.rectangle(sx + SW / 2, barY + SH / 2, SW, SH)
         .setInteractive({ useHandCursor: true }).setDepth(106).setAlpha(0.001);
       hitZone.on('pointerdown', (p) => {
+        this._cancelAbTip();
         const gs = this.gs;
         if (p.button === 2) {
           // ПКМ: удалить слот только в режиме редактирования
@@ -201,27 +225,92 @@ export default class HudScene extends Phaser.Scene {
       });
 
       const cdGfx = this.add.graphics().setDepth(103);
-      const hkStyle = { fontFamily: 'Inter, sans-serif', fontSize: `${Math.round(9 * DPR)}px`, color: '#4a6680', resolution: UI_RES };
-      const hk = this.add.text(sx + Math.round(3 * DPR), barY + Math.round(2 * DPR), i < 9 ? `${i + 1}` : '0', hkStyle).setDepth(104);
-      const cdStyle = { fontFamily: 'Orbitron, sans-serif', fontSize: `${Math.round(12 * DPR)}px`, color: '#ffffff', resolution: UI_RES };
+      const hkStyle = { fontFamily: 'Inter, sans-serif', fontSize: '9px', color: '#4a6680', resolution: UI_RES };
+      const hk = this.add.text(sx + 3, barY + 2, i < 9 ? `${i + 1}` : '0', hkStyle).setDepth(104);
+      const cdStyle = { fontFamily: 'Orbitron, sans-serif', fontSize: '12px', color: '#ffffff', resolution: UI_RES };
       const cdTxt = this.add.text(sx + SW / 2, barY + SH / 2, '', cdStyle).setOrigin(0.5).setDepth(104);
+
+      hitZone.on('pointerover', () => {
+        this._cancelAbTip();
+        this._abTipTimer = this.time.delayedCall(1200, () => this._showAbTip(i));
+      });
+      hitZone.on('pointerout',  () => this._cancelAbTip());
 
       return { sx, sy: barY, SW, SH, R, bg, cdGfx, hk, cdTxt, iconImg: null, _key: null, _pickGfx: null };
     });
 
     // Edit mode toggle button — right of bar
-    const ebX = startX + N * (SW + GAP) + Math.round(6 * DPR);
-    const ebW = Math.round(30 * DPR), ebH = Math.round(30 * DPR);
+    const ebX = startX + N * (SW + GAP) + 6;
+    const ebW = 30, ebH = 30;
     this._editBtn = this.add.rectangle(ebX, barY + (SH - ebH) / 2, ebW, ebH, 0x0a1828, 0.88)
-      .setOrigin(0, 0).setStrokeStyle(Math.max(1, Math.round(DPR)), 0x2a4060).setInteractive({ useHandCursor: true }).setDepth(105);
+      .setOrigin(0, 0).setStrokeStyle(1, 0x2a4060).setInteractive({ useHandCursor: true }).setDepth(105);
     this._editBtnTxt = this.add.text(ebX + ebW / 2, barY + SH / 2, '↔',
-      { fontFamily: 'Inter, sans-serif', fontSize: `${Math.round(17 * DPR)}px`, color: '#3a5a70', resolution: UI_RES })
+      { fontFamily: 'Inter, sans-serif', fontSize: '17px', color: '#3a5a70', resolution: UI_RES })
       .setOrigin(0.5).setDepth(106);
     this._editBtn.on('pointerover', () => { if (!this._barEditMode) this._editBtn.setFillStyle(0x142030, 0.95); });
     this._editBtn.on('pointerout',  () => { if (!this._barEditMode) this._editBtn.setFillStyle(0x0a1828, 0.88); });
     this._editBtn.on('pointerdown', () => this._toggleBarEditMode());
 
     this._rebuildActionBarIcons();
+
+    // Tooltip panel (hidden by default)
+    this._abTipTimer = null;
+    this._abTipBg   = this.add.graphics().setDepth(120).setVisible(false);
+    this._abTipName = this.add.text(0, 0, '', {
+      fontFamily: 'Orbitron, sans-serif', fontSize: '11px', color: '#e0f4ff',
+      fontStyle: 'bold', resolution: UI_RES,
+    }).setDepth(121).setVisible(false);
+    this._abTipDesc = this.add.text(0, 0, '', {
+      fontFamily: 'Inter, sans-serif', fontSize: '10px', color: '#7aacbc',
+      resolution: UI_RES, wordWrap: { width: 165 },
+    }).setDepth(121).setVisible(false);
+  }
+
+  _cancelAbTip() {
+    if (this._abTipTimer) { this._abTipTimer.remove(); this._abTipTimer = null; }
+    this._abTipBg?.setVisible(false);
+    this._abTipName?.setVisible(false);
+    this._abTipDesc?.setVisible(false);
+  }
+
+  _showAbTip(i) {
+    const key = ((this.gs?.actionBar) || [])[i];
+    if (!key) return;
+    const tip = AB_TIPS[key];
+    if (!tip) return;
+
+    const slot = this._abSlots?.[i];
+    if (!slot) return;
+
+    const PAD = 8, W_TIP = 180;
+    this._abTipName.setText(tip.name);
+    this._abTipDesc.setText(tip.desc);
+
+    const nameH = this._abTipName.height;
+    const descH = this._abTipDesc.height;
+    const tipH  = PAD * 2 + nameH + (tip.desc ? 4 + descH : 0);
+
+    const cx = slot.sx + slot.SW / 2;
+    let tx = cx - W_TIP / 2;
+    const W = this.scale.width;
+    if (tx < 4) tx = 4;
+    if (tx + W_TIP > W - 4) tx = W - 4 - W_TIP;
+
+    const ty = slot.sy - tipH - 6;
+
+    this._abTipBg.clear();
+    this._abTipBg.fillStyle(0x060e18, 0.94);
+    this._abTipBg.fillRoundedRect(tx, ty, W_TIP, tipH, 5);
+    this._abTipBg.lineStyle(1, 0x2a5070, 1);
+    this._abTipBg.strokeRoundedRect(tx, ty, W_TIP, tipH, 5);
+    this._abTipBg.setVisible(true);
+
+    this._abTipName.setPosition(tx + PAD, ty + PAD).setVisible(true);
+    if (tip.desc) {
+      this._abTipDesc.setPosition(tx + PAD, ty + PAD + nameH + 4).setVisible(true);
+    } else {
+      this._abTipDesc.setVisible(false);
+    }
   }
 
   _toggleBarEditMode() {
@@ -263,6 +352,8 @@ export default class HudScene extends Phaser.Scene {
       'ship:aegis_dome':           0x42a5f5,
       'ship:phantom_cloak':        0x9575cd,
       'ship:wisp_recall':          0x66bb6a,
+      'argus:pulsar':              0x00d4ff,
+      'argus:cocoon':              0xe0f7fa,
     };
     this._abSlots.forEach((slot, i) => {
       const key = (gs.actionBar || [])[i] || null;
@@ -275,7 +366,7 @@ export default class HudScene extends Phaser.Scene {
       slot.bg.fillStyle(0x0a1828, 0.92);
       const R = slot.R ?? Math.round(5 * DPR);
       slot.bg.fillRoundedRect(slot.sx, slot.sy, slot.SW, slot.SH, R);
-      const accent = key?.startsWith('ship:') ? (SHIP_ACCENT[key] ?? 0x4a7090) : null;
+      const accent = (key?.startsWith('ship:') || key?.startsWith('argus:')) ? (SHIP_ACCENT[key] ?? 0x4a7090) : null;
       if (accent) {
         slot.bg.lineStyle(Math.round(2 * DPR), accent, 0.85);
       } else {
@@ -293,11 +384,9 @@ export default class HudScene extends Phaser.Scene {
       }
 
       if (!key) return;
-      if (key.startsWith('ship:')) {
+      if (key.startsWith('ship:') || key.startsWith('argus:')) {
         const texKey = this._ensureShipSkillTex(key);
         const iconSz = slot.SW;
-        // PNGs pre-processed to 104px (2× slot) in BootScene; procedural fallbacks (__ss_) also 2×.
-        // setDisplaySize at slot size → GPU bilinear 2:1 downscale = sharper than canvas-only render.
         slot.iconImg = this.add.image(slot.sx + slot.SW / 2, slot.sy + slot.SH / 2, texKey)
           .setDisplaySize(iconSz, iconSz).setDepth(102);
         return;
@@ -329,6 +418,8 @@ export default class HudScene extends Phaser.Scene {
       'ship:aegis_dome':            { label: 'ЩК', bg: '#071020', fg: '#42a5f5', border: '#42a5f5' },
       'ship:phantom_cloak':         { label: 'МС', bg: '#0d0a18', fg: '#7e57c2', border: '#7e57c2' },
       'ship:wisp_recall':           { label: 'БЗ', bg: '#081408', fg: '#66bb6a', border: '#66bb6a' },
+      'argus:pulsar':               { label: 'КП', bg: '#00141e', fg: '#00d4ff', border: '#00d4ff' },
+      'argus:cocoon':               { label: 'ФК', bg: '#0a1218', fg: '#e0f7fa', border: '#e0f7fa' },
     };
     const info = INFO[key] || { label: '??', bg: '#0a0a14', fg: '#7e9398', border: '#7e9398' };
     const sz = Math.round(104 * DPR); // 2× physical slot size
@@ -394,7 +485,7 @@ export default class HudScene extends Phaser.Scene {
       const cdEnd   = key ? (gs.skillCooldowns[key] || 0) : 0;
       const cdMs    = key ? gs._skillCooldownMs(key) : 1;
       const cdRem   = Math.max(0, cdEnd - time);
-      const lv      = key?.startsWith('ship:') ? 1 : (gs.skillLevels?.[key] || 0);
+      const lv      = (key?.startsWith('ship:') || key?.startsWith('argus:')) ? 1 : (gs.skillLevels?.[key] || 0);
 
       slot.cdGfx.clear();
       if (key && buffRem > 0) {
