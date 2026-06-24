@@ -68,3 +68,5 @@ matrix visible through transparent casing, geometric lattice structure
 inside, pulsing violet glow around edges,
 flat icon with depth, no text, 512x512
 ```
+
+http://localhost:8080/weapon-compare.html

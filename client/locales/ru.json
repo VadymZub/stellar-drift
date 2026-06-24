@@ -198,6 +198,8 @@
   "mob.confed_09": "Дезертир-элита",
   "mob.sec_drone": "Охранный дрон",
   "mob.sec_destroyer": "Частный эсминец",
+  "mob.guard_main":  "Страж базы",
+  "mob.guard_drone": "Дрон охраны",
   "mob.sec_base": "Добывающая база",
   "mob.apophis": "АПОФИС",
   "mob.argus_boss": "АРГУС",

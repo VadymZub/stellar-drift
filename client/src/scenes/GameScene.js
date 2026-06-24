@@ -20,6 +20,7 @@ import VFXManager from '../systems/VFXManager.js';
 import MiningBase from '../entities/MiningBase.js';
 import HomeBase from '../entities/HomeBase.js';
 import ArgusController from '../systems/ArgusController.js';
+import ConfedGuardSystem, { getLastResetTime } from '../systems/ConfedGuardSystem.js';
 import { getUsername, getToken, apiPut, apiGet } from '../api.js';
 import { MISSIONS, getMissionSectorTarget } from '../data/missions.js';
 import EscortTransport, { ESCORT_SPEED, ESCORT_WAVE_AT } from '../entities/EscortTransport.js';
@@ -585,6 +586,8 @@ export default class GameScene extends Phaser.Scene {
 
   spawnMobs() {
     // Clean up any previous base visuals (scene restart)
+    this.confedGuards?.destroy();
+    this.confedGuards = null;
     for (const b of this.miningBases) b.destroy();
     this.miningBases = [];
     for (const b of this.homeBases) b.destroy();
@@ -659,6 +662,10 @@ export default class GameScene extends Phaser.Scene {
           }
         }
       }
+
+      // Охранники нейтральных баз — спавн по таймеру, уходят когда все базы захвачены
+      this._checkGuardReset();
+      this.confedGuards = new ConfedGuardSystem(this, Lmax);
       return;
     }
 
@@ -666,8 +673,19 @@ export default class GameScene extends Phaser.Scene {
       // Специальный спавн для босс-уровня Алгол: Зов Апофиса
       const apophis = add('apophis', 50, 0, 0, { behavior: 'guard', patrolRadius: 100, leash: Infinity });
       apophis.isDungeonBoss = true;
-      const ring = [[720, 720], [-720, 720], [720, -720], [-720, -720]];
-      ring.forEach(o => add('ancient_06', 50, o[0], o[1], { behavior: 'guard', patrolRadius: 300, bossRef: apophis }));
+      apophis.sprite.setAlpha(0.92);
+      this._apophisBoss = apophis;
+      this._apophisRingsEnraged = false;
+      this._apophisRings = this._createApophisRings(cx, cy);
+      // Пульс тела: медленное дыхание
+      const sx = apophis.sprite.scaleX, sy = apophis.sprite.scaleY;
+      this._apophisPulseTween = this.tweens.add({
+        targets: apophis.sprite,
+        scaleX: sx * 1.12, scaleY: sy * 1.12,
+        duration: 2200, yoyo: true, repeat: -1, ease: 'Sine.easeInOut',
+      });
+      const ringPts = [[720, 720], [-720, 720], [720, -720], [-720, -720]];
+      ringPts.forEach(o => add('ancient_06', 50, o[0], o[1], { behavior: 'guard', patrolRadius: 300, bossRef: apophis }));
       return;
     }
 
@@ -778,6 +796,59 @@ export default class GameScene extends Phaser.Scene {
       for (const [ox, oy] of [[-240, -130], [250, -90], [-110, 250]]) {
         add(pool[0], rnd(Lmin, Lmax), gx + ox, gy + oy, { patrolRadius: 150, leash: 520, bossRef: sectorBoss, ...(isHomeSector ? { passive: true } : {}) });
       }
+    }
+  }
+
+  // Сбрасывает нейтральные базы текущего сектора в активное состояние при еженедельном респауне.
+  // Расписание: среда и суббота в 22:00 UTC. Отслеживается per-sector чтобы каждый PvP-сектор
+  // сбрасывался независимо при первом посещении после времени респауна.
+  _checkGuardReset() {
+    const resetTime = getLastResetTime();
+    if (!resetTime) return;
+    this.lastGuardReset = this.lastGuardReset || {};
+    const key = galaxy.current;
+    if ((this.lastGuardReset[key] || 0) >= resetTime) return;
+    this.lastGuardReset[key] = resetTime;
+    for (const base of this.miningBases) base.resetToNeutral();
+  }
+
+  _createApophisRings(cx, cy) {
+    const defs = [
+      { key: 'ring_apophis_outer', depth: 37, size: 440, speed:  0.25 },
+      { key: 'ring_apophis_mid',   depth: 38, size: 330, speed: -0.45 },
+      { key: 'ring_apophis_inner', depth: 41, size: 220, speed:  0.75 },
+    ];
+    return defs.map(d => {
+      const img = this.add.image(cx, cy, d.key)
+        .setDepth(d.depth)
+        .setDisplaySize(d.size, d.size)
+        .setBlendMode('ADD');
+      img._rotSpeed = d.speed;
+      return img;
+    });
+  }
+
+  _updateApophisRings(dt) {
+    const boss = this._apophisBoss;
+    if (!boss || !boss.alive) {
+      this._apophisPulseTween?.stop();
+      this._apophisPulseTween = null;
+      for (const r of this._apophisRings) r.destroy();
+      this._apophisRings = null;
+      this._apophisBoss = null;
+      return;
+    }
+    if (!this._apophisRingsEnraged && boss.maxHull > 0 && (boss.hull / boss.maxHull) < 0.40) {
+      this._apophisRingsEnraged = true;
+      for (const r of this._apophisRings) {
+        r._rotSpeed *= 2.2;
+        r.setTint(0xff4444);
+      }
+    }
+    for (const r of this._apophisRings) {
+      r.x = boss.x;
+      r.y = boss.y;
+      r.rotation += r._rotSpeed * dt;
     }
   }
 
@@ -951,7 +1022,7 @@ export default class GameScene extends Phaser.Scene {
 
   travelTo(key) {
     const acc = sectorAccess(key, this.pilotLevel, this.activeShip, this.premium);
-    if (!acc.ok) { this.jumping = false; this.player.sprite.setVisible(true).setScale(1); return; }
+    if (!acc.ok) { this.jumping = false; this.player.sprite.setVisible(true); this.player._restoreDisplaySize(); return; }
 
     const fromKey = galaxy.current;
     const targetSec = SECTORS[key];
@@ -979,7 +1050,7 @@ export default class GameScene extends Phaser.Scene {
     noBtn.on('pointerdown', () => {
       objs.forEach(o => o?.destroy());
       this.jumping = false;
-      this.player.sprite.setVisible(true).setScale(1).setAlpha(1);
+      this.player.sprite.setVisible(true).setAlpha(1); this.player._restoreDisplaySize();
     });
     objs.push(noBtn);
     objs.push(this.add.text(ox + OW / 2 - 65, btnY, 'НАЗАД', { fontFamily: 'Orbitron, sans-serif', fontSize: '11px', color: '#4dd0e1', resolution: 2 }).setOrigin(0.5).setDepth(202).setScrollFactor(0));
@@ -2141,7 +2212,7 @@ export default class GameScene extends Phaser.Scene {
     if (this._jumpScaleTween) { this._jumpScaleTween.stop(); this._jumpScaleTween = null; }
     if (this._jumpVisTimer)   { this._jumpVisTimer.remove(false);   this._jumpVisTimer = null; }
     if (this._jumpTravelTimer){ this._jumpTravelTimer.remove(false); this._jumpTravelTimer = null; }
-    this.player.sprite.setScale(1);
+    this.player._restoreDisplaySize();
     const deathX = this.player.x, deathY = this.player.y;
     this.explosion(deathX, deathY, 1.1);
     this.log(i18n.t('log.you_died'));
@@ -2445,6 +2516,8 @@ export default class GameScene extends Phaser.Scene {
     this.plasmateDeposits.forEach(d => d.update(now2));
     if (this.pendingGate && Phaser.Math.Distance.Between(this.player.x, this.player.y, this.pendingGate.x, this.pendingGate.y) < 60) { this.pendingGate = null; }
     this.argusCtrl?.update(dt);
+    this.confedGuards?.update(dt, this.player);
+    if (this._apophisRings) this._updateApophisRings(dt);
     this._updateBotPilot(dt);
     this._updateEscort(dt);
 
@@ -3558,6 +3631,13 @@ export default class GameScene extends Phaser.Scene {
     this._escortMobs = null;
     this.argusCtrl?.destroy();
     this.argusCtrl = null;
+    this.confedGuards?.destroy();
+    this.confedGuards = null;
+    this._apophisPulseTween?.stop();
+    this._apophisPulseTween = null;
+    for (const r of (this._apophisRings ?? [])) r.destroy();
+    this._apophisRings = null;
+    this._apophisBoss = null;
     this._adminCh?.postMessage({ type: 'GAME_STATE', alive: false, playerName: this.playerName ?? 'Player' });
     this._adminCh?.close();
     this._adminCh = null;
@@ -3594,6 +3674,7 @@ export default class GameScene extends Phaser.Scene {
       plasmateToday:       this.plasmateToday        || 0,
       plasmateDayReset:    this.plasmateDayReset      || 0,
       clan:                this.clan                  ?? null,
+      lastGuardReset:      this.lastGuardReset         || {},
     };
   }
 
@@ -3641,6 +3722,7 @@ export default class GameScene extends Phaser.Scene {
     if (s.plasmateToday      != null) this.plasmateToday      = s.plasmateToday;
     if (s.plasmateDayReset   != null) this.plasmateDayReset   = s.plasmateDayReset;
     if (s.clan               !== undefined) this.clan         = s.clan;
+    if (s.lastGuardReset     != null) this.lastGuardReset    = s.lastGuardReset;
   }
 
   _saveState() {

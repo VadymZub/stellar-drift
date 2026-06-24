@@ -3,7 +3,7 @@
 ## Лор и роль в игре
 
 **Название фракции:** Рой (The Swarm)  
-**Внутренний код:** `corsair` (не меняем, чтобы не трогать спавн-логику)  
+**Внутренний код:** `swarm_01` … `swarm_09`  
 **Уровни:** 1–20 (начальная угроза для всех корпораций)  
 **Зоны:** все три корпоративных коридора — Helios, Karax, Tides
 
@@ -13,7 +13,7 @@
 крылья и усики — сенсоры и маневровые органы. Никакого металла — только органика, усиленная
 миллионами лет эволюции в вакууме.
 
-Рой не имеет единого разума — каждый улей управляется Маткой (pirate_09).
+Рой не имеет единого разума — каждый улей управляется Маткой (swarm_09).
 Без Матки отряд распадается и действует хаотично (passive → aggressive при уроне).
 
 ### Роль в геймплее
@@ -24,9 +24,9 @@
 - **Нарратив**: корпорации нанимают пилотов чистить астероидные пояса от Роя перед прокладкой маршрутов
 
 ### 3 подтверждённых ассета (уже будут нарисованы отдельно)
-- **Рогатый жук** → pirate_06 (Жук-боец)
-- **Стрекоза** → pirate_05 (Стрекоза-рейдер)
-- **Муравей** → pirate_08 (Муравей-элита)
+- **Рогатый жук** → swarm_06 (Жук-боец)
+- **Стрекоза** → swarm_05 (Стрекоза-рейдер)
+- **Муравей** → swarm_08 (Муравей-элита)
 
 ---
 
@@ -47,8 +47,8 @@ chitinous exoskeleton, alien hive aesthetic, painterly stylized, AAA mobile RTS 
 
 ---
 
-### pirate_01.png — Личинка (Larva Drone)
-**Роль:** pirate_01 · ур. 1–5 · hull 60 · самый маленький, быстрый, слабый  
+### swarm_01.png — Личинка (Larva Drone)
+**Роль:** swarm_01 · ур. 1–5 · hull 60 · самый маленький, быстрый, слабый  
 **Архетип насекомого:** личинка / мошка — бескрылое, вытянутое, примитивное
 
 ```
@@ -57,8 +57,8 @@ top-down 2D game sprite of an alien bio-mechanical insect spaceship, larva drone
 
 ---
 
-### pirate_02.png — Рабочий (Worker Ant Scout)
-**Роль:** pirate_02 · ур. 3–8 · hull 90 · разведчик, средняя скорость  
+### swarm_02.png — Рабочий (Worker Ant Scout)
+**Роль:** swarm_02 · ур. 3–8 · hull 90 · разведчик, средняя скорость  
 **Архетип насекомого:** муравей-рабочий — три сегмента, шесть конечностей-дюз
 
 ```
@@ -67,8 +67,8 @@ top-down 2D game sprite of an alien bio-mechanical insect spaceship, ant worker 
 
 ---
 
-### pirate_03.png — Оса (Wasp Fighter)
-**Роль:** pirate_03 · ур. 5–12 · hull 120 · перехватчик с щитом  
+### swarm_03.png — Оса (Wasp Fighter)
+**Роль:** swarm_03 · ур. 5–12 · hull 120 · перехватчик с щитом  
 **Архетип насекомого:** оса — тонкая талия, крылья, длинное жало
 
 ```
@@ -77,8 +77,8 @@ top-down 2D game sprite of an alien bio-mechanical insect spaceship, wasp fighte
 
 ---
 
-### pirate_04.png — Шершень (Hornet Skirmisher)
-**Роль:** pirate_04 · ур. 7–15 · hull 100 · самый быстрый в роте, aiClass gunner  
+### swarm_04.png — Шершень (Hornet Skirmisher)
+**Роль:** swarm_04 · ур. 7–15 · hull 100 · самый быстрый в роте, aiClass gunner  
 **Архетип насекомого:** шершень — крупнее осы, агрессивный, мощные челюсти
 
 ```
@@ -87,8 +87,8 @@ top-down 2D game sprite of an alien bio-mechanical insect spaceship, hornet skir
 
 ---
 
-### pirate_05.png — Стрекоза (Dragonfly Raider)
-**Роль:** pirate_05 · ур. 8–18 · hull 160 · aiClass dasher — быстрые рывки  
+### swarm_05.png — Стрекоза (Dragonfly Raider)
+**Роль:** swarm_05 · ур. 8–18 · hull 160 · aiClass dasher — быстрые рывки  
 **Архетип насекомого:** стрекоза — длинное тело, четыре крыла, фасеточные глаза  
 ⚠ Подтверждённый ассет (будет нарисован отдельно)
 
@@ -98,8 +98,8 @@ top-down 2D game sprite of an alien bio-mechanical insect spaceship, dragonfly r
 
 ---
 
-### pirate_06.png — Рогатый Жук (Horned Beetle Brawler)
-**Роль:** pirate_06 · ур. 10–20 · hull 200 · тяжёлый боец, aiClass dasher  
+### swarm_06.png — Рогатый Жук (Horned Beetle Brawler)
+**Роль:** swarm_06 · ур. 10–20 · hull 200 · тяжёлый боец, aiClass dasher  
 **Архетип насекомого:** жук-носорог / рогатый жук — массивный, два рога-орудия  
 ⚠ Подтверждённый ассет (будет нарисован отдельно)
 
@@ -109,8 +109,8 @@ top-down 2D game sprite of an alien bio-mechanical insect spaceship, horned beet
 
 ---
 
-### pirate_07.png — Паук-Охотник (Spider Gunship)
-**Роль:** pirate_07 · ур. 12–20 · hull 240 · восемь орудий, aiClass dasher  
+### swarm_07.png — Паук-Охотник (Spider Gunship)
+**Роль:** swarm_07 · ур. 12–20 · hull 240 · восемь орудий, aiClass dasher  
 **Архетип насекомого:** паук — широкий, восемь ног-орудий по кругу
 
 ```
@@ -119,8 +119,8 @@ top-down 2D game sprite of an alien bio-mechanical insect spaceship, spider hunt
 
 ---
 
-### pirate_08.png — Муравей-Солдат (Soldier Ant Elite)
-**Роль:** pirate_08 · ур. 15–20 · hull 320 · elite · aiClass berserker  
+### swarm_08.png — Муравей-Солдат (Soldier Ant Elite)
+**Роль:** swarm_08 · ур. 15–20 · hull 320 · elite · aiClass berserker  
 **Архетип насекомого:** муравей-солдат — крупная голова с мощными жвалами  
 ⚠ Подтверждённый ассет (будет нарисован отдельно)
 
@@ -130,8 +130,8 @@ top-down 2D game sprite of an alien bio-mechanical insect spaceship, soldier ant
 
 ---
 
-### pirate_09.png — Матка (Hive Queen)
-**Роль:** pirate_09 · ур. 15–20 · hull 700 · BOSS · bossType roaming · самый крупный  
+### swarm_09.png — Матка (Hive Queen)
+**Роль:** swarm_09 · ур. 15–20 · hull 700 · BOSS · bossType roaming · самый крупный  
 **Архетип насекомого:** матка / королева — огромная, брюхо с яйцевыми камерами, свита
 
 ```
@@ -143,20 +143,20 @@ top-down 2D game sprite of an alien bio-mechanical insect spaceship, hive queen 
 ## Имена в ru.json (заменить)
 
 ```json
-"mob.pirate_01": "Личинка-дрон",
-"mob.pirate_02": "Рабочий Роя",
-"mob.pirate_03": "Оса-боец",
-"mob.pirate_04": "Шершень",
-"mob.pirate_05": "Стрекоза-рейдер",
-"mob.pirate_06": "Рогатый жук",
-"mob.pirate_07": "Паук-охотник",
-"mob.pirate_08": "Муравей-солдат",
-"mob.pirate_09": "МАТКА РОЯ"
+"mob.swarm_01": "Личинка-дрон",
+"mob.swarm_02": "Рабочий Роя",
+"mob.swarm_03": "Оса-боец",
+"mob.swarm_04": "Шершень",
+"mob.swarm_05": "Стрекоза-рейдер",
+"mob.swarm_06": "Рогатый жук",
+"mob.swarm_07": "Паук-охотник",
+"mob.swarm_08": "Муравей-солдат",
+"mob.swarm_09": "МАТКА РОЯ"
 ```
 
 ## Порядок работы
 1. Сгенерировать 6 новых спрайтов в Midjourney (01-04, 07, 09)
 2. Получить готовые ассеты: стрекоза (05), рогатый жук (06), муравей (08)
-3. Сохранить как `pirate_01.png` … `pirate_09.png` → `client/assets/mobs/`
+3. Сохранить как `swarm_01.png` … `swarm_09.png` → `client/assets/mobs/`
 4. Обновить displaySize в constants.js если нужна коррекция размеров
 5. Обновить имена в ru.json

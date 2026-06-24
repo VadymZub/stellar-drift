@@ -120,3 +120,6 @@ sci-fi UI badge icon for spaceship ability "Shield Dome", glowing blue (#42a5f5)
 ```
 sci-fi UI badge icon for spaceship ability "Stealth Cloak", sharp spaceship silhouette outlined in blazing neon violet-white (#b39ddb) electric light, cloaking field activation burst — intense chromatic aberration prismatic halo splitting into cyan and magenta fringes around the ship outline, crackling lightning-thin energy threads radiating outward from the hull, bright overexposed center glow with electric purple (#9575cd) and white hot core, high-contrast vivid colors against a near-black deep space background, bold readable silhouette, painterly stylized game UI icon, AAA mobile MMO ability badge, centered composition with circular border ring, isolated on transparent background, no characters, no text, no letters, no words, easy-to-read silhouette at small size --ar 1:1 --stylize 750
 ```
+https://claude.ai/code/artifact/f2484180-6b30-44a3-8294-9745c038418f - данжи
+
+https://claude.ai/code/artifact/21f661f3-95a3-4807-a724-9feb9372502b - платы настройка

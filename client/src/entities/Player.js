@@ -126,6 +126,7 @@ export default class Player {
     const dw = Math.round(src.width  * scale);
     const dh = Math.round(src.height * scale);
     this.sprite.setDisplaySize(dw, dh);
+    this._spriteW = dw; this._spriteH = dh;
     this.displaySize = finalSize;
     // Уровень корабля 1-10 (прокачка за кредиты) → бонусы корпуса.
     this.shipLevel = this.scene.shipLevels?.[ship.key] || 1;
@@ -138,10 +139,18 @@ export default class Player {
     // Используем глобально экипированные модули (из GameScene.equipped).
     // Это позволяет сохранять прокачанные пушки/щиты при смене корабля.
     this.slots = this.scene.equipped || defaultLoadout(ship.wSlots, ship.sSlots, ship.eSlots);
-    
+
     // Если слотов на новом корабле МЕНЬШЕ, чем было на старом — лишние модули в расчете не участвуют.
     // Но физически они остаются в массиве this.scene.equipped, чтобы не пропадать.
     this.recomputeStats();
+  }
+
+  // Восстановить правильный отображаемый размер спрайта без пересчёта статов.
+  // Вызывается вместо setScale(1) после отмены jump-анимации или смерти.
+  _restoreDisplaySize() {
+    if (this._spriteW && this._spriteH) {
+      this.sprite.setDisplaySize(this._spriteW, this._spriteH);
+    }
   }
 
   // Пересчёт статов: суммирование по всем занятым слотам корабля.

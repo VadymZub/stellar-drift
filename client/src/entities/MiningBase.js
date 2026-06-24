@@ -427,6 +427,22 @@ export default class MiningBase {
     if (gs.scene.isActive('BaseMenuScene')) gs.scene.stop('BaseMenuScene');
   }
 
+  // Сбрасывает базу в нейтральное активное состояние (еженедельный респаун).
+  resetToNeutral() {
+    this.corp          = 'neutral';
+    this.state         = 'active';
+    this.hull          = BASE_CONFIG.hullMax;
+    this.owners        = [];
+    this.pointsBanked  = 0;
+    this.goldBanked    = 0;
+    this.turrets       = Array(BASE_CONFIG.turretSlots).fill(null);
+    this._neutralPhase = 'open';
+    this._neutralTimer = 0;
+    this._buildTimer   = 0;
+    this._refreshVisuals();
+    this._persist();
+  }
+
   _persist() {
     _registry.set(this.id, {
       corp:         this.corp,
