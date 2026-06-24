@@ -86,6 +86,13 @@ export default class Movement {
     const dy = p.waypoint.y - p.y;
     const dist = Math.hypot(dx, dy);
 
+    // Steer mode: stop at cursor but keep waypoint (next frame setWaypoint refreshes from cursor)
+    if (this.steerMode && dist <= this.arrivalThreshold) {
+      p.speed = 0;
+      p.sprite.body.setVelocity(0, 0);
+      return;
+    }
+
     if (!this.steerMode && dist <= this.arrivalThreshold) {
       // Долетели — убираем стрелку и сбрасываем состояние
       p.waypoint = null;
@@ -108,8 +115,11 @@ export default class Movement {
       }
       if (p.boosting) desired *= p.cfg.boostMult;
     }
-    
-    if (!this.steerMode && dist < 120) {
+
+    // Proximity slowdown — prevents arriving at full speed and oscillating
+    if (this.steerMode && dist < 50) {
+      desired *= Math.max(0.1, dist / 50);
+    } else if (!this.steerMode && dist < 120) {
       desired *= Math.max(0.25, dist / 120);
     }
 

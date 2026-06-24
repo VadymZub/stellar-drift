@@ -1,6 +1,6 @@
 import * as Phaser from 'https://cdn.jsdelivr.net/npm/phaser@4.1.0/dist/phaser.esm.js';
 import { RANKS } from '../constants.js';
-import { galaxy } from '../galaxy.js';
+import { galaxy, SECTORS } from '../galaxy.js';
 
 const CORP_HOME = { helios: 'helios_1', karax: 'karax_1', tides: 'tides_1', neutral: 'helios_1' };
 
@@ -175,9 +175,20 @@ export default class TestProfileScene extends Phaser.Scene {
       };
 
       this._cleanup();
-      this.scene.start('GameScene');
-      this.scene.launch('BackgroundScene');
-      this.scene.launch('HudScene');
+      // Load starting sector's map before launching (it wasn't loaded at boot).
+      const _tpMap = SECTORS[galaxy.current].map;
+      const _tpLaunch = () => {
+        this.scene.start('GameScene');
+        this.scene.launch('BackgroundScene');
+        this.scene.launch('HudScene');
+      };
+      if (this.textures.exists(_tpMap)) {
+        _tpLaunch();
+      } else {
+        this.load.image(_tpMap, `assets/maps/${_tpMap}.png`);
+        this.load.once('complete', _tpLaunch);
+        this.load.start();
+      }
     });
   }
 

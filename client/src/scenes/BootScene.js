@@ -140,8 +140,8 @@ export default class BootScene extends Phaser.Scene {
     // Локаль (MVP — ru). Всё UI-текст идёт через i18n.t().
     this.load.json('locale-ru', 'locales/ru.json');
 
-    // Фоны секторов галактики (по графу) — текстура с ключом = имя карты.
-    for (const s of Object.values(SECTORS)) this.load.image(s.map, `assets/maps/${s.map}.png`);
+    // Карты секторов грузятся лениво: стартовая — в LoginScene/TestProfileScene,
+    // следующая — в фоне во время jump-анимации (3s окно). Не грузим здесь.
     // Джапгейт: кольцо + вихрь (вихрь крутится в игре).
     this.load.image('jumpgate_ring', 'assets/structures/jumpgate_ring.png');
     this.load.image('jumpgate_vortex', 'assets/structures/jumpgate_vortex.png');
@@ -407,16 +407,8 @@ export default class BootScene extends Phaser.Scene {
         this.textures.get(s.garageKey).setFilter(LINEAR);
     }
     for (const m of Object.values(MOBS)) {
-      if (!m.anim && this.textures.exists(m.key)) {
+      if (!m.anim && this.textures.exists(m.key))
         this.textures.get(m.key).setFilter(LINEAR);
-        const mSrc = this.textures.get(m.key).getSourceImage();
-        const mSrcW = mSrc.naturalWidth ?? mSrc.width;
-        const mSrcH = mSrc.naturalHeight ?? mSrc.height;
-        const mAR   = mSrcW / mSrcH;
-        const prH   = m.displaySize;
-        const prW   = Math.round(prH * mAR);
-        m._prerenderKey = prerenderTex(this, m.key, prW, prH);
-      }
     }
 
     const loading = document.getElementById('loading');

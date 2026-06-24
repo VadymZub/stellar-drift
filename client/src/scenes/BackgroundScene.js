@@ -16,8 +16,9 @@ export default class BackgroundScene extends Phaser.Scene {
 
   fit() {
     const W = this.scale.width, H = this.scale.height;
-    const mapKey = (SECTORS[galaxy.current] ?? SECTORS[this.cur])?.map;
-    if (!mapKey) return;
+    // Use this.cur (the currently displayed sector), not galaxy.current which may be loading.
+    const mapKey = SECTORS[this.cur]?.map;
+    if (!mapKey || !this.textures.exists(mapKey)) return;
     const src = this.textures.get(mapKey).getSourceImage();
     const cover = Math.max(W / src.width, H / src.height) * 1.30;   // увеличенный запас под PvP-параллакс
     this.img.setDisplaySize(src.width * cover, src.height * cover).setPosition(W / 2, H / 2);
@@ -26,7 +27,12 @@ export default class BackgroundScene extends Phaser.Scene {
   update() {
     const sec = SECTORS[galaxy.current];
     if (!sec) return;
-    if (this.cur !== galaxy.current) { this.cur = galaxy.current; this.img.setTexture(sec.map); this.fit(); }
+    // Swap texture only when the new map is fully loaded (lazy-loaded during jump animation).
+    if (this.cur !== galaxy.current && this.textures.exists(sec.map)) {
+      this.cur = galaxy.current;
+      this.img.setTexture(sec.map);
+      this.fit();
+    }
     // Плавный параллакс: центрируем смещение относительно центра мира, чтобы минимизировать выход за края.
     const gs = this.scene.get('GameScene');
     const cam = gs.cameras && gs.cameras.main;

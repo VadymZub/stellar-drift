@@ -221,8 +221,9 @@ export default class ArgusController {
       const tx = p.x + Math.cos(this._orbitAngle) * ORBIT_R_TIGHT;
       const ty = p.y + Math.sin(this._orbitAngle) * ORBIT_R_TIGHT;
       const sx = tx - m.x, sy = ty - m.y, sd = Math.sqrt(sx*sx + sy*sy) || 1;
-      vx = (sx / sd) * spd * ORBIT_SPEED;
-      vy = (sy / sd) * spd * ORBIT_SPEED;
+      const orbitScale = Math.min(1, sd / 60);
+      vx = (sx / sd) * spd * ORBIT_SPEED * Math.max(0.2, orbitScale);
+      vy = (sy / sd) * spd * ORBIT_SPEED * Math.max(0.2, orbitScale);
 
     } else {
       // Oscillate: sine wave on distance + slow angular drift
@@ -232,8 +233,9 @@ export default class ArgusController {
       const tx = p.x + Math.cos(this._orbitAngle) * targetDist;
       const ty = p.y + Math.sin(this._orbitAngle) * targetDist;
       const sx = tx - m.x, sy = ty - m.y, sd = Math.sqrt(sx*sx + sy*sy) || 1;
-      vx = (sx / sd) * spd * 0.9;
-      vy = (sy / sd) * spd * 0.9;
+      const oscScale = Math.min(1, sd / 80);
+      vx = (sx / sd) * spd * 0.9 * Math.max(0.15, oscScale);
+      vy = (sy / sd) * spd * 0.9 * Math.max(0.15, oscScale);
     }
 
     m.sprite.body.setVelocity(vx, vy);

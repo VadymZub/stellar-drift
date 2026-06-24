@@ -2,6 +2,17 @@ import * as Phaser from 'https://cdn.jsdelivr.net/npm/phaser@4.1.0/dist/phaser.e
 import { COLORS, UI_RES } from '../constants.js';
 import { i18n } from '../i18n.js';
 import { apiPost, apiGet, setSession, clearSession, getToken, getUsername } from '../api.js';
+import { galaxy, SECTORS } from '../galaxy.js';
+
+// Determine the sector the player should start in from their saved state.
+// Mirrors the redirect logic in GameScene._applyLoadedState.
+function _resolveStartSector(state) {
+  if (!state) return 'helios_1';
+  const sec = state.currentSector;
+  if (sec && SECTORS[sec] && sec !== 'shadow_arena' && sec !== 'R-1-boss') return sec;
+  const corp = state.playerCorp || 'helios';
+  return corp === 'neutral' ? 'helios_1' : `${corp}_1`;
+}
 
 const DEV_MODE = true;
 
@@ -155,10 +166,21 @@ export default class LoginScene extends Phaser.Scene {
 
         window.TEST_PROFILE = null; // clear any leftover dev session data
         this._removeOverlay();
-        // Go directly to game — TestProfileScene is only for DEV skip
-        this.scene.start('GameScene');
-        this.scene.launch('BackgroundScene');
-        this.scene.launch('HudScene');
+        // Set galaxy.current now so BackgroundScene.create() gets the right sector.
+        galaxy.current = _resolveStartSector(window.PLAYER_STATE);
+        const _mapKey = SECTORS[galaxy.current].map;
+        const _launch = () => {
+          this.scene.start('GameScene');
+          this.scene.launch('BackgroundScene');
+          this.scene.launch('HudScene');
+        };
+        if (this.textures.exists(_mapKey)) {
+          _launch();
+        } else {
+          this.load.image(_mapKey, `assets/maps/${_mapKey}.png`);
+          this.load.once('complete', _launch);
+          this.load.start();
+        }
       } catch (e) {
         errMsg.textContent = e.message || 'Ошибка сервера';
       } finally {

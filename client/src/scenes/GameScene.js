@@ -945,10 +945,16 @@ export default class GameScene extends Phaser.Scene {
     }
 
     this.jumping = true;
-    this.player.waypoint = null; 
+    // Begin loading the target sector's map in background — 3s animation is the load window.
+    const _jMap = SECTORS[gate.target]?.map;
+    if (_jMap && !this.textures.exists(_jMap)) {
+      this.load.image(_jMap, `assets/maps/${_jMap}.png`);
+      this.load.start();
+    }
+    this.player.waypoint = null;
     this.movement.setWaypoint(null);
-    this.player.speed = 0;       
-    this.selectTarget(null);    
+    this.player.speed = 0;
+    this.selectTarget(null);
     this.isFiring = false;
     
     // Вихрь появляется ОДНОМОМЕНТНО на 130px
@@ -1034,6 +1040,12 @@ export default class GameScene extends Phaser.Scene {
   }
 
   _showJumpDangerWarning(key, recLevel, fromKey) {
+    // Start loading the target map so it's ready if user confirms the jump.
+    const _wMap = SECTORS[key]?.map;
+    if (_wMap && !this.textures.exists(_wMap)) {
+      this.load.image(_wMap, `assets/maps/${_wMap}.png`);
+      this.load.start();
+    }
     const W = this.scale.width, H = this.scale.height;
     const OW = 300, OH = 120, ox = (W - OW) / 2, oy = (H - OH) / 2;
     const objs = [];
@@ -1154,7 +1166,7 @@ export default class GameScene extends Phaser.Scene {
       if (this.player.alive && !this.jumping) { this.cancelCollect(); this.steering = true; this.movement.setWaypoint(wx, wy, false); this.pingAt(wx, wy); }
     });
 
-    this.input.on('pointerup', () => { this.steering = false; });
+    this.input.on('pointerup', () => { this.steering = false; this.movement.steerMode = false; });
     this.input.keyboard.addCapture('TAB,ESC,G,M,J,F,CTRL,I,S');
 
     this.input.keyboard.on('keydown-TAB', (e) => { e.preventDefault(); if (this._autoTargetEnabled !== false) this.cycleTarget(); });
@@ -2493,6 +2505,7 @@ export default class GameScene extends Phaser.Scene {
     this.player.update(dt, inSafe, faceAngle);
     if (this.steering && this.player.alive && !this.jumping) {
       const wpt = this.cameras.main.getWorldPoint(this.input.activePointer.x, this.input.activePointer.y);
+      this.movement.steerMode = true;
       this.movement.setWaypoint(wpt.x, wpt.y, false);
     }
     if (!this.jumping && this.player.alive) this.movement.update(dt, inSafe);
