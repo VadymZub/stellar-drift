@@ -675,55 +675,58 @@ export default class GameScene extends Phaser.Scene {
     const isHomeSector = sec.lvlMin === 1 && !sec.isDungeon && !sec.pvp;
 
     if (galaxy.current === 'dungeon_1') {
-      pool = ['pirate_01', 'pirate_02', 'pirate_03', 'pirate_04', 'pirate_05']; boss = 'pirate_09';
+      pool = ['swarm_01', 'swarm_02', 'swarm_03', 'swarm_04', 'swarm_05']; boss = 'swarm_09';
     } else if (galaxy.current === 'dungeon_2') {
-      pool = ['syndicate_01', 'syndicate_02', 'syndicate_04', 'syndicate_03']; boss = 'syndicate_06';
+      pool = ['corsair_01', 'corsair_02', 'corsair_04', 'corsair_03', 'corsair_05']; boss = 'corsair_09';
     } else if (galaxy.current === 'dungeon_3') {
       pool = ['confed_01', 'confed_02', 'syndicate_04', 'confed_06']; boss = 'confed_09';
     } else if (galaxy.current === 'dungeon_4') {
-      pool = ['ancient_01', 'ancient_02', 'ancient_03', 'ancient_04']; boss = 'ancient_06';
+      pool = ['ancient_01', 'ancient_02', 'ancient_03', 'ancient_07', 'ancient_08']; boss = 'ancient_06';
     } else if (galaxy.current === 'dungeon_5') {
-      pool = ['ancient_03', 'ancient_04', 'ancient_05', 'ancient_01', 'ancient_02'];
+      pool = ['ancient_09', 'ancient_10', 'ancient_11', 'ancient_08', 'ancient_07'];
       boss = 'ancient_06';
     } else if (galaxy.current === 'tides_d4') {
-      pool = ['ancient_01', 'ancient_02', 'ancient_04', 'confed_06']; boss = 'ancient_06';
+      pool = ['ancient_09', 'ancient_10', 'ancient_11', 'confed_06']; boss = 'ancient_06';
     } else if (galaxy.current === 'helios_5') {
       // Бастион Конфедерации — дезертиры и элита
       pool = ['confed_01', 'confed_02', 'confed_06', 'syndicate_05', 'confed_01'];
       boss = 'confed_09';
     } else if (Lmax <= 20) {
-      pool = ['pirate_01', 'pirate_02', 'pirate_03', 'pirate_04', 'pirate_05', 'pirate_06', 'pirate_07']; boss = 'pirate_09'; 
-    } else if (Lmax <= 35) { 
-      // Мид-гейм: Синдикат + Безопасность
-      pool = ['syndicate_01', 'sec_drone', 'syndicate_04', 'pirate_08', 'sec_drone', 'syndicate_03']; 
-      boss = 'sec_destroyer'; 
-    } else { 
-      pool = ['ancient_01', 'ancient_02', 'ancient_04', 'confed_06', 'ancient_03']; boss = 'ancient_06'; 
+      pool = ['swarm_01', 'swarm_02', 'swarm_03', 'swarm_04', 'swarm_05', 'swarm_06', 'swarm_07']; boss = 'swarm_09';
+    } else if (Lmax <= 30) {
+      // Корсары — люди-пираты, мид-ранний
+      pool = ['corsair_01', 'corsair_02', 'corsair_03', 'corsair_04', 'corsair_05', 'corsair_06']; boss = 'corsair_09';
+    } else if (Lmax <= 45) {
+      // Синдикат + Безопасность
+      pool = ['syndicate_01', 'syndicate_02', 'syndicate_04', 'syndicate_07', 'syndicate_08', 'syndicate_03'];
+      boss = 'syndicate_11';
+    } else {
+      pool = ['ancient_07', 'ancient_08', 'ancient_09', 'ancient_10', 'ancient_11']; boss = 'ancient_06';
     }
     
     if (galaxy.current === 'dungeon_1') {
-      // D1: пираты в крестообразных коридорах; мини-боссы на E/W; босс за северной дверью
-      add('pirate_02', rnd(Lmin, Lmax), 0, -900, { patrolRadius: 350 });
-      add('pirate_01', rnd(Lmin, Lmax), 1800, 0, {});
-      add('pirate_03', rnd(Lmin, Lmax), -1800, 0, {});
-      add('pirate_02', rnd(Lmin, Lmax), 0, 900, { patrolRadius: 400 });
-      add('pirate_04', rnd(Lmin, Lmax), 2000, 0, {});
-      add('pirate_01', rnd(Lmin, Lmax), -2000, 0, {});
-      add('pirate_07', Lmax, 2200, 0, { behavior: 'guard', patrolRadius: 250, leash: 600 });
-      add('pirate_07', Lmax, -2200, 0, { behavior: 'guard', patrolRadius: 250, leash: 600 });
-      const d1boss = add('pirate_09', Lmax, 0, -2200, { behavior: 'guard', patrolRadius: 180, leash: 450 });
+      // D1: Рой в крестообразных коридорах; мини-боссы на E/W; босс за северной дверью
+      add('swarm_02', rnd(Lmin, Lmax), 0, -900, { patrolRadius: 350 });
+      add('swarm_01', rnd(Lmin, Lmax), 1800, 0, {});
+      add('swarm_03', rnd(Lmin, Lmax), -1800, 0, {});
+      add('swarm_02', rnd(Lmin, Lmax), 0, 900, { patrolRadius: 400 });
+      add('swarm_04', rnd(Lmin, Lmax), 2000, 0, {});
+      add('swarm_01', rnd(Lmin, Lmax), -2000, 0, {});
+      add('swarm_07', Lmax, 2200, 0, { behavior: 'guard', patrolRadius: 250, leash: 600 });
+      add('swarm_07', Lmax, -2200, 0, { behavior: 'guard', patrolRadius: 250, leash: 600 });
+      const d1boss = add('swarm_09', Lmax, 0, -2200, { behavior: 'guard', patrolRadius: 180, leash: 450 });
       d1boss.isDungeonBoss = true;
 
     } else if (galaxy.current === 'dungeon_2') {
-      // D2: Синдикат по Z-маршруту; мини-боссы в тупиках; босс в сев-вост комнате
-      add('syndicate_01', rnd(Lmin, Lmax), -1800, 1000, {});
-      add('syndicate_02', rnd(Lmin, Lmax), 0, 1200, {});
-      add('syndicate_03', rnd(Lmin, Lmax), 0, 0, {});
-      add('syndicate_04', rnd(Lmin, Lmax), -800, -300, {});
-      add('syndicate_02', rnd(Lmin, Lmax), 1500, 0, {});
-      add('syndicate_05', Lmax, 1900, 1100, { behavior: 'guard', patrolRadius: 200, leash: 550 });
-      add('syndicate_05', Lmax, -1900, -200, { behavior: 'guard', patrolRadius: 200, leash: 550 });
-      const d2boss = add('syndicate_06', Lmax, 1800, -1800, { behavior: 'guard', patrolRadius: 180, leash: 480 });
+      // D2: Корсары по Z-маршруту; мини-боссы в тупиках; босс в сев-вост комнате
+      add('corsair_01', rnd(Lmin, Lmax), -1800, 1000, {});
+      add('corsair_03', rnd(Lmin, Lmax), 0, 1200, {});
+      add('corsair_02', rnd(Lmin, Lmax), 0, 0, {});
+      add('corsair_05', rnd(Lmin, Lmax), -800, -300, {});
+      add('corsair_04', rnd(Lmin, Lmax), 1500, 0, {});
+      add('corsair_08', Lmax, 1900, 1100, { behavior: 'guard', patrolRadius: 200, leash: 550 });
+      add('corsair_08', Lmax, -1900, -200, { behavior: 'guard', patrolRadius: 200, leash: 550 });
+      const d2boss = add('corsair_09', Lmax, 1800, -1800, { behavior: 'guard', patrolRadius: 180, leash: 480 });
       d2boss.isDungeonBoss = true;
 
     } else if (galaxy.current === 'dungeon_3') {
@@ -2074,7 +2077,7 @@ export default class GameScene extends Phaser.Scene {
     // Hull scales to journey AND pilot level: wave 1 (20%→50% window) should kill an
     // unprotected transport. Mob damage scales as base × (1 + 0.5 × (level − 1)).
     const levelScale = 1 + 0.5 * ((this.pilotLevel ?? 1) - 1);
-    const wave1Dps = [MOBS.pirate_03, MOBS.pirate_04]
+    const wave1Dps = [MOBS.swarm_03, MOBS.swarm_04]
       .reduce((s, m) => s + m.damage * m.fireRate * levelScale, 0);
     const journeyDist = Phaser.Math.Distance.Between(spawnX, spawnY, destX, destY);
     const hull = Math.max(800,
@@ -2089,9 +2092,9 @@ export default class GameScene extends Phaser.Scene {
 
   _spawnEscortWave(tx, ty, waveIdx) {
     const WAVES = [
-      ['pirate_03', 'pirate_04'],
-      ['pirate_04', 'pirate_05', 'pirate_04'],
-      ['pirate_05', 'pirate_06', 'pirate_05'],
+      ['swarm_03', 'swarm_04'],
+      ['swarm_04', 'swarm_05', 'swarm_04'],
+      ['swarm_05', 'swarm_06', 'swarm_05'],
     ];
     const keys = WAVES[waveIdx] ?? WAVES[0];
     const sec = SECTORS[galaxy.current];
