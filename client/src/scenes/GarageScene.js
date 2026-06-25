@@ -26,8 +26,12 @@ export default class GarageScene extends Phaser.Scene {
     this.gs = this.scene.get('GameScene');
     const W = this.scale.width, H = this.scale.height;
 
-    const _bg = this.add.image(W / 2, H / 2, 'bg_garage');
-    _bg.setScale(Math.max(W / _bg.width, H / _bg.height)).setAlpha(0.8);
+    if (this.textures.exists('bg_garage')) {
+      const _bg = this.add.image(W / 2, H / 2, 'bg_garage');
+      _bg.setScale(Math.max(W / _bg.width, H / _bg.height)).setAlpha(0.8);
+    } else {
+      this.add.rectangle(0, 0, W, H, 0x060d18, 1).setOrigin(0);
+    }
 
     const pw = Math.min(960, W - 40), ph = Math.min(720, H - 40);
     const px = (W - pw) / 2, py = (H - ph) / 2;

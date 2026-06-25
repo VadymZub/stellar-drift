@@ -39,9 +39,11 @@ export default class CargoScene extends Phaser.Scene {
     const W = this.scale.width, H = this.scale.height;
     const atBase = !!this.gs.atBase;
 
-    if (atBase) {
+    if (atBase && this.textures.exists('bg_garage')) {
       const _bg = this.add.image(W / 2, H / 2, 'bg_garage');
       _bg.setScale(Math.max(W / _bg.width, H / _bg.height)).setAlpha(0.8);
+    } else if (atBase) {
+      this.add.rectangle(0, 0, W, H, 0x060d18, 1).setOrigin(0);
     } else {
       this.add.rectangle(0, 0, W, H, 0x000000, 0.35).setOrigin(0);
     }

@@ -163,8 +163,12 @@ export default class SkillScene extends Phaser.Scene {
     const py = NAV_BTM;
     this._p = { px, py, pw, ph };
 
-    const _bgSkill = this.add.image(W / 2, H / 2, 'bg_garage');
-    _bgSkill.setScale(Math.max(W / _bgSkill.width, H / _bgSkill.height)).setAlpha(0.8);
+    if (this.textures.exists('bg_garage')) {
+      const _bgSkill = this.add.image(W / 2, H / 2, 'bg_garage');
+      _bgSkill.setScale(Math.max(W / _bgSkill.width, H / _bgSkill.height)).setAlpha(0.8);
+    } else {
+      this.add.rectangle(0, 0, W, H, 0x060d18, 1).setOrigin(0);
+    }
 
     // Overlay для закрытия тултипа по клику на фон (не покрывает nav bar)
     const overlay = this.add.rectangle(0, NAV_BTM, W, H - NAV_BTM, 0x000000, 0).setOrigin(0).setInteractive();
