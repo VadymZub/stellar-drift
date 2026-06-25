@@ -1,7 +1,7 @@
 import * as Phaser from 'https://cdn.jsdelivr.net/npm/phaser@4.1.0/dist/phaser.esm.js';
 import { COLORS, UI_RES } from '../constants.js';
 import MiningBase from '../entities/MiningBase.js';
-import { galaxy } from '../galaxy.js';
+import { galaxy, SECTORS } from '../galaxy.js';
 
 const TF = { fontFamily: 'Orbitron', resolution: UI_RES };
 
@@ -391,7 +391,16 @@ export default class CorpScene extends Phaser.Scene {
       gs.playerCorp = corp;
       galaxy.current = CORP_HOME[corp] || 'helios_1';
       this.scene.stop();
-      gs.scene.restart();
+      // Load the new sector's map before restarting (lazy-loaded, may not be in cache)
+      const _swMap = SECTORS[galaxy.current]?.map;
+      const _doRestart = () => gs.scene.restart({ corpSwitch: true });
+      if (_swMap && !gs.textures.exists(_swMap)) {
+        gs.load.image(_swMap, `assets/maps/${_swMap}.png`);
+        gs.load.once('complete', _doRestart);
+        gs.load.start();
+      } else {
+        _doRestart();
+      }
     });
 
     // CANCEL button

@@ -157,8 +157,10 @@ export default class GameScene extends Phaser.Scene {
     this.movement = new Movement(this, this.player);
 
     this.cameras.main.startFollow(this.player.sprite, false, 0.15, 0.15);
-    this.cameras.main.setZoom(DPR);   
+    this.cameras.main.setZoom(DPR);
     this.cameras.main.roundPixels = true;
+    // Snap camera to spawn position immediately (prevents visible drift on restart)
+    this.cameras.main.setScroll(startX - this.scale.width / (2 * DPR), startY - this.scale.height / (2 * DPR));
 
     this.reticle = this.add.graphics().setDepth(45);
     this.target = null;
@@ -444,8 +446,8 @@ export default class GameScene extends Phaser.Scene {
     // Background-load non-critical assets — one tick delay so the first frame renders first.
     if (!this.textures.exists('bg_garage')) this.time.delayedCall(0, () => this._bgPreloadDeferred());
 
-    // Fade in from black after sector jump to mask scene.restart() hitch
-    if (data?.startX !== undefined) {
+    // Fade in from black after sector jump or corp switch to mask scene.restart() hitch
+    if (data?.startX !== undefined || data?.corpSwitch) {
       const _ov = this.add.rectangle(this.scale.width / 2, this.scale.height / 2,
         this.scale.width * 4, this.scale.height * 4, 0x000000, 1).setScrollFactor(0).setDepth(999);
       this.cameras.main.once('postrender', () => {
