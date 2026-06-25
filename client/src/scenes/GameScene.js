@@ -2043,10 +2043,15 @@ export default class GameScene extends Phaser.Scene {
   }
 
   _laserBeam(x1, y1, x2, y2, color, alpha, width = 3) {
-    const g = this.add.graphics().setDepth(65);
-    g.lineStyle(width, color, alpha);
-    g.beginPath(); g.moveTo(x1, y1); g.lineTo(x2, y2); g.strokePath();
-    this.tweens.add({ targets: g, alpha: 0, duration: 160, ease: 'Expo.easeOut', onComplete: () => g.destroy() });
+    const g = this.add.graphics().setDepth(65).setBlendMode('ADD');
+    const line = () => { g.beginPath(); g.moveTo(x1, y1); g.lineTo(x2, y2); g.strokePath(); };
+    // Outer glow — wide, dim
+    g.lineStyle(width * 6, color, 0.12 * alpha); line();
+    // Mid halo
+    g.lineStyle(width * 2.5, color, 0.35 * alpha); line();
+    // Bright core
+    g.lineStyle(Math.max(1, width * 0.6), 0xffffff, 0.90 * alpha); line();
+    this.tweens.add({ targets: g, alpha: 0, duration: 200, ease: 'Expo.easeOut', onComplete: () => g.destroy() });
   }
   fireMobWeapon(mob, tx, ty, victim = this.player, extraOpts = {}) {
     const pType = mob.tpl.projectileType || 'plasma';
