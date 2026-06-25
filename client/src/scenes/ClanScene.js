@@ -86,8 +86,13 @@ export default class ClanScene extends Phaser.Scene {
     // DEV: to test guild panel: gs.clan = MOCK_MY_GUILD;
 
     const bgMap = { helios: 'bg_corp_helios', karax: 'bg_corp_karaks', tides: 'bg_corp_tides' };
-    const bg    = this.add.image(W / 2, H / 2, bgMap[gs.playerCorp] || 'bg_corp_helios');
-    bg.setScale(Math.max(W / bg.width, H / bg.height)).setAlpha(0.8);
+    const bgKey = bgMap[gs.playerCorp] || 'bg_corp_helios';
+    if (this.textures.exists(bgKey)) {
+      const bg = this.add.image(W / 2, H / 2, bgKey);
+      bg.setScale(Math.max(W / bg.width, H / bg.height)).setAlpha(0.8);
+    } else {
+      this.add.rectangle(0, 0, W, H, 0x060d18, 1).setOrigin(0);
+    }
 
     if (!gs.clan) {
       this._renderNoClan(W, H);

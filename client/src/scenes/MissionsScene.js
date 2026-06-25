@@ -21,8 +21,12 @@ export default class MissionsScene extends Phaser.Scene {
 
     const W  = this.scale.width, H = this.scale.height;
 
-    const _bgMiss = this.add.image(W / 2, H / 2, 'bg_missions');
-    _bgMiss.setScale(Math.max(W / _bgMiss.width, H / _bgMiss.height)).setAlpha(0.8);
+    if (this.textures.exists('bg_missions')) {
+      const _bgMiss = this.add.image(W / 2, H / 2, 'bg_missions');
+      _bgMiss.setScale(Math.max(W / _bgMiss.width, H / _bgMiss.height)).setAlpha(0.8);
+    } else {
+      this.add.rectangle(0, 0, W, H, 0x060d18, 1).setOrigin(0);
+    }
 
     const pw = Math.min(1152, W - 40);
     const ph = Math.min(744, H - 60);

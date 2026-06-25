@@ -46,8 +46,13 @@ export default class CorpScene extends Phaser.Scene {
 
 
     const _corpBgMap2 = { helios: 'bg_corp_helios', karax: 'bg_corp_karaks', tides: 'bg_corp_tides' };
-    const _bgCorp = this.add.image(W / 2, H / 2, _corpBgMap2[gs?.playerCorp] || 'bg_corp_helios');
-    _bgCorp.setScale(Math.max(W / _bgCorp.width, H / _bgCorp.height)).setAlpha(0.8);
+    const _corpBgKey = _corpBgMap2[gs?.playerCorp] || 'bg_corp_helios';
+    if (this.textures.exists(_corpBgKey)) {
+      const _bgCorp = this.add.image(W / 2, H / 2, _corpBgKey);
+      _bgCorp.setScale(Math.max(W / _bgCorp.width, H / _bgCorp.height)).setAlpha(0.8);
+    } else {
+      this.add.rectangle(0, 0, W, H, 0x060d18, 1).setOrigin(0);
+    }
 
     // Panel
     const pw = Math.min(920, W - 40);

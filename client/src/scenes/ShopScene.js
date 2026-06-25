@@ -32,8 +32,12 @@ export default class ShopScene extends Phaser.Scene {
     const gs = this.scene.get('GameScene');
     this._gs = gs;
 
-    const _bg = this.add.image(W / 2, H / 2, 'bg_shop');
-    _bg.setScale(Math.max(W / _bg.width, H / _bg.height)).setAlpha(0.8);
+    if (this.textures.exists('bg_shop')) {
+      const _bg = this.add.image(W / 2, H / 2, 'bg_shop');
+      _bg.setScale(Math.max(W / _bg.width, H / _bg.height)).setAlpha(0.8);
+    } else {
+      this.add.rectangle(0, 0, W, H, 0x060d18, 1).setOrigin(0);
+    }
 
     const pw = Math.min(1140, W - 24), ph = Math.min(700, H - 24);
     const px = (W - pw) / 2, py = (H - ph) / 2;
