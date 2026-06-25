@@ -12,8 +12,15 @@ class NoCacheHandler(http.server.SimpleHTTPRequestHandler):
         self.send_header('Expires', '0')
         super().end_headers()
 
+    def log_message(self, fmt, *args):
+        pass  # silence per-request logs — too noisy with 200+ boot assets
 
-socketserver.TCPServer.allow_reuse_address = True
-with socketserver.TCPServer(('', port), NoCacheHandler) as httpd:
+
+class ThreadedServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
+    allow_reuse_address = True
+    daemon_threads = True   # threads exit when main process exits
+
+
+with ThreadedServer(('', port), NoCacheHandler) as httpd:
     print(f'Stellar Drift (no-cache) -> http://localhost:{port}')
     httpd.serve_forever()
