@@ -443,8 +443,8 @@ export default class GameScene extends Phaser.Scene {
     // Auto-select bot target (vfx not ready during spawnMobs, defer one tick)
     if (this.botPilot) this.time.delayedCall(16, () => { if (this.botPilot?.alive) this.selectTarget(this.botPilot); });
 
-    // Background-load non-critical assets — one tick delay so the first frame renders first.
-    if (!this.textures.exists('bg_garage')) this.time.delayedCall(0, () => this._bgPreloadDeferred());
+    // All secondary assets (perks, module icons, NPC portraits, UI backgrounds) are now
+    // loaded in BootScene.preload() so _bgPreloadDeferred is no longer needed.
 
     // Fade out the #scene-overlay shown by _doRestart() before scene.restart().
     // The overlay is a fixed HTML element that survives Phaser scene lifecycle,

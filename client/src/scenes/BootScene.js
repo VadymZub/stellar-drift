@@ -5,6 +5,7 @@ import { SHIPS } from '../ships.js';
 import { SECTORS } from '../galaxy.js';
 import { buildBitmapFont } from '../utils/buildBitmapFont.js';
 import { prepShipTex, removeWhiteBg } from '../utils/prepShipTex.js';
+import { PERK_DEFS } from '../perks.js';
 
 // Классы взрывов (px нативного кадра). Стек 28 кадров на класс — из design/slice_explosion24.py,
 // лежит в client/explosion24/<class>_sheet.png (игра берёт свежий стек оттуда).
@@ -140,6 +141,29 @@ export default class BootScene extends Phaser.Scene {
 
     this.load.spritesheet('plasmate_crystal', 'assets/vfx/plasmate_crystal.png',
       { frameWidth: 256, frameHeight: 256 });
+
+    // Assets previously deferred to GameScene._bgPreloadDeferred — moved here so all
+    // HTTP requests fire in parallel during the boot loading screen, not during gameplay.
+    for (const [key, file] of [
+      ['bg_garage',      'garage.png'],
+      ['bg_missions',    'missions.png'],
+      ['bg_shop',        'shop.png'],
+      ['bg_corp_helios', 'Corp_Hub_Helios.png'],
+      ['bg_corp_karaks', 'Corp_Hub_Karaks.png'],
+      ['bg_corp_tides',  'Corp_Hub_Tides.png'],
+    ]) this.load.image(key, `assets/UI BACKGROUNDS/${file}`);
+
+    for (const [key, file] of Object.entries(MOD_ICON_FILES))
+      this.load.image(key, `assets/modules/${encodeURIComponent(file)}`);
+
+    for (const type of ['ammo_plasma', 'ammo_plasma_elite', 'ammo_laser'])
+      this.load.image(type, `assets/ammo/${type}.png`);
+
+    for (const p of PERK_DEFS)
+      this.load.image(p.key, `assets/perks/${encodeURIComponent(p.imgFile)}`);
+
+    for (const [key, file] of NPC_PORTRAITS)
+      this.load.image(key, `assets/npc/${encodeURIComponent(file)}`);
   }
 
   create() {
@@ -200,6 +224,11 @@ export default class BootScene extends Phaser.Scene {
       () => prepShipTex(this, 'lootbox', 68),
       () => prepShipTex(this, 'plasmate_icon', 96),
       ...['ring_apophis_outer', 'ring_apophis_mid', 'ring_apophis_inner'].map(k => () => prepShipTex(this, k, 880)),
+      // Previously-deferred assets — now loaded at boot
+      ...Object.keys(MOD_ICON_FILES).map(k => () => prepShipTex(this, k, 96)),
+      ...['ammo_plasma', 'ammo_plasma_elite', 'ammo_laser'].map(k => () => prepShipTex(this, k, 230)),
+      ...PERK_DEFS.flatMap(p => [() => prepShipTex(this, p.key, 384), () => removeWhiteBg(this, p.key)]),
+      ...NPC_PORTRAITS.map(([k]) => () => prepShipTex(this, k, 432)),
     ];
     this._runPrepJobs(_jobs);
   }
