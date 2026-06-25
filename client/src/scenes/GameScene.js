@@ -822,63 +822,97 @@ export default class GameScene extends Phaser.Scene {
     }
     
     if (galaxy.current === 'dungeon_1') {
-      // D1: Рой в крестообразных коридорах; мини-боссы на E/W; босс за северной дверью
-      add('swarm_02', rnd(Lmin, Lmax), 0, -900, { patrolRadius: 350 });
-      add('swarm_01', rnd(Lmin, Lmax), 1800, 0, {});
-      add('swarm_03', rnd(Lmin, Lmax), -1800, 0, {});
-      add('swarm_02', rnd(Lmin, Lmax), 0, 900, { patrolRadius: 400 });
+      // D1: Рой в крестообразных коридорах; мини-боссы на E/W; босс + охрана за северной дверью
+      add('swarm_01', rnd(Lmin, Lmax), 0, -900, { patrolRadius: 350 });
+      add('swarm_02', rnd(Lmin, Lmax), 1500, 0, {});
+      add('swarm_03', rnd(Lmin, Lmax), -1500, 0, {});
+      add('swarm_02', rnd(Lmin, Lmax), 0, 1200, { patrolRadius: 400 });
       add('swarm_04', rnd(Lmin, Lmax), 2000, 0, {});
       add('swarm_01', rnd(Lmin, Lmax), -2000, 0, {});
+      add('swarm_03', rnd(Lmin, Lmax), 0, -500, { patrolRadius: 300 });
+      add('swarm_05', rnd(Lmin, Lmax), 800, 700, {});
+      add('swarm_04', rnd(Lmin, Lmax), -800, 700, {});
       add('swarm_07', Lmax, 2200, 0, { behavior: 'guard', patrolRadius: 250, leash: 600 });
       add('swarm_07', Lmax, -2200, 0, { behavior: 'guard', patrolRadius: 250, leash: 600 });
       const d1boss = add('swarm_09', Lmax, 0, -2200, { behavior: 'guard', patrolRadius: 180, leash: 450 });
       d1boss.isDungeonBoss = true;
+      // охрана босса (в боссовой комнате — не открывают дверь)
+      const d1e1 = add('swarm_07', Lmax, -250, -2000, { behavior: 'guard', patrolRadius: 150, leash: 500 });
+      d1e1.isBossEscort = true;
+      const d1e2 = add('swarm_07', Lmax, 250, -2000, { behavior: 'guard', patrolRadius: 150, leash: 500 });
+      d1e2.isBossEscort = true;
 
     } else if (galaxy.current === 'dungeon_2') {
-      // D2: Корсары по Z-маршруту; мини-боссы в тупиках; босс в сев-вост комнате
+      // D2: Корсары по Z-маршруту; ресурсы в тупиках; охрана босса в сев-вост комнате
       add('corsair_01', rnd(Lmin, Lmax), -1800, 1000, {});
       add('corsair_03', rnd(Lmin, Lmax), 0, 1200, {});
       add('corsair_02', rnd(Lmin, Lmax), 0, 0, {});
       add('corsair_05', rnd(Lmin, Lmax), -800, -300, {});
       add('corsair_04', rnd(Lmin, Lmax), 1500, 0, {});
+      add('corsair_03', rnd(Lmin, Lmax), -1200, 1400, {});
+      add('corsair_01', rnd(Lmin, Lmax), 1800, 800, {});
+      add('corsair_04', rnd(Lmin, Lmax), -700, -1300, {});
+      add('corsair_02', rnd(Lmin, Lmax), 800, -1200, {});
       add('corsair_08', Lmax, 1900, 1100, { behavior: 'guard', patrolRadius: 200, leash: 550 });
       add('corsair_08', Lmax, -1900, -200, { behavior: 'guard', patrolRadius: 200, leash: 550 });
       const d2boss = add('corsair_09', Lmax, 1800, -1800, { behavior: 'guard', patrolRadius: 180, leash: 480 });
       d2boss.isDungeonBoss = true;
+      // охрана босса
+      const d2e1 = add('corsair_08', Lmax, 1500, -1800, { behavior: 'guard', patrolRadius: 150, leash: 500 });
+      d2e1.isBossEscort = true;
+      const d2e2 = add('corsair_08', Lmax, 2100, -1800, { behavior: 'guard', patrolRadius: 150, leash: 500 });
+      d2e2.isBossEscort = true;
 
     } else if (galaxy.current === 'dungeon_3') {
-      // D3: Синдикат в военной сетке; мини-боссы на постах; босс в верхне-правой комнате
+      // D3: Синдикат в военной сетке; мини-боссы на постах; охрана босса в верхне-правой комнате
       add('syndicate_01', rnd(Lmin, Lmax), -1650, -1000, {});
       add('syndicate_02', rnd(Lmin, Lmax), 0, -1000, {});
       add('syndicate_03', rnd(Lmin, Lmax), -1650, 900, {});
       add('syndicate_04', rnd(Lmin, Lmax), 0, 900, {});
       add('syndicate_05', rnd(Lmin, Lmax), 1200, 500, {});
+      add('syndicate_01', rnd(Lmin, Lmax), 1650, 500, {});
+      add('syndicate_02', rnd(Lmin, Lmax), -1650, 0, {});
+      add('syndicate_04', rnd(Lmin, Lmax), 0, 0, {});
       add('syndicate_07', Lmax, -1650, -300, { behavior: 'guard', patrolRadius: 200, leash: 500 });
       add('syndicate_07', Lmax, 0, -300, { behavior: 'guard', patrolRadius: 200, leash: 500 });
       const d3boss = add('syndicate_11', Lmax, 1650, -1800, { behavior: 'guard', patrolRadius: 180, leash: 420 });
       d3boss.isDungeonBoss = true;
+      // охрана босса
+      const d3e1 = add('syndicate_07', Lmax, 1300, -1800, { behavior: 'guard', patrolRadius: 150, leash: 480 });
+      d3e1.isBossEscort = true;
+      const d3e2 = add('syndicate_07', Lmax, 2000, -1800, { behavior: 'guard', patrolRadius: 150, leash: 480 });
+      d3e2.isBossEscort = true;
 
     } else if (galaxy.current === 'dungeon_4') {
-      // D4: Древние среди обломков; мини-боссы у кластеров; босс в юго-вост углу
-      const d4pts = [[500,-900], [-700,-600], [1200,200], [-900,600], [400,1000], [-500,-1200]];
+      // D4: Древние среди обломков; мини-боссы у кластеров; охрана босса в юго-вост углу
+      const d4pts = [[500,-900], [-700,-600], [1200,200], [-900,600], [400,1000], [-500,-1200], [700,-1500], [-1200,900]];
       d4pts.forEach(([ox, oy], i) => add(pool[i % pool.length], rnd(Lmin, Lmax), ox, oy, {}));
       add('ancient_05', Lmax, 1200, -1200, { behavior: 'guard', patrolRadius: 280, leash: 650 });
       add('ancient_05', Lmax, -900, 900, { behavior: 'guard', patrolRadius: 280, leash: 650 });
       add('ancient_03', Lmax, 1400, 900, { behavior: 'guard', patrolRadius: 250, leash: 600 });
       const d4boss = add('ancient_06', Lmax, 2200, 1600, { behavior: 'guard', patrolRadius: 180, leash: 420 });
       d4boss.isDungeonBoss = true;
+      // охрана босса
+      const d4e1 = add('ancient_03', Lmax, 1900, 1600, { behavior: 'guard', patrolRadius: 150, leash: 480 });
+      d4e1.isBossEscort = true;
+      const d4e2 = add('ancient_05', Lmax, 2200, 1300, { behavior: 'guard', patrolRadius: 150, leash: 480 });
+      d4e2.isBossEscort = true;
 
     } else if (galaxy.current === 'dungeon_5') {
-      // D5: три кольца обороны; босс в центральной арене (за северной дверью)
-      // Охранники снаружи — убить всех, чтобы открыть дверь в арену
-      const pts = [[960, 960], [-960, 960], [960, -960], [-960, -960], [0, 1800], [0, -1800], [2160, 0], [-2160, 0]];
+      // D5: три кольца обороны; босс в центральной арене (за северной дверью); охрана в арене
+      const pts = [[960,960], [-960,960], [960,-960], [-960,-960], [0,1800], [0,-1800], [2160,0], [-2160,0], [1500,1500], [-1500,-1500]];
       pts.forEach((o, i) => add(pool[i % pool.length], rnd(Lmin, Lmax), o[0], o[1], { patrolRadius: 400 }));
       const dungeon5boss = add(boss, Lmax, 0, 0, { behavior: 'guard', patrolRadius: 300, leash: 900 });
       dungeon5boss.isDungeonBoss = true;
+      // охрана в арене (не считаются для открытия двери)
+      const d5e1 = add('ancient_09', Lmax, -300, 200, { behavior: 'guard', patrolRadius: 150, leash: 600 });
+      d5e1.isBossEscort = true;
+      const d5e2 = add('ancient_11', Lmax, 300, 200, { behavior: 'guard', patrolRadius: 150, leash: 600 });
+      d5e2.isBossEscort = true;
 
     } else if (galaxy.current === 'dungeon_prem') {
-      // Лабиринт Тьмы — только Древние; мини-боссы в тупиках; босс за юго-вост дверью
-      const tdpts = [[-1800,-1300], [600,-1200], [-400,-500], [1200,-500], [-800,300], [1600,900]];
+      // Лабиринт Тьмы — только Древние; мини-боссы в тупиках; охрана босса за юго-вост дверью
+      const tdpts = [[-1800,-1300], [600,-1200], [-400,-500], [1200,-500], [-800,300], [1600,900], [-2000,100], [400,200]];
       tdpts.forEach(([ox, oy], i) => add(pool[i % pool.length], rnd(Lmin, Lmax), ox, oy, {}));
       add('ancient_05', Lmax, 0, -1800, { behavior: 'guard', patrolRadius: 250, leash: 580 });
       add('ancient_05', Lmax, -1800, 200, { behavior: 'guard', patrolRadius: 250, leash: 580 });
@@ -886,6 +920,11 @@ export default class GameScene extends Phaser.Scene {
       add('ancient_05', Lmax, -800, 1600, { behavior: 'guard', patrolRadius: 250, leash: 580 });
       const tdboss = add('ancient_06', Lmax, 2300, 1900, { behavior: 'guard', patrolRadius: 180, leash: 420 });
       tdboss.isDungeonBoss = true;
+      // охрана босса
+      const tde1 = add('ancient_08', Lmax, 2000, 1900, { behavior: 'guard', patrolRadius: 150, leash: 480 });
+      tde1.isBossEscort = true;
+      const tde2 = add('ancient_10', Lmax, 2300, 1600, { behavior: 'guard', patrolRadius: 150, leash: 480 });
+      tde2.isBossEscort = true;
 
     } else {
       const ring = [[1200, -360], [-1320, 480], [480, 1260], [-1020, -840], [1800, 624], [-1800, -180]];
@@ -1028,7 +1067,7 @@ export default class GameScene extends Phaser.Scene {
     for (const t of neighbors(cur)) {
       const _map = SECTORS[t]?.map;
       if (_map && !this.textures.exists(_map)) {
-        this.load.image(_map, `assets/maps/${_map}.png`);
+        this.load.image(_map, `assets/maps/${_map}.jpg`);
         _mapsQueued = true;
       }
     }
@@ -3218,8 +3257,9 @@ export default class GameScene extends Phaser.Scene {
     // ── Wall layout per dungeon ───────────────────────────────────────────────
     if (galaxy.current === 'dungeon_1') {
       // Хаб + крест: 4 угловых блока → коридоры 600px N/S/E/W; бутылочное горлышко в N-рукаве → узкая дверь
-      addWall(cx - 1400, cy - 1000, 2200, 1400);   // NW (коридоры 600px)
-      addWall(cx + 1400, cy - 1000, 2200, 1400);   // NE
+      // NW/NE вытянуты вверх до y=-2250 чтобы закрыть боковые обходы к боссу
+      addWall(cx - 1400, cy - 1275, 2200, 1950);   // NW: x cx-2500..cx-300, y cy-2250..cy-300
+      addWall(cx + 1400, cy - 1275, 2200, 1950);   // NE: x cx+300..cx+2500, y cy-2250..cy-300
       addWall(cx - 1400, cy + 1000, 2200, 1400);   // SW
       addWall(cx + 1400, cy + 1000, 2200, 1400);   // SE
       // горлышко: 200px проход у верха N-рукава
@@ -3330,7 +3370,7 @@ export default class GameScene extends Phaser.Scene {
 
   _checkDungeonBossDoor() {
     if (!this.dungeonBossDoor) return;
-    const remaining = this.mobs.filter(m => m.alive && !m.isDungeonBoss).length;
+    const remaining = this.mobs.filter(m => m.alive && !m.isDungeonBoss && !m.isBossEscort).length;
     if (remaining === 0) this._openDungeonBossDoor();
   }
 
@@ -3349,37 +3389,25 @@ export default class GameScene extends Phaser.Scene {
     if (!SECTORS[galaxy.current]?.isDungeon) return;
     const cx = this.worldWidth / 2, cy = this.worldHeight / 2;
 
-    // Plasmate deposits at fixed strategic positions
-    const PLASMATE_CONFIGS = {
-      dungeon_1:    [[2200, 0, 320], [-2200, 0, 320]],
-      dungeon_2:    [[1900, 1100, 380], [-1900, -200, 380], [1800, -1800, 480]],
-      dungeon_3:    [[-1650, -1000, 450], [1650, -1000, 450], [-1650, 900, 400], [0, 900, 400]],
-      dungeon_4:    [[1200, -1200, 500], [-900, 900, 500], [1400, 900, 550]],
-      dungeon_5:    [[0, -1800, 650], [1800, 0, 650], [-1800, 0, 650], [0, 1800, 650]],
-      dungeon_prem: [[0, -1800, 800], [-1800, 200, 800], [800, 1400, 900], [-800, 1600, 900]],
-      'R-1-boss':   [[1500, 0, 950], [-1500, 0, 950]],
-    };
-    const plasmateEntries = PLASMATE_CONFIGS[galaxy.current];
+    // Данжи — только новые ресурсы (плазмит убран, он для обычных секторов).
+    // Позиции проверены против стен каждого данжа.
+    // res: единственный тип; types: несколько типов (по i % length); guard: ключ охранника
     const RESPAWN_MS = 24 * 60 * 60 * 1000;
-    if (plasmateEntries) {
-      for (const [ox, oy, amount] of plasmateEntries) {
-        const x = cx + ox, y = cy + oy;
-        this.plasmateDeposits.push(
-          new PlasmateDeposit(this, x, y, amount, { xMin: x - 80, xMax: x + 80, yMin: y - 80, yMax: y + 80 }, RESPAWN_MS),
-        );
-      }
-    }
-
-    // Fixed dungeon resource deposits — каждый охраняется мини-боссом
-    // res: один тип на данж; types: несколько типов (по i % length); guard: ключ моба-охранника
     const DUNGEON_DEPOSITS = {
-      dungeon_1:    { res:   'biomech_fragment',                                                   guard: 'swarm_07',   amount: 2, spots: [[0, 1800], [1400, 800], [-1400, 800]] },
-      dungeon_2:    { res:   'quantum_shard',                                                       guard: 'corsair_08', amount: 3, spots: [[1000, 1400], [-500, -800], [-1200, -1400]] },
-      dungeon_3:    { res:   'plasma_strand',                                                       guard: 'syndicate_07', amount: 3, spots: [[-1650, 500], [1200, -1700], [0, 1500]] },
-      dungeon_4:    { types: ['biomech_fragment', 'quantum_shard', 'plasma_strand'],                guard: 'ancient_03', amount: 5, spots: [[800, -1400], [-1100, -700], [900, 1300]] },
-      dungeon_5:    { types: ['biomech_fragment', 'quantum_shard', 'plasma_strand'],                guard: 'ancient_08', amount: 6, spots: [[1500, 1500], [-1500, 1500], [1500, -1500], [-1500, -1500]] },
-      dungeon_prem: { types: ['biomech_fragment', 'quantum_shard', 'plasma_strand'],                guard: 'ancient_10', amount: 8, spots: [[600, -1700], [-1500, 700], [1700, 1500]] },
-      'R-1-boss':   { types: ['biomech_fragment', 'quantum_shard', 'plasma_strand'],                guard: 'ancient_11', amount: 9, spots: [[1200, 1200], [-1200, -1200]] },
+      // D1 hub+крест: тупики в конце E/W рукавов + S рукав
+      dungeon_1:    { res:   'biomech_fragment',                                guard: 'swarm_07',     amount: 2, spots: [[0, 1800], [1800, 0], [-1800, 0]] },
+      // D2 Z-маршрут: W тупик, SE карман, верхний левый тупик
+      dungeon_2:    { res:   'quantum_shard',                                   guard: 'corsair_08',   amount: 3, spots: [[-2000, -400], [2000, 900], [-1500, -1300]] },
+      // D3 военная сетка: нижнее лево, верхний центр, верхнее право (перед боссом)
+      dungeon_3:    { res:   'plasma_strand',                                   guard: 'syndicate_07', amount: 3, spots: [[-1800, 700], [0, -1000], [1800, -700]] },
+      // D4 обломки: между кластерами мусора
+      dungeon_4:    { types: ['biomech_fragment', 'quantum_shard', 'plasma_strand'], guard: 'ancient_03', amount: 5, spots: [[800, -1400], [-1400, -800], [900, 1300]] },
+      // D5 три кольца: 4 прохода между кольцами (N/S/E/W)
+      dungeon_5:    { types: ['biomech_fragment', 'quantum_shard', 'plasma_strand'], guard: 'ancient_08', amount: 6, spots: [[0, -1800], [0, 1800], [1700, 0], [-1800, 0]] },
+      // D-prem лабиринт: три зоны между горизонтальными барьерами
+      dungeon_prem: { types: ['biomech_fragment', 'quantum_shard', 'plasma_strand'], guard: 'ancient_10', amount: 8, spots: [[-1800, -1300], [-400, -500], [1600, 900]] },
+      // R-1-boss арена: два свободных кармана между колоннами
+      'R-1-boss':   { types: ['biomech_fragment', 'quantum_shard', 'plasma_strand'], guard: 'ancient_11', amount: 9, spots: [[1200, 1200], [-1200, -1200]] },
     };
     const dcfg = DUNGEON_DEPOSITS[galaxy.current];
     if (!dcfg) return;

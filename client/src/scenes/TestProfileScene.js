@@ -186,7 +186,7 @@ export default class TestProfileScene extends Phaser.Scene {
       if (this.textures.exists(_tpMap)) {
         _tpLaunch();
       } else {
-        this.load.image(_tpMap, `assets/maps/${_tpMap}.png`);
+        this.load.image(_tpMap, `assets/maps/${_tpMap}.jpg`);
         this.load.once('complete', _tpLaunch);
         this.load.start();
       }

@@ -398,7 +398,7 @@ export default class CorpScene extends Phaser.Scene {
         gs.scene.restart({ corpSwitch: true });
       };
       if (_swMap && !gs.textures.exists(_swMap)) {
-        gs.load.image(_swMap, `assets/maps/${_swMap}.png`);
+        gs.load.image(_swMap, `assets/maps/${_swMap}.jpg`);
         gs.load.once('complete', _doRestart);
         gs.load.start();
       } else {

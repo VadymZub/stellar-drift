@@ -92,7 +92,7 @@ export default class BootScene extends Phaser.Scene {
     }
 
     // UI Backgrounds — only login needed at boot; others deferred to GameScene._bgPreloadDeferred()
-    this.load.image('bg_login', 'assets/UI BACKGROUNDS/login_main_menu.png');
+    this.load.image('bg_login', 'assets/UI BACKGROUNDS/login_main_menu.jpg');
 
     // Loot and plasmate sprites
     this.load.image('lootbox',       'assets/modules/lootbox.png');
@@ -145,12 +145,12 @@ export default class BootScene extends Phaser.Scene {
     // Assets previously deferred to GameScene._bgPreloadDeferred — moved here so all
     // HTTP requests fire in parallel during the boot loading screen, not during gameplay.
     for (const [key, file] of [
-      ['bg_garage',      'garage.png'],
-      ['bg_missions',    'missions.png'],
-      ['bg_shop',        'shop.png'],
-      ['bg_corp_helios', 'Corp_Hub_Helios.png'],
-      ['bg_corp_karaks', 'Corp_Hub_Karaks.png'],
-      ['bg_corp_tides',  'Corp_Hub_Tides.png'],
+      ['bg_garage',      'garage.jpg'],
+      ['bg_missions',    'missions.jpg'],
+      ['bg_shop',        'shop.jpg'],
+      ['bg_corp_helios', 'Corp_Hub_Helios.jpg'],
+      ['bg_corp_karaks', 'Corp_Hub_Karaks.jpg'],
+      ['bg_corp_tides',  'Corp_Hub_Tides.jpg'],
     ]) this.load.image(key, `assets/UI BACKGROUNDS/${file}`);
 
     for (const [key, file] of Object.entries(MOD_ICON_FILES))

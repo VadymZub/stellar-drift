@@ -178,7 +178,7 @@ export default class LoginScene extends Phaser.Scene {
         if (this.textures.exists(_mapKey)) {
           _launch();
         } else {
-          this.load.image(_mapKey, `assets/maps/${_mapKey}.png`);
+          this.load.image(_mapKey, `assets/maps/${_mapKey}.jpg`);
           this.load.once('complete', _launch);
           this.load.start();
         }
