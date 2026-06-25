@@ -32,7 +32,8 @@ RULES = [
     ('bases/*.png',               512),
     ('ui/*.png',                  256),
     ('structures/*.png',          512),
-    ('vfx/*_sheet.png',          1024),   # sprite sheet frames
+    # NOTE: vfx/*_sheet.png and ui/arrow_cruise_anim.png are spritesheets — do NOT resize
+    # them here. Resizing breaks frameWidth/frameHeight slicing in vfx_manifest.json.
 ]
 
 # Photographic content — convert to JPEG (no alpha, 8-15x savings over PNG).
