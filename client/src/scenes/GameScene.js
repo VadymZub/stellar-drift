@@ -977,7 +977,10 @@ export default class GameScene extends Phaser.Scene {
       const gx = cx + dx * mx, gy = cy + dy * my;
       const sec = SECTORS[t];
       const isDungeon = sec.isDungeon === true;
-      const vortex = this.add.image(gx, gy, 'jumpgate_vortex').setOrigin(0.5, 0.5).setDepth(2).setDisplaySize(95, 95).setVisible(false);
+      // Ring hole is offset +2.1px right, +5.9px down from PNG center at 512px;
+      // at display size 260px (scale 0.508) → +1px X, +3px Y in world coords.
+      const vx = gx + 1, vy = gy + 3;
+      const vortex = this.add.image(vx, vy, 'jumpgate_vortex').setOrigin(0.5, 0.5).setDepth(2).setDisplaySize(110, 110).setVisible(false);
       if (isDungeon) vortex.setTint(0xffaa00); // Оранжевый вихрь для данжей
 
       const ring = this.add.image(gx, gy, 'jumpgate_ring').setDepth(4).setDisplaySize(260, 260);
@@ -998,7 +1001,7 @@ export default class GameScene extends Phaser.Scene {
         backgroundColor: isDungeon ? '#f57c00' : '#4dd0e1', padding: { x: 14, y: 8 }
       }).setOrigin(0.5, 1).setDepth(10).setInteractive({ useHandCursor: true }).setVisible(false);
       
-      const gate = { x: gx, y: gy, target: t, ring, vortex, label, btn, spin: 1.1 };
+      const gate = { x: vx, y: vy, target: t, ring, vortex, label, btn, spin: 1.1 };
       btn.on('pointerdown', (pointer, localX, localY, event) => {
         if (event) event.stopPropagation();
         this._tryJump(gate);
@@ -1054,7 +1057,7 @@ export default class GameScene extends Phaser.Scene {
     this.isFiring = false;
     
     // Вихрь появляется ОДНОМОМЕНТНО
-    gate.vortex.setVisible(true).setAlpha(1).setDisplaySize(145, 145);
+    gate.vortex.setVisible(true).setAlpha(1).setDisplaySize(165, 165);
     
     const spinUpDuration = 2600;
     const flashDuration = 400;
