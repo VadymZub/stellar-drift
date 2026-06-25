@@ -439,11 +439,13 @@ export default class GameScene extends Phaser.Scene {
     // Auto-select bot target (vfx not ready during spawnMobs, defer one tick)
     if (this.botPilot) this.time.delayedCall(16, () => { if (this.botPilot?.alive) this.selectTarget(this.botPilot); });
 
-    // Background-load non-critical assets — delayed 4 s so the game renders smoothly first.
-    if (!this.textures.exists('bg_garage')) this.time.delayedCall(4000, () => this._bgPreloadDeferred());
+    // Background-load non-critical assets — delayed so the first frame renders smoothly.
+    if (!this.textures.exists('bg_garage')) this.time.delayedCall(800, () => this._bgPreloadDeferred());
   }
 
   _bgPreloadDeferred() {
+    if (this._bgDeferredDone) return;
+    this._bgDeferredDone = true;
     // UI backgrounds (non-login)
     for (const [key, file] of [
       ['bg_garage',      'garage.png'],
