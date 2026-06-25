@@ -1,6 +1,6 @@
 import * as Phaser from 'https://cdn.jsdelivr.net/npm/phaser@4.1.0/dist/phaser.esm.js';
 import { COLORS, UI_RES } from '../constants.js';
-import { itemName, itemStats, itemIconKey } from '../items.js';
+import { itemName, itemStats, itemIconKey, addConsumableToInventory, removeConsumableFromInventory, countConsumableInInventory, DUNGEON_RES_EXCHANGE_RATE, BUFF_KEY_TO_RESOURCE, BUFF_KEY_TO_MATERIAL, RESOURCE_NAMES, MATERIAL_NAMES } from '../items.js';
 import { prerenderTex } from '../utils/prerenderTex.js';
 import { PERK_MAP, RARITY_COLOR, perkBonus } from '../perks.js';
 
@@ -18,7 +18,8 @@ const VAULT_TIERS = [
   { slots: 50,  cr: 3000000,  pts: 80000   },
 ];
 
-const BUFF_PCT = [0, 3, 6, 10, 15, 22];
+const BUFF_PCT     = [0, 3, 6, 10, 15, 22];
+const BUFF_MAT_COST = [0, 10, 50, 100, 300, 1000]; // materials to reach level N
 
 const MOCK_GUILDS = [
   { name: 'Nova Fleet',   tag: 'NF',  corp: 'helios', level: 3, members: 12, recruiting: true,  minLvl: 8,  motto: 'В единстве сила',  desc: 'Дружная гильдия опытных пилотов Гелиоса' },
@@ -49,7 +50,8 @@ const MOCK_MY_GUILD = {
     { name: 'NebulaDrift', level: 11, msg: '' },
   ],
   vault: [], vaultTier: 0,
-  treasury: { credits: 18500 },
+  treasury: { credits: 18500, biomech_core: 3, quantum_crystal: 1, plasma_coil: 0 },
+  contributions: {},
   buffs: [
     { key: 'hull',   name: 'Броня', icon: '🛡', lvl: 2, maxLvl: 5 },
     { key: 'shield', name: 'Щит',   icon: '💠', lvl: 1, maxLvl: 5 },
@@ -825,62 +827,124 @@ export default class ClanScene extends Phaser.Scene {
   // ── БАФФЫ ─────────────────────────────────────────────────────────────────
   _tabBuffs(x, y, w, h, clan) {
     const isCapt = clan.myRole === 'Капитан';
-    const treas  = clan.treasury || { credits: 0 };
+    const treas  = clan.treasury || {};
     const buffs  = clan.buffs || [];
     const n      = buffs.length;
     const colW   = Math.floor((w - (n - 1) * 10) / n);
+    const gs     = this.gs;
 
     this.add.text(x + w / 2, y + 6, 'БАФФЫ ГИЛЬДИИ', this.O('13px', '#2a5a70')).setOrigin(0.5, 0);
 
     buffs.forEach((b, i) => {
-      const bx = x + i * (colW + 10), by = y + 30;
-      const bh2 = Math.min(230, h - 36);
+      const bx  = x + i * (colW + 10), by = y + 30;
+      const bh2 = Math.min(h - 36, 300);
 
       const bg2 = this.add.graphics();
       bg2.fillStyle(0x080e18, 0.9); bg2.fillRoundedRect(bx, by, colW, bh2, 8);
       bg2.lineStyle(1, 0x1a2a3a, 0.7); bg2.strokeRoundedRect(bx, by, colW, bh2, 8);
 
-      this.add.text(bx + colW / 2, by + 14, b.icon, { fontSize: '28px', resolution: UI_RES }).setOrigin(0.5, 0);
-      this.add.text(bx + colW / 2, by + 52, b.name, this.O('13px', '#4dd0e1')).setOrigin(0.5, 0);
+      // Icon + name + pct
+      this.add.text(bx + colW / 2, by + 12, b.icon, { fontSize: '26px', resolution: UI_RES }).setOrigin(0.5, 0);
+      this.add.text(bx + colW / 2, by + 48, b.name, this.O('13px', '#4dd0e1')).setOrigin(0.5, 0);
       const pct = BUFF_PCT[b.lvl] || 0;
-      this.add.text(bx + colW / 2, by + 74,
+      this.add.text(bx + colW / 2, by + 68,
         b.lvl > 0 ? `+${pct}%` : 'неактивен',
-        this.O('18px', b.lvl > 0 ? '#66bb6a' : '#334455')).setOrigin(0.5, 0);
-      this.add.text(bx + colW / 2, by + 100,
+        this.O('17px', b.lvl > 0 ? '#66bb6a' : '#334455')).setOrigin(0.5, 0);
+      this.add.text(bx + colW / 2, by + 90,
         `Уровень ${b.lvl} / ${b.maxLvl}`,
         this.F('11px', '#2a5a70')).setOrigin(0.5, 0);
 
+      // Progress pips
       const pipW = Math.floor((colW - 20) / b.maxLvl) - 4;
       for (let p = 0; p < b.maxLvl; p++) {
         const pg = this.add.graphics();
         pg.fillStyle(p < b.lvl ? 0x4dd0e1 : 0x1a2a3a, 1);
-        pg.fillRoundedRect(bx + 10 + p * (pipW + 4), by + 124, pipW, 10, 3);
-        if (p === b.lvl) { pg.lineStyle(1, COLORS.primary, 0.4); pg.strokeRoundedRect(bx + 10 + p * (pipW + 4), by + 124, pipW, 10, 3); }
+        pg.fillRoundedRect(bx + 10 + p * (pipW + 4), by + 106, pipW, 8, 3);
+        if (p === b.lvl) { pg.lineStyle(1, COLORS.primary, 0.4); pg.strokeRoundedRect(bx + 10 + p * (pipW + 4), by + 106, pipW, 8, 3); }
       }
 
+      // Material info section
+      const resKey = BUFF_KEY_TO_RESOURCE[b.key];
+      const matKey = BUFF_KEY_TO_MATERIAL[b.key];
+      const matInTreas = treas[matKey] || 0;
+      const resInWh    = resKey ? countConsumableInInventory(gs.warehouse || [], resKey) : 0;
+      const resName    = resKey ? (RESOURCE_NAMES[resKey] || resKey) : '—';
+      const matName    = matKey ? (MATERIAL_NAMES[matKey] || matKey) : '—';
+
+      const divY = by + 120;
+      const divG = this.add.graphics();
+      divG.lineStyle(1, 0x1a2a3a, 0.5); divG.lineBetween(bx + 10, divY, bx + colW - 10, divY);
+
+      this.add.text(bx + 10, divY + 6, '💎 В казне:', this.F('10px', '#2a5060'));
+      this.add.text(bx + colW - 10, divY + 6, `${matName}: ${matInTreas}`, this.F('10px', '#ce93d8')).setOrigin(1, 0);
+
+      this.add.text(bx + 10, divY + 22, '⛏ Мой склад:', this.F('10px', '#2a5060'));
+      const canExch = resInWh >= DUNGEON_RES_EXCHANGE_RATE;
+      this.add.text(bx + colW - 10, divY + 22, `${resName}: ${resInWh}`, this.F('10px', canExch ? '#ffe0b2' : '#4a5a6a')).setOrigin(1, 0);
+
+      // Exchange button (any member, needs 500 resources in warehouse)
+      const exchY = divY + 40;
+      this._btn(bx + 8, exchY, colW - 16, 24,
+        `ОБМЕН 500→1 💎`, canExch ? '#ffe082' : '#2a3a2a',
+        canExch ? 0x1a1400 : 0x0a0e0a, 0x201800, () => {
+          if (!canExch) return;
+          removeConsumableFromInventory(gs.warehouse || [], resKey, DUNGEON_RES_EXCHANGE_RATE);
+          treas[matKey] = (treas[matKey] || 0) + 1;
+          const ts = this._ts();
+          (clan.log = clan.log || []).unshift({ time: ts, text: `${gs.playerName || 'Пилот'} обменял 500 ${resName} → ${matName}`, color: '#ffd54f' });
+          clan.log = clan.log.slice(0, 500);
+          clan.contributions = clan.contributions || {};
+          const cc = clan.contributions[gs.playerName || 'Пилот'] = clan.contributions[gs.playerName || 'Пилот'] || {};
+          cc[matKey] = (cc[matKey] || 0) + 1;
+          this._sr();
+        });
+
       if (b.lvl < b.maxLvl) {
-        const nPct   = BUFF_PCT[b.lvl + 1];
-        const cost   = (b.lvl + 1) * 5000;
-        const canAff = treas.credits >= cost;
-        this.add.text(bx + colW / 2, by + 146, `→ +${nPct}%`, this.F('10px', '#2a6a50')).setOrigin(0.5, 0);
-        this.add.text(bx + colW / 2, by + 162, `${(cost / 1000).toFixed(0)}k кр`, this.F('10px', canAff ? '#ffe0b2' : '#5a3a2a')).setOrigin(0.5, 0);
+        const nPct    = BUFF_PCT[b.lvl + 1];
+        const matCost = BUFF_MAT_COST[b.lvl + 1];
+        const crCost  = (b.lvl + 1) * 5000;
+        const hasMat  = matInTreas >= matCost;
+        const hasCr   = (treas.credits || 0) >= crCost;
+        const canUpg  = isCapt && hasMat && hasCr;
+
+        const infoY = exchY + 30;
+        this.add.text(bx + colW / 2, infoY, `→ +${nPct}%`, this.F('10px', '#2a6a50')).setOrigin(0.5, 0);
+        this.add.text(bx + colW / 2, infoY + 14,
+          `${matCost} 💎 · ${(crCost/1000).toFixed(0)}k кр`,
+          this.F('10px', canUpg ? '#ffe0b2' : (isCapt ? '#5a3a2a' : '#3a4a5a'))).setOrigin(0.5, 0);
+
         if (isCapt) {
-          this._btn(bx + 8, by + bh2 - 38, colW - 16, 28,
-            '↑ УЛУЧШИТЬ', canAff ? '#66cc88' : '#2a3a2a',
-            canAff ? 0x0a1a10 : 0x0a0e0a, 0x122818, () => {
-              if (!canAff) return;
-              treas.credits -= cost; b.lvl += 1;
-              (clan.log = clan.log || []).unshift({ time: this._ts(), text: `${b.name} +${BUFF_PCT[b.lvl]}% — уровень гильдии ${clan.level}`, color: '#ffd54f' });
+          this._btn(bx + 8, by + bh2 - 34, colW - 16, 26,
+            '↑ УЛУЧШИТЬ', canUpg ? '#66cc88' : '#2a3a2a',
+            canUpg ? 0x0a1a10 : 0x0a0e0a, 0x122818, () => {
+              if (!canUpg) return;
+              treas[matKey] -= matCost;
+              treas.credits -= crCost;
+              b.lvl += 1;
+              (clan.log = clan.log || []).unshift({ time: this._ts(), text: `${b.name} → +${BUFF_PCT[b.lvl]}% (ур.${b.lvl})`, color: '#ffd54f' });
               clan.log = clan.log.slice(0, 500);
               this._sr();
             });
         } else {
-          this.add.text(bx + colW / 2, by + bh2 - 24, '(только капитан)', this.F('10px', '#1a3a4a')).setOrigin(0.5, 1);
+          this.add.text(bx + colW / 2, by + bh2 - 22, '(только капитан)', this.F('10px', '#1a3a4a')).setOrigin(0.5, 1);
         }
       } else {
-        this.add.text(bx + colW / 2, by + bh2 - 24, 'МАКСИМУМ', this.F('11px', '#ffb74d')).setOrigin(0.5, 1);
+        this.add.text(bx + colW / 2, by + bh2 - 22, 'МАКСИМУМ', this.F('11px', '#ffb74d')).setOrigin(0.5, 1);
       }
     });
+
+    // Contribution summary at bottom
+    const contribY = y + h - 34;
+    const myContrib = (clan.contributions || {})[gs.playerName || 'Пилот'];
+    if (myContrib) {
+      const parts = [];
+      if (myContrib.biomech_core)    parts.push(`${myContrib.biomech_core} Б-ядро`);
+      if (myContrib.quantum_crystal) parts.push(`${myContrib.quantum_crystal} К-кристалл`);
+      if (myContrib.plasma_coil)     parts.push(`${myContrib.plasma_coil} П-катушку`);
+      if (parts.length) {
+        this.add.text(x + w / 2, contribY, `Мой вклад: ${parts.join(' · ')}`, this.F('10px', '#4a7a6a')).setOrigin(0.5, 0);
+      }
+    }
   }
 
   // ── ИСТОРИЯ ───────────────────────────────────────────────────────────────
@@ -1242,7 +1306,12 @@ export default class ClanScene extends Phaser.Scene {
   }
 
   // save → restart (для всех мутирующих действий)
-  _sr() { this.gs._saveState?.(); this.scene.restart(); }
+  _sr() {
+    this.gs._saveState?.();
+    const gs = this.gs;
+    gs.player?.setNameplate(gs.playerName, gs.pilotRank, gs.playerCorp, gs.clan?.tag);
+    this.scene.restart();
+  }
 
   // ── Helpers ───────────────────────────────────────────────────────────────
   _btn(x, y, w, h, label, tc, fillN, fillH, cb) {

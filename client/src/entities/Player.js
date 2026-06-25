@@ -75,6 +75,11 @@ export default class Player {
     this._npIcon = scene.add.image(0, 0, 'rank_tier1')
       .setDisplaySize(22, 22)
       .setDepth(51);
+    this._npTag = scene.add.text(0, 0, '', {
+      fontFamily: 'Inter, sans-serif', fontSize: '11px',
+      color: '#4dd0e1', stroke: '#000000', strokeThickness: 3,
+      resolution: UI_RES,
+    }).setOrigin(0, 0.5).setDepth(51).setVisible(false);
     this._npText = scene.add.text(0, 0, '', {
       fontFamily: 'Inter, sans-serif', fontSize: '12px',
       color: '#e0e0e0', stroke: '#000000', strokeThickness: 3,
@@ -109,12 +114,14 @@ export default class Player {
   get x() { return this.sprite.x; }
   get y() { return this.sprite.y; }
 
-  // Вызвать из GameScene после того, как pilotRank и playerCorp определены.
-  setNameplate(name, rank, corp) {
+  // Вызвать из GameScene после того, как pilotRank, playerCorp и clan определены.
+  setNameplate(name, rank, corp, clanTag) {
     const id   = rank?.id ?? 20;
     const tier = rankTier(id);
     const tint = RANK_TINTS[id] ?? 0x888888;
     this._npIcon.setTexture(`rank_tier${tier}`).setTint(tint);
+    if (clanTag) { this._npTag.setText(`[${clanTag}]`).setVisible(true); }
+    else         { this._npTag.setVisible(false); }
     this._npText.setText(name || 'PILOT');
     const embKey = corp && corp !== 'neutral' ? `emblem_${corp}` : null;
     if (embKey && this.scene.textures.exists(embKey)) {
@@ -454,6 +461,7 @@ export default class Player {
     this.sprite.body?.setVelocity(0, 0);
     this.sprite.setVisible(false);
     this._npIcon.setVisible(false);
+    this._npTag.setVisible(false);
     this._npText.setVisible(false);
     this._npEmblemBg.setVisible(false);
     this._npEmblem.setVisible(false);
@@ -471,6 +479,7 @@ export default class Player {
     this.sprite.setPosition(x, y);
     this.sprite.setVisible(true);
     this._npIcon.setVisible(true);
+    if (this._npTag.text) this._npTag.setVisible(true);
     this._npText.setVisible(true);
     if (this._npEmblem.texture.key !== 'rank_tier1') {
       this._npEmblemBg.setVisible(true);
@@ -536,13 +545,17 @@ export default class Player {
     // Nameplate: над кораблём, центрировано. Float-позиция = двигается 1:1 со спрайтом.
     // Shimmer от 46× downscale решён через pre-render rank_tier в BootScene (44px).
     const npY     = this.y - this.sprite.displayHeight * 0.55 - 13;
+    const hasTag  = this._npTag.visible;
     const hasEmbl = this._npEmblem.visible;
-    const totalW  = 22 + 4 + this._npText.width + (hasEmbl ? 4 + 18 : 0);
+    const tagW    = hasTag ? this._npTag.width + 4 : 0;
+    const totalW  = 22 + 4 + tagW + this._npText.width + (hasEmbl ? 4 + 18 : 0);
     const npX     = this.x - totalW / 2;
     this._npIcon.setPosition(npX + 11, npY);
-    this._npText.setPosition(npX + 22 + 4, npY);
+    let cursor = npX + 22 + 4;
+    if (hasTag) { this._npTag.setPosition(cursor, npY); cursor += this._npTag.width + 4; }
+    this._npText.setPosition(cursor, npY);
     if (hasEmbl) {
-      const embX = npX + 22 + 4 + this._npText.width + 4 + 9;
+      const embX = cursor + this._npText.width + 4 + 9;
       this._npEmblemBg.setPosition(embX, npY);
       this._npEmblem.setPosition(embX, npY);
     }

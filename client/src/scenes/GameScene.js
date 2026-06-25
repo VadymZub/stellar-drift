@@ -8,7 +8,7 @@ import Projectile from '../entities/Projectile.js';
 import Loot from '../entities/Loot.js';       
 import Movement from '../systems/Movement.js';
 import { EXP_CLASSES, MOD_ICON_FILES, NPC_PORTRAITS } from './BootScene.js'; 
-import { rollLootForMob, dropChance, itemName, rollStarGold, starterCannon, starterShield, rollCannon, rollShield, rollEngine, rollLaser, rollArmor, rollApophisLoot, PLASMATE_PER_SLOT, PLASMATE_DAILY_MAX, addPlasmateToInventory, totalPlasmateInInventory, removePlasmateFromInventory, CONSUMABLES, addConsumableToInventory, countConsumableInInventory, removeConsumableFromInventory, rollConsumableDrop } from '../items.js';
+import { rollLootForMob, dropChance, itemName, rollStarGold, starterCannon, starterShield, rollCannon, rollShield, rollEngine, rollLaser, rollArmor, rollApophisLoot, PLASMATE_PER_SLOT, PLASMATE_DAILY_MAX, addPlasmateToInventory, totalPlasmateInInventory, removePlasmateFromInventory, CONSUMABLES, addConsumableToInventory, countConsumableInInventory, removeConsumableFromInventory, rollConsumableDrop, MATERIAL_NAMES, RESOURCE_NAMES } from '../items.js';
 import { rollBoard, rollConnector } from '../boards.js';
 import PlasmateDeposit from '../entities/PlasmateDeposit.js';
 import { rollPerk, perkBonus, PERK_DEFS } from '../perks.js';
@@ -368,7 +368,7 @@ export default class GameScene extends Phaser.Scene {
     this._scanPulseTimer   = null;
 
     this.playerName  = this.playerName  || getUsername();
-    this.player.setNameplate(this.playerName, this.pilotRank, this.playerCorp);
+    this.player.setNameplate(this.playerName, this.pilotRank, this.playerCorp, this.clan?.tag);
     this.miningBases = [];
     this.homeBases   = [];
 
@@ -616,7 +616,21 @@ export default class GameScene extends Phaser.Scene {
     }
   }
 
+  _collectDungeonResource(deposit) {
+    const whMax = 8 + ([0,3,8,16][this.skillLevels?.cargo_expand||0]||0) + (this.premium ? 8 : 0);
+    this.warehouse = this.warehouse || [];
+    const leftover = addConsumableToInventory(this.warehouse, deposit.resourceType, deposit.amount, whMax);
+    const collected = deposit.amount - leftover;
+    if (collected <= 0) {
+      this.log(`⛏ Склад полон (${RESOURCE_NAMES[deposit.resourceType] || deposit.resourceType})`);
+      return;
+    }
+    this.log(`⛏ +${collected} ${RESOURCE_NAMES[deposit.resourceType] || deposit.resourceType} → склад`);
+    deposit.collect();
+  }
+
   _collectPlasmateDeposit(deposit) {
+    if (deposit.isDungeonResource) { this._collectDungeonResource(deposit); return; }
     // Daily limit check
     if ((this.plasmateToday || 0) >= PLASMATE_DAILY_MAX) {
       this.log(i18n.t('log.plasmate_limit'));
@@ -2158,6 +2172,25 @@ export default class GameScene extends Phaser.Scene {
       const tierLabel = boardTier === 1 ? 'T1' : boardTier === 2 ? 'T2' : 'T3';
       this.log(`📋 Найдена плата расширения ${tierLabel}`);
     }
+    // Dungeon boss material drop (2.5%)
+    if (mob.isBoss && SECTORS[galaxy.current]?.isDungeon && Math.random() < 0.025) {
+      const MATS = ['biomech_core', 'quantum_crystal', 'plasma_coil'];
+      const matType = MATS[Math.floor(Math.random() * 3)];
+      const matName = MATERIAL_NAMES[matType] || matType;
+      if (this.clan) {
+        this.clan.treasury = this.clan.treasury || {};
+        this.clan.treasury[matType] = (this.clan.treasury[matType] || 0) + 1;
+        const d = new Date();
+        const ts = `${String(d.getDate()).padStart(2,'0')}.${String(d.getMonth()+1).padStart(2,'0')}  ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+        (this.clan.log = this.clan.log || []).unshift({ time: ts, text: `${this.playerName || 'Пилот'} добыл «${matName}» → казна`, color: '#ffd54f' });
+        this.clan.log = this.clan.log.slice(0, 500);
+        this._trackClanContrib(matType, 1);
+        this.log(`💎 ${matName} → казна гильдии!`);
+      } else {
+        addConsumableToInventory(this.inventory, matType, 1, this._cargoMax());
+        this.log(`💎 ${matName} (вступи в гильдию для вклада в казну)`);
+      }
+    }
     if (!mob.noRespawn && !SECTORS[galaxy.current]?.isDungeon) {
       this.time.delayedCall(RESPAWN_MS, () => { if (!mob.alive) { mob.respawn(); this.log(i18n.t('log.respawn', { name, lvl })); } });
     }
@@ -2178,6 +2211,14 @@ export default class GameScene extends Phaser.Scene {
       this.gainHonor(Math.round(mob.level * HONOR_PER_LVL50 / 50));
     }
     if (sec?.isDungeon) this._checkDungeonBossDoor();
+  }
+
+  _trackClanContrib(type, amount) {
+    if (!this.clan) return;
+    const name = this.playerName || 'Пилот';
+    this.clan.contributions = this.clan.contributions || {};
+    const c = this.clan.contributions[name] = this.clan.contributions[name] || { biomech_core: 0, quantum_crystal: 0, plasma_coil: 0, credits: 0 };
+    if (c[type] !== undefined) c[type] += amount;
   }
 
   // ── Mission system ───────────────────────────────────────────────────────
@@ -2739,7 +2780,7 @@ export default class GameScene extends Phaser.Scene {
       this.collectGfx.strokeCircle(target.x, target.y, 45 * (1 - frac));
       
       if (frac >= 1) {
-        if (target.isPlasmate) {
+        if (target.isPlasmate || target.isDungeonResource) {
           this._collectPlasmateDeposit(target);
           this.cancelCollect();
         } else {
@@ -2869,6 +2910,7 @@ export default class GameScene extends Phaser.Scene {
 
       for (const dep of this.plasmateDeposits) {
         if (!dep.alive) continue;
+        if (!dep.isPlasmate) continue; // magnet only auto-collects plasmate
         if (dep === this.collectTarget) continue;
 
         // Release if blocked by limit or cargo
@@ -3196,7 +3238,9 @@ export default class GameScene extends Phaser.Scene {
   spawnDungeonDeposits() {
     if (!SECTORS[galaxy.current]?.isDungeon) return;
     const cx = this.worldWidth / 2, cy = this.worldHeight / 2;
-    const CONFIGS = {
+
+    // Plasmate deposits at fixed strategic positions
+    const PLASMATE_CONFIGS = {
       dungeon_1: [[2200, 0, 320], [-2200, 0, 320]],
       dungeon_2: [[1900, 1100, 380], [-1900, -200, 380], [1800, -1800, 480]],
       dungeon_3: [[-1650, -1000, 450], [1650, -1000, 450], [-1650, 900, 400], [0, 900, 400]],
@@ -3205,13 +3249,46 @@ export default class GameScene extends Phaser.Scene {
       tides_d4:  [[0, -1800, 750], [-1800, 200, 750], [800, 1400, 850], [-800, 1600, 850]],
       'R-1-boss': [[1500, 0, 950], [-1500, 0, 950]],
     };
-    const entries = CONFIGS[galaxy.current];
-    if (!entries) return;
+    const plasmateEntries = PLASMATE_CONFIGS[galaxy.current];
     const RESPAWN_MS = 24 * 60 * 60 * 1000;
-    for (const [ox, oy, amount] of entries) {
-      const x = cx + ox, y = cy + oy;
+    if (plasmateEntries) {
+      for (const [ox, oy, amount] of plasmateEntries) {
+        const x = cx + ox, y = cy + oy;
+        this.plasmateDeposits.push(
+          new PlasmateDeposit(this, x, y, amount, { xMin: x - 80, xMax: x + 80, yMin: y - 80, yMax: y + 80 }, RESPAWN_MS),
+        );
+      }
+    }
+
+    // Dungeon resource deposits (biomech_fragment / quantum_shard / plasma_strand)
+    const DUNGEON_TIER = {
+      dungeon_1: 1, dungeon_2: 2, dungeon_3: 3, dungeon_4: 4,
+      dungeon_5: 5, tides_d4: 5, 'R-1-boss': 6,
+    };
+    const tier = DUNGEON_TIER[galaxy.current];
+    if (!tier) return;
+
+    // Amount per deposit by tier: [min, max]
+    const AMOUNT_RANGE = [[0,0],[1,2],[1,3],[2,4],[3,6],[4,7],[5,7]];
+    const [aMin, aMax] = AMOUNT_RANGE[tier];
+
+    // Pick 1-3 resource types for this run (Fisher-Yates shuffle)
+    const ALL_RES = ['biomech_fragment', 'quantum_shard', 'plasma_strand'];
+    for (let j = ALL_RES.length - 1; j > 0; j--) { const k = Math.floor(Math.random() * (j + 1)); [ALL_RES[j], ALL_RES[k]] = [ALL_RES[k], ALL_RES[j]]; }
+    const typeCount = Math.min(3, Math.max(1, tier));
+    const activeTypes = ALL_RES.slice(0, typeCount);
+
+    const depositCount = Phaser.Math.Between(10, 20);
+    const margin = 500;
+    const W = this.worldWidth, H = this.worldHeight;
+
+    for (let i = 0; i < depositCount; i++) {
+      const rType = activeTypes[i % activeTypes.length];
+      const x = Phaser.Math.Between(margin, W - margin);
+      const y = Phaser.Math.Between(margin, H - margin);
+      const amount = Phaser.Math.Between(aMin, aMax);
       this.plasmateDeposits.push(
-        new PlasmateDeposit(this, x, y, amount, { xMin: x - 80, xMax: x + 80, yMin: y - 80, yMax: y + 80 }, RESPAWN_MS),
+        new PlasmateDeposit(this, x, y, amount, { xMin: x-100, xMax: x+100, yMin: y-100, yMax: y+100 }, RESPAWN_MS, rType),
       );
     }
   }
