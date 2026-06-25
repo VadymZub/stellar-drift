@@ -1418,16 +1418,13 @@ export default class GarageScene extends Phaser.Scene {
     const cx = detX + detW / 2;
 
     const imgSize = 192;
-    const slotScales = { weapon: 1.0, shield: 1.0, laser: 0.8, engine: 0.8 };
-    const displaySize = Math.round(imgSize * (slotScales[pDef.slot] || 1.0));
-    const imgOffsetY = Math.round((imgSize - displaySize) / 2);
     if (this.textures.exists(pDef.key)) {
-      const preKey = prerenderTex(this, pDef.key, displaySize, displaySize);
-      this.add.image(cx, cy + imgOffsetY + displaySize / 2, preKey).setDisplaySize(displaySize, displaySize).setOrigin(0.5);
+      const preKey = prerenderTex(this, pDef.key, imgSize, imgSize);
+      this.add.image(cx, cy + imgSize / 2, preKey).setDisplaySize(imgSize, imgSize).setOrigin(0.5);
     } else {
       const fg = this.add.graphics();
-      fg.fillStyle(rarHex, 0.3); fg.fillRoundedRect(cx - displaySize / 2, cy + imgOffsetY, displaySize, displaySize, 10);
-      fg.lineStyle(2, rarHex, 0.7); fg.strokeRoundedRect(cx - displaySize / 2, cy + imgOffsetY, displaySize, displaySize, 10);
+      fg.fillStyle(rarHex, 0.3); fg.fillRoundedRect(cx - imgSize / 2, cy, imgSize, imgSize, 10);
+      fg.lineStyle(2, rarHex, 0.7); fg.strokeRoundedRect(cx - imgSize / 2, cy, imgSize, imgSize, 10);
     }
     cy += imgSize + 10;
 
