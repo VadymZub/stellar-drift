@@ -223,6 +223,7 @@
   "log.entered": "Сектор: {sector}",
   "log.jumping": "Прыжок в сектор: {sector}…",
   "log.jump_locked": "Джапгейт закрыт: {reason}",
+  "log.jump_enemy_corp": "Запрещено: чужая территория",
   "log.plasmate_collected": "Плазмит +{amount} · сегодня {total}/{max}",
   "log.plasmate_limit": "Сбор невозможен, отдохни пилот",
   "log.plasmate_lost": "Потеряно {amount} ед. плазмита",

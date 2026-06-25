@@ -768,7 +768,7 @@ export default class HudScene extends Phaser.Scene {
     if (sec.isDungeon && gs.walls) {
       const DUNGEON_WALL_COLOR = {
         dungeon_1: 0x8b3a1a, dungeon_2: 0x3a6a3a, dungeon_3: 0x505080,
-        dungeon_4: 0x3a5a3a, dungeon_5: 0x4dd0e1, tides_d4: 0x9c27b0, 'R-1-boss': 0xc8a800,
+        dungeon_4: 0x3a5a3a, dungeon_5: 0x4dd0e1, dungeon_prem: 0x00c853, 'R-1-boss': 0xc8a800,
       };
       const wc = DUNGEON_WALL_COLOR[galaxy.current] ?? 0x4dd0e1;
       g.fillStyle(wc, 0.35);

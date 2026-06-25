@@ -89,6 +89,38 @@ function _bestHomeSector(corp, level) {
   return `${prefix}_1`;
 }
 
+// Fixed gate positions for PvP sectors — offsets [ox, oy] from world center (px).
+// Computed for PVP_WORLD_SCALE=2.4: mx=9658, my=5296.
+// Layout A: 2-left + 1-right │ B: top + 2-bottom │ C: left + 2-right │ D: NW + NE + S-center
+const PVP_GATES = {
+  pvp_1: {                                    // Layout A
+    helios_2: [-9658, -2640],                 // left edge, upper third
+    karax_2:  [-9658, +2640],                 // left edge, lower third
+    tides_2:  [+9658,     0],                 // right edge, center
+  },
+  pvp_2: {                                    // Layout B
+    helios_3: [    0, -5296],                 // top edge, center
+    karax_3:  [-4640, +5296],                 // bottom edge, left
+    tides_3:  [+4640, +5296],                 // bottom edge, right
+  },
+  pvp_3: {                                    // Layout D
+    helios_4: [-9658, -5296],                 // NW corner
+    karax_4:  [+9658, -5296],                 // NE corner
+    tides_4:  [    0, +5296],                 // S-center
+  },
+  pvp_4: {                                    // Layout C
+    helios_5: [-9658,     0],                 // left edge, center
+    karax_5:  [+9658, -2640],                 // right edge, upper
+    tides_5:  [+9658, +2640],                 // right edge, lower
+  },
+  pvp_5: {                                    // Layout D
+    helios_5:   [-9658, -5296],               // NW corner
+    karax_5:    [+9658, -5296],               // NE corner
+    tides_5:    [    0, +5296],               // S-center
+    'R-1-boss': [+9658,     0],               // right edge, center
+  },
+};
+
 export default class GameScene extends Phaser.Scene {
   constructor() { super('GameScene'); }
 
@@ -109,8 +141,9 @@ export default class GameScene extends Phaser.Scene {
     // PvE-секторы (не данж, не PvP, не персональный) — +20% по каждой стороне
     const scale = isPvp ? PVP_WORLD_SCALE : (isDungeon || isPersonal) ? 1.0 : 1.2;
 
-    this.worldWidth = BASE_WORLD.width * (galaxy.current === 'shadow_arena' ? 0.5 : scale);
-    this.worldHeight = BASE_WORLD.height * (galaxy.current === 'shadow_arena' ? 0.5 : scale);
+    const worldScale = galaxy.current === 'shadow_arena' ? 0.5 : galaxy.current === 'R-1-boss' ? 2.0 : scale;
+    this.worldWidth = BASE_WORLD.width * worldScale;
+    this.worldHeight = BASE_WORLD.height * worldScale;
     this.safeZoneRadius = BASE_WORLD.safeZoneRadius;
     this.objScale = 1.0;
 
@@ -783,8 +816,8 @@ export default class GameScene extends Phaser.Scene {
         scaleX: sx * 1.12, scaleY: sy * 1.12,
         duration: 2200, yoyo: true, repeat: -1, ease: 'Sine.easeInOut',
       });
-      const ringPts = [[720, 720], [-720, 720], [720, -720], [-720, -720]];
-      ringPts.forEach(o => add('ancient_06', 50, o[0], o[1], { behavior: 'guard', patrolRadius: 300, bossRef: apophis }));
+      const ringPts = [[1440, 1440], [-1440, 1440], [1440, -1440], [-1440, -1440]];
+      ringPts.forEach(o => add('ancient_06', 50, o[0], o[1], { behavior: 'guard', patrolRadius: 600, bossRef: apophis }));
       return;
     }
 
@@ -830,17 +863,27 @@ export default class GameScene extends Phaser.Scene {
       add('swarm_04', rnd(Lmin, Lmax), 2000, 0, {});
       add('swarm_01', rnd(Lmin, Lmax), -2000, 0, {});
       add('swarm_03', rnd(Lmin, Lmax), 0, -500, { patrolRadius: 300 });
-      add('swarm_05', rnd(Lmin, Lmax), 800, 700, {});
-      add('swarm_04', rnd(Lmin, Lmax), -800, 700, {});
+      add('swarm_05', rnd(Lmin, Lmax), 100, 700, {});    // S-рукав (был внутри SE-блока)
+      add('swarm_04', rnd(Lmin, Lmax), -100, 700, {});   // S-рукав (был внутри SW-блока)
+      // левый борт (x≈958, за NW/SW блоком)
+      add('swarm_02', rnd(Lmin, Lmax), -3200, -600, { patrolRadius: 400 });
+      add('swarm_04', rnd(Lmin, Lmax), -3200, 800, {});
+      // правый борт (x≈7358, за NE/SE блоком)
+      add('swarm_01', rnd(Lmin, Lmax), 3200, -600, { patrolRadius: 400 });
+      add('swarm_03', rnd(Lmin, Lmax), 3200, 800, {});
       add('swarm_07', Lmax, 2200, 0, { behavior: 'guard', patrolRadius: 250, leash: 600 });
       add('swarm_07', Lmax, -2200, 0, { behavior: 'guard', patrolRadius: 250, leash: 600 });
       const d1boss = add('swarm_09', Lmax, 0, -2200, { behavior: 'guard', patrolRadius: 180, leash: 450 });
       d1boss.isDungeonBoss = true;
-      // охрана босса (в боссовой комнате — не открывают дверь)
+      // охрана босса ×4 (в боссовой комнате — не открывают дверь)
       const d1e1 = add('swarm_07', Lmax, -250, -2000, { behavior: 'guard', patrolRadius: 150, leash: 500 });
       d1e1.isBossEscort = true;
-      const d1e2 = add('swarm_07', Lmax, 250, -2000, { behavior: 'guard', patrolRadius: 150, leash: 500 });
+      const d1e2 = add('swarm_07', Lmax,  250, -2000, { behavior: 'guard', patrolRadius: 150, leash: 500 });
       d1e2.isBossEscort = true;
+      const d1e3 = add('swarm_07', Lmax, -250, -2150, { behavior: 'guard', patrolRadius: 150, leash: 500 });
+      d1e3.isBossEscort = true;
+      const d1e4 = add('swarm_07', Lmax,  250, -2150, { behavior: 'guard', patrolRadius: 150, leash: 500 });
+      d1e4.isBossEscort = true;
 
     } else if (galaxy.current === 'dungeon_2') {
       // D2: Корсары по Z-маршруту; ресурсы в тупиках; охрана босса в сев-вост комнате
@@ -1010,13 +1053,15 @@ export default class GameScene extends Phaser.Scene {
     if (cur.startsWith('tides'))  { add('tides',  0, 0); return; }
 
     if (cur.startsWith('pvp')) {
-      // Each corp has a forward base near the top edge (toward helios/home sectors)
-      // Helios: centered, just inside the top gate
-      // Karax: offset left (territory is upper-left in galaxy grid)
-      // Tides: offset right (territory is lower-right in galaxy grid)
-      add('helios',     0, -(my - 500));
-      add('karax',  -3120, -(my - 500));
-      add('tides',   3120, -(my - 500));
+      // Each corp base is placed 700px inward from its gate (toward world center)
+      const layout = PVP_GATES[cur];
+      if (!layout) return;
+      for (const [target, [ox, oy]] of Object.entries(layout)) {
+        const corp = ['helios', 'karax', 'tides'].find(c => target.startsWith(c));
+        if (!corp) continue; // skip R-1-boss gate
+        const dist = Math.hypot(ox, oy) || 1;
+        add(corp, ox - ox / dist * 700, oy - oy / dist * 700);
+      }
     }
   }
 
@@ -1024,35 +1069,96 @@ export default class GameScene extends Phaser.Scene {
     this.gates = [];
     const cx = this.worldWidth / 2, cy = this.worldHeight / 2, cur = galaxy.current;
     const mx = this.worldWidth / 2 - 320, my = this.worldHeight / 2 - 320;
-    for (const t of neighbors(cur)) {
-      const { dx, dy } = edgeDir(cur, t);     
-      const gx = cx + dx * mx, gy = cy + dy * my;
+    const curSec = SECTORS[cur];
+
+    const nbrs = neighbors(cur);
+    const pvpLayout = PVP_GATES[cur]; // fixed positions for PvP sectors
+
+    // Dungeons: show only one exit gate at fixed south-center position (→ player's own corp).
+    // Other corp exit gates are hidden — each player sees only their own exit.
+    // Non-corp dungeon gates (e.g. dungeon_5 → dungeon_prem) are still shown via edgeDir.
+    // Side-effect fix: the old Karax gate in D1 (north edge, dy=-1) was within 650px of the
+    // boss door, causing addWall to silently skip it. Now gone → boss door properly exists.
+    let dungeonGate = null;
+    let dungeonOtherNbrs = [];
+    if (curSec?.isDungeon && !pvpLayout) {
+      const exitKey = nbrs.find(k => k.startsWith(this.playerCorp + '_'));
+      if (exitKey) dungeonGate = { target: exitKey, gx: cx, gy: cy + my };
+      // Keep non-corp dungeon-to-dungeon connections (dungeon_prem, etc.)
+      dungeonOtherNbrs = nbrs.filter(k => !['helios', 'karax', 'tides'].some(c => k.startsWith(c + '_')));
+    }
+    const gateTargets = dungeonGate
+      ? [dungeonGate.target, ...dungeonOtherNbrs]
+      : nbrs;
+
+    // Count gates per direction for perpendicular spread (non-PvP, non-dungeon-corp-gates only)
+    const dirCount = {}, dirIdx = {};
+    const needsEdgeDirs = !pvpLayout && (!dungeonGate || dungeonOtherNbrs.length > 0);
+    if (needsEdgeDirs) {
+      const toCount = dungeonGate ? dungeonOtherNbrs : gateTargets;
+      for (const t of toCount) {
+        const { dx, dy } = edgeDir(cur, t);
+        const k = `${dx},${dy}`;
+        dirCount[k] = (dirCount[k] || 0) + 1;
+        dirIdx[k] = 0;
+      }
+    }
+
+    for (const t of gateTargets) {
+      let gx, gy;
+      if (dungeonGate && t === dungeonGate.target) {
+        gx = dungeonGate.gx;
+        gy = dungeonGate.gy;
+      } else if (pvpLayout && pvpLayout[t]) {
+        const [ox, oy] = pvpLayout[t];
+        gx = cx + ox;
+        gy = cy + oy;
+      } else if (pvpLayout) {
+        continue; // target not in layout (shouldn't happen)
+      } else {
+        const { dx, dy } = edgeDir(cur, t);
+        const k = `${dx},${dy}`;
+        const total = dirCount[k];
+        const idx = dirIdx[k]++;
+        // Разносим: dy≠0 → расталкиваем по X; dx≠0 → по Y
+        const perpOff = total > 1 ? (idx - (total - 1) / 2) * 520 : 0;
+        gx = cx + dx * mx + (dy !== 0 ? perpOff : 0);
+        gy = cy + dy * my + (dx !== 0 ? perpOff : 0);
+      }
+
       const sec = SECTORS[t];
       const isDungeon = sec.isDungeon === true;
+
+      // Enemy-corp gate in PvP: player can't jump there
+      const isEnemyPvp = !!pvpLayout && ['helios', 'karax', 'tides']
+        .some(c => c !== this.playerCorp && t.startsWith(c));
+
       // Ring hole is offset +2.1px right, +5.9px down from PNG center at 512px;
       // at display size 260px (scale 0.508) → +1px X, +3px Y in world coords.
       const vx = gx + 1, vy = gy + 3;
       const vortex = this.add.image(vx, vy, 'jumpgate_vortex').setOrigin(0.5, 0.5).setDepth(2).setDisplaySize(110, 110).setVisible(false);
-      if (isDungeon) vortex.setTint(0xffaa00); // Оранжевый вихрь для данжей
+      if (isDungeon)  vortex.setTint(0xffaa00);
+      if (isEnemyPvp) vortex.setTint(0xff4444);
 
       const ring = this.add.image(gx, gy, 'jumpgate_ring').setDepth(4).setDisplaySize(260, 260);
-      if (isDungeon) ring.setTint(0xffe0b2);
+      if (isDungeon)  ring.setTint(0xffe0b2);
+      if (isEnemyPvp) ring.setTint(0xff4444);
 
       const lock = sectorAccess(t, this.pilotLevel, this.activeShip, this.premium).ok ? '' : ' 🔒';
+      const labelSuffix = isEnemyPvp ? ' 🚫' : lock;
+      const labelColor  = isEnemyPvp ? '#ff8080' : isDungeon ? '#ffcc80' : (lock ? '#ef9a9a' : '#9fe6ff');
       const label = this.add.text(gx, gy - 135,
-        `${sec.name}${lock}\n${i18n.t('mob.level')}${sec.lvlMin}–${sec.lvlMax}`,
-        { 
-          fontFamily: 'Orbitron, sans-serif', fontSize: '14px', 
-          color: isDungeon ? '#ffcc80' : (lock ? '#ef9a9a' : '#9fe6ff'), 
-          align: 'center', resolution: UI_RES 
-        })
+        `${sec.name}${labelSuffix}\n${i18n.t('mob.level')}${sec.lvlMin}–${sec.lvlMax}`,
+        { fontFamily: 'Orbitron, sans-serif', fontSize: '14px', color: labelColor, align: 'center', resolution: UI_RES })
         .setOrigin(0.5, 1).setDepth(6);
-      
-      const btn = this.add.text(gx, gy - 185, i18n.t('map.jump'), {
-        fontFamily: 'Orbitron', fontSize: '18px', color: '#ffffff',
-        backgroundColor: isDungeon ? '#f57c00' : '#4dd0e1', padding: { x: 14, y: 8 }
+
+      const btnBg = isEnemyPvp ? '#5a1a1a' : isDungeon ? '#f57c00' : '#4dd0e1';
+      const btnText = isEnemyPvp ? '🚫 ЗАКРЫТО' : i18n.t('map.jump');
+      const btn = this.add.text(gx, gy - 185, btnText, {
+        fontFamily: 'Orbitron', fontSize: '18px', color: isEnemyPvp ? '#ff8080' : '#ffffff',
+        backgroundColor: btnBg, padding: { x: 14, y: 8 }
       }).setOrigin(0.5, 1).setDepth(10).setInteractive({ useHandCursor: true }).setVisible(false);
-      
+
       const gate = { x: vx, y: vy, target: t, ring, vortex, label, btn, spin: 1.1 };
       btn.on('pointerdown', (pointer, localX, localY, event) => {
         if (event) event.stopPropagation();
@@ -1064,7 +1170,7 @@ export default class GameScene extends Phaser.Scene {
     // Pre-load neighboring sector maps after the first frame so the loader doesn't
     // compete with scene setup. Uses delayedCall so it fires after create() returns.
     let _mapsQueued = false;
-    for (const t of neighbors(cur)) {
+    for (const t of gateTargets) {
       const _map = SECTORS[t]?.map;
       if (_map && !this.textures.exists(_map)) {
         this.load.image(_map, `assets/maps/${_map}.jpg`);
@@ -1078,6 +1184,12 @@ export default class GameScene extends Phaser.Scene {
     if (this.jumping) return;
     const acc = sectorAccess(gate.target, this.pilotLevel, this.activeShip, this.premium);
     if (!acc.ok) { this.log(i18n.t('log.jump_locked', { reason: acc.reason })); return; }
+    // From PvP: block jumps into enemy corp sectors
+    if (SECTORS[galaxy.current]?.pvp) {
+      const isEnemyCorp = ['helios', 'karax', 'tides']
+        .some(c => c !== this.playerCorp && gate.target.startsWith(c));
+      if (isEnemyCorp) { this.log(i18n.t('log.jump_enemy_corp')); return; }
+    }
     const sec = SECTORS[gate.target];
     if (sec?.lvlMin && sec.lvlMin > this.pilotLevel + 5) {
       this._showJumpDangerWarning(gate.target, sec.lvlMin, () => this.startJumpSequence(gate));
@@ -1219,10 +1331,20 @@ export default class GameScene extends Phaser.Scene {
     const nextScale = nextPvp ? PVP_WORLD_SCALE : (nextDungeon || nextPersonal) ? 1.0 : 1.2;
     const nextW = BASE_WORLD.width * nextScale;
     const nextH = BASE_WORLD.height * nextScale;
-    const { dx, dy } = edgeDir(key, fromKey);
     const mx = nextW / 2 - 320, my = nextH / 2 - 320;
-    const startX = nextW / 2 + dx * mx;
-    const startY = nextH / 2 + dy * my;
+    let startX, startY;
+    // Dungeon exits are always at south center for all corps (see createJumpgates dungeonGate).
+    // edgeDir(dungeon, karax_1) gives dy=-1 (north) → player spawned next to boss. Fix:
+    // always spawn at south center when entering a dungeon from a corp sector.
+    const fromCorpSector = ['helios', 'karax', 'tides'].some(c => fromKey?.startsWith(c + '_'));
+    if (nextDungeon && fromCorpSector) {
+      startX = nextW / 2;
+      startY = nextH / 2 + my; // south center — matches the dungeon exit gate position
+    } else {
+      const { dx, dy } = edgeDir(key, fromKey);
+      startX = nextW / 2 + dx * mx;
+      startY = nextH / 2 + dy * my;
+    }
     document.getElementById('scene-overlay')?.classList.add('active');
     this.scene.restart({ startX, startY });
   }
@@ -2463,8 +2585,13 @@ export default class GameScene extends Phaser.Scene {
     // personal sectors (shadow_arena) have no edges → fall back to corp home sector.
     const CORP_HOME  = { helios: 'helios_1', karax: 'karax_1', tides: 'tides_1' };
     const parentSecKey = isDungOrBoss
-      ? (neighbors(galaxy.current).find(k => !SECTORS[k]?.isDungeon && !SECTORS[k]?.personal)
-         ?? CORP_HOME[this.playerCorp] ?? 'helios_1')
+      ? (() => {
+          const cands = neighbors(galaxy.current).filter(k => !SECTORS[k]?.isDungeon && !SECTORS[k]?.personal);
+          return cands.find(k => k.startsWith(this.playerCorp + '_'))
+              ?? cands[0]
+              ?? CORP_HOME[this.playerCorp]
+              ?? 'helios_1';
+        })()
       : null;
 
     // Compute corp-base position within the parent sector, mirroring _spawnHomeBase() logic.
@@ -2478,12 +2605,18 @@ export default class GameScene extends Phaser.Scene {
     let baseX, baseY;
     if (isDungOrBoss) {
       if (parentSec?.pvp) {
-        // PvP home bases mirror _spawnHomeBase: add('corp', ox, -(my-500)) where my = worldH/2-320
-        const PVP_OX = { helios: 0, karax: -3120, tides: 3120 };
-        const ox = PVP_OX[this.playerCorp] ?? 0;
-        const pmy = parentH / 2 - 320;
-        baseX = parentW / 2 + ox;
-        baseY = parentH / 2 - (pmy - 500) + 80; // +80: spawn just below the base object
+        // Use PVP_GATES layout to find this corp's base in the parent PvP sector
+        const pvpLayout = PVP_GATES[parentSecKey] || {};
+        const corpGateKey = Object.keys(pvpLayout).find(k => k.startsWith(this.playerCorp));
+        let bx = 0, by = 0;
+        if (corpGateKey) {
+          const [gox, goy] = pvpLayout[corpGateKey];
+          const dist = Math.hypot(gox, goy) || 1;
+          bx = gox - gox / dist * 700;
+          by = goy - goy / dist * 700;
+        }
+        baseX = parentW / 2 + bx;
+        baseY = parentH / 2 + by + 80;
       } else {
         // Corp / neutral sector: base is always at world centre
         baseX = parentW / 2;
@@ -3258,8 +3391,8 @@ export default class GameScene extends Phaser.Scene {
     if (galaxy.current === 'dungeon_1') {
       // Хаб + крест: 4 угловых блока → коридоры 600px N/S/E/W; бутылочное горлышко в N-рукаве → узкая дверь
       // NW/NE вытянуты вверх до y=-2250 чтобы закрыть боковые обходы к боссу
-      addWall(cx - 1400, cy - 1275, 2200, 1950);   // NW: x cx-2500..cx-300, y cy-2250..cy-300
-      addWall(cx + 1400, cy - 1275, 2200, 1950);   // NE: x cx+300..cx+2500, y cy-2250..cy-300
+      addWall(cx - 1400, cy - 1320, 2200, 2040);   // NW: x cx-2500..cx-300, y 0..cy-300 (до границы мира)
+      addWall(cx + 1400, cy - 1320, 2200, 2040);   // NE: x cx+300..cx+2500, y 0..cy-300
       addWall(cx - 1400, cy + 1000, 2200, 1400);   // SW
       addWall(cx + 1400, cy + 1000, 2200, 1400);   // SE
       // горлышко: 200px проход у верха N-рукава
@@ -3351,17 +3484,17 @@ export default class GameScene extends Phaser.Scene {
       addBossDoor(cx + 2475, cy + 1650, 450, 250); // горизонтальный boss door в восточном проходе
 
     } else if (galaxy.current === 'R-1-boss') {
-      // Алтарь: 5 пар колонн создают 5 коридоров-подходов к центральной арене
-      addWall(cx + 2200, cy - 700, 600, 600);
-      addWall(cx + 2200, cy + 700, 600, 600);
-      addWall(cx + 1100, cy - 1950, 600, 600);
-      addWall(cx + 2100, cy - 1400, 600, 600);
-      addWall(cx - 1100, cy - 1950, 600, 600);
-      addWall(cx - 2100, cy - 1400, 600, 600);
-      addWall(cx - 1100, cy + 1950, 600, 600);
-      addWall(cx - 2100, cy + 1400, 600, 600);
-      addWall(cx + 1100, cy + 1950, 600, 600);
-      addWall(cx + 2100, cy + 1400, 600, 600);
+      // Алтарь: 5 пар колонн — позиции и размер ×2 под удвоенную карту
+      addWall(cx + 4400, cy - 1400, 1200, 1200);
+      addWall(cx + 4400, cy + 1400, 1200, 1200);
+      addWall(cx + 2200, cy - 3900, 1200, 1200);
+      addWall(cx + 4200, cy - 2800, 1200, 1200);
+      addWall(cx - 2200, cy - 3900, 1200, 1200);
+      addWall(cx - 4200, cy - 2800, 1200, 1200);
+      addWall(cx - 2200, cy + 3900, 1200, 1200);
+      addWall(cx - 4200, cy + 2800, 1200, 1200);
+      addWall(cx + 2200, cy + 3900, 1200, 1200);
+      addWall(cx + 4200, cy + 2800, 1200, 1200);
     }
 
     this.physics.add.collider(this.player.sprite, this.walls);
@@ -3395,19 +3528,19 @@ export default class GameScene extends Phaser.Scene {
     const RESPAWN_MS = 24 * 60 * 60 * 1000;
     const DUNGEON_DEPOSITS = {
       // D1 hub+крест: тупики в конце E/W рукавов + S рукав
-      dungeon_1:    { res:   'biomech_fragment',                                guard: 'swarm_07',     amount: 2, spots: [[0, 1800], [1800, 0], [-1800, 0]] },
+      dungeon_1:    { res:   'biomech_fragment',                                guard: 'swarm_07',     amount: 10, spots: [[0, 1800], [3200, 0], [-3200, 0]] },
       // D2 Z-маршрут: W тупик, SE карман, верхний левый тупик
-      dungeon_2:    { res:   'quantum_shard',                                   guard: 'corsair_08',   amount: 3, spots: [[-2000, -400], [2000, 900], [-1500, -1300]] },
+      dungeon_2:    { res:   'quantum_shard',                                   guard: 'corsair_08',   amount: 12, spots: [[-2000, -400], [2000, 900], [-1500, -1300]] },
       // D3 военная сетка: нижнее лево, верхний центр, верхнее право (перед боссом)
-      dungeon_3:    { res:   'plasma_strand',                                   guard: 'syndicate_07', amount: 3, spots: [[-1800, 700], [0, -1000], [1800, -700]] },
+      dungeon_3:    { res:   'plasma_strand',                                   guard: 'syndicate_07', amount: 14, spots: [[-1800, 700], [0, -1000], [1800, -700]] },
       // D4 обломки: между кластерами мусора
-      dungeon_4:    { types: ['biomech_fragment', 'quantum_shard', 'plasma_strand'], guard: 'ancient_03', amount: 5, spots: [[800, -1400], [-1400, -800], [900, 1300]] },
+      dungeon_4:    { types: ['biomech_fragment', 'quantum_shard', 'plasma_strand'], guard: 'ancient_03', amount: 15, spots: [[800, -1400], [-1400, -800], [900, 1300]] },
       // D5 три кольца: 4 прохода между кольцами (N/S/E/W)
-      dungeon_5:    { types: ['biomech_fragment', 'quantum_shard', 'plasma_strand'], guard: 'ancient_08', amount: 6, spots: [[0, -1800], [0, 1800], [1700, 0], [-1800, 0]] },
+      dungeon_5:    { types: ['biomech_fragment', 'quantum_shard', 'plasma_strand'], guard: 'ancient_08', amount: 18, spots: [[0, -1800], [0, 1800], [1700, 0], [-1800, 0]] },
       // D-prem лабиринт: три зоны между горизонтальными барьерами
-      dungeon_prem: { types: ['biomech_fragment', 'quantum_shard', 'plasma_strand'], guard: 'ancient_10', amount: 8, spots: [[-1800, -1300], [-400, -500], [1600, 900]] },
-      // R-1-boss арена: два свободных кармана между колоннами
-      'R-1-boss':   { types: ['biomech_fragment', 'quantum_shard', 'plasma_strand'], guard: 'ancient_11', amount: 9, spots: [[1200, 1200], [-1200, -1200]] },
+      dungeon_prem: { types: ['biomech_fragment', 'quantum_shard', 'plasma_strand'], guard: 'ancient_10', amount: 20, spots: [[-1800, -1300], [-400, -500], [1600, 900]] },
+      // R-1-boss арена: 6 точек между колоннами (карта ×2, депозитов ×3)
+      'R-1-boss':   { types: ['biomech_fragment', 'quantum_shard', 'plasma_strand'], guard: 'ancient_11', amount: 20, spots: [[2400, 2400], [-2400, -2400], [0, 2000], [0, -2000], [3000, 0], [-3000, 0]] },
     };
     const dcfg = DUNGEON_DEPOSITS[galaxy.current];
     if (!dcfg) return;
@@ -3416,14 +3549,24 @@ export default class GameScene extends Phaser.Scene {
     const guardLvl = sec2.lvlMax;
     const typeList = dcfg.types ? dcfg.types : [dcfg.res];
 
+    const CLUSTER_R = 100; // радиус россыпи кристаллов вокруг центра точки
+
     dcfg.spots.forEach((spot, i) => {
       const [ox, oy] = spot;
       const x = cx + ox, y = cy + oy;
       const resType = typeList[i % typeList.length];
-      this.plasmateDeposits.push(
-        new PlasmateDeposit(this, x, y, dcfg.amount,
-          { xMin: x - 80, xMax: x + 80, yMin: y - 80, yMax: y + 80 }, RESPAWN_MS, resType),
-      );
+      const zone = { xMin: x - CLUSTER_R, xMax: x + CLUSTER_R, yMin: y - CLUSTER_R, yMax: y + CLUSTER_R };
+
+      // Россыпь: dcfg.amount кристаллов вокруг точки, каждый даёт 1-3 ресурса
+      for (let c = 0; c < dcfg.amount; c++) {
+        const angle = (c / dcfg.amount) * Math.PI * 2 + Math.random() * 0.8;
+        const r = 20 + Math.random() * (CLUSTER_R - 20);
+        const kx = x + Math.cos(angle) * r;
+        const ky = y + Math.sin(angle) * r;
+        const yield_ = Phaser.Math.Between(1, 3);
+        this.plasmateDeposits.push(new PlasmateDeposit(this, kx, ky, yield_, zone, RESPAWN_MS, resType));
+      }
+
       const guard = new Mob(this, MOBS[dcfg.guard], guardLvl, x + 130, y + 90,
         { behavior: 'guard', patrolRadius: 150, leash: 400, passive: true });
       guard.isDepositGuard = true;

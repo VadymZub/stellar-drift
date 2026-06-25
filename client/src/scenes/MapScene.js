@@ -237,7 +237,7 @@ export default class MapScene extends Phaser.Scene {
   }
 
   _drawDungeonPanel(W, H, lvl, cur) {
-    const DUNGEON_KEYS = ['dungeon_1','dungeon_2','dungeon_3','dungeon_4','dungeon_5','tides_d4','R-1-boss'];
+    const DUNGEON_KEYS = ['dungeon_1','dungeon_2','dungeon_3','dungeon_4','dungeon_5','dungeon_prem','R-1-boss'];
     const pW = 194, pX = W - pW - 12;
     const nodeH = 66, gap = 5;
     const headerH = 30;

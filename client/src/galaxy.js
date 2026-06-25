@@ -1,4 +1,4 @@
-// Галактика: 3 корпорации + 6 общих данжей + PvP-зоны + босс-карта.
+// Галактика: 3 корпорации + 6 общих данжей (D1-D5 + премиум) + PvP-зоны + босс-карта.
 // Данжи общие для всех корп — доступны через панель на карте (M).
 // sx/sy — позиция на схеме (экран M). map — ключ фоновой текстуры.
 export const SECTORS = {
@@ -11,11 +11,12 @@ export const SECTORS = {
   helios_4: { name: 'Глубокий Гелиос',         map: 'helios_4', lvlMin: 30, lvlMax: 40, sx: 3, sy: 0 },
   helios_5: { name: 'Бастион Конфедерации',    map: 'helios_5', lvlMin: 40, lvlMax: 50, sx: 4, sy: 0 },
 
-  dungeon_1: { name: 'Заброшенная Шахта',      map: 'D1', lvlMin: 5,  lvlMax: 15, sx: 0, sy: -1, isDungeon: true },
-  dungeon_2: { name: 'Логово Контрабандистов', map: 'D2', lvlMin: 15, lvlMax: 25, sx: 1, sy: -1, isDungeon: true },
-  dungeon_3: { name: 'Забытый Форпост',        map: 'D3', lvlMin: 25, lvlMax: 35, sx: 2, sy: -1, isDungeon: true },
-  dungeon_4: { name: 'Обломки Станции',        map: 'D4', lvlMin: 35, lvlMax: 45, sx: 3, sy: -1, isDungeon: true },
-  dungeon_5: { name: 'Хранилище Древних',      map: 'D5', lvlMin: 45, lvlMax: 50, sx: 4, sy: -1, isDungeon: true },
+  dungeon_1: { name: 'Заброшенная Шахта',      map: 'D1',     lvlMin: 5,  lvlMax: 15, sx: 0, sy: -1, isDungeon: true },
+  dungeon_2: { name: 'Логово Контрабандистов', map: 'D2',     lvlMin: 15, lvlMax: 25, sx: 1, sy: -1, isDungeon: true },
+  dungeon_3: { name: 'Забытый Форпост',        map: 'D3',     lvlMin: 25, lvlMax: 35, sx: 2, sy: -1, isDungeon: true },
+  dungeon_4: { name: 'Обломки Станции',        map: 'D4',     lvlMin: 35, lvlMax: 45, sx: 3, sy: -1, isDungeon: true },
+  dungeon_5: { name: 'Хранилище Древних',      map: 'D5',     lvlMin: 45, lvlMax: 50, sx: 4, sy: -1, isDungeon: true },
+  dungeon_prem: { name: 'Лабиринт Тьмы',      map: 'D-prem', lvlMin: 40, lvlMax: 50, sx: 5, sy: -1, isDungeon: true, premium: true },
 
   // ══════════════════════════════════════════════════════════════════════
   // PvP — общие зоны для всех корпораций (sy = 1)
@@ -49,7 +50,7 @@ export const SECTORS = {
   tides_4: { name: 'Бездонный Риф',        map: 'HM4', lvlMin: 30, lvlMax: 40, sx: 3, sy: 2 },
   tides_5: { name: 'Предел Горизонта',     map: 'HM5', lvlMin: 40, lvlMax: 50, sx: 4, sy: 2 },
 
-  tides_d4: { name: 'Лабиринт Тьмы',      map: 'D-prem', lvlMin: 40, lvlMax: 50, sx: 3, sy: 3, isDungeon: true, premium: true },
+  tides_d4: { name: 'Тёмный Риф',          map: 'HM4',    lvlMin: 40, lvlMax: 50, sx: 3, sy: 3 },
 };
 
 // Связи (двусторонние) — где есть джапгейт между секторами.
@@ -59,6 +60,14 @@ export const EDGES = [
   // Helios — данжи
   ['helios_1', 'dungeon_1'], ['helios_2', 'dungeon_2'], ['helios_3', 'dungeon_3'],
   ['helios_4', 'dungeon_4'], ['helios_5', 'dungeon_5'],
+  // Karax — данжи (одинаковые уровни)
+  ['karax_1', 'dungeon_1'], ['karax_2', 'dungeon_2'], ['karax_3', 'dungeon_3'],
+  ['karax_4', 'dungeon_4'], ['karax_5', 'dungeon_5'],
+  // Tides — данжи
+  ['tides_1', 'dungeon_1'], ['tides_2', 'dungeon_2'], ['tides_3', 'dungeon_3'],
+  ['tides_4', 'dungeon_4'], ['tides_5', 'dungeon_5'],
+  // Премиум данж — вход из dungeon_5 (только с Premium)
+  ['dungeon_5', 'dungeon_prem'],
   // Helios → PvP (со второго сектора)
   ['helios_2', 'pvp_1'], ['helios_3', 'pvp_2'], ['helios_4', 'pvp_3'], ['helios_5', 'pvp_4'],
 
@@ -72,11 +81,12 @@ export const EDGES = [
   // Tides → PvP (со второго сектора)
   ['tides_2', 'pvp_1'], ['tides_3', 'pvp_2'], ['tides_4', 'pvp_3'], ['tides_5', 'pvp_4'],
 
-  // PvP — внутренняя цепочка
-  ['pvp_4', 'pvp_5'], ['pvp_5', 'R-1-boss'],
+  // PvP-5 — доступен напрямую из топовых секторов каждого корпа
+  ['helios_5', 'pvp_5'], ['karax_5', 'pvp_5'], ['tides_5', 'pvp_5'],
+  ['pvp_5', 'R-1-boss'],
 
-  // Лабиринт Тьмы — выход через helios_4 (единственный физический джампгейт)
-  ['helios_4', 'tides_d4'],
+  // Тёмный Риф — ответвление от tides_4
+  ['tides_4', 'tides_d4'],
 ];
 
 // Текущий сектор (мутабельно; переживает scene.restart при прыжке).
