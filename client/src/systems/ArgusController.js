@@ -177,7 +177,7 @@ export default class ArgusController {
       elapsed:  0,
       duration: 4.0,
       angle:    0,
-      radius:   600,
+      radius:   720,
       dmgTimer: 0,
     };
     this.scene.log('⚡ КВАНТОВЫЙ ПУЛЬСАР — 4с');
@@ -221,18 +221,24 @@ export default class ArgusController {
     const speed = 1.5 + (pd.elapsed / pd.duration) * 1.5; // 1.5→3.0 rad/s
     pd.angle += speed * dt;
 
-    const NUM   = 8;
-    const step  = (Math.PI * 2) / NUM;
-    const r     = pd.radius;
+    const NUM  = 8;
+    const step = (Math.PI * 2) / NUM;
+    const r    = pd.radius;
+    const SEGS = 12; // segments per beam for tip fade
     pd.beams.clear();
     for (let i = 0; i < NUM; i++) {
-      const a  = pd.angle + i * step;
-      const ex = p.x + Math.cos(a) * r;
-      const ey = p.y + Math.sin(a) * r;
-      pd.beams.lineStyle(12, 0x00d4ff, 0.22);
-      pd.beams.lineBetween(p.x, p.y, ex, ey);
-      pd.beams.lineStyle(2, 0xe0f7fa, 0.95);
-      pd.beams.lineBetween(p.x, p.y, ex, ey);
+      const a = pd.angle + i * step;
+      for (let s = 0; s < SEGS; s++) {
+        const t0   = s / SEGS;
+        const t1   = (s + 1) / SEGS;
+        const fade = 1.0 - (t0 + t1) * 0.5; // linear: opaque at center, transparent at tip
+        const x0 = p.x + Math.cos(a) * r * t0, y0 = p.y + Math.sin(a) * r * t0;
+        const x1 = p.x + Math.cos(a) * r * t1, y1 = p.y + Math.sin(a) * r * t1;
+        pd.beams.lineStyle(12, 0x00d4ff, 0.22 * fade);
+        pd.beams.lineBetween(x0, y0, x1, y1);
+        pd.beams.lineStyle(2, 0xe0f7fa, 0.95 * fade);
+        pd.beams.lineBetween(x0, y0, x1, y1);
+      }
     }
 
     pd.dmgTimer += dt;
