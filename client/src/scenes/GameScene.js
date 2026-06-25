@@ -1955,6 +1955,10 @@ export default class GameScene extends Phaser.Scene {
     const beamWidth = isOC ? 12 : isCrit ? 6 : 3;
     this._laserBeam(p.x, p.y, t.x, t.y, beamColor, hit ? 1.0 : 0.25, beamWidth);
     this.muzzleFlash(p.x, p.y, beamColor);
+    // Animated muzzle discharge — beam1 rotated toward target
+    const _beamAngle = Math.atan2(t.y - p.y, t.x - p.x);
+    const _beamSpr = this.vfx?.play('laser_beam1', p.x, p.y, { scale: isOC ? 0.22 : isCrit ? 0.17 : 0.13, depth: 64 });
+    if (_beamSpr) _beamSpr.setRotation(_beamAngle);
 
     if (!hit) return;
 
