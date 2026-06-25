@@ -446,14 +446,12 @@ export default class GameScene extends Phaser.Scene {
     // Background-load non-critical assets — one tick delay so the first frame renders first.
     if (!this.textures.exists('bg_garage')) this.time.delayedCall(0, () => this._bgPreloadDeferred());
 
-    // Fade in from black after sector jump or corp switch to mask scene.restart() hitch
-    if (data?.startX !== undefined || data?.corpSwitch) {
-      const _ov = this.add.rectangle(this.scale.width / 2, this.scale.height / 2,
-        this.scale.width * 4, this.scale.height * 4, 0x000000, 1).setScrollFactor(0).setDepth(999);
-      this.cameras.main.once('postrender', () => {
-        this.tweens.add({ targets: _ov, alpha: 0, duration: 500, delay: 30, onComplete: () => _ov.destroy() });
-      });
-    }
+    // Fade out the #scene-overlay shown by _doRestart() before scene.restart().
+    // The overlay is a fixed HTML element that survives Phaser scene lifecycle,
+    // so it hides the synchronous create() processing time on every sector transition.
+    this.time.delayedCall(1, () => {
+      document.getElementById('scene-overlay')?.classList.remove('active');
+    });
   }
 
   _bgPreloadDeferred() {
@@ -510,8 +508,11 @@ export default class GameScene extends Phaser.Scene {
             scheduleNext();
           }, { timeout: 10000 });
         } else {
-          // Safari fallback: one job per setTimeout so it yields between calls
-          setTimeout(() => { jobs[i++](); scheduleNext(); }, 0);
+          requestAnimationFrame(() => {
+            const t0 = performance.now();
+            while (i < jobs.length && performance.now() - t0 < 8) jobs[i++]();
+            scheduleNext();
+          });
         }
       };
       scheduleNext();
@@ -1027,7 +1028,8 @@ export default class GameScene extends Phaser.Scene {
       this.gates.push(gate);
     }
 
-    // Eagerly pre-load all neighboring sector maps — eliminates load.start() hitch on jump button press
+    // Pre-load neighboring sector maps after the first frame so the loader doesn't
+    // compete with scene setup. Uses delayedCall so it fires after create() returns.
     let _mapsQueued = false;
     for (const t of neighbors(cur)) {
       const _map = SECTORS[t]?.map;
@@ -1036,7 +1038,7 @@ export default class GameScene extends Phaser.Scene {
         _mapsQueued = true;
       }
     }
-    if (_mapsQueued) this.load.start();
+    if (_mapsQueued) this.time.delayedCall(300, () => { if (this.scene.isActive()) this.load.start(); });
   }
 
   _tryJump(gate) {
@@ -1188,6 +1190,7 @@ export default class GameScene extends Phaser.Scene {
     const mx = nextW / 2 - 320, my = nextH / 2 - 320;
     const startX = nextW / 2 + dx * mx;
     const startY = nextH / 2 + dy * my;
+    document.getElementById('scene-overlay')?.classList.add('active');
     this.scene.restart({ startX, startY });
   }
 
@@ -2521,6 +2524,7 @@ export default class GameScene extends Phaser.Scene {
       if (jumpToSector) {
         // Eject from dungeon/boss map → jump to home sector
         galaxy.current = jumpToSector;
+        document.getElementById('scene-overlay')?.classList.add('active');
         this.scene.restart({ startX: rx, startY: ry });
       } else {
         this.player.respawn(rx, ry);
@@ -3310,6 +3314,7 @@ export default class GameScene extends Phaser.Scene {
     this._shadowBattleCfg  = cfg;
     this._shadowPrevSector = galaxy.current;
     galaxy.current = 'shadow_arena';
+    document.getElementById('scene-overlay')?.classList.add('active');
     this.scene.restart();
   }
 
@@ -3319,6 +3324,7 @@ export default class GameScene extends Phaser.Scene {
     this._shadowBattleDone = false;
     galaxy.current = this._shadowPrevSector || 'helios_1';
     this._shadowPrevSector = null;
+    document.getElementById('scene-overlay')?.classList.add('active');
     this.scene.restart();
   }
 
@@ -3802,7 +3808,7 @@ export default class GameScene extends Phaser.Scene {
     [
       { x: cx - 100, label: 'НА БАЗУ', color: COLORS.primary, fill: 0x0d2233, hover: 0x1a3a50, action: () => this.exitShadowBattle() },
       { x: cx + 100, label: 'РЕВАНШ',  color: 0xccbb44, fill: 0x1a1a0d, hover: 0x2a2a10,
-        action: () => { this._shadowBattleDone = false; this._cleanupBotPilot(); this.scene.restart(); } },
+        action: () => { this._shadowBattleDone = false; this._cleanupBotPilot(); document.getElementById('scene-overlay')?.classList.add('active'); this.scene.restart(); } },
     ].forEach(({ x, label, color, fill, hover, action }) => {
       const btn = reg(this.add.rectangle(x, closeY, 180, 42, fill)
         .setStrokeStyle(1, color, 0.8).setInteractive({ useHandCursor: true })

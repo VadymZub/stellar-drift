@@ -393,7 +393,10 @@ export default class CorpScene extends Phaser.Scene {
       this.scene.stop();
       // Load the new sector's map before restarting (lazy-loaded, may not be in cache)
       const _swMap = SECTORS[galaxy.current]?.map;
-      const _doRestart = () => gs.scene.restart({ corpSwitch: true });
+      const _doRestart = () => {
+        document.getElementById('scene-overlay')?.classList.add('active');
+        gs.scene.restart({ corpSwitch: true });
+      };
       if (_swMap && !gs.textures.exists(_swMap)) {
         gs.load.image(_swMap, `assets/maps/${_swMap}.png`);
         gs.load.once('complete', _doRestart);

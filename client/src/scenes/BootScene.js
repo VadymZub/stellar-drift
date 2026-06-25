@@ -174,79 +174,59 @@ export default class BootScene extends Phaser.Scene {
 
     // Апофис теперь статичный спрайт (ancient_12) + вращающиеся кольца — анимация не нужна
 
-    // Pre-render ship game sprites at displaySize×2 (optimal for clean 2× WebGL bilinear).
-    for (const s of SHIPS) {
-      prepShipTex(this, s.key, s.displaySize * 2);
-    }
-
-    // Mob sprites: same pipeline as ships (raw PNGs are displaySize×4).
-    // Deduplicate keys (confed_* reuse syndicate_* textures) — use max displaySize per key.
+    // Build the dedup map (fast — no canvas work), then queue all texture-prep jobs
+    // to run across rAF frames (~14 ms budget each) so boot never freezes the screen.
     const _mobTexMax = new Map();
     for (const m of Object.values(MOBS)) {
       if (m.anim) continue;
       if ((m.displaySize ?? 0) > (_mobTexMax.get(m.key) ?? 0)) _mobTexMax.set(m.key, m.displaySize);
     }
-    for (const [key, ds] of _mobTexMax) {
-      if (this.textures.exists(key)) prepShipTex(this, key, ds * 2);
-    }
-    // Pre-process large garage hero images to 2× their display box (223px → 446px target)
-    // so prerenderTex in GarageScene always gets a ≤2× source for its final drawImage.
-    for (const key of ['drover_g', 'phantom_g', 'argosy_g', 'helion_g', 'drifter_g']) {
-      prepShipTex(this, key, 446);
-    }
-    // Rank tier icons: 1024×1024 displayed at 22×22 — 46× downscale causes shimmer.
-    // Pre-process to 44px (2× display size) for stable bilinear and no subpixel flicker.
-    for (let t = 1; t <= 7; t++) prepShipTex(this, `rank_tier${t}`, 44);
-    for (const c of ['helios', 'karax', 'tides']) prepShipTex(this, `emblem_${c}`, 36);
+    const _jobs = [
+      ...SHIPS.map(s => () => prepShipTex(this, s.key, s.displaySize * 2)),
+      ...[..._mobTexMax].map(([k, ds]) => () => prepShipTex(this, k, ds * 2)),
+      ...['drover_g', 'phantom_g', 'argosy_g', 'helion_g', 'drifter_g'].map(k => () => prepShipTex(this, k, 446)),
+      ...Array.from({ length: 7 }, (_, i) => () => prepShipTex(this, `rank_tier${i + 1}`, 44)),
+      ...['helios', 'karax', 'tides'].map(c => () => prepShipTex(this, `emblem_${c}`, 36)),
+      ...['sharpshooter','heavy_caliber','penetrating_rounds','overcharge_shot',
+          'salvo','targeting_ai','berserker',
+          'reinforced_hull','shield_optimizer','fast_regen','emergency_repair',
+          'shield_burst','damage_resist','module_specialist',
+          'loot_magnet','salvager','merchants_eye','scanner_boost',
+          'cargo_expand','stealth_sprint'].map(k => () => prepShipTex(this, `skill_${k}`, 96)),
+      ...['ship_helion_volley','ship_argosy_repair','ship_drifter_jump',
+          'ship_stiletto_afterburner','ship_anvil_lockdown','ship_drover_scan',
+          'ship_aegis_dome','ship_phantom_cloak','ship_wisp_recall'].map(k => () => prepShipTex(this, k, Math.round(104 * DPR))),
+      () => prepShipTex(this, 'npc_transport', 240),
+      () => prepShipTex(this, 'lootbox', 68),
+      () => prepShipTex(this, 'plasmate_icon', 96),
+      ...['ring_apophis_outer', 'ring_apophis_mid', 'ring_apophis_inner'].map(k => () => prepShipTex(this, k, 880)),
+    ];
+    this._runPrepJobs(_jobs);
+  }
 
-    // Module icons, perk images — deferred to GameScene._bgPreloadDeferred()
+  _runPrepJobs(jobs) {
+    const bar = document.getElementById('loading-bar');
+    let i = 0;
+    const tick = () => {
+      const t0 = performance.now();
+      while (i < jobs.length && performance.now() - t0 < 14) jobs[i++]();
+      if (bar) bar.style.width = `${Math.round(i / jobs.length * 100)}%`;
+      if (i < jobs.length) { requestAnimationFrame(tick); return; }
+      this._finishCreate();
+    };
+    requestAnimationFrame(tick);
+  }
 
-
-    // Skill icons: 128×128 displayed at 48×48 — pre-process to 96px (2× display).
-    for (const k of ['sharpshooter','heavy_caliber','penetrating_rounds','overcharge_shot',
-                     'salvo','targeting_ai','berserker',
-                     'reinforced_hull','shield_optimizer','fast_regen','emergency_repair',
-                     'shield_burst','damage_resist','module_specialist',
-                     'loot_magnet','salvager','merchants_eye','scanner_boost',
-                     'cargo_expand','stealth_sprint']) {
-      prepShipTex(this, `skill_${k}`, 96);
-    }
-
-    // Ship ability icons: 1024×1024 → pre-process to 2× physical slot size (52*DPR*2).
-    // HudScene displays at 52*DPR px → GPU 2:1 bilinear = SSAA-quality downscale.
-    for (const k of ['ship_helion_volley','ship_argosy_repair','ship_drifter_jump',
-                     'ship_stiletto_afterburner','ship_anvil_lockdown','ship_drover_scan',
-                     'ship_aegis_dome','ship_phantom_cloak','ship_wisp_recall']) {
-      prepShipTex(this, k, Math.round(104 * DPR));
-    }
-
-    // NPC transport: displayed at 96×120 — pre-process to 240px.
-    prepShipTex(this, 'npc_transport', 240);
-
-    // Loot drop: 1024×1536 displayed at 34×34 — pre-process to 68px (2× display height).
-    prepShipTex(this, 'lootbox',       68);
-    // Plasmate icon: 1024×1536 displayed at 48×48 in cargo — pre-process to 96px (2× display).
-    prepShipTex(this, 'plasmate_icon', 96);
-    // Apophis rings: ~1024px square, displayed at 220–440px — pre-process to 880px (2× outer).
-    for (const key of ['ring_apophis_outer', 'ring_apophis_mid', 'ring_apophis_inner'])
-      prepShipTex(this, key, 880);
-
-    // Set LINEAR filter on all ship/mob textures (no mipmap sampling for non-POT assets).
+  _finishCreate() {
     const LINEAR = 0;
     for (const s of SHIPS) {
-      if (this.textures.exists(s.key))
-        this.textures.get(s.key).setFilter(LINEAR);
-      if (s.garageKey && this.textures.exists(s.garageKey))
-        this.textures.get(s.garageKey).setFilter(LINEAR);
+      if (this.textures.exists(s.key)) this.textures.get(s.key).setFilter(LINEAR);
+      if (s.garageKey && this.textures.exists(s.garageKey)) this.textures.get(s.garageKey).setFilter(LINEAR);
     }
     for (const m of Object.values(MOBS)) {
-      if (!m.anim && this.textures.exists(m.key))
-        this.textures.get(m.key).setFilter(LINEAR);
+      if (!m.anim && this.textures.exists(m.key)) this.textures.get(m.key).setFilter(LINEAR);
     }
-
-    const loading = document.getElementById('loading');
-    if (loading) loading.remove();
-
+    document.getElementById('loading')?.remove();
     this._loadVFX();
   }
 

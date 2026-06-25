@@ -11,17 +11,29 @@
     /* Скрываем системный курсор над канвасом — рисуем свой прицел в игре */
     canvas { display: block; cursor: crosshair; image-rendering: pixelated; image-rendering: crisp-edges; }
     #loading {
-      position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+      position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center;
       color: #4dd0e1; font-family: 'Orbitron', system-ui, sans-serif; letter-spacing: 2px;
       font-size: 20px; z-index: 10; pointer-events: none;
     }
+    #loading-bar-bg {
+      width: 220px; height: 2px; background: rgba(77, 208, 225, 0.15);
+      margin-top: 20px; border-radius: 1px;
+    }
+    #loading-bar { height: 100%; width: 0%; background: #4dd0e1; border-radius: 1px; }
+    #scene-overlay {
+      position: fixed; inset: 0; background: #000;
+      opacity: 0; pointer-events: none; z-index: 9;
+      transition: opacity 0.38s ease-out;
+    }
+    #scene-overlay.active { opacity: 1; transition: none; }
   </style>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700&family=Inter:wght@400;600&display=block" rel="stylesheet">
 </head>
 <body>
-  <div id="loading">STELLAR DRIFT…</div>
+  <div id="scene-overlay"></div>
+  <div id="loading"><span>STELLAR DRIFT…</span><div id="loading-bar-bg"><div id="loading-bar"></div></div></div>
   <div id="game"></div>
   <script type="module" src="./src/main.js"></script>
 </body>
