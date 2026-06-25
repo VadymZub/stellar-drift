@@ -80,6 +80,8 @@ export default class Player {
       color: '#e0e0e0', stroke: '#000000', strokeThickness: 3,
       resolution: UI_RES,
     }).setOrigin(0, 0.5).setDepth(51);
+    this._npEmblemGlow = scene.add.image(0, 0, 'rank_tier1')
+      .setDisplaySize(28, 28).setDepth(50).setAlpha(0.5).setBlendMode('ADD').setVisible(false);
     this._npEmblem = scene.add.image(0, 0, 'rank_tier1')
       .setDisplaySize(18, 18).setDepth(51).setVisible(false);
 
@@ -116,8 +118,10 @@ export default class Player {
     this._npText.setText(name || 'PILOT');
     const embKey = corp && corp !== 'neutral' ? `emblem_${corp}` : null;
     if (embKey && this.scene.textures.exists(embKey)) {
+      this._npEmblemGlow.setTexture(embKey).setDisplaySize(28, 28).setVisible(true);
       this._npEmblem.setTexture(embKey).setDisplaySize(18, 18).setVisible(true);
     } else {
+      this._npEmblemGlow.setVisible(false);
       this._npEmblem.setVisible(false);
     }
   }
@@ -447,6 +451,7 @@ export default class Player {
     this.sprite.setVisible(false);
     this._npIcon.setVisible(false);
     this._npText.setVisible(false);
+    this._npEmblemGlow.setVisible(false);
     this._npEmblem.setVisible(false);
   }
 
@@ -463,7 +468,10 @@ export default class Player {
     this.sprite.setVisible(true);
     this._npIcon.setVisible(true);
     this._npText.setVisible(true);
-    if (this._npEmblem.texture.key !== 'rank_tier1') this._npEmblem.setVisible(true);
+    if (this._npEmblem.texture.key !== 'rank_tier1') {
+      this._npEmblemGlow.setVisible(true);
+      this._npEmblem.setVisible(true);
+    }
     this.alive = true;
   }
 
@@ -529,6 +537,10 @@ export default class Player {
     const npX     = this.x - totalW / 2;
     this._npIcon.setPosition(npX + 11, npY);
     this._npText.setPosition(npX + 22 + 4, npY);
-    if (hasEmbl) this._npEmblem.setPosition(npX + 22 + 4 + this._npText.width + 4 + 9, npY);
+    if (hasEmbl) {
+      const embX = npX + 22 + 4 + this._npText.width + 4 + 9;
+      this._npEmblemGlow.setPosition(embX, npY);
+      this._npEmblem.setPosition(embX, npY);
+    }
   }
 }
