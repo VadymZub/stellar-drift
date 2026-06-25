@@ -121,7 +121,7 @@ export default class Player {
     const tint = RANK_TINTS[id] ?? 0x888888;
     this._npIcon.setTexture(`rank_tier${tier}`).setTint(tint);
     if (clanTag) { this._npTag.setText(`[${clanTag}]`).setVisible(true); }
-    else         { this._npTag.setVisible(false); }
+    else         { this._npTag.setText('').setVisible(false); }
     this._npText.setText(name || 'PILOT');
     const embKey = corp && corp !== 'neutral' ? `emblem_${corp}` : null;
     if (embKey && this.scene.textures.exists(embKey)) {
