@@ -1110,8 +1110,10 @@ export default class HudScene extends Phaser.Scene {
     this._chatTab = 'general';
     this._chatPmTarget = null;
     this._chatVisible = true;
-    this._chatDragging = false;
-    this._chatResizing = false;
+    this._chatDragging  = false;
+    this._chatResizing  = false;
+    this._chatCollapsed = false;
+    this._chatDragMoved = false;
     this._chatRzOx = 0; this._chatRzOy = 0;
 
     const BAR_TOP = H - 62; // action bar: H - 52 - 10
@@ -1162,10 +1164,14 @@ export default class HudScene extends Phaser.Scene {
     this.input.on('pointermove', ptr => {
       if (this._chatDragging) {
         const W2 = this.scale.width, H2 = this.scale.height;
-        this._chatX = Math.max(0, Math.min(W2 - this._chatW, ptr.x - this._chatDragOx));
-        this._chatY = Math.max(0, Math.min(H2 - this._chatH, ptr.y - this._chatDragOy));
-        this._chatC.setPosition(this._chatX, this._chatY);
-        this._posChatInput();
+        const maxX = this._chatCollapsed ? W2 - 72        : W2 - this._chatW;
+        const maxY = this._chatCollapsed ? H2 - 22        : H2 - this._chatH;
+        const nx = Math.max(0, Math.min(maxX, ptr.x - this._chatDragOx));
+        const ny = Math.max(0, Math.min(maxY, ptr.y - this._chatDragOy));
+        if (Math.abs(nx - this._chatX) > 3 || Math.abs(ny - this._chatY) > 3) this._chatDragMoved = true;
+        this._chatX = nx; this._chatY = ny;
+        this._chatC.setPosition(nx, ny);
+        if (!this._chatCollapsed) this._posChatInput();
       }
       if (this._chatResizing) {
         const dx = ptr.x - this._chatRzOx, dy = ptr.y - this._chatRzOy;
@@ -1176,8 +1182,17 @@ export default class HudScene extends Phaser.Scene {
       }
     });
     this.input.on('pointerup', () => {
-      if (this._chatDragging || this._chatResizing) {
-        this._chatDragging = false; this._chatResizing = false;
+      if (this._chatDragging) {
+        if (this._chatCollapsed && !this._chatDragMoved) {
+          this._chatVisible = true;
+          this._rebuildChatPanel();
+        }
+        this._chatDragging = false;
+        this._chatCollapsed = false;
+        this._saveChatState();
+      }
+      if (this._chatResizing) {
+        this._chatResizing = false;
         this._saveChatState();
       }
     });
@@ -1212,13 +1227,19 @@ export default class HudScene extends Phaser.Scene {
     const O = (sz, c) => ({ fontFamily: 'Orbitron, sans-serif', fontSize: sz, color: c, resolution: UI_RES });
     const mk = o => { this._chatC.add(o); return o; };
 
-    // Свёрнуто — только кнопка-тоггл
+    // Свёрнуто — только кнопка-тоггл (перетаскивается, клик открывает)
     if (!this._chatVisible) {
       this._chatInputEl.style.display = 'none';
       const tbg = mk(this.add.rectangle(0, 0, 72, 22, 0x050e18, 0.95).setOrigin(0)
         .setStrokeStyle(1, 0x1a4060, 0.8).setInteractive({ useHandCursor: true }));
       mk(this.add.text(36, 11, '💬 ЧАТ', F('10px', '#4dd0e1')).setOrigin(0.5));
-      tbg.on('pointerdown', () => { this._chatVisible = true; this._rebuildChatPanel(); });
+      tbg.on('pointerdown', ptr => {
+        this._chatDragging  = true;
+        this._chatCollapsed = true;
+        this._chatDragMoved = false;
+        this._chatDragOx = ptr.x - this._chatX;
+        this._chatDragOy = ptr.y - this._chatY;
+      });
       return;
     }
 
