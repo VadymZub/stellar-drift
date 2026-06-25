@@ -828,14 +828,20 @@ export default class HudScene extends Phaser.Scene {
       g.strokeCircle(pCenter.x, pCenter.y, r.w * 0.46);
     }
 
-    // Плазмит — точки, только в радиусе сканирования
+    // Плазмит и данж-ресурсы — точки, только в радиусе сканирования
     if (gs.plasmateDeposits) {
-      g.fillStyle(0xaa66ff, 0.85);
       for (const d of gs.plasmateDeposits) {
         if (!d.alive) continue;
         if (!fullScan && Phaser.Math.Distance.Between(px2, py2, d.x, d.y) > sr) continue;
         const p = worldToMinimap(d.x, d.y, r, ww, wh);
-        g.fillCircle(p.x, p.y, 1.8);
+        if (d.isDungeonResource) {
+          const DTINT = { biomech_fragment: 0xb39ddb, quantum_shard: 0x80ffff, plasma_strand: 0xff8c00 };
+          g.fillStyle(DTINT[d.resourceType] || 0xffffff, 0.9);
+          g.fillCircle(p.x, p.y, 2.2);
+        } else {
+          g.fillStyle(0xaa66ff, 0.85);
+          g.fillCircle(p.x, p.y, 1.8);
+        }
       }
     }
 

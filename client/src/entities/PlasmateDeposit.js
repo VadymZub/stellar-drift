@@ -1,15 +1,23 @@
 import * as Phaser from 'https://cdn.jsdelivr.net/npm/phaser@4.1.0/dist/phaser.esm.js';
 
-// Single plasmate crystal — animated sprite. Respawns at a random new position within zone.
+const TINTS = {
+  biomech_fragment: 0xb39ddb,
+  quantum_shard:    0x80ffff,
+  plasma_strand:    0xff8c00,
+};
+
+// Single crystal deposit — plasmate or dungeon resource. Respawns within zone.
 export default class PlasmateDeposit {
-  constructor(scene, x, y, amount, zone, respawnMs = 10 * 60 * 1000) {
-    this.scene     = scene;
-    this.amount    = amount;
-    this.zone      = zone;
-    this.respawnMs = respawnMs;
-    this.alive     = true;
-    this.isPlasmate = true;
-    this.respawnAt  = 0;
+  constructor(scene, x, y, amount, zone, respawnMs = 10 * 60 * 1000, resourceType = 'plasmate') {
+    this.scene            = scene;
+    this.amount           = amount;
+    this.zone             = zone;
+    this.respawnMs        = respawnMs;
+    this.alive            = true;
+    this.resourceType     = resourceType;
+    this.isPlasmate       = resourceType === 'plasmate';
+    this.isDungeonResource = !this.isPlasmate;
+    this.respawnAt        = 0;
     this._build(x, y);
   }
 
@@ -22,8 +30,8 @@ export default class PlasmateDeposit {
       .setDisplaySize(40, 40)
       .setBlendMode(Phaser.BlendModes.ADD)
       .play('plasmate_idle');
-    // Offset animation phase per crystal so they don't all pulse in sync
     this.sprite.anims.setProgress(Math.random());
+    if (TINTS[this.resourceType]) this.sprite.setTint(TINTS[this.resourceType]);
   }
 
   collect() {

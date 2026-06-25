@@ -152,9 +152,12 @@ export const CONSUMABLES = {
   speed_boost:     { category: 'consumable', maxPerSlot: 100,   canBuy: true,  price: 2800, sell: 100 },
   scanner_pulse:   { category: 'consumable', maxPerSlot: 100,   canBuy: true,  price: 1800, sell: 100 },
   emergency_warp:  { category: 'consumable', maxPerSlot:  50,   canBuy: true,  price: 5000, sell: 100 },
-  biomech_core:    { category: 'material',   maxPerSlot:   5,   canBuy: false, price: 0,    sell: 0   },
-  quantum_crystal: { category: 'material',   maxPerSlot:   5,   canBuy: false, price: 0,    sell: 0   },
-  plasma_coil:     { category: 'material',   maxPerSlot:   5,   canBuy: false, price: 0,    sell: 0   },
+  biomech_core:    { category: 'material',      maxPerSlot:   5,   canBuy: false, price: 0, sell: 0 },
+  quantum_crystal: { category: 'material',      maxPerSlot:   5,   canBuy: false, price: 0, sell: 0 },
+  plasma_coil:     { category: 'material',      maxPerSlot:   5,   canBuy: false, price: 0, sell: 0 },
+  biomech_fragment: { category: 'dungeonResource', maxPerSlot: 9999, canBuy: false, price: 0, sell: 0 },
+  quantum_shard:    { category: 'dungeonResource', maxPerSlot: 9999, canBuy: false, price: 0, sell: 0 },
+  plasma_strand:    { category: 'dungeonResource', maxPerSlot: 9999, canBuy: false, price: 0, sell: 0 },
   // Boosters — temporary stat multipliers
   damage_booster: { category: 'consumable', maxPerSlot: 10, canBuy: true,  price: 8000,  sell: 500 },
   hull_booster:   { category: 'consumable', maxPerSlot: 10, canBuy: true,  price: 6000,  sell: 500 },
@@ -164,6 +167,34 @@ export const CONSUMABLES = {
   ammo_plasma:       { category: 'ammo', maxPerSlot: 10000, canBuy: true,  price: 100, sell: 50  },
   ammo_plasma_elite: { category: 'ammo', maxPerSlot: 10000, canBuy: true,  price: 200, sell: 100 },
   ammo_laser:        { category: 'ammo', maxPerSlot: 10000, canBuy: false, price: 0,   sell: 50  },
+};
+
+// ── Dungeon resource system ───────────────────────────────────────────────────
+export const DUNGEON_RES_EXCHANGE_RATE = 500; // resources → 1 material
+export const DUNGEON_RES_TO_MATERIAL = {
+  biomech_fragment: 'biomech_core',
+  quantum_shard:    'quantum_crystal',
+  plasma_strand:    'plasma_coil',
+};
+export const BUFF_KEY_TO_RESOURCE = {
+  hull:   'biomech_fragment',
+  shield: 'quantum_shard',
+  damage: 'plasma_strand',
+};
+export const BUFF_KEY_TO_MATERIAL = {
+  hull:   'biomech_core',
+  shield: 'quantum_crystal',
+  damage: 'plasma_coil',
+};
+export const RESOURCE_NAMES = {
+  biomech_fragment: 'Органит',
+  quantum_shard:    'Фазолит',
+  plasma_strand:    'Каленит',
+};
+export const MATERIAL_NAMES = {
+  biomech_core:    'Органит-ядро',
+  quantum_crystal: 'Фазолит-кристалл',
+  plasma_coil:     'Каленит-катушка',
 };
 
 // Visual info for ammo types (canvas icon generation)
