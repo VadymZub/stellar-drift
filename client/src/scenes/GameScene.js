@@ -439,8 +439,17 @@ export default class GameScene extends Phaser.Scene {
     // Auto-select bot target (vfx not ready during spawnMobs, defer one tick)
     if (this.botPilot) this.time.delayedCall(16, () => { if (this.botPilot?.alive) this.selectTarget(this.botPilot); });
 
-    // Background-load non-critical assets — delayed so the first frame renders smoothly.
-    if (!this.textures.exists('bg_garage')) this.time.delayedCall(800, () => this._bgPreloadDeferred());
+    // Background-load non-critical assets — one tick delay so the first frame renders first.
+    if (!this.textures.exists('bg_garage')) this.time.delayedCall(0, () => this._bgPreloadDeferred());
+
+    // Fade in from black after sector jump to mask scene.restart() hitch
+    if (data?.startX !== undefined) {
+      const _ov = this.add.rectangle(this.scale.width / 2, this.scale.height / 2,
+        this.scale.width * 4, this.scale.height * 4, 0x000000, 1).setScrollFactor(0).setDepth(999);
+      this.cameras.main.once('postrender', () => {
+        this.tweens.add({ targets: _ov, alpha: 0, duration: 500, delay: 30, onComplete: () => _ov.destroy() });
+      });
+    }
   }
 
   _bgPreloadDeferred() {
@@ -968,7 +977,7 @@ export default class GameScene extends Phaser.Scene {
       const gx = cx + dx * mx, gy = cy + dy * my;
       const sec = SECTORS[t];
       const isDungeon = sec.isDungeon === true;
-      const vortex = this.add.image(gx, gy, 'jumpgate_vortex').setDepth(2).setDisplaySize(80, 80).setVisible(false);
+      const vortex = this.add.image(gx, gy, 'jumpgate_vortex').setOrigin(0.5, 0.5).setDepth(2).setDisplaySize(95, 95).setVisible(false);
       if (isDungeon) vortex.setTint(0xffaa00); // Оранжевый вихрь для данжей
 
       const ring = this.add.image(gx, gy, 'jumpgate_ring').setDepth(4).setDisplaySize(260, 260);
@@ -990,12 +999,35 @@ export default class GameScene extends Phaser.Scene {
       }).setOrigin(0.5, 1).setDepth(10).setInteractive({ useHandCursor: true }).setVisible(false);
       
       const gate = { x: gx, y: gy, target: t, ring, vortex, label, btn, spin: 1.1 };
-      btn.on('pointerdown', (pointer, localX, localY, event) => { 
-        if (event) event.stopPropagation(); 
-        this.startJumpSequence(gate); 
+      btn.on('pointerdown', (pointer, localX, localY, event) => {
+        if (event) event.stopPropagation();
+        this._tryJump(gate);
       });
       this.gates.push(gate);
     }
+
+    // Eagerly pre-load all neighboring sector maps — eliminates load.start() hitch on jump button press
+    let _mapsQueued = false;
+    for (const t of neighbors(cur)) {
+      const _map = SECTORS[t]?.map;
+      if (_map && !this.textures.exists(_map)) {
+        this.load.image(_map, `assets/maps/${_map}.png`);
+        _mapsQueued = true;
+      }
+    }
+    if (_mapsQueued) this.load.start();
+  }
+
+  _tryJump(gate) {
+    if (this.jumping) return;
+    const acc = sectorAccess(gate.target, this.pilotLevel, this.activeShip, this.premium);
+    if (!acc.ok) { this.log(i18n.t('log.jump_locked', { reason: acc.reason })); return; }
+    const sec = SECTORS[gate.target];
+    if (sec?.lvlMin && sec.lvlMin > this.pilotLevel + 5) {
+      this._showJumpDangerWarning(gate.target, sec.lvlMin, () => this.startJumpSequence(gate));
+      return;
+    }
+    this.startJumpSequence(gate);
   }
 
   updateGates(dt) {
@@ -1007,35 +1039,22 @@ export default class GameScene extends Phaser.Scene {
       const near = d < 200;
       g.btn.setVisible(this.player.alive && !this.jumping && near);
       if (near && this.input.keyboard.checkDown(this.keyJ, 500)) {
-        this.startJumpSequence(g);
+        this._tryJump(g);
       }
     }
   }
 
   startJumpSequence(gate) {
     if (this.jumping) return;
-    
-    const acc = sectorAccess(gate.target, this.pilotLevel, this.activeShip, this.premium);
-    if (!acc.ok) {
-      this.log(i18n.t('log.jump_locked', { reason: acc.reason }));
-      return;
-    }
-
     this.jumping = true;
-    // Begin loading the target sector's map in background — 3s animation is the load window.
-    const _jMap = SECTORS[gate.target]?.map;
-    if (_jMap && !this.textures.exists(_jMap)) {
-      this.load.image(_jMap, `assets/maps/${_jMap}.png`);
-      this.load.start();
-    }
     this.player.waypoint = null;
     this.movement.setWaypoint(null);
     this.player.speed = 0;
     this.selectTarget(null);
     this.isFiring = false;
     
-    // Вихрь появляется ОДНОМОМЕНТНО на 130px
-    gate.vortex.setVisible(true).setAlpha(1).setDisplaySize(130, 130);
+    // Вихрь появляется ОДНОМОМЕНТНО
+    gate.vortex.setVisible(true).setAlpha(1).setDisplaySize(145, 145);
     
     const spinUpDuration = 2600;
     const flashDuration = 400;
@@ -1106,23 +1125,10 @@ export default class GameScene extends Phaser.Scene {
   travelTo(key) {
     const acc = sectorAccess(key, this.pilotLevel, this.activeShip, this.premium);
     if (!acc.ok) { this.jumping = false; this.player.sprite.setVisible(true); this.player._restoreDisplaySize(); return; }
-
-    const fromKey = galaxy.current;
-    const targetSec = SECTORS[key];
-    if (targetSec?.lvlMin && targetSec.lvlMin > this.pilotLevel + 5) {
-      this._showJumpDangerWarning(key, targetSec.lvlMin, fromKey);
-      return;
-    }
-    this._execJump(key, fromKey);
+    this._execJump(key, galaxy.current);
   }
 
-  _showJumpDangerWarning(key, recLevel, fromKey) {
-    // Start loading the target map so it's ready if user confirms the jump.
-    const _wMap = SECTORS[key]?.map;
-    if (_wMap && !this.textures.exists(_wMap)) {
-      this.load.image(_wMap, `assets/maps/${_wMap}.png`);
-      this.load.start();
-    }
+  _showJumpDangerWarning(key, recLevel, onConfirm) {
     const W = this.scale.width, H = this.scale.height;
     const OW = 300, OH = 120, ox = (W - OW) / 2, oy = (H - OH) / 2;
     const objs = [];
@@ -1136,17 +1142,13 @@ export default class GameScene extends Phaser.Scene {
     const btnY = oy + OH - 22;
     const noBtn = this.add.rectangle(ox + OW / 2 - 65, btnY, 100, 28, 0x0d1e2c, 1)
       .setStrokeStyle(1, 0x2a4a60, 0.8).setDepth(201).setScrollFactor(0).setInteractive({ useHandCursor: true });
-    noBtn.on('pointerdown', () => {
-      objs.forEach(o => o?.destroy());
-      this.jumping = false;
-      this.player.sprite.setVisible(true).setAlpha(1); this.player._restoreDisplaySize();
-    });
+    noBtn.on('pointerdown', () => { objs.forEach(o => o?.destroy()); });
     objs.push(noBtn);
     objs.push(this.add.text(ox + OW / 2 - 65, btnY, 'НАЗАД', { fontFamily: 'Orbitron, sans-serif', fontSize: '11px', color: '#4dd0e1', resolution: 2 }).setOrigin(0.5).setDepth(202).setScrollFactor(0));
 
     const yesBtn = this.add.rectangle(ox + OW / 2 + 65, btnY, 100, 28, 0x1a0808, 1)
       .setStrokeStyle(1, 0xef5350, 0.8).setDepth(201).setScrollFactor(0).setInteractive({ useHandCursor: true });
-    yesBtn.on('pointerdown', () => { objs.forEach(o => o?.destroy()); this._execJump(key, fromKey); });
+    yesBtn.on('pointerdown', () => { objs.forEach(o => o?.destroy()); onConfirm(); });
     objs.push(yesBtn);
     objs.push(this.add.text(ox + OW / 2 + 65, btnY, 'ВОЙТИ', { fontFamily: 'Orbitron, sans-serif', fontSize: '11px', color: '#ef9a9a', resolution: 2 }).setOrigin(0.5).setDepth(202).setScrollFactor(0));
   }
