@@ -1419,8 +1419,14 @@ export default class GarageScene extends Phaser.Scene {
 
     const imgSize = 192;
     if (this.textures.exists(pDef.key)) {
-      const preKey = prerenderTex(this, pDef.key, imgSize, imgSize);
-      this.add.image(cx, cy + imgSize / 2, preKey).setDisplaySize(imgSize, imgSize).setOrigin(0.5);
+      const _src = this.textures.get(pDef.key).getSourceImage();
+      const _sw = _src.naturalWidth || _src.width;
+      const _sh = _src.naturalHeight || _src.height;
+      const _scale = imgSize / Math.max(_sw, _sh);
+      const _dw = Math.round(_sw * _scale);
+      const _dh = Math.round(_sh * _scale);
+      const preKey = prerenderTex(this, pDef.key, _dw, _dh);
+      this.add.image(cx, cy + imgSize / 2, preKey).setDisplaySize(_dw, _dh).setOrigin(0.5);
     } else {
       const fg = this.add.graphics();
       fg.fillStyle(rarHex, 0.3); fg.fillRoundedRect(cx - imgSize / 2, cy, imgSize, imgSize, 10);
