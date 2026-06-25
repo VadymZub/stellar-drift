@@ -502,17 +502,11 @@ export default class GameScene extends Phaser.Scene {
       const scheduleNext = () => {
         if (i >= jobs.length) return;
         if (typeof requestIdleCallback === 'function') {
-          requestIdleCallback(deadline => {
-            // Run as many jobs as fit in the idle slice (leave 1 ms margin)
-            while (i < jobs.length && deadline.timeRemaining() > 1) jobs[i++]();
-            scheduleNext();
-          }, { timeout: 10000 });
+          // One job per idle callback — each job may take 5-15 ms, so batching
+          // causes dropped frames even with timeRemaining() checks.
+          requestIdleCallback(() => { jobs[i++](); scheduleNext(); }, { timeout: 400 });
         } else {
-          requestAnimationFrame(() => {
-            const t0 = performance.now();
-            while (i < jobs.length && performance.now() - t0 < 8) jobs[i++]();
-            scheduleNext();
-          });
+          requestAnimationFrame(() => { jobs[i++](); scheduleNext(); });
         }
       };
       scheduleNext();
@@ -802,14 +796,14 @@ export default class GameScene extends Phaser.Scene {
     } else if (galaxy.current === 'dungeon_2') {
       pool = ['corsair_01', 'corsair_02', 'corsair_04', 'corsair_03', 'corsair_05']; boss = 'corsair_09';
     } else if (galaxy.current === 'dungeon_3') {
-      pool = ['confed_01', 'confed_02', 'syndicate_04', 'confed_06']; boss = 'confed_09';
+      pool = ['syndicate_01', 'syndicate_02', 'syndicate_03', 'syndicate_04', 'syndicate_05']; boss = 'syndicate_11';
     } else if (galaxy.current === 'dungeon_4') {
       pool = ['ancient_01', 'ancient_02', 'ancient_03', 'ancient_07', 'ancient_08']; boss = 'ancient_06';
     } else if (galaxy.current === 'dungeon_5') {
       pool = ['ancient_09', 'ancient_10', 'ancient_11', 'ancient_08', 'ancient_07'];
       boss = 'ancient_06';
-    } else if (galaxy.current === 'tides_d4') {
-      pool = ['ancient_09', 'ancient_10', 'ancient_11', 'confed_06']; boss = 'ancient_06';
+    } else if (galaxy.current === 'dungeon_prem') {
+      pool = ['ancient_09', 'ancient_10', 'ancient_11', 'ancient_08']; boss = 'ancient_06';
     } else if (galaxy.current === 'helios_5') {
       // Бастион Конфедерации — дезертиры и элита
       pool = ['confed_01', 'confed_02', 'confed_06', 'syndicate_05', 'confed_01'];
@@ -853,15 +847,15 @@ export default class GameScene extends Phaser.Scene {
       d2boss.isDungeonBoss = true;
 
     } else if (galaxy.current === 'dungeon_3') {
-      // D3: конфедераты в военной сетке; мини-боссы на постах; босс в верхне-правой комнате
-      add('confed_01', rnd(Lmin, Lmax), -1650, -1000, {});
-      add('confed_02', rnd(Lmin, Lmax), 0, -1000, {});
-      add('confed_01', rnd(Lmin, Lmax), -1650, 900, {});
-      add('confed_06', rnd(Lmin, Lmax), 0, 900, {});
-      add('syndicate_04', rnd(Lmin, Lmax), 1200, 500, {});
-      add('confed_06', Lmax, -1650, -300, { behavior: 'guard', patrolRadius: 200, leash: 500 });
-      add('confed_06', Lmax, 0, -300, { behavior: 'guard', patrolRadius: 200, leash: 500 });
-      const d3boss = add('confed_09', Lmax, 1650, -1800, { behavior: 'guard', patrolRadius: 180, leash: 420 });
+      // D3: Синдикат в военной сетке; мини-боссы на постах; босс в верхне-правой комнате
+      add('syndicate_01', rnd(Lmin, Lmax), -1650, -1000, {});
+      add('syndicate_02', rnd(Lmin, Lmax), 0, -1000, {});
+      add('syndicate_03', rnd(Lmin, Lmax), -1650, 900, {});
+      add('syndicate_04', rnd(Lmin, Lmax), 0, 900, {});
+      add('syndicate_05', rnd(Lmin, Lmax), 1200, 500, {});
+      add('syndicate_07', Lmax, -1650, -300, { behavior: 'guard', patrolRadius: 200, leash: 500 });
+      add('syndicate_07', Lmax, 0, -300, { behavior: 'guard', patrolRadius: 200, leash: 500 });
+      const d3boss = add('syndicate_11', Lmax, 1650, -1800, { behavior: 'guard', patrolRadius: 180, leash: 420 });
       d3boss.isDungeonBoss = true;
 
     } else if (galaxy.current === 'dungeon_4') {
@@ -882,8 +876,8 @@ export default class GameScene extends Phaser.Scene {
       const dungeon5boss = add(boss, Lmax, 0, 0, { behavior: 'guard', patrolRadius: 300, leash: 900 });
       dungeon5boss.isDungeonBoss = true;
 
-    } else if (galaxy.current === 'tides_d4') {
-      // tides_d4: Лабиринт Тьмы — Древние и конфедераты; мини-боссы в тупиках; босс за юго-вост дверью
+    } else if (galaxy.current === 'dungeon_prem') {
+      // Лабиринт Тьмы — только Древние; мини-боссы в тупиках; босс за юго-вост дверью
       const tdpts = [[-1800,-1300], [600,-1200], [-400,-500], [1200,-500], [-800,300], [1600,900]];
       tdpts.forEach(([ox, oy], i) => add(pool[i % pool.length], rnd(Lmin, Lmax), ox, oy, {}));
       add('ancient_05', Lmax, 0, -1800, { behavior: 'guard', patrolRadius: 250, leash: 580 });
@@ -2671,6 +2665,16 @@ export default class GameScene extends Phaser.Scene {
       this.movement.setWaypoint(wpt.x, wpt.y, false);
     }
     if (!this.jumping && this.player.alive) this.movement.update(dt, inSafe);
+    // EMP slow: применяем после movement, до обновления мобов
+    if (this.player.alive && (this._empSlowUntil || 0) > this.time.now) {
+      const b = this.player.sprite.body;
+      b.setVelocity(b.velocity.x * 0.45, b.velocity.y * 0.45);
+    }
+    // Данж: охранники депозитов просыпаются, рой агрится стаей
+    if (this.player.alive && SECTORS[galaxy.current]?.isDungeon) {
+      this._updateDepositGuardSleep();
+      if (galaxy.current === 'dungeon_1') this._updateSwarmPack();
+    }
     this.mobs.forEach((m) => {
       const tgt = (m.escortTarget?.alive) ? m.escortTarget : this.player;
       const victim = (m.escortTarget?.alive) ? this.escortTransport : this.player;
@@ -2679,7 +2683,7 @@ export default class GameScene extends Phaser.Scene {
       if (m.requestAoe) { this.spawnBossAoe(m, this.player.x, this.player.y); m.requestAoe = false; }
     });
     this.updateAoe();
-    
+    if (this.player.alive && galaxy.current === 'dungeon_3') this._updateSyndicateEMP(dt);
 
     this.miningBases.forEach(b => b.update(dt));
     this.nearBase = false; // reset before home bases accumulate — any base can set it to true
@@ -2734,6 +2738,84 @@ export default class GameScene extends Phaser.Scene {
       mobs:       this.mobs.filter(m => m.alive).length,
       alive:      p?.alive ?? false,
     });
+  }
+
+  // ── Данж: охранники депозитов — спят до 300px ────────────────────────────
+  _updateDepositGuardSleep() {
+    for (const mob of this.mobs) {
+      if (!mob.alive || !mob.depositGuardSleeping) continue;
+      const d = Phaser.Math.Distance.Between(mob.x, mob.y, this.player.x, this.player.y);
+      if (d < 300) {
+        mob.depositGuardSleeping = false;
+        mob.passive  = false;
+        mob.state    = 'aggro';
+        mob.sprite.setTint(0xff3333);
+        this.time.delayedCall(350, () => { if (mob.alive) mob.sprite.clearTint(); });
+        this.cameras.main.shake(160, 0.004);
+      }
+    }
+  }
+
+  // ── Данж: Рой — стайный агрос (pack trigger) ─────────────────────────────
+  _updateSwarmPack() {
+    const PACK_R = 520;
+    for (const aggr of this.mobs) {
+      if (!aggr.alive || aggr.state !== 'aggro') continue;
+      if (!aggr.tpl.key?.startsWith('swarm_')) continue;
+      for (const nb of this.mobs) {
+        if (!nb.alive || nb.state === 'aggro' || nb.passive || nb.depositGuardSleeping) continue;
+        if (!nb.tpl.key?.startsWith('swarm_')) continue;
+        const d = Phaser.Math.Distance.Between(aggr.x, aggr.y, nb.x, nb.y);
+        if (d < PACK_R) { nb.state = 'aggro'; nb.neutral = false; }
+      }
+    }
+  }
+
+  // ── Данж: Синдикат — ЭМИ-разряд от шиелдеров ────────────────────────────
+  _updateSyndicateEMP(dt) {
+    const EMP_CD = 14, EMP_RANGE = 600;
+    for (const mob of this.mobs) {
+      if (!mob.alive || mob.state !== 'aggro') continue;
+      if (mob.tpl.faction !== 'syndicate' || mob.tpl.aiClass !== 'shielder') continue;
+      mob._empCd = (mob._empCd ?? EMP_CD) - dt;
+      if (mob._empCd > 0) continue;
+      const d = Phaser.Math.Distance.Between(mob.x, mob.y, this.player.x, this.player.y);
+      if (d > EMP_RANGE) { mob._empCd = 5; continue; }
+      mob._empCd = EMP_CD;
+      this._spawnEMPPulse(mob.x, mob.y);
+    }
+  }
+
+  _spawnEMPPulse(ox, oy) {
+    const g = this.add.graphics().setDepth(58);
+    const MAX_R = 380, DUR = 700;
+    let elapsed = 0;
+    const hit = new Set();
+    const timer = this.time.addEvent({
+      delay: 16, loop: true,
+      callback: () => {
+        elapsed += 16;
+        const frac = Math.min(1, elapsed / DUR);
+        const r    = MAX_R * frac;
+        const a    = 0.85 * (1 - frac);
+        g.clear();
+        g.lineStyle(4, 0x4dd0e1, a); g.strokeCircle(ox, oy, r);
+        g.lineStyle(1.5, 0x80ffff, a * 0.45); g.strokeCircle(ox, oy, r * 0.65);
+        if (this.player.alive && !hit.has('p')) {
+          const pd = Phaser.Math.Distance.Between(ox, oy, this.player.x, this.player.y);
+          if (pd >= r - 40 && pd <= r + 40) { hit.add('p'); this._applyEMPSlow(2400); }
+        }
+        if (frac >= 1) { g.destroy(); timer.destroy(); }
+      },
+    });
+    this.log('⚡ ЭМИ-разряд Синдиката!');
+  }
+
+  _applyEMPSlow(ms) {
+    const end = this.time.now + ms;
+    if ((this._empSlowUntil || 0) >= end) return;
+    this._empSlowUntil = end;
+    this.log('⚡ Двигатель замедлен на 2.4с');
   }
 
   _updateCursor() {
@@ -2993,13 +3075,13 @@ export default class GameScene extends Phaser.Scene {
     const cx = this.worldWidth / 2, cy = this.worldHeight / 2;
 
     const WALL_STYLES = {
-      dungeon_1:  { type: 'asteroid', fill: 0x2a1206, fillA: 0.92, edge: 0x8b3a1a },
-      dungeon_2:  { type: 'metal',    fill: 0x0e1e0e, fillA: 0.92, edge: 0x3a6a3a },
-      dungeon_3:  { type: 'stone',    fill: 0x1c1c2e, fillA: 0.92, edge: 0x505080 },
-      dungeon_4:  { type: 'debris',   fill: 0x0e180e, fillA: 0.92, edge: 0x3a5a3a },
-      dungeon_5:  { type: 'energy',   fill: 0x020c14, fillA: 0.80, edge: 0x4dd0e1 },
-      tides_d4:   { type: 'void',     fill: 0x0e0520, fillA: 0.88, edge: 0x9c27b0 },
-      'R-1-boss': { type: 'boss',     fill: 0x060a06, fillA: 0.88, edge: 0xc8a800 },
+      dungeon_1:    { type: 'asteroid', fill: 0x2a1206, fillA: 0.92, edge: 0x8b3a1a },
+      dungeon_2:    { type: 'metal',    fill: 0x0e1e0e, fillA: 0.92, edge: 0x3a6a3a },
+      dungeon_3:    { type: 'stone',    fill: 0x1c1c2e, fillA: 0.92, edge: 0x505080 },
+      dungeon_4:    { type: 'debris',   fill: 0x0e180e, fillA: 0.92, edge: 0x3a5a3a },
+      dungeon_5:    { type: 'energy',   fill: 0x020c14, fillA: 0.80, edge: 0x4dd0e1 },
+      dungeon_prem: { type: 'ancient',   fill: 0x020a04, fillA: 0.92, edge: 0x00c853 },
+      'R-1-boss':   { type: 'boss',     fill: 0x060a06, fillA: 0.88, edge: 0xc8a800 },
     };
     const ws = WALL_STYLES[galaxy.current] ?? WALL_STYLES['dungeon_5'];
 
@@ -3062,6 +3144,21 @@ export default class GameScene extends Phaser.Scene {
         g.lineStyle(1, ws.edge, 0.05);
         for (let i = 80; i < w; i += 80) g.lineBetween(x0 + i, y0, x0 + i, y0 + h);
         for (let j = 80; j < h; j += 80) g.lineBetween(x0, y0 + j, x0 + w, y0 + j);
+
+      } else if (ws.type === 'ancient') {
+        // Биоорганические стены зелёного храма — прожилки и кристальное свечение
+        g.lineStyle(12, ws.edge, 0.03); g.strokeRect(x0 - 6, y0 - 6, w + 12, h + 12);
+        g.lineStyle(5,  ws.edge, 0.10); g.strokeRect(x0 - 2, y0 - 2, w + 4,  h + 4);
+        g.lineStyle(2,  ws.edge, 0.90); g.strokeRect(x0, y0, w, h);
+        const rngA = new Phaser.Math.RandomDataGenerator([`a${x0}|${y0}`]);
+        g.lineStyle(1, ws.edge, 0.12);
+        for (let k = 0; k < 4; k++) {
+          const sx2 = x0 + rngA.between(10, w - 10), sy2 = y0 + rngA.between(10, h - 10);
+          const len = rngA.between(40, 100), ang = rngA.between(0, 360) * Math.PI / 180;
+          g.lineBetween(sx2, sy2,
+            Phaser.Math.Clamp(sx2 + Math.cos(ang) * len, x0, x0 + w),
+            Phaser.Math.Clamp(sy2 + Math.sin(ang) * len, y0, y0 + h));
+        }
 
       } else if (ws.type === 'void') {
         g.lineStyle(10, ws.edge, 0.03); g.strokeRect(x0 - 5, y0 - 5, w + 10, h + 10);
@@ -3187,7 +3284,7 @@ export default class GameScene extends Phaser.Scene {
       addWall(cx + 700, cy, 250, 1200, true);      // вост. стена арены
       addBossDoor(cx, cy - 600, 1400, 250);         // сев. стена арены = boss door
 
-    } else if (galaxy.current === 'tides_d4') {
+    } else if (galaxy.current === 'dungeon_prem') {
       // Лабиринт Тьмы: плотная Z-сеть из тёмной материи (вход с севера)
       addWall(cx - 2700, cy + 300, 300, 4200);     // левая граница
       addWall(cx + 2700, cy + 300, 300, 4200);     // правая граница
@@ -3254,13 +3351,13 @@ export default class GameScene extends Phaser.Scene {
 
     // Plasmate deposits at fixed strategic positions
     const PLASMATE_CONFIGS = {
-      dungeon_1: [[2200, 0, 320], [-2200, 0, 320]],
-      dungeon_2: [[1900, 1100, 380], [-1900, -200, 380], [1800, -1800, 480]],
-      dungeon_3: [[-1650, -1000, 450], [1650, -1000, 450], [-1650, 900, 400], [0, 900, 400]],
-      dungeon_4: [[1200, -1200, 500], [-900, 900, 500], [1400, 900, 550]],
-      dungeon_5: [[0, -1800, 650], [1800, 0, 650], [-1800, 0, 650], [0, 1800, 650]],
-      tides_d4:  [[0, -1800, 750], [-1800, 200, 750], [800, 1400, 850], [-800, 1600, 850]],
-      'R-1-boss': [[1500, 0, 950], [-1500, 0, 950]],
+      dungeon_1:    [[2200, 0, 320], [-2200, 0, 320]],
+      dungeon_2:    [[1900, 1100, 380], [-1900, -200, 380], [1800, -1800, 480]],
+      dungeon_3:    [[-1650, -1000, 450], [1650, -1000, 450], [-1650, 900, 400], [0, 900, 400]],
+      dungeon_4:    [[1200, -1200, 500], [-900, 900, 500], [1400, 900, 550]],
+      dungeon_5:    [[0, -1800, 650], [1800, 0, 650], [-1800, 0, 650], [0, 1800, 650]],
+      dungeon_prem: [[0, -1800, 800], [-1800, 200, 800], [800, 1400, 900], [-800, 1600, 900]],
+      'R-1-boss':   [[1500, 0, 950], [-1500, 0, 950]],
     };
     const plasmateEntries = PLASMATE_CONFIGS[galaxy.current];
     const RESPAWN_MS = 24 * 60 * 60 * 1000;
@@ -3273,37 +3370,38 @@ export default class GameScene extends Phaser.Scene {
       }
     }
 
-    // Dungeon resource deposits (biomech_fragment / quantum_shard / plasma_strand)
-    const DUNGEON_TIER = {
-      dungeon_1: 1, dungeon_2: 2, dungeon_3: 3, dungeon_4: 4,
-      dungeon_5: 5, tides_d4: 5, 'R-1-boss': 6,
+    // Fixed dungeon resource deposits — каждый охраняется мини-боссом
+    // res: один тип на данж; types: несколько типов (по i % length); guard: ключ моба-охранника
+    const DUNGEON_DEPOSITS = {
+      dungeon_1:    { res:   'biomech_fragment',                                                   guard: 'swarm_07',   amount: 2, spots: [[0, 1800], [1400, 800], [-1400, 800]] },
+      dungeon_2:    { res:   'quantum_shard',                                                       guard: 'corsair_08', amount: 3, spots: [[1000, 1400], [-500, -800], [-1200, -1400]] },
+      dungeon_3:    { res:   'plasma_strand',                                                       guard: 'syndicate_07', amount: 3, spots: [[-1650, 500], [1200, -1700], [0, 1500]] },
+      dungeon_4:    { types: ['biomech_fragment', 'quantum_shard', 'plasma_strand'],                guard: 'ancient_03', amount: 5, spots: [[800, -1400], [-1100, -700], [900, 1300]] },
+      dungeon_5:    { types: ['biomech_fragment', 'quantum_shard', 'plasma_strand'],                guard: 'ancient_08', amount: 6, spots: [[1500, 1500], [-1500, 1500], [1500, -1500], [-1500, -1500]] },
+      dungeon_prem: { types: ['biomech_fragment', 'quantum_shard', 'plasma_strand'],                guard: 'ancient_10', amount: 8, spots: [[600, -1700], [-1500, 700], [1700, 1500]] },
+      'R-1-boss':   { types: ['biomech_fragment', 'quantum_shard', 'plasma_strand'],                guard: 'ancient_11', amount: 9, spots: [[1200, 1200], [-1200, -1200]] },
     };
-    const tier = DUNGEON_TIER[galaxy.current];
-    if (!tier) return;
+    const dcfg = DUNGEON_DEPOSITS[galaxy.current];
+    if (!dcfg) return;
 
-    // Amount per deposit by tier: [min, max]
-    const AMOUNT_RANGE = [[0,0],[1,2],[1,3],[2,4],[3,6],[4,7],[5,7]];
-    const [aMin, aMax] = AMOUNT_RANGE[tier];
+    const sec2 = SECTORS[galaxy.current];
+    const guardLvl = sec2.lvlMax;
+    const typeList = dcfg.types ? dcfg.types : [dcfg.res];
 
-    // Pick 1-3 resource types for this run (Fisher-Yates shuffle)
-    const ALL_RES = ['biomech_fragment', 'quantum_shard', 'plasma_strand'];
-    for (let j = ALL_RES.length - 1; j > 0; j--) { const k = Math.floor(Math.random() * (j + 1)); [ALL_RES[j], ALL_RES[k]] = [ALL_RES[k], ALL_RES[j]]; }
-    const typeCount = Math.min(3, Math.max(1, tier));
-    const activeTypes = ALL_RES.slice(0, typeCount);
-
-    const depositCount = Phaser.Math.Between(10, 20);
-    const margin = 500;
-    const W = this.worldWidth, H = this.worldHeight;
-
-    for (let i = 0; i < depositCount; i++) {
-      const rType = activeTypes[i % activeTypes.length];
-      const x = Phaser.Math.Between(margin, W - margin);
-      const y = Phaser.Math.Between(margin, H - margin);
-      const amount = Phaser.Math.Between(aMin, aMax);
+    dcfg.spots.forEach((spot, i) => {
+      const [ox, oy] = spot;
+      const x = cx + ox, y = cy + oy;
+      const resType = typeList[i % typeList.length];
       this.plasmateDeposits.push(
-        new PlasmateDeposit(this, x, y, amount, { xMin: x-100, xMax: x+100, yMin: y-100, yMax: y+100 }, RESPAWN_MS, rType),
+        new PlasmateDeposit(this, x, y, dcfg.amount,
+          { xMin: x - 80, xMax: x + 80, yMin: y - 80, yMax: y + 80 }, RESPAWN_MS, resType),
       );
-    }
+      const guard = new Mob(this, MOBS[dcfg.guard], guardLvl, x + 130, y + 90,
+        { behavior: 'guard', patrolRadius: 150, leash: 400, passive: true });
+      guard.isDepositGuard = true;
+      guard.depositGuardSleeping = true;
+      this.mobs.push(guard);
+    });
   }
 
   // ═══════════════════════════════════════════════════════════════════════════

@@ -170,6 +170,7 @@ export default class LoginScene extends Phaser.Scene {
         galaxy.current = _resolveStartSector(window.PLAYER_STATE);
         const _mapKey = SECTORS[galaxy.current].map;
         const _launch = () => {
+          document.getElementById('scene-overlay')?.classList.add('active');
           this.scene.start('GameScene');
           this.scene.launch('BackgroundScene');
           this.scene.launch('HudScene');

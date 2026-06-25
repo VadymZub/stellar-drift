@@ -178,6 +178,7 @@ export default class TestProfileScene extends Phaser.Scene {
       // Load starting sector's map before launching (it wasn't loaded at boot).
       const _tpMap = SECTORS[galaxy.current].map;
       const _tpLaunch = () => {
+        document.getElementById('scene-overlay')?.classList.add('active');
         this.scene.start('GameScene');
         this.scene.launch('BackgroundScene');
         this.scene.launch('HudScene');
