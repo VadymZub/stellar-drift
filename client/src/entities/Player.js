@@ -80,6 +80,8 @@ export default class Player {
       color: '#e0e0e0', stroke: '#000000', strokeThickness: 3,
       resolution: UI_RES,
     }).setOrigin(0, 0.5).setDepth(51);
+    this._npEmblem = scene.add.image(0, 0, 'rank_tier1')
+      .setDisplaySize(18, 18).setDepth(51).setVisible(false);
 
     this.heading = -Math.PI / 2;     // направление ДВИЖЕНИЯ
     this.facing = -Math.PI / 2;      // направление НОСА (в бою — на цель)
@@ -105,13 +107,19 @@ export default class Player {
   get x() { return this.sprite.x; }
   get y() { return this.sprite.y; }
 
-  // Вызвать из GameScene после того, как pilotRank определён.
-  setNameplate(name, rank) {
+  // Вызвать из GameScene после того, как pilotRank и playerCorp определены.
+  setNameplate(name, rank, corp) {
     const id   = rank?.id ?? 20;
     const tier = rankTier(id);
     const tint = RANK_TINTS[id] ?? 0x888888;
     this._npIcon.setTexture(`rank_tier${tier}`).setTint(tint);
     this._npText.setText(name || 'PILOT');
+    const embKey = corp && corp !== 'neutral' ? `emblem_${corp}` : null;
+    if (embKey && this.scene.textures.exists(embKey)) {
+      this._npEmblem.setTexture(embKey).setDisplaySize(18, 18).setVisible(true);
+    } else {
+      this._npEmblem.setVisible(false);
+    }
   }
 
   // Сменить активный корабль (из Гаража). Сохраняем долю корпуса, чтобы не «долечивать» сменой.
@@ -439,6 +447,7 @@ export default class Player {
     this.sprite.setVisible(false);
     this._npIcon.setVisible(false);
     this._npText.setVisible(false);
+    this._npEmblem.setVisible(false);
   }
 
   respawn(x, y) {
@@ -454,6 +463,7 @@ export default class Player {
     this.sprite.setVisible(true);
     this._npIcon.setVisible(true);
     this._npText.setVisible(true);
+    if (this._npEmblem.texture.key !== 'rank_tier1') this._npEmblem.setVisible(true);
     this.alive = true;
   }
 
@@ -513,10 +523,12 @@ export default class Player {
 
     // Nameplate: над кораблём, центрировано. Float-позиция = двигается 1:1 со спрайтом.
     // Shimmer от 46× downscale решён через pre-render rank_tier в BootScene (44px).
-    const npY    = this.y - this.sprite.displayHeight * 0.55 - 13;
-    const totalW = 22 + 4 + this._npText.width;
-    const npX    = this.x - totalW / 2;
+    const npY     = this.y - this.sprite.displayHeight * 0.55 - 13;
+    const hasEmbl = this._npEmblem.visible;
+    const totalW  = 22 + 4 + this._npText.width + (hasEmbl ? 4 + 18 : 0);
+    const npX     = this.x - totalW / 2;
     this._npIcon.setPosition(npX + 11, npY);
     this._npText.setPosition(npX + 22 + 4, npY);
+    if (hasEmbl) this._npEmblem.setPosition(npX + 22 + 4 + this._npText.width + 4 + 9, npY);
   }
 }

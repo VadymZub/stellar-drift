@@ -70,6 +70,7 @@ export default class BootScene extends Phaser.Scene {
 
     // Иконки рангов (7 тиров)
     for (let t = 1; t <= 7; t++) this.load.image(`rank_tier${t}`, `assets/ranks/rank_tier${t}.png`);
+    for (const c of ['helios', 'karax', 'tides']) this.load.image(`emblem_${c}`, `assets/corps/emblem_${c}.png`);
 
     // UI-стрелки движения
     this.load.image('arrow_waypoint', 'assets/ui/arrow_waypoint.png');
@@ -196,6 +197,7 @@ export default class BootScene extends Phaser.Scene {
     // Rank tier icons: 1024×1024 displayed at 22×22 — 46× downscale causes shimmer.
     // Pre-process to 44px (2× display size) for stable bilinear and no subpixel flicker.
     for (let t = 1; t <= 7; t++) prepShipTex(this, `rank_tier${t}`, 44);
+    for (const c of ['helios', 'karax', 'tides']) prepShipTex(this, `emblem_${c}`, 36);
 
     // Module icons, perk images — deferred to GameScene._bgPreloadDeferred()
 

@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<title>Сравнение оружия — Stellar Drift</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: #07111e; color: #cce4f7; font-family: 'Segoe UI', sans-serif; font-size: 13px; padding: 20px; }
+  h1 { color: #4dd0e1; font-size: 17px; margin-bottom: 6px; letter-spacing: 1px; }
+  .sub { color: #5577aa; font-size: 11px; margin-bottom: 18px; }
+
+  /* stat strip */
+  .stat-row { display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 18px; }
+  .stat-box { background: #0d1f30; border: 1px solid #1e3a50; border-radius: 6px; padding: 8px 14px; min-width: 160px; }
+  .stat-box .lbl { color: #446688; font-size: 10px; text-transform: uppercase; letter-spacing: 1px; }
+  .stat-box .val { font-size: 13px; color: #eee; margin-top: 2px; }
+
+  /* main table */
+  .wrap { overflow-x: auto; }
+  table { border-collapse: collapse; min-width: 900px; }
+  th, td { padding: 7px 10px; border: 1px solid #152535; text-align: center; white-space: nowrap; }
+  th { background: #0a1c2c; color: #4dd0e1; font-size: 11px; letter-spacing: .5px; }
+  th.tgt { font-size: 10px; color: #5599bb; }
+
+  tr.group-header td { background: #0d2030; color: #4dd0e1; font-size: 11px; font-weight: bold;
+    text-align: left; padding-left: 14px; letter-spacing: 1px; border-top: 2px solid #1e4a6a; }
+
+  td.config { text-align: left; color: #8baabb; font-size: 11px; padding-left: 18px; }
+  td.config .params { color: #3a6080; font-size: 10px; margin-top: 1px; }
+
+  /* color scale: green→yellow→red */
+  td.val { font-weight: bold; font-size: 13px; }
+  td.pen-kill { color: #ffee55; }
+
+  /* dps bars */
+  .bar-cell { padding: 4px 8px; }
+  .bar-wrap { display: flex; align-items: center; gap: 6px; }
+  .bar { height: 8px; border-radius: 3px; min-width: 2px; }
+  .bar-sh { background: #4dd0e1; }
+  .bar-hu { background: #ef5350; }
+  .bar-num { font-size: 10px; color: #7799aa; }
+
+  .legend { display: flex; gap: 20px; margin-top: 12px; font-size: 11px; color: #446688; }
+  .leg-item { display: flex; align-items: center; gap: 6px; }
+  .leg-sq { width: 12px; height: 12px; border-radius: 2px; }
+  .note { margin-top: 16px; font-size: 11px; color: #446688; line-height: 1.7; }
+  .note b { color: #5599bb; }
+</style>
+</head>
+<body>
+<h1>СРАВНЕНИЕ ОРУЖИЯ — урон 1000 за выстрел</h1>
+<p class="sub">Итоговые выстрелы до убийства по каждому типу цели · ⭐ = убит пробиванием (корпус умер раньше снятия щита)</p>
+
+<div id="stat-strips"></div>
+<div class="wrap"><table id="main-table"></table></div>
+
+<div class="legend">
+  <div class="leg-item"><div class="leg-sq" style="background:#4dd0e1"></div> Урон по щиту (E за выстрел)</div>
+  <div class="leg-item"><div class="leg-sq" style="background:#ef9a9a"></div> Урон по корпусу при живом щите (пробивание)</div>
+  <div class="leg-item"><div class="leg-sq" style="background:#ef5350"></div> Урон по корпусу без щита</div>
+  <div class="leg-item"><div class="leg-sq" style="background:#ffee55; border:1px solid #aaa"></div> ⭐ Убит через пробивание</div>
+</div>
+
+<div class="note" id="notes"></div>
+
+<script>
+// ─── Целевые стенды ─────────────────────────────────────────────────────────
+const TARGETS = [
+  { label: '10к / 10к', hull: 10000, shield: 10000 },
+  { label: '2к / 18к',  hull: 2000,  shield: 18000 },
+  { label: '18к / 2к',  hull: 18000, shield: 2000  },
+  { label: '7к / 14к',  hull: 7000,  shield: 14000 },
+  { label: '14к / 7к',  hull: 14000, shield: 7000  },
+];
+
+// ─── Конфиги оружия ──────────────────────────────────────────────────────────
+// acc: точность (вер. попасть), pen: пробивание, dmgMult: множитель урона на выстрел,
+// shMult: эффективность по щиту (1.0 = 100%), hMult: множитель по голому корпусу
+const WEAPONS = [
+  {
+    name: 'ПЛАЗМА ОБЫЧНАЯ', color: '#aaccee',
+    configs: [
+      { label: 'Базовый',        params: 'точн 90% · пробив 0% · перки нет',   acc:0.90, pen:0.00, dmgMult:1.00, shMult:1.0, hMult:1.0 },
+      { label: '+Точность макс', params: 'точн 100% · пробив 0% · перки нет',  acc:1.00, pen:0.00, dmgMult:1.00, shMult:1.0, hMult:1.0, },
+      { label: '+Пробивание',    params: 'точн 100% · пробив 15% · перки нет', acc:1.00, pen:0.15, dmgMult:1.00, shMult:1.0, hMult:1.0, },
+      { label: 'Макс всё',       params: 'точн 100% · пробив 40% · урон ×1.75',acc:1.00, pen:0.40, dmgMult:1.75, shMult:1.0, hMult:1.0, },
+    ]
+  },
+  {
+    name: 'ПЛАЗМА ЭЛИТ (×1.2)', color: '#ffcc88',
+    configs: [
+      { label: 'Базовый',        params: 'точн 90% · пробив 0% · перки нет',   acc:0.90, pen:0.00, dmgMult:1.20, shMult:1.0, hMult:1.0, },
+      { label: '+Точность макс', params: 'точн 100% · пробив 0% · перки нет',  acc:1.00, pen:0.00, dmgMult:1.20, shMult:1.0, hMult:1.0, },
+      { label: '+Пробивание',    params: 'точн 100% · пробив 15% · перки нет', acc:1.00, pen:0.15, dmgMult:1.20, shMult:1.0, hMult:1.0, },
+      { label: 'Макс всё',       params: 'точн 100% · пробив 40% · урон ×2.10',acc:1.00, pen:0.40, dmgMult:2.10, shMult:1.0, hMult:1.0, },
+    ]
+  },
+  {
+    name: 'ЛАЗЕР', color: '#88ccff',
+    configs: [
+      { label: 'Базовый',        params: 'точн 80% · пробив 0% · перки нет',           acc:0.80, pen:0.00, dmgMult:1.00, shMult:0.90, hMult:1.30, },
+      { label: '+Точность макс', params: 'точн 97% · пробив 0% · перки нет',           acc:0.97, pen:0.00, dmgMult:1.00, shMult:0.90, hMult:1.30, },
+      { label: '+Пробивание',    params: 'точн 97% · пробив 15% · перки нет',          acc:0.97, pen:0.15, dmgMult:1.00, shMult:0.90, hMult:1.30, },
+      { label: 'Макс всё',       params: 'точн 97% · пробив 40% · hullMult ×2.50',    acc:0.97, pen:0.40, dmgMult:1.00, shMult:0.90, hMult:2.50, },
+    ]
+  },
+];
+
+// ─── Расчёт выстрелов до убийства ───────────────────────────────────────────
+function calcShots(cfg, target) {
+  const baseDmg = 1000;
+  const dmg = baseDmg * cfg.dmgMult;
+  const direct = dmg * cfg.pen;              // пробивание → корпус (×1.0 при живом щите)
+  const toShd  = dmg - direct;
+
+  // Ожидаемый урон за выстрел (с учётом промахов)
+  const E_sh      = cfg.acc * toShd * cfg.shMult;   // по щиту
+  const E_hull_sh = cfg.acc * direct * cfg.hMult;      // по корпусу при живом щите (×hMult — лазер режет корпус независимо от щита)
+  const E_hull_naked = cfg.acc * dmg * cfg.hMult;    // по корпусу при снятом щите (×hMult)
+
+  // Выстрелов чтобы снять щит
+  const N_drain = Math.ceil(target.shield / E_sh);
+  // Выстрелов чтобы убить корпус через пробивание
+  const N_pen = E_hull_sh > 0 ? Math.ceil(target.hull / E_hull_sh) : Infinity;
+
+  let N1, N2, penKill = false;
+  if (N_pen <= N_drain) {
+    // Корпус умирает через пробивание до снятия щита
+    N1 = N_pen; N2 = 0; penKill = true;
+  } else {
+    N1 = N_drain;
+    const hullLeft = Math.max(0, target.hull - N1 * E_hull_sh);
+    N2 = hullLeft > 0 ? Math.ceil(hullLeft / E_hull_naked) : 0;
+  }
+  return { total: N1 + N2, N1, N2, penKill, E_sh, E_hull_sh, E_hull_naked };
+}
+
+// ─── Цвет по значению (зелёный = мало выстрелов, красный = много) ────────────
+function heatColor(val, min, max) {
+  const t = Math.max(0, Math.min(1, (val - min) / (max - min)));
+  // зелёный → жёлтый → красный
+  const r = t < 0.5 ? Math.round(255 * t * 2) : 255;
+  const g = t < 0.5 ? 200 : Math.round(200 * (1 - (t - 0.5) * 2));
+  return `rgb(${r},${g},60)`;
+}
+
+// ─── Collect all values for color scale ──────────────────────────────────────
+const allResults = [];
+WEAPONS.forEach(w => w.configs.forEach(cfg => TARGETS.forEach(t => {
+  allResults.push(calcShots(cfg, t).total);
+})));
+const globalMin = Math.min(...allResults);
+const globalMax = Math.max(...allResults);
+
+// ─── Build table ─────────────────────────────────────────────────────────────
+const table = document.getElementById('main-table');
+
+// Header
+const thead = table.createTHead();
+const hr = thead.insertRow();
+hr.insertCell().outerHTML = '<th style="text-align:left;min-width:220px">Конфиг</th>';
+hr.insertCell().outerHTML = '<th class="tgt" style="min-width:70px">Урон<br>по щиту</th>';
+hr.insertCell().outerHTML = '<th class="tgt" style="min-width:70px">Пробив<br>в корпус</th>';
+hr.insertCell().outerHTML = '<th class="tgt" style="min-width:70px">Голый<br>корпус</th>';
+TARGETS.forEach(t => {
+  hr.insertCell().outerHTML = `<th class="tgt">${t.label}<br><span style="color:#2a4a6a;font-size:9px">корп/щит</span></th>`;
+});
+
+const tbody = table.createTBody();
+const maxBarDmg = 3000;
+
+WEAPONS.forEach(w => {
+  // Group header
+  const gRow = tbody.insertRow();
+  gRow.classList.add('group-header');
+  const gc = gRow.insertCell();
+  gc.colSpan = 4 + TARGETS.length;
+  gc.textContent = w.name;
+  gc.style.color = w.color;
+
+  w.configs.forEach(cfg => {
+    const row = tbody.insertRow();
+
+    // Config label
+    const lc = row.insertCell();
+    lc.className = 'config';
+    lc.innerHTML = `${cfg.label}<div class="params">${cfg.params}</div>`;
+
+    // Compute sample result for bars (use T1 values)
+    const sample = calcShots(cfg, TARGETS[0]);
+    const maxBar = maxBarDmg;
+    const bSh  = Math.round(sample.E_sh  / maxBar * 140);
+    const bHsh = Math.round(sample.E_hull_sh / maxBar * 140);
+    const bHna = Math.round(sample.E_hull_naked / maxBar * 140);
+
+    const shCell = row.insertCell();
+    shCell.className = 'bar-cell';
+    shCell.innerHTML = `<div class="bar-wrap"><div class="bar bar-sh" style="width:${bSh}px"></div><span class="bar-num">${Math.round(sample.E_sh)}</span></div>`;
+
+    const hshCell = row.insertCell();
+    hshCell.className = 'bar-cell';
+    hshCell.innerHTML = `<div class="bar-wrap"><div class="bar bar-hu" style="width:${bHsh}px;background:#ef9a9a"></div><span class="bar-num">${Math.round(sample.E_hull_sh)}</span></div>`;
+
+    const hnCell = row.insertCell();
+    hnCell.className = 'bar-cell';
+    hnCell.innerHTML = `<div class="bar-wrap"><div class="bar bar-hu" style="width:${bHna}px"></div><span class="bar-num">${Math.round(sample.E_hull_naked)}</span></div>`;
+
+    TARGETS.forEach(t => {
+      const res = calcShots(cfg, t);
+      const td = row.insertCell();
+      td.className = 'val';
+      td.style.color = res.penKill ? '#ffee55' : heatColor(res.total, globalMin, globalMax);
+      td.innerHTML = res.penKill
+        ? `${res.total} ⭐`
+        : `${res.total}`;
+      if (res.penKill) td.classList.add('pen-kill');
+    });
+  });
+});
+
+// ─── Notes ────────────────────────────────────────────────────────────────────
+document.getElementById('notes').innerHTML = `
+  <br>
+  <b>Формула:</b> hullMult (×1.3/×2.5 для лазера) применяется ко ВСЕМУ урону по корпусу — и голому, и через пробивание.<br>
+  При живом щите: пробивание → корпус × hullMult; щит поглощает оставшееся × shieldMult (0.90 для лазера).<br><br>
+  <b>⭐ Убит пробиванием</b> — корпус сгорел через pen-урон раньше, чем щит был снят.<br>
+  <b>Точность макс:</b> пушка 100% (targeting_ai ×5 +2%/ур), лазер 97% (+3.4%/ур, кап 97%).<br>
+  <b>Пробивание макс пушки:</b> оружие ~10% + скилл 15% + перк hull_breaker 15% ≈ 40%.<br>
+  <b>Пробивание макс лазера:</b> оружие ~10% + скилл 15% + перк hull_breaker 15% ≈ 40% (hull_breaker работает на оба типа оружия).<br>
+  <b>Перки пушки Макс:</b> steady_aim ×4 слота 5⭐ → урон ×1.75; hull_breaker учтён в пробивании.<br>
+  <b>Перки лазера Макс:</b> laser_shredder ×4 слота 5⭐ → hullMult 1.30 + 4×0.30 = 2.50.<br>
+  <b>Элит-патроны:</b> пропорциональный бонус к урону ×1.2 (100% элит в обойме).
+`;
+</script>
+</body>
+</html>

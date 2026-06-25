@@ -62,6 +62,8 @@ export default class ArgusController {
     this._pulsarData  = null;
     this._cocoonGfx   = null;
     this._cocoonTimer = 0;
+    this._missileGfx  = null;
+    this._missiles    = null;
 
     this._ch = null;
     try {
@@ -93,22 +95,26 @@ export default class ArgusController {
       player,
     };
 
-    // Auto-insert abilities into action bar slots 0 and 1
+    // Auto-insert abilities into action bar slots 0–2
     const bar = gs.actionBar || (gs.actionBar = Array(10).fill(null));
     bar[0] = 'argus:pulsar';
     bar[1] = 'argus:cocoon';
+    bar[2] = 'argus:missiles';
+    bar[3] = 'argus:phase_strike';
   }
 
   detachFromPlayer() {
-    // Clear argus ability slots from action bar
+    // Clear argus ability slots only if player is no longer on the Argus ship.
+    // On scene.restart() (sector jump) the ship stays the same — keep the abilities.
     const bar = this.scene?.actionBar;
-    if (bar) {
+    if (bar && this.scene?.activeShip !== 'argus') {
       for (let i = 0; i < bar.length; i++) {
         if ((bar[i] + '').startsWith('argus:')) bar[i] = null;
       }
     }
     this._pulsarData?.beams?.destroy(); this._pulsarData = null;
     this._cocoonGfx?.destroy(); this._cocoonGfx = null;
+    this._missileGfx?.destroy(); this._missileGfx = null; this._missiles = null;
 
     if (!this._playerFX) return;
     this._playerFX.white?.destroy();
@@ -156,6 +162,7 @@ export default class ArgusController {
 
     this._updatePulsar(dt);
     this._updateCocoon(dt);
+    this._updateMissiles(dt);
   }
 
   // ── Player abilities ─────────────────────────────────────────────────
@@ -242,7 +249,7 @@ export default class ArgusController {
         for (let i = 0; i < NUM; i++) {
           let diff = ((ma - (pd.angle + i * step)) % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2);
           if (diff > Math.PI) diff = Math.PI * 2 - diff;
-          if (diff < HALF) { mob.takeDamage(300, 0); break; }
+          if (diff < HALF) { mob.takeDamage(900, 0); break; }
         }
       }
     }
@@ -262,6 +269,177 @@ export default class ArgusController {
       this._cocoonGfx.fillStyle(0x00d4ff, alpha * 0.12);
       this._cocoonGfx.fillCircle(p.x, p.y, 94);
     }
+  }
+
+  // ── Homing missiles ─────────────────────────────────────────────────
+
+  _activateMissiles() {
+    const fx = this._playerFX;
+    if (!fx?.player?.alive) return;
+    const p  = fx.player;
+    const gs = this.scene;
+
+    const MISSILE_COUNT  = 8;
+    const MISSILE_DAMAGE = 2000;
+    const DETECT_RADIUS  = 900;
+
+    const nearby = gs.mobs.filter(m => m.alive &&
+      Math.hypot(m.x - p.x, m.y - p.y) < DETECT_RADIUS);
+
+    this._missileGfx?.destroy();
+    this._missileGfx = gs.add.graphics().setDepth(56);
+    this._missiles   = [];
+
+    for (let i = 0; i < MISSILE_COUNT; i++) {
+      const target = nearby.length > 0 ? nearby[i % nearby.length] : null;
+      const baseAngle = target
+        ? Math.atan2(target.y - p.y, target.x - p.x)
+        : (i / MISSILE_COUNT) * Math.PI * 2;
+      this._missiles.push({ x: p.x, y: p.y, angle: baseAngle, speed: 580, target, life: 3.0, hit: false, damage: MISSILE_DAMAGE });
+    }
+
+    const nTargets = Math.min(nearby.length, MISSILE_COUNT);
+    gs.log(`🚀 РАКЕТНЫЙ ЗАЛП — 8 ракет · 2000 урон${nearby.length === 0 ? ' (нет целей)' : ` · ${nTargets} цел.`}`);
+  }
+
+  _updateMissiles(dt) {
+    if (!this._missiles) return;
+    const gs = this.scene;
+
+    let anyAlive = false;
+    this._missileGfx.clear();
+
+    for (const m of this._missiles) {
+      if (m.hit || m.life <= 0) continue;
+      anyAlive = true;
+      m.life -= dt;
+
+      // Retarget if current target died
+      if (m.target && !m.target.alive) {
+        m.target = gs.mobs.find(mob => mob.alive) || null;
+      }
+
+      // Steer toward target
+      if (m.target?.alive) {
+        const desired = Math.atan2(m.target.y - m.y, m.target.x - m.x);
+        let diff = desired - m.angle;
+        // normalise to [-π, π]
+        diff = ((diff + Math.PI) % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2) - Math.PI;
+        const turn = Math.min(Math.abs(diff), 4.5 * dt);
+        m.angle += Math.sign(diff) * turn;
+      }
+
+      m.x += Math.cos(m.angle) * m.speed * dt;
+      m.y += Math.sin(m.angle) * m.speed * dt;
+
+      // Hit check
+      if (m.target?.alive) {
+        const dist = Math.hypot(m.target.x - m.x, m.target.y - m.y);
+        if (dist < 45) {
+          m.target.takeDamage(m.damage, 0);
+          m.hit = true;
+          gs.explosion?.(m.x, m.y, 0.4);
+          continue;
+        }
+      }
+
+      // Draw missile: body + nose + exhaust trail
+      const ca = Math.cos(m.angle), sa = Math.sin(m.angle);
+      const nx = -sa, ny = ca; // perpendicular (normal)
+
+      // Exhaust trail — 3 fading segments behind
+      this._missileGfx.lineStyle(6, 0xff4400, 0.35);
+      this._missileGfx.lineBetween(m.x - ca * 22, m.y - sa * 22, m.x - ca * 40, m.y - sa * 40);
+      this._missileGfx.lineStyle(4, 0xff8800, 0.55);
+      this._missileGfx.lineBetween(m.x - ca * 10, m.y - sa * 10, m.x - ca * 24, m.y - sa * 24);
+      this._missileGfx.lineStyle(3, 0xffcc44, 0.8);
+      this._missileGfx.lineBetween(m.x, m.y - sa * 2, m.x - ca * 12, m.y - sa * 12);
+
+      // Body — tapered rectangle (4 vertices)
+      const bL = 20, bW = 5; // body length, half-width
+      const p0x = m.x + ca * bL + nx * bW,  p0y = m.y + sa * bL + ny * bW;
+      const p1x = m.x + ca * bL - nx * bW,  p1y = m.y + sa * bL - ny * bW;
+      const p2x = m.x - ca * 2  - nx * bW,  p2y = m.y - sa * 2  - ny * bW;
+      const p3x = m.x - ca * 2  + nx * bW,  p3y = m.y - sa * 2  + ny * bW;
+      this._missileGfx.fillStyle(0xffcc44, 1);
+      this._missileGfx.fillPoints([
+        { x: p0x, y: p0y }, { x: p1x, y: p1y },
+        { x: p2x, y: p2y }, { x: p3x, y: p3y },
+      ], true);
+
+      // Nose cone — triangle
+      const nTip  = bL + 10;
+      this._missileGfx.fillStyle(0xffffff, 0.95);
+      this._missileGfx.fillTriangle(
+        m.x + ca * nTip,          m.y + sa * nTip,
+        m.x + ca * bL + nx * bW,  m.y + sa * bL + ny * bW,
+        m.x + ca * bL - nx * bW,  m.y + sa * bL - ny * bW,
+      );
+    }
+
+    if (!anyAlive) {
+      this._missileGfx.destroy();
+      this._missileGfx = null;
+      this._missiles   = null;
+    }
+  }
+
+  _activatePhaseStrike() {
+    const fx = this._playerFX;
+    if (!fx?.player?.alive) return;
+    const p  = fx.player;
+    const gs = this.scene;
+
+    // Find target: current target or nearest mob
+    const target = (gs.target?.alive ? gs.target : null)
+      || gs.mobs.filter(m => m.alive).sort((a, b) =>
+          Math.hypot(a.x - p.x, a.y - p.y) - Math.hypot(b.x - p.x, b.y - p.y))[0];
+
+    if (!target) { gs.log('🌀 Фазовый удар — нет целей'); return; }
+
+    // Disrupt mob aim for 3 seconds
+    gs.mobAimDisrupted = true;
+    gs.time.delayedCall(3000, () => { gs.mobAimDisrupted = false; });
+
+    gs.log('🌀 ФАЗОВЫЙ УДАР — прицел врагов сбит на 3с');
+
+    // Destination: 280px past the target along the approach vector (= behind the target)
+    const approachAngle = Math.atan2(target.y - p.y, target.x - p.x);
+    const destX = Math.max(120, Math.min(gs.worldWidth  - 120, target.x + Math.cos(approachAngle) * 280));
+    const destY = Math.max(120, Math.min(gs.worldHeight - 120, target.y + Math.sin(approachAngle) * 280));
+
+    // Phase-out: all FX layers vanish
+    const layers = [p.sprite, this._playerFX?.white, this._playerFX?.violet, this._playerFX?.blue].filter(Boolean);
+    layers.forEach(l => gs.tweens.add({ targets: l, alpha: 0, duration: 80 }));
+
+    gs.time.delayedCall(100, () => {
+      if (!p.alive) return;
+
+      // Camera pans to destination (280ms), then we teleport and resume follow
+      const cam = gs.cameras.main;
+      cam.stopFollow();
+      cam.pan(destX, destY, 280, 'Quad.easeInOut');
+
+      gs.time.delayedCall(300, () => {
+        if (!p.alive) { cam.startFollow(p.sprite, false, 0.15, 0.15); return; }
+
+        // Teleport player to destination
+        p.sprite.setPosition(destX, destY);
+        if (p.sprite.body) p.sprite.body.reset(destX, destY);
+
+        // Rotate nose to face the target immediately
+        const faceAngle = Math.atan2(target.y - destY, target.x - destX);
+        p.facing = faceAngle;
+        p.sprite.rotation = faceAngle + (p.ship?.artAngleOffset ?? Math.PI / 2);
+
+        // Phase-in: layers reappear
+        const restoreAlphas = [1, 0.15, 0.25, 0.35];
+        layers.forEach((l, i) => gs.tweens.add({ targets: l, alpha: restoreAlphas[i] ?? 1, duration: 120 }));
+
+        // Resume camera follow
+        cam.startFollow(p.sprite, false, 0.15, 0.15);
+      });
+    });
   }
 
   _onMsg(msg) {
@@ -301,6 +479,14 @@ export default class ArgusController {
     this._berserkApplied = false;
 
     this._phaseInvincible = false;
+
+    // Mob ability cooldowns (seconds until next use; offset so they don't fire simultaneously)
+    this._mobPulsarCd    = 20;
+    this._mobMissileCd   = 35;
+    this._mobPulsarData  = null;
+    this._mobMissileData = null;
+    this._mobMissileGfx  = null;
+
     this._setupQuantumFX();
 
     // Wrap takeDamage: quantum invincibility + damage tracking + white flash
@@ -324,6 +510,25 @@ export default class ArgusController {
 
     gs.log('⚠ АРГУС вышел на орбиту — уровень ' + level);
     this._logAudit('ARGUS_SPAWN', { level, sector: galaxy.current });
+    this._broadcast();
+  }
+
+  _despawn() {
+    if (!this.mob) return;
+    this._removeMob();
+    this.scene.log('АРГУС отступил.');
+    this._logAudit('ARGUS_DESPAWN', {});
+    this._broadcast();
+  }
+
+  _heal(msg) {
+    const m = this.mob;
+    if (!m?.alive) return;
+    const pct = Math.min(1, Math.max(0, msg.pct ?? HEAL_PCT));
+    m.hull   = Math.min(m.maxHull,   m.hull   + m.maxHull   * pct);
+    m.shield = Math.min(m.maxShield, m.shield + m.maxShield * pct);
+    this.scene.log(`💚 АРГУС восстановил ${Math.round(pct * 100)}% HP и щита.`);
+    this._logAudit('ARGUS_HEAL', { pct });
     this._broadcast();
   }
 
@@ -433,6 +638,131 @@ export default class ArgusController {
     this.scene.log('⚡ АРГУС: квантовый берсерк — фаза 2');
   }
 
+  // ── Mob active abilities (pulsar + missiles, 60s CD each) ───────────
+
+  _updateMobAbilities(dt) {
+    const m  = this.mob;
+    const gs = this.scene;
+    const p  = gs.player;
+    if (!m?.alive || !p?.alive) return;
+
+    // ── Mob pulsar cooldown ──
+    this._mobPulsarCd -= dt;
+    if (this._mobPulsarCd <= 0) {
+      this._mobPulsarCd = 60;
+      this._mobPulsarData?.gfx?.destroy();
+      this._mobPulsarData = { gfx: gs.add.graphics().setDepth(41), elapsed: 0, duration: 4.0, angle: 0, radius: 700, dmgTimer: 0 };
+      gs.log('⚡ АРГУС: квантовый пульсар');
+    }
+
+    // ── Mob pulsar update ──
+    const pd = this._mobPulsarData;
+    if (pd) {
+      pd.elapsed += dt;
+      if (pd.elapsed >= pd.duration) {
+        pd.gfx.destroy(); this._mobPulsarData = null;
+      } else {
+        const speed = 1.5 + (pd.elapsed / pd.duration) * 1.5;
+        pd.angle += speed * dt;
+        const NUM = 8, step = (Math.PI * 2) / NUM, r = pd.radius;
+        pd.gfx.clear();
+        for (let i = 0; i < NUM; i++) {
+          const a = pd.angle + i * step;
+          const ex = m.x + Math.cos(a) * r, ey = m.y + Math.sin(a) * r;
+          pd.gfx.lineStyle(12, 0x00d4ff, 0.22);
+          pd.gfx.lineBetween(m.x, m.y, ex, ey);
+          pd.gfx.lineStyle(2, 0xe0f7fa, 0.95);
+          pd.gfx.lineBetween(m.x, m.y, ex, ey);
+        }
+        // Damage player if caught in a beam
+        pd.dmgTimer += dt;
+        if (pd.dmgTimer >= 0.1) {
+          pd.dmgTimer -= 0.1;
+          const HALF = 0.055;
+          const dx = p.x - m.x, dy = p.y - m.y;
+          const d2 = dx * dx + dy * dy;
+          if (d2 <= r * r && d2 >= 900) {
+            const ma = Math.atan2(dy, dx);
+            for (let i = 0; i < NUM; i++) {
+              let diff = ((ma - (pd.angle + i * step)) % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2);
+              if (diff > Math.PI) diff = Math.PI * 2 - diff;
+              if (diff < HALF) { p.takeDamage(900, 0, { ignoreMovEvasion: false }); break; }
+            }
+          }
+        }
+      }
+    }
+
+    // ── Mob missiles cooldown ──
+    this._mobMissileCd -= dt;
+    if (this._mobMissileCd <= 0 && !this._mobMissileData) {
+      this._mobMissileCd = 60;
+      this._mobMissileGfx?.destroy();
+      this._mobMissileGfx = gs.add.graphics().setDepth(56);
+      this._mobMissileData = [];
+      for (let i = 0; i < 8; i++) {
+        const spread = (i / 8) * Math.PI * 2;
+        const baseAngle = Math.atan2(p.y - m.y, p.x - m.x) + (Math.random() - 0.5) * 0.4;
+        this._mobMissileData.push({ x: m.x, y: m.y, angle: baseAngle + spread * 0.1, speed: 480, life: 4.0, hit: false });
+      }
+      gs.log('🚀 АРГУС: ракетный залп');
+    }
+
+    // ── Mob missiles update ──
+    const missiles = this._mobMissileData;
+    if (missiles) {
+      let anyAlive = false;
+      this._mobMissileGfx.clear();
+      for (const mis of missiles) {
+        if (mis.hit || mis.life <= 0) continue;
+        anyAlive = true;
+        mis.life -= dt;
+        // Steer toward player
+        if (p.alive) {
+          const desired = Math.atan2(p.y - mis.y, p.x - mis.x);
+          let diff = desired - mis.angle;
+          diff = ((diff + Math.PI) % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2) - Math.PI;
+          mis.angle += Math.sign(diff) * Math.min(Math.abs(diff), 4.0 * dt);
+        }
+        mis.x += Math.cos(mis.angle) * mis.speed * dt;
+        mis.y += Math.sin(mis.angle) * mis.speed * dt;
+        // Hit check
+        if (p.alive && Math.hypot(p.x - mis.x, p.y - mis.y) < 40) {
+          p.takeDamage(2000, 0);
+          mis.hit = true;
+          gs.explosion?.(mis.x, mis.y, 0.4);
+          continue;
+        }
+        // Draw
+        const ca = Math.cos(mis.angle), sa = Math.sin(mis.angle);
+        const nx = -sa, ny = ca;
+        this._mobMissileGfx.lineStyle(6, 0xff4400, 0.35);
+        this._mobMissileGfx.lineBetween(mis.x - ca * 22, mis.y - sa * 22, mis.x - ca * 40, mis.y - sa * 40);
+        this._mobMissileGfx.lineStyle(4, 0xff8800, 0.55);
+        this._mobMissileGfx.lineBetween(mis.x - ca * 10, mis.y - sa * 10, mis.x - ca * 24, mis.y - sa * 24);
+        this._mobMissileGfx.lineStyle(3, 0xffcc44, 0.8);
+        this._mobMissileGfx.lineBetween(mis.x, mis.y, mis.x - ca * 12, mis.y - sa * 12);
+        const bL = 20, bW = 5;
+        this._mobMissileGfx.fillStyle(0xffcc44, 1);
+        this._mobMissileGfx.fillPoints([
+          { x: mis.x + ca * bL + nx * bW, y: mis.y + sa * bL + ny * bW },
+          { x: mis.x + ca * bL - nx * bW, y: mis.y + sa * bL - ny * bW },
+          { x: mis.x - ca * 2  - nx * bW, y: mis.y - sa * 2  - ny * bW },
+          { x: mis.x - ca * 2  + nx * bW, y: mis.y - sa * 2  + ny * bW },
+        ], true);
+        this._mobMissileGfx.fillStyle(0xffffff, 0.95);
+        this._mobMissileGfx.fillTriangle(
+          mis.x + ca * (bL + 10), mis.y + sa * (bL + 10),
+          mis.x + ca * bL + nx * bW, mis.y + sa * bL + ny * bW,
+          mis.x + ca * bL - nx * bW, mis.y + sa * bL - ny * bW,
+        );
+      }
+      if (!anyAlive) {
+        this._mobMissileGfx.destroy(); this._mobMissileGfx = null; this._mobMissileData = null;
+      }
+    }
+  }
+
   _quantumJump() {
     const m  = this.mob;
     const p  = this.scene.player;
@@ -486,6 +816,7 @@ export default class ArgusController {
       this._updateMovement(dt);
       this._updateQuantum(dt);
       this._updateSelfHeal(dt);
+      this._updateMobAbilities(dt);
     }
     this._updatePlayerQuantum(dt);
 
@@ -620,7 +951,13 @@ export default class ArgusController {
 
   // ── Remove mob ───────────────────────────────────────────────────────
 
+  _clearMobAbilityFX() {
+    this._mobPulsarData?.gfx?.destroy(); this._mobPulsarData = null;
+    this._mobMissileGfx?.destroy(); this._mobMissileGfx = null; this._mobMissileData = null;
+  }
+
   _removeMob() {
+    this._clearMobAbilityFX();
     this._destroyQuantumFX();
     const m = this.mob;
     if (!m) return;
@@ -699,6 +1036,7 @@ export default class ArgusController {
   }
 
   destroy() {
+    this._clearMobAbilityFX();
     this.detachFromPlayer();
     this._destroyQuantumFX();
     this._ch?.close();

@@ -366,7 +366,7 @@ export default class GameScene extends Phaser.Scene {
     this._scanPulseTimer   = null;
 
     this.playerName  = this.playerName  || getUsername();
-    this.player.setNameplate(this.playerName, this.pilotRank);
+    this.player.setNameplate(this.playerName, this.pilotRank, this.playerCorp);
     this.miningBases = [];
     this.homeBases   = [];
 
@@ -427,6 +427,8 @@ export default class GameScene extends Phaser.Scene {
     // Argus boss controller — BroadcastChannel listener for admin.html commands
     this.argusCtrl?.destroy();
     this.argusCtrl = new ArgusController(this);
+    // Restore quantum FX and action bar abilities if player is still on Argus ship
+    if (this.activeShip === 'argus') this.argusCtrl.attachToPlayer(this.player);
     this._targetFx = null;
 
     // Admin game-state broadcast (same channel as ArgusController)
@@ -647,7 +649,7 @@ export default class GameScene extends Phaser.Scene {
     const sl = (this.skillLevels?.cargo_expand || 0);
     const drover = this.activeShip === 'drover' ? 4 : 0;
     const prem   = this.premium ? 8 : 0;
-    const base   = 8 + drover + sl * (sl + 1) + prem;
+    const base   = 8 + drover + ([0,3,8,16][sl]||0) + prem;
     return Math.round(base * (1 + (this.player?.cargoBonusMod ?? 0)));
   }
 
@@ -1333,8 +1335,10 @@ export default class GameScene extends Phaser.Scene {
   _skillCooldownMs(key) {
     const CONS_CD = { repair_pack: 90000, speed_boost: 120000, scanner_pulse: 180000, emergency_warp: 600000 };
     if (key.startsWith('use:')) return CONS_CD[key.slice(4)] ?? 60000;
-    if (key === 'argus:pulsar') return 45000;
-    if (key === 'argus:cocoon') return 60000;
+    if (key === 'argus:pulsar')       return 25000;
+    if (key === 'argus:cocoon')       return 60000;
+    if (key === 'argus:missiles')     return 35000;
+    if (key === 'argus:phase_strike') return 50000;
     if (key.startsWith('ship:')) {
       const mod = this.player?.activeCooldownMod ?? 1;
       const SHIP_CD = {
@@ -1371,8 +1375,10 @@ export default class GameScene extends Phaser.Scene {
       const cdEnd = this.skillCooldowns[key] || 0;
       if (now < cdEnd) { this.log(`⏳ КД: ${Math.ceil((cdEnd - now) / 1000)}с`); return; }
       this.skillCooldowns[key] = now + this._skillCooldownMs(key);
-      if (key === 'argus:pulsar') this.argusCtrl?._activatePulsar();
-      else if (key === 'argus:cocoon') this.argusCtrl?._activateCocoon();
+      if (key === 'argus:pulsar')              this.argusCtrl?._activatePulsar();
+      else if (key === 'argus:cocoon')         this.argusCtrl?._activateCocoon();
+      else if (key === 'argus:missiles')       this.argusCtrl?._activateMissiles();
+      else if (key === 'argus:phase_strike')   this.argusCtrl?._activatePhaseStrike();
       return;
     }
     if (key.startsWith('ship:')) {
@@ -2612,7 +2618,8 @@ export default class GameScene extends Phaser.Scene {
     this.mobs.forEach((m) => {
       const tgt = (m.escortTarget?.alive) ? m.escortTarget : this.player;
       const victim = (m.escortTarget?.alive) ? this.escortTransport : this.player;
-      m.update(dt, tgt, tgt === this.player && inSafe, (mob, tx, ty) => this.fireMobWeapon(mob, tx, ty, victim));
+      const _fireCb = this.mobAimDisrupted ? () => {} : (mob, tx, ty) => this.fireMobWeapon(mob, tx, ty, victim);
+      m.update(dt, tgt, tgt === this.player && inSafe, _fireCb);
       if (m.requestAoe) { this.spawnBossAoe(m, this.player.x, this.player.y); m.requestAoe = false; }
     });
     this.updateAoe();

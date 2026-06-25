@@ -30,8 +30,10 @@ const AB_TIPS = {
   'ship:aegis_dome':           { name: 'Щитовой купол',         desc: 'Непробиваемый щит на 5с\nКД 90с' },
   'ship:phantom_cloak':        { name: 'Маскировка',            desc: 'Стелс 10с, +30% скорость\nКД 3 мин' },
   'ship:wisp_recall':          { name: 'Телепорт на базу',      desc: 'Мгновенный возврат на базу\nКД 3 мин' },
-  'argus:pulsar':              { name: 'Квантовый пульсар',     desc: '8 лучей · 300 урон/касание · 4с\nКД 45с' },
+  'argus:pulsar':              { name: 'Квантовый пульсар',     desc: '8 лучей · 900 урон/касание · 4с\nКД 25с' },
   'argus:cocoon':              { name: 'Фазовый кокон',         desc: '+30% HP и щит + неуязвимость 2с\nВо время кокона пульсар урон не наносит\nКД 60с' },
+  'argus:missiles':            { name: 'Ракетный залп',         desc: '8 самонаводящихся ракет · 2000 урон/ракета\nЦели: все враги вокруг\nКД 35с' },
+  'argus:phase_strike':        { name: 'Фазовый удар',          desc: 'Прицел врагов сбит на 3с\nТелепорт за спину цели · камера следует\nКД 50с' },
 };
 
 // Оверлей-сцена HUD. Читает статы из GameScene, слушает события лога.
@@ -354,6 +356,8 @@ export default class HudScene extends Phaser.Scene {
       'ship:wisp_recall':          0x66bb6a,
       'argus:pulsar':              0x00d4ff,
       'argus:cocoon':              0xe0f7fa,
+      'argus:missiles':            0xff8c00,
+      'argus:phase_strike':        0xce93d8,
     };
     this._abSlots.forEach((slot, i) => {
       const key = (gs.actionBar || [])[i] || null;
@@ -420,6 +424,8 @@ export default class HudScene extends Phaser.Scene {
       'ship:wisp_recall':           { label: 'БЗ', bg: '#081408', fg: '#66bb6a', border: '#66bb6a' },
       'argus:pulsar':               { label: 'КП', bg: '#00141e', fg: '#00d4ff', border: '#00d4ff' },
       'argus:cocoon':               { label: 'ФК', bg: '#0a1218', fg: '#e0f7fa', border: '#e0f7fa' },
+      'argus:missiles':             { label: 'РЗ', bg: '#1a0c00', fg: '#ff8c00', border: '#ff8c00' },
+      'argus:phase_strike':         { label: 'ФУ', bg: '#130a1a', fg: '#ce93d8', border: '#ce93d8' },
     };
     const info = INFO[key] || { label: '??', bg: '#0a0a14', fg: '#7e9398', border: '#7e9398' };
     const sz = Math.round(104 * DPR); // 2× physical slot size

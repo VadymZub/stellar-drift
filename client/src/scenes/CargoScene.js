@@ -17,9 +17,9 @@ export default class CargoScene extends Phaser.Scene {
     const gs = this.gs; const sl = gs.skillLevels?.cargo_expand || 0;
     const drover = gs.activeShip === 'drover' ? 4 : 0;
     const prem   = gs.premium ? 8 : 0;
-    return 8 + drover + sl * (sl + 1) + prem;
+    return 8 + drover + ([0,3,8,16][sl]||0) + prem;
   }
-  _whMax() { const gs = this.gs; const sl = gs.skillLevels?.cargo_expand || 0; return 8 + sl * (sl + 1) + (gs.premium ? 8 : 0); }
+  _whMax() { const gs = this.gs; const sl = gs.skillLevels?.cargo_expand || 0; return 8 + ([0,3,8,16][sl]||0) + (gs.premium ? 8 : 0); }
 
   _addConsumableToBar(type) {
     const gs = this.gs;

@@ -482,6 +482,6 @@ export default class ShopScene extends Phaser.Scene {
     const sl = gs.skillLevels?.cargo_expand || 0;
     const drover = gs.activeShip === 'drover' ? 2 : 0;
     const prem = gs.premium ? (gs.activeShip === 'drover' ? 6 : 8) : 0;
-    return 8 + drover + sl * (sl + 1) + prem;
+    return 8 + drover + ([0,3,8,16][sl]||0) + prem;
   }
 }
