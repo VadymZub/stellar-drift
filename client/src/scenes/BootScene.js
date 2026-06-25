@@ -37,51 +37,6 @@ export const NPC_PORTRAITS = [
   ['npc_hazard',   'Хазард.png'],
 ];
 
-// ── Armor perk placeholder drawers ────────────────────────────────────────────
-// g = Phaser.GameObjects.Graphics (make.graphics), cx/cy = center, col = glow color
-function _placeholderArmorPlating(g, cx, cy, col) {
-  // Three stacked horizontal bars — armor plates
-  const w = 44, h = 10, gap = 7;
-  for (let i = 0; i < 3; i++) {
-    const y = cy - (h + gap) + i * (h + gap);
-    g.fillStyle(col, 0.85 - i * 0.15);
-    g.fillRoundedRect(cx - w / 2, y, w, h, 3);
-  }
-}
-function _placeholderNimble(g, cx, cy, col) {
-  // Three curved arcs sweeping right — motion / evasion
-  g.lineStyle(3, col, 0.9);
-  for (let i = 0; i < 3; i++) {
-    const r = 18 + i * 10;
-    g.beginPath();
-    g.arc(cx - 12, cy, r, -0.8, 0.8, false);
-    g.strokePath();
-  }
-  // Arrow tip
-  g.fillStyle(col, 1); g.fillTriangle(cx + 22, cy, cx + 10, cy - 8, cx + 10, cy + 8);
-}
-function _placeholderKineticAbsorb(g, cx, cy, col) {
-  // Incoming arrow dissolving into concentric rings
-  g.lineStyle(2, col, 0.9); g.strokeCircle(cx, cy, 22);
-  g.lineStyle(1, col, 0.5); g.strokeCircle(cx, cy, 32);
-  g.lineStyle(1, col, 0.25); g.strokeCircle(cx, cy, 40);
-  // Arrow pointing at center (left→right), broken before it arrives
-  g.fillStyle(col, 1);
-  g.fillTriangle(cx - 38, cy, cx - 28, cy - 7, cx - 28, cy + 7);
-  g.lineStyle(3, col, 0.9);
-  g.beginPath(); g.moveTo(cx - 28, cy); g.lineTo(cx - 22, cy); g.strokePath();
-}
-function _placeholderBulwark(g, cx, cy, col) {
-  // Solid shield silhouette
-  g.fillStyle(col, 0.85);
-  g.fillTriangle(cx, cy + 30, cx - 26, cy - 10, cx + 26, cy - 10);
-  g.fillRect(cx - 26, cy - 22, 52, 14);
-  g.fillRoundedRect(cx - 26, cy - 22, 52, 14, 4);
-  // Bright cross on shield
-  g.fillStyle(0x080e1a, 0.9);
-  g.fillRect(cx - 3, cy - 16, 6, 28);
-  g.fillRect(cx - 14, cy - 5, 28, 6);
-}
 
 export default class BootScene extends Phaser.Scene {
   constructor() { super('BootScene'); }
@@ -244,29 +199,6 @@ export default class BootScene extends Phaser.Scene {
 
     // Module icons, perk images — deferred to GameScene._bgPreloadDeferred()
 
-    // Placeholder badges for armor perks (images not yet added to assets/perks/).
-    // Each key that failed to load gets a procedural colored badge so the UI shows
-    // something meaningful. Replace by dropping the real PNG into assets/perks/.
-    const RARITY_GLOW = { common: 0x66bb6a, uncommon: 0x4dd0e1, rare: 0xffb74d, jackpot: 0xff7043 };
-    const ARMOR_PLACEHOLDERS = [
-      { key: 'perk_armor_plating', rarity: 'common',   draw: _placeholderArmorPlating },
-      { key: 'perk_nimble',        rarity: 'uncommon', draw: _placeholderNimble        },
-      { key: 'perk_kinetic_absorb',rarity: 'rare',     draw: _placeholderKineticAbsorb },
-      { key: 'perk_bulwark',       rarity: 'jackpot',  draw: _placeholderBulwark       },
-    ];
-    for (const { key, rarity, draw } of ARMOR_PLACEHOLDERS) {
-      if (this.textures.exists(key)) continue; // real image loaded — skip placeholder
-      const S = 128, cx = S / 2, cy = S / 2, g = this.make.graphics({ x: 0, y: 0 }, false);
-      const col = RARITY_GLOW[rarity];
-      // dark badge background
-      g.fillStyle(0x080e1a, 1); g.fillCircle(cx, cy, 60);
-      // glow ring (3 layers)
-      for (let i = 3; i >= 1; i--) { g.lineStyle(i * 2, col, 0.15 * i); g.strokeCircle(cx, cy, 56); }
-      g.lineStyle(2, col, 0.9); g.strokeCircle(cx, cy, 56);
-      draw(g, cx, cy, col);
-      g.generateTexture(key, S, S);
-      g.destroy();
-    }
 
     // Skill icons: 128×128 displayed at 48×48 — pre-process to 96px (2× display).
     for (const k of ['sharpshooter','heavy_caliber','penetrating_rounds','overcharge_shot',
