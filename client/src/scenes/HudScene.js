@@ -174,14 +174,21 @@ export default class HudScene extends Phaser.Scene {
     this._buildChatPanel();
 
     // Social windows (group + friends)
-    this._groupBossHpRatio = 0;
-    this._groupWinVisible  = false;
+    this._groupBossHpRatio  = 0;
+    this._groupWinVisible   = false;
     this._friendsWinVisible = false;
-    this._friendsList      = [];
-    this._lastSectorSent   = null;
+    this._friendsList       = [];
+    this._lastSectorSent    = null;
+    this._grpWinCollapsed   = _s.grpWinCollapsed  ?? false;
+    this._frWinCollapsed    = _s.frWinCollapsed   ?? false;
+    this._grpWinAlphaIdx    = _s.grpWinAlphaIdx   ?? 0;
+    this._frWinAlphaIdx     = _s.frWinAlphaIdx    ?? 0;
+    this._grpWinDrag        = { active: false, ox: 0, oy: 0 };
+    this._frWinDrag         = { active: false, ox: 0, oy: 0 };
     this._buildHudSocialButtons();
     this._buildGroupWin();
     this._buildFriendsWin();
+    this._initSocialWinDrag();
 
     // F key → toggle friends window (работает и на базе, и в космосе)
     this.input.keyboard?.on('keydown-F', () => {
@@ -1667,7 +1674,9 @@ export default class HudScene extends Phaser.Scene {
   // ── Окно ГРУППА ──────────────────────────────────────────────────────────
 
   _buildGroupWin() {
-    this._grpWin = this.add.container(8, 118).setDepth(102);
+    const _ws = loadSettings();
+    const x = _ws.grpWinX ?? 8, y = _ws.grpWinY ?? 118;
+    this._grpWin = this.add.container(x, y).setDepth(102);
     this._rebuildGroupWin();
   }
 
@@ -1676,40 +1685,86 @@ export default class HudScene extends Phaser.Scene {
     if (!this._groupWinVisible) { this._grpWin?.setVisible(false); return; }
     this._grpWin.setVisible(true);
 
-    const grp = this.groupSystem;
-    const PW = 224, PAD = 8;
-    const F = (sz, c) => ({ fontFamily: 'Inter, sans-serif',    fontSize: sz, color: c, resolution: UI_RES });
-    const O = (sz, c) => ({ fontFamily: 'Orbitron, sans-serif', fontSize: sz, color: c, resolution: UI_RES });
+    const grp       = this.groupSystem;
+    const collapsed = this._grpWinCollapsed;
+    const BG_ALPHA  = [0.93, 0.55, 0.22][this._grpWinAlphaIdx ?? 0];
+    const PW = 224, PAD = 8, HDR = 28;
+    const F  = (sz, c) => ({ fontFamily: 'Inter, sans-serif',    fontSize: sz, color: c, resolution: UI_RES });
+    const O  = (sz, c) => ({ fontFamily: 'Orbitron, sans-serif', fontSize: sz, color: c, resolution: UI_RES });
     const add = o => { this._grpWin.add(o); return o; };
 
+    // ── Вычисляем полную высоту ──
+    const members     = grp?.members ?? [];
+    const showBossBar = !collapsed && this._groupBossHpRatio > 0 && this._groupBossHpRatio < 1;
+    let contentH = 0;
+    if (!collapsed) {
+      if (!grp?.inGroup) contentH = 58;
+      else contentH = 6 + members.length * 20 + (grp.canAddMembers() ? 32 : 0) + (showBossBar ? 30 : 0) + PAD;
+    }
+    const totalH = HDR + contentH;
+
+    // ── Фон ──
+    add(this.add.rectangle(0, 0, PW, totalH, 0x020a14, BG_ALPHA).setOrigin(0).setStrokeStyle(1, 0x1a4060, 0.7));
+
+    // ── Drag handle (левая часть заголовка) ──
+    const dragHandle = add(this.add.rectangle(0, 0, PW - 68, HDR, 0x000000, 0.001)
+      .setOrigin(0).setInteractive({ useHandCursor: true, cursor: 'grab' }));
+    dragHandle.on('pointerdown', (p) => {
+      this._grpWinDrag.active = true;
+      this._grpWinDrag.ox = p.x - this._grpWin.x;
+      this._grpWinDrag.oy = p.y - this._grpWin.y;
+    });
+
+    // ── Заголовок ──
+    const titleStr = grp?.inGroup ? `ГРУППА  ${members.length}/8` : 'ГРУППА';
+    add(this.add.text(PAD, 9, titleStr, O('10px', '#4dd0e1')));
+
+    // ── Кнопки заголовка (α | − | ✕) ──
+    const alphaColors = ['#4dd0e1', '#2a7080', '#154050'];
+    const alphaBtn = add(this.add.text(PW - 52, 9, 'α', F('11px', alphaColors[this._grpWinAlphaIdx ?? 0]))
+      .setInteractive({ useHandCursor: true }));
+    alphaBtn.on('pointerdown', () => {
+      this._grpWinAlphaIdx = ((this._grpWinAlphaIdx ?? 0) + 1) % 3;
+      const s = loadSettings(); s.grpWinAlphaIdx = this._grpWinAlphaIdx; saveSettings(s);
+      this._rebuildGroupWin();
+    });
+
+    const colBtn = add(this.add.text(PW - 36, 9, collapsed ? '+' : '−', F('13px', '#4dd0e1'))
+      .setInteractive({ useHandCursor: true }));
+    colBtn.on('pointerdown', () => {
+      this._grpWinCollapsed = !this._grpWinCollapsed;
+      const s = loadSettings(); s.grpWinCollapsed = this._grpWinCollapsed; saveSettings(s);
+      this._rebuildGroupWin();
+    });
+
+    const closeBtn = add(this.add.text(PW - 16, 9, '✕', F('11px', '#ef5350'))
+      .setInteractive({ useHandCursor: true }));
+    closeBtn.on('pointerdown', () => this._toggleGroupWin());
+
+    if (collapsed) return;
+
+    // ── Разделитель ──
+    add(this.add.rectangle(0, HDR, PW, 1, 0x1a4060, 0.4).setOrigin(0));
+    let y = HDR + 6;
+
     if (!grp?.inGroup) {
-      // ── Нет группы: предложить создать ──
-      add(this.add.rectangle(0, 0, PW, 82, 0x020a14, 0.93).setOrigin(0).setStrokeStyle(1, 0x1a4060, 0.7));
-      add(this.add.text(PAD, 8, 'ГРУППА', O('10px', '#4dd0e1')));
-      add(this.add.rectangle(0, 26, PW, 1, 0x1a4060, 0.4).setOrigin(0));
-      add(this.add.text(PAD, 32, 'Создай группу и зови друзей!', F('10px', '#4a6880')));
-      const createBtn = add(this.add.rectangle(PAD, 50, PW - PAD * 2, 24, 0x0a2030, 1)
+      // Нет группы
+      add(this.add.text(PAD, y, 'Создай группу и зови друзей!', F('10px', '#4a6880')));
+      y += 18;
+      const createBtn = add(this.add.rectangle(PAD, y, PW - PAD * 2, 24, 0x0a2030, 1)
         .setOrigin(0).setStrokeStyle(1, 0x1a5060, 0.8).setInteractive({ useHandCursor: true }));
-      add(this.add.text(PW / 2, 62, '+ Создать группу', F('11px', '#4dd0e1')).setOrigin(0.5));
+      add(this.add.text(PW / 2, y + 12, '+ Создать группу', F('11px', '#4dd0e1')).setOrigin(0.5));
       createBtn.on('pointerover', () => createBtn.setFillStyle(0x0d3a4a));
       createBtn.on('pointerout',  () => createBtn.setFillStyle(0x0a2030));
       createBtn.on('pointerdown', () => {
         this.groupSystem?.create(galaxy.current, false);
-        this.pushChatMessage('general', 'System', '[Группа] Группа создана. Пригласи друзей из окна Друзья!', {});
+        this.pushChatMessage('general', 'System', '[Группа] Группа создана. Пригласи друзей!', {});
       });
       return;
     }
 
-    // ── В группе ──
-    const members = grp.members;
-    const rowH    = 20;
-    const showBossBar = this._groupBossHpRatio > 0 && this._groupBossHpRatio < 1;
-    const H = 32 + members.length * rowH + (grp.canAddMembers() ? 32 : 0) + (showBossBar ? 30 : 0) + PAD;
-
-    add(this.add.rectangle(0, 0, PW, H, 0x020a14, 0.93).setOrigin(0).setStrokeStyle(1, 0x1a4060, 0.7));
-    add(this.add.text(PAD, 8, `ГРУППА  ${members.length}/8`, O('10px', '#4dd0e1')));
-
-    const leaveBtn = add(this.add.text(PW - PAD, 8, '✕ выйти', F('10px', '#ef5350'))
+    // Кнопка «выйти» в теле окна (не в заголовке)
+    const leaveBtn = add(this.add.text(PW - PAD, y, '← выйти', F('10px', '#ef5350'))
       .setOrigin(1, 0).setInteractive({ useHandCursor: true }));
     leaveBtn.on('pointerover', () => leaveBtn.setAlpha(0.7));
     leaveBtn.on('pointerout',  () => leaveBtn.setAlpha(1));
@@ -1721,39 +1776,34 @@ export default class HudScene extends Phaser.Scene {
       this._updateSocialBtnStyles();
     });
 
-    add(this.add.rectangle(0, 26, PW, 1, 0x1a4060, 0.4).setOrigin(0));
-
     const myName = this.gs?.playerName || '';
     members.forEach((name, i) => {
-      const isMe     = name === myName;
-      const isLeader = i === 0;
-      const dot = isMe ? '●' : '○';
-      const col = isMe ? '#80cbc4' : '#9fb3b8';
-      add(this.add.text(PAD, 30 + i * rowH, `${dot} ${name}${isLeader ? '  ♛' : ''}`, F('11px', col)));
+      const isMe = name === myName, isLeader = i === 0;
+      add(this.add.text(PAD, y + i * 20, `${isMe ? '●' : '○'} ${name}${isLeader ? '  ♛' : ''}`,
+        F('11px', isMe ? '#80cbc4' : '#9fb3b8')));
     });
-
-    let nextY = 30 + members.length * rowH + 4;
+    y += members.length * 20 + 4;
 
     if (grp.canAddMembers()) {
-      const invBtn = add(this.add.rectangle(PAD, nextY, PW - PAD * 2, 24, 0x0a2030, 1)
+      const invBtn = add(this.add.rectangle(PAD, y, PW - PAD * 2, 24, 0x0a2030, 1)
         .setOrigin(0).setStrokeStyle(1, 0x1a4060, 0.5).setInteractive({ useHandCursor: true }));
-      add(this.add.text(PW / 2, nextY + 12, '+ Пригласить из друзей', F('10px', '#4dd0e1')).setOrigin(0.5));
+      add(this.add.text(PW / 2, y + 12, '+ Пригласить из друзей', F('10px', '#4dd0e1')).setOrigin(0.5));
       invBtn.on('pointerover', () => invBtn.setFillStyle(0x0d2e40));
       invBtn.on('pointerout',  () => invBtn.setFillStyle(0x0a2030));
       invBtn.on('pointerdown', () => {
         if (!this._friendsWinVisible) { this._friendsWinVisible = true; this._rebuildFriendsWin(); this._updateSocialBtnStyles(); }
       });
-      nextY += 32;
+      y += 32;
     }
 
     if (showBossBar) {
-      add(this.add.text(PAD, nextY + 2, 'БОСС', O('8px', '#ef5350')));
+      add(this.add.text(PAD, y + 2, 'БОСС', O('8px', '#ef5350')));
       const BW = PW - PAD * 2, BH = 7;
-      add(this.add.rectangle(PAD, nextY + 14, BW, BH, 0x1a0000, 1).setOrigin(0));
+      add(this.add.rectangle(PAD, y + 14, BW, BH, 0x1a0000, 1).setOrigin(0));
       const ratio = Math.max(0, Math.min(1, this._groupBossHpRatio));
       const bCol  = ratio > 0.5 ? 0xef5350 : ratio > 0.25 ? 0xff7043 : 0xffa726;
-      add(this.add.rectangle(PAD, nextY + 14, Math.round(BW * ratio), BH, bCol, 1).setOrigin(0));
-      add(this.add.text(PAD + BW, nextY + 12, `${Math.round(ratio * 100)}%`, F('9px', '#ef9a9a')).setOrigin(1, 0));
+      add(this.add.rectangle(PAD, y + 14, Math.round(BW * ratio), BH, bCol, 1).setOrigin(0));
+      add(this.add.text(PAD + BW, y + 12, `${Math.round(ratio * 100)}%`, F('9px', '#ef9a9a')).setOrigin(1, 0));
     }
   }
 
@@ -1761,7 +1811,9 @@ export default class HudScene extends Phaser.Scene {
 
   _buildFriendsWin() {
     const W = this.scale.width;
-    this._frWin = this.add.container(W - 292, 40).setDepth(103);
+    const _ws = loadSettings();
+    const x = _ws.frWinX ?? (W - 292), y = _ws.frWinY ?? 40;
+    this._frWin = this.add.container(x, y).setDepth(103);
     this._rebuildFriendsWin();
   }
 
@@ -1770,33 +1822,70 @@ export default class HudScene extends Phaser.Scene {
     if (!this._friendsWinVisible) { this._frWin?.setVisible(false); return; }
     this._frWin.setVisible(true);
 
-    const PW = 284, PAD = 8;
-    const F = (sz, c) => ({ fontFamily: 'Inter, sans-serif',    fontSize: sz, color: c, resolution: UI_RES });
-    const O = (sz, c) => ({ fontFamily: 'Orbitron, sans-serif', fontSize: sz, color: c, resolution: UI_RES });
+    const collapsed = this._frWinCollapsed;
+    const BG_ALPHA  = [0.93, 0.55, 0.22][this._frWinAlphaIdx ?? 0];
+    const PW = 284, PAD = 8, HDR = 28;
+    const F  = (sz, c) => ({ fontFamily: 'Inter, sans-serif',    fontSize: sz, color: c, resolution: UI_RES });
+    const O  = (sz, c) => ({ fontFamily: 'Orbitron, sans-serif', fontSize: sz, color: c, resolution: UI_RES });
     const add = o => { this._frWin.add(o); return o; };
 
-    const friends  = this._friendsList || [];
-    const pending  = friends.filter(f => f.status === 'pending' && f.dir === 'in');
-    const accepted = friends.filter(f => f.status === 'accepted');
-    const online   = accepted.filter(f =>  f.online).sort((a, b) => a.name.localeCompare(b.name));
-    const offline  = accepted.filter(f => !f.online).sort((a, b) => a.name.localeCompare(b.name));
+    const friends   = this._friendsList || [];
+    const pending   = friends.filter(f => f.status === 'pending' && f.dir === 'in');
+    const accepted  = friends.filter(f => f.status === 'accepted');
+    const online    = accepted.filter(f =>  f.online).sort((a, b) => a.name.localeCompare(b.name));
+    const offline   = accepted.filter(f => !f.online).sort((a, b) => a.name.localeCompare(b.name));
     const onlineCnt = online.length;
 
-    // Вычисляем высоту заранее
-    const pendingH  = pending.length > 0 ? 22 + pending.length * 24 + 1 : 0;
-    const onlineH   = online.length  * 24;
-    const offlineH  = offline.length * 20;
-    const totalH    = 30 + pendingH + onlineH + offlineH + 34;
+    // ── Полная высота ──
+    let contentH = 0;
+    if (!collapsed) {
+      const pendingH = pending.length > 0 ? 22 + pending.length * 24 + 1 : 0;
+      contentH = 1 + pendingH + online.length * 24 + offline.length * 20 + 1 + 34;
+    }
+    const totalH = HDR + contentH;
 
-    // Фон
-    add(this.add.rectangle(0, 0, PW, totalH, 0x020a14, 0.93).setOrigin(0).setStrokeStyle(1, 0x1a4060, 0.8));
+    // ── Фон ──
+    add(this.add.rectangle(0, 0, PW, totalH, 0x020a14, BG_ALPHA).setOrigin(0).setStrokeStyle(1, 0x1a4060, 0.8));
 
-    // Заголовок
-    add(this.add.text(PAD, 8, `ДРУЗЬЯ${onlineCnt > 0 ? `   •   ${onlineCnt} онлайн` : ''}`, O('10px', '#4dd0e1')));
-    const closeBtn = add(this.add.text(PW - PAD, 8, '✕', F('12px', '#ef5350')).setOrigin(1, 0).setInteractive({ useHandCursor: true }));
+    // ── Drag handle ──
+    const dragHandle = add(this.add.rectangle(0, 0, PW - 68, HDR, 0x000000, 0.001)
+      .setOrigin(0).setInteractive({ useHandCursor: true, cursor: 'grab' }));
+    dragHandle.on('pointerdown', (p) => {
+      this._frWinDrag.active = true;
+      this._frWinDrag.ox = p.x - this._frWin.x;
+      this._frWinDrag.oy = p.y - this._frWin.y;
+    });
+
+    // ── Заголовок ──
+    const titleSuffix = onlineCnt > 0 ? `  •  ${onlineCnt} онлайн` : '';
+    add(this.add.text(PAD, 9, `ДРУЗЬЯ${titleSuffix}`, O('10px', '#4dd0e1')));
+
+    // ── Кнопки заголовка (α | − | ✕) ──
+    const alphaColors = ['#4dd0e1', '#2a7080', '#154050'];
+    const alphaBtn = add(this.add.text(PW - 52, 9, 'α', F('11px', alphaColors[this._frWinAlphaIdx ?? 0]))
+      .setInteractive({ useHandCursor: true }));
+    alphaBtn.on('pointerdown', () => {
+      this._frWinAlphaIdx = ((this._frWinAlphaIdx ?? 0) + 1) % 3;
+      const s = loadSettings(); s.frWinAlphaIdx = this._frWinAlphaIdx; saveSettings(s);
+      this._rebuildFriendsWin();
+    });
+
+    const colBtn = add(this.add.text(PW - 36, 9, collapsed ? '+' : '−', F('13px', '#4dd0e1'))
+      .setInteractive({ useHandCursor: true }));
+    colBtn.on('pointerdown', () => {
+      this._frWinCollapsed = !this._frWinCollapsed;
+      const s = loadSettings(); s.frWinCollapsed = this._frWinCollapsed; saveSettings(s);
+      this._rebuildFriendsWin();
+    });
+
+    const closeBtn = add(this.add.text(PW - 16, 9, '✕', F('11px', '#ef5350'))
+      .setInteractive({ useHandCursor: true }));
     closeBtn.on('pointerdown', () => { this._friendsWinVisible = false; this._rebuildFriendsWin(); this._updateSocialBtnStyles(); });
 
-    let y = 27;
+    if (collapsed) return;
+
+    // ── Контент ──
+    let y = HDR;
     add(this.add.rectangle(0, y, PW, 1, 0x1a4060, 0.5).setOrigin(0));
     y += 1;
 
@@ -1806,14 +1895,12 @@ export default class HudScene extends Phaser.Scene {
       y += 22;
       for (const f of pending) {
         add(this.add.text(PAD, y + 4, `● ${f.name}`, F('11px', '#ffa726')));
-        // Принять
         const accBtn = add(this.add.rectangle(PW - PAD - 58, y + 2, 28, 18, 0x0d2a1a, 1).setOrigin(0)
           .setStrokeStyle(1, 0x1a4a2a, 0.9).setInteractive({ useHandCursor: true }));
         add(this.add.text(PW - PAD - 44, y + 11, '✓', F('13px', '#66bb6a')).setOrigin(0.5));
         accBtn.on('pointerover', () => accBtn.setFillStyle(0x143520));
         accBtn.on('pointerout',  () => accBtn.setFillStyle(0x0d2a1a));
         accBtn.on('pointerdown', () => this.groupSystem?.friendAccept(f.name));
-        // Отклонить
         const decBtn = add(this.add.rectangle(PW - PAD - 26, y + 2, 28, 18, 0x200010, 1).setOrigin(0)
           .setStrokeStyle(1, 0x400020, 0.9).setInteractive({ useHandCursor: true }));
         add(this.add.text(PW - PAD - 12, y + 11, '✗', F('13px', '#ef5350')).setOrigin(0.5));
@@ -1832,7 +1919,6 @@ export default class HudScene extends Phaser.Scene {
       add(this.add.text(PAD + 14, y + 4, f.name, F('11px', '#c8f0d0')));
       if (f.sector) add(this.add.text(PAD + 14, y + 15, f.sector, F('8px', '#3a6858')));
 
-      // Кнопка «→Группа»
       const invBtn = add(this.add.rectangle(PW - PAD - 56, y + 2, 30, 18, 0x0a2030, 1).setOrigin(0)
         .setStrokeStyle(1, 0x1a4060, 0.8).setInteractive({ useHandCursor: true }));
       add(this.add.text(PW - PAD - 41, y + 11, '→Гр', F('9px', '#4dd0e1')).setOrigin(0.5));
@@ -1846,12 +1932,10 @@ export default class HudScene extends Phaser.Scene {
         this.pushChatMessage('general', 'System', `[Группа] Приглашение отправлено: ${f.name}`, {});
       });
 
-      // Кнопка удалить
       const remBtn = add(this.add.rectangle(PW - PAD - 22, y + 2, 24, 18, 0x180008, 0.9).setOrigin(0)
         .setStrokeStyle(1, 0x380015, 0.7).setInteractive({ useHandCursor: true }));
       add(this.add.text(PW - PAD - 10, y + 11, '✕', F('11px', '#ef5350')).setOrigin(0.5));
       remBtn.on('pointerdown', () => this.groupSystem?.friendRemove(f.name));
-
       y += 24;
     }
 
@@ -1866,14 +1950,12 @@ export default class HudScene extends Phaser.Scene {
       y += 20;
     }
 
-    // Нижняя линия
+    // Кнопка «Добавить друга»
     add(this.add.rectangle(0, y, PW, 1, 0x1a4060, 0.4).setOrigin(0));
     y += 1;
-
-    // Кнопка «Добавить друга» → фокус на чат с префиксом
-    const addBtn = add(this.add.rectangle(PAD, y + 6, PW - PAD * 2, 24, 0x0a1828, 1).setOrigin(0)
+    const addBtn = add(this.add.rectangle(PAD, y + 5, PW - PAD * 2, 24, 0x0a1828, 1).setOrigin(0)
       .setStrokeStyle(1, 0x1e4060, 0.5).setInteractive({ useHandCursor: true }));
-    add(this.add.text(PW / 2, y + 18, '+ Добавить друга  /добавить [ник]', F('9px', '#4dd0e1')).setOrigin(0.5));
+    add(this.add.text(PW / 2, y + 17, '+ Добавить друга  /добавить [ник]', F('9px', '#4dd0e1')).setOrigin(0.5));
     addBtn.on('pointerover', () => addBtn.setFillStyle(0x0d2e40));
     addBtn.on('pointerout',  () => addBtn.setFillStyle(0x0a1828));
     addBtn.on('pointerdown', () => {
@@ -1882,6 +1964,40 @@ export default class HudScene extends Phaser.Scene {
         this._chatVisible = true;
         this._rebuildChatPanel();
         this._chatInputEl.focus();
+      }
+    });
+  }
+
+  // ── Drag / поведение окон ─────────────────────────────────────────────────
+
+  _initSocialWinDrag() {
+    const W = this.scale.width, H = this.scale.height;
+    this.input.on('pointermove', (pointer) => {
+      if (this._grpWinDrag?.active && pointer.isDown) {
+        const nx = Math.max(0, Math.min(W - 240, pointer.x - this._grpWinDrag.ox));
+        const ny = Math.max(0, Math.min(H - 32,  pointer.y - this._grpWinDrag.oy));
+        this._grpWin?.setPosition(nx, ny);
+      }
+      if (this._frWinDrag?.active && pointer.isDown) {
+        const nx = Math.max(0, Math.min(W - 300, pointer.x - this._frWinDrag.ox));
+        const ny = Math.max(0, Math.min(H - 32,  pointer.y - this._frWinDrag.oy));
+        this._frWin?.setPosition(nx, ny);
+      }
+    });
+    this.input.on('pointerup', () => {
+      if (this._grpWinDrag?.active) {
+        this._grpWinDrag.active = false;
+        const s = loadSettings();
+        s.grpWinX = Math.round(this._grpWin.x);
+        s.grpWinY = Math.round(this._grpWin.y);
+        saveSettings(s);
+      }
+      if (this._frWinDrag?.active) {
+        this._frWinDrag.active = false;
+        const s = loadSettings();
+        s.frWinX = Math.round(this._frWin.x);
+        s.frWinY = Math.round(this._frWin.y);
+        saveSettings(s);
       }
     });
   }
