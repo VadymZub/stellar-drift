@@ -172,6 +172,8 @@ export default class HudScene extends Phaser.Scene {
     this._buildInfoPanel();
     this._buildLogPanel();
     this._buildChatPanel();
+    this._groupBossHpRatio = 0;
+    this._buildGroupPanel();
   }
 
   _buildActionBarHUD() {
@@ -1412,6 +1414,30 @@ export default class HudScene extends Phaser.Scene {
   }
 
   _sendChatMessage(text) {
+    // Group commands — handled locally, not sent to chat
+    if (this.groupSystem) {
+      if (text.startsWith('/принять ')) {
+        const leader = text.slice(9).trim();
+        if (leader) { this.groupSystem.join(leader); this.pushChatMessage('general', 'System', `[Группа] Отправляем запрос на вступление к ${leader}…`, {}); }
+        return;
+      }
+      if (text.startsWith('/пригласить ')) {
+        const name = text.slice(12).trim();
+        if (name) { this.groupSystem.invite(name, galaxy.current); this.pushChatMessage('general', 'System', `[Группа] Приглашение отправлено: ${name}`, {}); }
+        return;
+      }
+      if (text === '/группа') {
+        this.groupSystem.create(galaxy.current, false);
+        this.pushChatMessage('general', 'System', '[Группа] Группа создана. Используй /пригласить [ник]', {});
+        return;
+      }
+      if (text === '/выйти') {
+        this.groupSystem.leave();
+        this.pushChatMessage('general', 'System', '[Группа] Вы вышли из группы.', {});
+        this._rebuildGroupPanel();
+        return;
+      }
+    }
     if (this._chatWS?.readyState === WebSocket.OPEN) {
       if (this._chatPmTarget) {
         this._chatWS.send(JSON.stringify({ type: 'pm', to: this._chatPmTarget, text }));
@@ -1453,6 +1479,53 @@ export default class HudScene extends Phaser.Scene {
     };
     this.groupSystem.onInvite = ({ from, dungeon }) => {
       this.pushChatMessage('general', 'System', `[Группа] ${from} приглашает в данж ${dungeon}. /принять ${from}`, {});
+    };
+    this.groupSystem.onUpdate = (members) => {
+      const gs = this.scene.get('GameScene');
+      if (gs) gs.groupSize = members.length;
+      this._rebuildGroupPanel();
+    };
+    this.groupSystem.onBossHp = (ratio) => {
+      this._groupBossHpRatio = ratio;
+      this._rebuildGroupPanel();
+      // Обновляем HP призрака-босса у не-лидеров
+      if (!this.groupSystem.isLeader) {
+        const gs = this.scene.get('GameScene');
+        const ghost = gs?.mobs?.find(m => m.ghostBoss);
+        if (ghost) ghost.hull = Math.max(1, ratio * ghost.maxHull);
+      }
+    };
+    // Лидер получает урон от участников → применяет к своему боссу
+    this.groupSystem.onMemberDamage = (amount) => {
+      const gs = this.scene.get('GameScene');
+      if (!gs || !this.groupSystem.isLeader) return;
+      const boss = gs._apophisBoss || gs.mobs?.find(m => m.isDungeonBoss && m.alive);
+      if (!boss) return;
+      const res = boss.takeDamage(amount, 0.5, {});
+      gs.hitFlash(boss.x, boss.y, (res.hullHit || 0) > 0);
+      gs.showDamage(boss.x, boss.y, res);
+      if (res.killed) gs.onMobKilled(boss);
+    };
+    // Не-лидер: сервер сообщил что ГЛАВНЫЙ босс убит → чистим призрака
+    this.groupSystem.onBossKilled = () => {
+      const gs = this.scene.get('GameScene');
+      if (!gs) return;
+      const ghost = gs.mobs?.find(m => m.ghostBoss && m.isDungeonBoss);
+      if (!ghost) return;
+      gs.explosion(ghost.x, ghost.y, 1.6);
+      ghost.hull = 0; ghost.alive = false;
+      ghost.sprite?.destroy();
+      gs.mobs = gs.mobs.filter(m => m !== ghost);
+      gs.log('Босс побеждён группой!');
+    };
+    // Не-лидер: охранник/минибосс убит лидером → даём участнику награды и чистим призрака
+    this.groupSystem.onMobDied = (id) => {
+      const gs = this.scene.get('GameScene');
+      if (!gs) return;
+      const ghost = gs.mobs?.find(m => m.ghostBoss && m._groupMobId === id);
+      if (!ghost) return;
+      ghost.ghostBoss = false; // снимаем флаг — onMobKilled отработает нормально
+      gs.onMobKilled(ghost);   // участник получает свои XP / кредиты / лут
     };
 
     ws.onopen = () => {};
@@ -1496,5 +1569,86 @@ export default class HudScene extends Phaser.Scene {
 
   _saveChatState() {
     try { localStorage.setItem('sd_chat_state', JSON.stringify({ x: this._chatX, y: this._chatY, w: this._chatW, h: this._chatH })); } catch {}
+  }
+
+  // ── Группа: UI-панель ─────────────────────────────────────────────────────
+
+  _buildGroupPanel() {
+    this._grpC = this.add.container(8, 92).setDepth(102);
+    this._rebuildGroupPanel();
+  }
+
+  _rebuildGroupPanel() {
+    const grp = this.groupSystem;
+    this._grpC?.removeAll(true);
+    if (!grp?.inGroup) return;
+
+    const F  = (sz, c) => ({ fontFamily: 'Inter, sans-serif',    fontSize: sz, color: c, resolution: UI_RES });
+    const O  = (sz, c) => ({ fontFamily: 'Orbitron, sans-serif', fontSize: sz, color: c, resolution: UI_RES });
+    const PW = 192, PAD = 8;
+    const members = grp.members;
+    const rowH = 17;
+    const showBossBar = this._groupBossHpRatio > 0 && this._groupBossHpRatio < 1;
+    const innerH = 20 + members.length * rowH + (grp.canAddMembers() ? 22 : 0) + (showBossBar ? 22 : 0) + PAD;
+    const c = this._grpC;
+    const add = o => { c.add(o); return o; };
+
+    // фон
+    add(this.add.rectangle(0, 0, PW, innerH, 0x020a14, 0.88).setOrigin(0).setStrokeStyle(1, 0x1a4060, 0.6));
+
+    // заголовок
+    add(this.add.text(PAD, 5, `ГРУППА (${members.length}/8)`, O('10px', '#4dd0e1')).setOrigin(0));
+
+    // кнопка выйти
+    const leaveBtn = add(this.add.text(PW - PAD, 5, '✕', F('11px', '#ef5350')).setOrigin(1, 0).setInteractive({ useHandCursor: true }));
+    leaveBtn.on('pointerover', () => leaveBtn.setAlpha(0.7));
+    leaveBtn.on('pointerout',  () => leaveBtn.setAlpha(1));
+    leaveBtn.on('pointerdown', () => {
+      this.groupSystem?.leave();
+      const gs = this.scene.get('GameScene');
+      if (gs) gs.groupSize = 0;
+      this._rebuildGroupPanel();
+    });
+
+    // список участников
+    const myName = this.gs?.playerName || '';
+    members.forEach((name, i) => {
+      const isMe = name === myName;
+      const dot = isMe ? '●' : '○';
+      const col = isMe ? '#80cbc4' : '#9fb3b8';
+      add(this.add.text(PAD, 22 + i * rowH, `${dot} ${name}`, F('11px', col)));
+    });
+
+    let nextY = 22 + members.length * rowH + 4;
+
+    // кнопка пригласить
+    if (grp.canAddMembers()) {
+      const invBtn = add(this.add.rectangle(PAD, nextY, PW - PAD * 2, 18, 0x0a2030, 1)
+        .setOrigin(0).setStrokeStyle(1, 0x1a4060, 0.5).setInteractive({ useHandCursor: true }));
+      add(this.add.text(PW / 2, nextY + 9, '+ Пригласить', F('10px', '#4dd0e1')).setOrigin(0.5));
+      invBtn.on('pointerover', () => invBtn.setFillStyle(0x0d2e40, 1));
+      invBtn.on('pointerout',  () => invBtn.setFillStyle(0x0a2030, 1));
+      invBtn.on('pointerdown', () => {
+        // Фокусируем чат и вставляем префикс
+        if (this._chatInputEl) {
+          this._chatInputEl.value = '/пригласить ';
+          this._chatVisible = true;
+          this._rebuildChatPanel();
+          this._chatInputEl.focus();
+        }
+      });
+      nextY += 22;
+    }
+
+    // полоса HP босса (если лидер прислал ratio)
+    if (showBossBar) {
+      add(this.add.text(PAD, nextY, 'АПОФИС', O('8px', '#ef5350')).setOrigin(0));
+      const BAR_W = PW - PAD * 2, BAR_H = 7;
+      add(this.add.rectangle(PAD, nextY + 11, BAR_W, BAR_H, 0x1a0000, 1).setOrigin(0));
+      const ratio = Math.max(0, Math.min(1, this._groupBossHpRatio));
+      const col = ratio > 0.5 ? 0xef5350 : ratio > 0.25 ? 0xff7043 : 0xffa726;
+      add(this.add.rectangle(PAD, nextY + 11, Math.round(BAR_W * ratio), BAR_H, col, 1).setOrigin(0));
+      add(this.add.text(PAD + BAR_W - 2, nextY + 9, `${Math.round(ratio * 100)}%`, F('9px', '#ef9a9a')).setOrigin(1, 0));
+    }
   }
 }

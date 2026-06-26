@@ -1020,6 +1020,17 @@ export default class GameScene extends Phaser.Scene {
 
     if (sec.isDungeon) this._spawnDifficultyReinforcements(pool, cx, cy, Lmin, Lmax);
 
+    // Назначаем ID и помечаем призраками боссов + охрану в данже для не-лидеров группы.
+    this._nextGroupMobId = 0;
+    const _grpForGhost = this.groupSystem;
+    const _isMember = sec.isDungeon && _grpForGhost?.inGroup && !_grpForGhost.isLeader;
+    for (const _m of this.mobs) {
+      if (_m.isDungeonBoss || _m.isBossEscort) {
+        _m._groupMobId = this._nextGroupMobId++;
+        if (_isMember) _m.ghostBoss = true;
+      }
+    }
+
     if (!sec.isDungeon && galaxy.current !== 'R-1-boss') {
       const ring = [[1200, -360], [-1320, 480], [480, 1260], [-1020, -840], [1800, 624], [-1800, -180]];
       ring.forEach((o, i) => add(pool[i % pool.length], rnd(Lmin, Lmax), o[0], o[1], isHomeSector ? { passive: true } : {}));
@@ -1030,6 +1041,8 @@ export default class GameScene extends Phaser.Scene {
       }
     }
   }
+
+  get groupSystem() { return this.scene.get('HudScene')?.groupSystem ?? null; }
 
   _dungeonDiff() {
     return DUNGEON_DIFF[this.dungeonDifficulty ?? 'normal'];
@@ -1109,6 +1122,13 @@ export default class GameScene extends Phaser.Scene {
       return;
     }
     const hpRatio = boss.maxHull > 0 ? boss.hull / boss.maxHull : 1;
+    // Синхронизация HP босса для участников группы (лидер — раз в 0.5с)
+    this._bossSyncTimer = (this._bossSyncTimer || 0) + dt;
+    if (this._bossSyncTimer >= 0.5) {
+      this._bossSyncTimer = 0;
+      const grp = this.groupSystem;
+      if (grp?.inGroup && grp.isLeader) grp.syncBossHp(hpRatio);
+    }
     // Фаза 2: при 50% HP вызвать Жнецов и Левиафанов
     if (!this._apophisPhase2Started && hpRatio < 0.50) {
       this._apophisPhase2Started = true;
@@ -1161,19 +1181,25 @@ export default class GameScene extends Phaser.Scene {
         const m = new Mob(this, MOBS['ancient_10'], 50, cx + ox, cy + oy,
           { behavior: 'guard', patrolRadius: 350, bossRef: this._apophisBoss, hpMult: 3, dmgMult: 3 });
         m.isBossEscort = true;
+        m._groupMobId = this._nextGroupMobId++;
+        const _grp2 = this.groupSystem;
+        if (_grp2?.inGroup && !_grp2.isLeader) m.ghostBoss = true;
         this.mobs.push(m);
         this.log('Жнец появляется!');
       });
       delay += 2000;
     });
     delay += 1000;
-    // 4 Левиафана (ancient_06 ×3) последовательно с интервалом 2с
+    // 4 Левиафана (ancient_06 ×4) последовательно с интервалом 2с
     [[-700, 0], [-230, 0], [230, 0], [700, 0]].forEach(([ox, oy]) => {
       this.time.delayedCall(delay, () => {
         if (!this._apophisBoss?.alive) return;
         const m = new Mob(this, MOBS['ancient_06'], 50, cx + ox, cy + oy,
           { behavior: 'guard', patrolRadius: 350, bossRef: this._apophisBoss, hpMult: 3, dmgMult: 3 });
         m.isBossEscort = true;
+        m._groupMobId = this._nextGroupMobId++;
+        const _grp2 = this.groupSystem;
+        if (_grp2?.inGroup && !_grp2.isLeader) m.ghostBoss = true;
         this.mobs.push(m);
         this.log('Левиафан появляется!');
       });
@@ -1437,6 +1463,13 @@ export default class GameScene extends Phaser.Scene {
   startJumpSequence(gate) {
     if (this.jumping) return;
     this.jumping = true;
+    // Solo-lock: entering dungeon without group marks instance as solo
+    const _targetSec = SECTORS[gate.target];
+    const _grp = this.groupSystem;
+    if (_grp) {
+      if (_targetSec?.isDungeon && !_grp.inGroup) _grp.isSolo = true;
+      else if (!_targetSec?.isDungeon) _grp.isSolo = false;
+    }
     this.player.waypoint = null;
     this.movement.setWaypoint(null);
     this.player.speed = 0;
@@ -1834,6 +1867,7 @@ export default class GameScene extends Phaser.Scene {
         this.player.hull = Math.min(this.player.maxHull, this.player.hull + heal);
         this.log(`🔧 Ремкомплект: +${heal} HP`);
         this.hitFlash(this.player.x, this.player.y, true);
+        this.groupSystem?.recordHeal(heal);
         break;
       }
       case 'speed_boost': {
@@ -1918,6 +1952,7 @@ export default class GameScene extends Phaser.Scene {
     this.player.hull = Math.min(this.player.maxHull, this.player.hull + heal);
     this.log(`💉 Ремонт: +${heal} HP`);
     this.hitFlash(this.player.x, this.player.y, true);
+    this.groupSystem?.recordHeal(heal);
   }
 
   _doShieldBurst(now, cd) {
@@ -1992,6 +2027,7 @@ export default class GameScene extends Phaser.Scene {
     p.hull = Math.min(p.maxHull, p.hull + heal);
     p.lastDamageAt = 0;
     this.log(`🔧 Ремонт: +${heal} HP`);
+    this.groupSystem?.recordHeal(heal);
   }
 
   _doShipDrifterJump(now, cd) {
@@ -2353,6 +2389,13 @@ export default class GameScene extends Phaser.Scene {
     this.hitFlash(t.x, t.y, toHull);
     if (toHull && this._onScreen(t.x, t.y)) this.vfx?.play('hull_hit', t.x, t.y, { scale: 0.15, depth: 67 });
     this.showDamage(t.x, t.y, res);
+    const laserDmgDone = (res.shieldHit || 0) + (res.hullHit || 0);
+    if (laserDmgDone > 0) this.groupSystem?.recordDamage(laserDmgDone);
+    if (res.killed) {
+      if (t.ghostBoss) t.hull = 1; // не убиваем призрака локально
+      else this.onMobKilled(t);
+      return;
+    }
     if (isOC || isCrit) {
       const label = isOC ? '⚡ УДАР!' : 'КРИТ!';
       const clr   = isOC ? '#ffcc00' : '#ffff44';
@@ -2361,7 +2404,6 @@ export default class GameScene extends Phaser.Scene {
         .setOrigin(0.5).setDepth(71);
       this.tweens.add({ targets: txt, y: t.y - 80, alpha: 0, duration: 600, ease: 'Quad.easeOut', onComplete: () => txt.destroy() });
     }
-    if (res.killed) this.onMobKilled(t);
   }
 
   // Consume ammo charges. For cannon: elite first, then regular; returns proportional mult (1.0–1.2).
@@ -2483,7 +2525,12 @@ export default class GameScene extends Phaser.Scene {
       this.hitFlash(m.x, m.y, toHull);
       if (toHull && this._onScreen(m.x, m.y)) this.vfx?.play('hull_hit', m.x, m.y, { scale: 0.15, depth: 67 });
       this.showDamage(m.x, m.y, res);
-      if (res.killed) this.onMobKilled(m);
+      const dmgDone = (res.shieldHit || 0) + (res.hullHit || 0);
+      if (dmgDone > 0) this.groupSystem?.recordDamage(dmgDone);
+      if (res.killed) {
+        if (m.ghostBoss) m.hull = 1; // не убиваем призрака — смерть придёт от сервера
+        else this.onMobKilled(m);
+      }
     } else {
       const hx = proj.victim?.x ?? this.player.x;
       const hy = proj.victim?.y ?? this.player.y;
@@ -2546,6 +2593,16 @@ export default class GameScene extends Phaser.Scene {
     } else {
       const rawSg = rollStarGold(mob);
       sg = rawSg > 0 ? Math.round(rawSg * (diff?.goldMult ?? 1)) : 0;
+    }
+    // Данж-босс в группе: сервер распределяет золото, не начисляем локально
+    const _grpKill = this.groupSystem;
+    if (isDung && mob.isDungeonBoss && _grpKill?.inGroup) {
+      _grpKill.bossKilled(sg);
+      sg = 0;
+    }
+    // Охранник/минибосс в группе: лидер уведомляет остальных участников
+    if (isDung && mob.isBossEscort && _grpKill?.inGroup && _grpKill.isLeader && mob._groupMobId !== undefined) {
+      _grpKill.sendMobDied(mob._groupMobId);
     }
     if (sg > 0) { this.starGold = (this.starGold || 0) + sg; this.log(i18n.t('log.stargold', { amount: sg })); }
 

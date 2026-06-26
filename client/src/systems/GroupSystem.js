@@ -16,12 +16,15 @@ export class GroupSystem {
         this.members    = [];   // string[] — usernames
         this.isSolo     = false;
 
-        // Callbacks — assign from GameScene
+        // Callbacks — assign from HudScene._connectChatWS
         this.onUpdate       = null;   // (members: string[]) => void
         this.onGoldReward   = null;   // (gold: number) => void
         this.onBossHp       = null;   // (ratio: number) => void
         this.onInvite       = null;   // ({from, dungeon}) => void
         this.onError        = null;   // (text: string) => void
+        this.onMemberDamage = null;   // (amount: number) => void  — leader receives member damage
+        this.onBossKilled   = null;   // () => void                — non-leader: main ghost boss died
+        this.onMobDied      = null;   // (id: number) => void      — non-leader: ghost escort/miniboss died
     }
 
     // ── Outgoing ─────────────────────────────────────────────────────────────
@@ -59,6 +62,12 @@ export class GroupSystem {
     bossKilled(baseGold) {
         if (!this.instanceId) return;
         this._send({ type: 'group_boss_dead', baseGold });
+    }
+
+    /** Called by leader when an escort/miniboss dies. id = _groupMobId. */
+    sendMobDied(id) {
+        if (!this.instanceId) return;
+        this._send({ type: 'group_mob_died', id });
     }
 
     /** Broadcast current boss HP ratio to group members. */
@@ -104,6 +113,18 @@ export class GroupSystem {
 
             case 'group_boss_hp':
                 this.onBossHp?.(msg.ratio);
+                break;
+
+            case 'group_member_damage':
+                this.onMemberDamage?.(msg.amount);
+                break;
+
+            case 'group_boss_killed':
+                this.onBossKilled?.();
+                break;
+
+            case 'group_mob_died':
+                this.onMobDied?.(msg.id);
                 break;
 
             case 'group_invite':

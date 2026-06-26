@@ -445,7 +445,14 @@ async def chat_ws(
 
             # ── Группа: записать урон / хил для пропорционального золота
             elif msg_type == 'group_damage':
-                group_manager.record_damage(user.username, float(data.get('amount', 0)))
+                amount = float(data.get('amount', 0))
+                group_manager.record_damage(user.username, amount)
+                # Relay to leader so they can apply it to their local boss
+                inst = group_manager.get_instance(user.username)
+                if inst and inst.leader != user.username:
+                    await chat_manager.send_pm(inst.leader, {
+                        'type': 'group_member_damage', 'from': user.username, 'amount': amount,
+                    })
             elif msg_type == 'group_heal':
                 group_manager.record_heal(user.username, float(data.get('amount', 0)))
 
@@ -453,12 +460,24 @@ async def chat_ws(
             elif msg_type == 'group_boss_dead':
                 base_gold = int(data.get('baseGold', 0))
                 rewards   = group_manager.boss_died(user.username, base_gold)
-                # Отправить каждому его долю
+                # Отправить каждому его долю + уведомить о смерти босса
                 for name, gold in rewards.items():
                     if name == user.username:
                         await ws.send_json({'type': 'group_gold_reward', 'gold': gold})
                     else:
                         await chat_manager.send_pm(name, {'type': 'group_gold_reward', 'gold': gold})
+                        await chat_manager.send_pm(name, {'type': 'group_boss_killed'})
+
+            # ── Группа: охранник/минибосс убит лидером → relay всем участникам
+            elif msg_type == 'group_mob_died':
+                inst = group_manager.get_instance(user.username)
+                if inst and inst.leader == user.username:
+                    members = group_manager.members_list(user.username)
+                    for m in members:
+                        if m != user.username:
+                            await chat_manager.send_pm(m, {
+                                'type': 'group_mob_died', 'id': data.get('id'),
+                            })
 
             # ── Группа: синхронизировать HP босса ────────────────────
             elif msg_type == 'group_boss_hp':
