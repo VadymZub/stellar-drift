@@ -55,6 +55,10 @@ export default class HudScene extends Phaser.Scene {
     const O = (size, color = '#4dd0e1') =>
       ({ fontFamily: 'Orbitron, sans-serif', fontSize: size, color, resolution: UI_RES });
 
+    // Подписи под миникартой — позиция пересчитывается каждый кадр под текущий размер карты
+    this._mmSectorTxt = this.add.text(0, 0, '', F('9px', '#607d8b', '400')).setOrigin(0.5, 0).setDepth(101);
+    this._mmCoordTxt  = this.add.text(0, 0, '', O('9px', '#2a7a8a')).setOrigin(0.5, 0).setDepth(101);
+
     // Панель игрока (лев-верх) — фиксированный вертикальный layout
     // Bar rows: icon (left) + bar (center, 155px) + value (right of bar, white)
     this._icoShield = this.add.text(18, 20, '🛡', F('12px', '#4dd0e1')).setDepth(101);
@@ -653,6 +657,22 @@ export default class HudScene extends Phaser.Scene {
 
     // ── Миникарта (векторные блипы) ──
     this.drawMinimap();
+
+    // ── Подписи под миникартой: название сектора + координаты ──
+    {
+      const _r = minimapRect(this, getMinimapDims(loadSettings().minimapSize));
+      const _cx = _r.x + _r.w / 2;
+      const _labelY = _r.y + _r.h + 4;
+      if (!atBase && p.alive) {
+        this._mmSectorTxt.setPosition(_cx, _labelY)
+          .setText(SECTORS[galaxy.current]?.name ?? '').setVisible(true);
+        this._mmCoordTxt.setPosition(_cx, _labelY + 13)
+          .setText(`${Math.round(p.x)}  ·  ${Math.round(p.y)}`).setVisible(true);
+      } else {
+        this._mmSectorTxt.setVisible(false);
+        this._mmCoordTxt.setVisible(false);
+      }
+    }
 
     // ── Активна підсвітка nav-кнопок ──
     if (this._navBtnItems) {
