@@ -3,10 +3,11 @@ import time
 from fastapi import FastAPI, Depends, HTTPException, WebSocket, WebSocketDisconnect, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from sqlalchemy import or_, and_
 from sqlalchemy.orm import Session
 
 from database import engine, get_db, Base
-from models import User, PlayerState, AuditLog, ChatMessage
+from models import User, PlayerState, AuditLog, ChatMessage, Friendship
 from schemas import (
     RegisterRequest, LoginRequest, TokenResponse, UserResponse,
     PlayerStateResponse, AuditEntryCreate, AuditEntryResponse,
@@ -35,7 +36,7 @@ class ChatManager:
 
     async def connect(self, ws: WebSocket, uid: int, name: str, corp_ch: str, clan_ch):
         await ws.accept()
-        self.active[ws] = {'uid': uid, 'name': name, 'corp_ch': corp_ch, 'clan_ch': clan_ch}
+        self.active[ws] = {'uid': uid, 'name': name, 'corp_ch': corp_ch, 'clan_ch': clan_ch, 'sector': ''}
 
     def disconnect(self, ws: WebSocket):
         self.active.pop(ws, None)
@@ -173,6 +174,36 @@ class GroupManager:
 
 
 group_manager = GroupManager()
+
+
+# ── Friends helpers ───────────────────────────────────────────────────
+
+def _online_names() -> set[str]:
+    return {m['name'] for m in chat_manager.active.values()}
+
+
+def _online_sectors() -> dict[str, str]:
+    return {m['name']: m.get('sector', '') for m in chat_manager.active.values()}
+
+
+def _get_friend_list(username: str, db: Session) -> list[dict]:
+    online   = _online_names()
+    sectors  = _online_sectors()
+    rows = db.query(Friendship).filter(
+        or_(Friendship.user_a == username, Friendship.user_b == username)
+    ).all()
+    result = []
+    for r in rows:
+        other     = r.user_b if r.user_a == username else r.user_a
+        direction = 'out'    if r.user_a == username else 'in'
+        result.append({
+            'name':   other,
+            'status': r.status,
+            'dir':    direction,
+            'online': other in online,
+            'sector': sectors.get(other, ''),
+        })
+    return result
 
 
 def _fmt_time(ts: float) -> str:
@@ -370,6 +401,15 @@ async def chat_ws(
             'messages': [{'from': m.username, 'text': m.text, 'time': _fmt_time(m.ts)} for m in reversed(msgs)],
         })
 
+    # Send friend list on connect; notify online friends that this user came online
+    friend_list = _get_friend_list(user.username, db)
+    await ws.send_json({'type': 'friend_list', 'friends': friend_list})
+    for f in friend_list:
+        if f['status'] == 'accepted' and f['online']:
+            await chat_manager.send_pm(f['name'], {
+                'type': 'friend_online', 'name': user.username, 'sector': '',
+            })
+
     try:
         while True:
             data = await ws.receive_json()
@@ -491,6 +531,111 @@ async def chat_ws(
                                 'type': 'group_boss_hp', 'ratio': inst.boss_hp_ratio,
                             })
 
+            # ── Сектор: клиент сообщает текущий сектор ───────────────
+            elif msg_type == 'sector_update':
+                sec = str(data.get('sector', '')).strip()[:50]
+                if ws in chat_manager.active:
+                    chat_manager.active[ws]['sector'] = sec
+                # Notify online friends of new sector
+                fl = _get_friend_list(user.username, db)
+                for f in fl:
+                    if f['status'] == 'accepted' and f['online']:
+                        await chat_manager.send_pm(f['name'], {
+                            'type': 'friend_online', 'name': user.username, 'sector': sec,
+                        })
+
+            # ── Друзья: добавить / принять авто ──────────────────────
+            elif msg_type == 'friend_add':
+                to_name = str(data.get('to', '')).strip()
+                if not to_name or to_name == user.username:
+                    await ws.send_json({'type': 'friend_error', 'text': 'Некорректное имя'})
+                else:
+                    target = db.query(User).filter(User.username == to_name).first()
+                    if not target:
+                        await ws.send_json({'type': 'friend_error', 'text': f'Игрок {to_name} не найден'})
+                    else:
+                        existing = db.query(Friendship).filter(
+                            or_(
+                                and_(Friendship.user_a == user.username, Friendship.user_b == to_name),
+                                and_(Friendship.user_a == to_name,       Friendship.user_b == user.username),
+                            )
+                        ).first()
+                        if existing:
+                            if existing.status == 'accepted':
+                                await ws.send_json({'type': 'friend_error', 'text': f'{to_name} уже в списке друзей'})
+                            elif existing.user_a == user.username:
+                                await ws.send_json({'type': 'friend_error', 'text': 'Запрос уже отправлен'})
+                            else:
+                                # They sent request first → auto-accept
+                                existing.status = 'accepted'
+                                db.commit()
+                                fl = _get_friend_list(user.username, db)
+                                await ws.send_json({'type': 'friend_list', 'friends': fl})
+                                if to_name in _online_names():
+                                    fl2 = _get_friend_list(to_name, db)
+                                    await chat_manager.send_pm(to_name, {'type': 'friend_list', 'friends': fl2})
+                        else:
+                            db.add(Friendship(user_a=user.username, user_b=to_name, status='pending'))
+                            db.commit()
+                            fl = _get_friend_list(user.username, db)
+                            await ws.send_json({'type': 'friend_list', 'friends': fl})
+                            if to_name in _online_names():
+                                await chat_manager.send_pm(to_name, {
+                                    'type': 'friend_request_in', 'from': user.username,
+                                })
+
+            # ── Друзья: принять запрос ────────────────────────────────
+            elif msg_type == 'friend_accept':
+                from_name = str(data.get('from', '')).strip()
+                if from_name:
+                    row = db.query(Friendship).filter(
+                        Friendship.user_a == from_name,
+                        Friendship.user_b == user.username,
+                        Friendship.status == 'pending',
+                    ).first()
+                    if row:
+                        row.status = 'accepted'
+                        db.commit()
+                        fl = _get_friend_list(user.username, db)
+                        await ws.send_json({'type': 'friend_list', 'friends': fl})
+                        if from_name in _online_names():
+                            fl2 = _get_friend_list(from_name, db)
+                            await chat_manager.send_pm(from_name, {'type': 'friend_list', 'friends': fl2})
+
+            # ── Друзья: отклонить запрос ──────────────────────────────
+            elif msg_type == 'friend_decline':
+                from_name = str(data.get('from', '')).strip()
+                if from_name:
+                    db.query(Friendship).filter(
+                        Friendship.user_a == from_name,
+                        Friendship.user_b == user.username,
+                    ).delete()
+                    db.commit()
+                    fl = _get_friend_list(user.username, db)
+                    await ws.send_json({'type': 'friend_list', 'friends': fl})
+
+            # ── Друзья: удалить из списка ─────────────────────────────
+            elif msg_type == 'friend_remove':
+                name = str(data.get('name', '')).strip()
+                if name:
+                    db.query(Friendship).filter(
+                        or_(
+                            and_(Friendship.user_a == user.username, Friendship.user_b == name),
+                            and_(Friendship.user_a == name,          Friendship.user_b == user.username),
+                        )
+                    ).delete()
+                    db.commit()
+                    fl = _get_friend_list(user.username, db)
+                    await ws.send_json({'type': 'friend_list', 'friends': fl})
+
     except WebSocketDisconnect:
+        # Notify online friends that this user went offline
+        try:
+            fl = _get_friend_list(user.username, db)
+            for f in fl:
+                if f['status'] == 'accepted' and f['online']:
+                    await chat_manager.send_pm(f['name'], {'type': 'friend_offline', 'name': user.username})
+        except Exception:
+            pass
         group_manager.leave(user.username)
         chat_manager.disconnect(ws)

@@ -22,9 +22,14 @@ export class GroupSystem {
         this.onBossHp       = null;   // (ratio: number) => void
         this.onInvite       = null;   // ({from, dungeon}) => void
         this.onError        = null;   // (text: string) => void
-        this.onMemberDamage = null;   // (amount: number) => void  — leader receives member damage
-        this.onBossKilled   = null;   // () => void                — non-leader: main ghost boss died
-        this.onMobDied      = null;   // (id: number) => void      — non-leader: ghost escort/miniboss died
+        this.onMemberDamage  = null;   // (amount: number) => void  — leader receives member damage
+        this.onBossKilled    = null;   // () => void                — non-leader: main ghost boss died
+        this.onMobDied       = null;   // (id: number) => void      — non-leader: ghost escort/miniboss died
+
+        // Friend callbacks
+        this.onFriendList    = null;   // (friends: Array<{name,status,dir,online,sector}>) => void
+        this.onFriendUpdate  = null;   // ({name, online, sector?}) => void
+        this.onFriendRequest = null;   // ({from: string}) => void
     }
 
     // ── Outgoing ─────────────────────────────────────────────────────────────
@@ -76,6 +81,18 @@ export class GroupSystem {
         this._send({ type: 'group_boss_hp', ratio });
     }
 
+    /** Inform server of current sector (for friends online status). */
+    sectorUpdate(sector) {
+        this._send({ type: 'sector_update', sector });
+    }
+
+    // ── Friends ───────────────────────────────────────────────────────────────
+
+    friendAdd(name)     { this._send({ type: 'friend_add',     to:   name }); }
+    friendAccept(name)  { this._send({ type: 'friend_accept',  from: name }); }
+    friendDecline(name) { this._send({ type: 'friend_decline', from: name }); }
+    friendRemove(name)  { this._send({ type: 'friend_remove',  name       }); }
+
     // ── Incoming (call from WS onmessage handler in GameScene) ───────────────
 
     handleMessage(msg) {
@@ -125,6 +142,22 @@ export class GroupSystem {
 
             case 'group_mob_died':
                 this.onMobDied?.(msg.id);
+                break;
+
+            case 'friend_list':
+                this.onFriendList?.(msg.friends ?? []);
+                break;
+
+            case 'friend_online':
+                this.onFriendUpdate?.({ name: msg.name, online: true, sector: msg.sector ?? '' });
+                break;
+
+            case 'friend_offline':
+                this.onFriendUpdate?.({ name: msg.name, online: false });
+                break;
+
+            case 'friend_request_in':
+                this.onFriendRequest?.({ from: msg.from });
                 break;
 
             case 'group_invite':

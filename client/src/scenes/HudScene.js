@@ -172,8 +172,21 @@ export default class HudScene extends Phaser.Scene {
     this._buildInfoPanel();
     this._buildLogPanel();
     this._buildChatPanel();
+
+    // Social windows (group + friends)
     this._groupBossHpRatio = 0;
-    this._buildGroupPanel();
+    this._groupWinVisible  = false;
+    this._friendsWinVisible = false;
+    this._friendsList      = [];
+    this._lastSectorSent   = null;
+    this._buildHudSocialButtons();
+    this._buildGroupWin();
+    this._buildFriendsWin();
+
+    // F key → toggle friends window
+    this.input.keyboard?.on('keydown-F', () => {
+      if (!this.gs?.atBase) this._toggleFriendsWin();
+    });
   }
 
   _buildActionBarHUD() {
@@ -746,6 +759,13 @@ export default class HudScene extends Phaser.Scene {
     for (let i = this.logEntries.length - 1, row = 0; i >= 0; i--, row++) {
       const e = this.logEntries[i];
       e.t.setX(this._logX + 10).setY(logBottom - row * 18).setVisible(logVisible).setAlpha(1);
+    }
+
+    // ── Sector tracking for friends online status ──
+    const _curSec = galaxy.current;
+    if (_curSec !== this._lastSectorSent && this.groupSystem) {
+      this._lastSectorSent = _curSec;
+      this.groupSystem.sectorUpdate(_curSec);
     }
   }
 
@@ -1434,7 +1454,13 @@ export default class HudScene extends Phaser.Scene {
       if (text === '/выйти') {
         this.groupSystem.leave();
         this.pushChatMessage('general', 'System', '[Группа] Вы вышли из группы.', {});
-        this._rebuildGroupPanel();
+        this._rebuildGroupWin();
+        this._updateSocialBtnStyles();
+        return;
+      }
+      if (text.startsWith('/добавить ')) {
+        const name = text.slice(9).trim();
+        if (name) { this.groupSystem.friendAdd(name); this.pushChatMessage('general', 'System', `[Друзья] Запрос отправлен: ${name}`, {}); }
         return;
       }
     }
@@ -1483,11 +1509,12 @@ export default class HudScene extends Phaser.Scene {
     this.groupSystem.onUpdate = (members) => {
       const gs = this.scene.get('GameScene');
       if (gs) gs.groupSize = members.length;
-      this._rebuildGroupPanel();
+      this._rebuildGroupWin();
+      this._updateSocialBtnStyles();
     };
     this.groupSystem.onBossHp = (ratio) => {
       this._groupBossHpRatio = ratio;
-      this._rebuildGroupPanel();
+      this._rebuildGroupWin();
       // Обновляем HP призрака-босса у не-лидеров
       if (!this.groupSystem.isLeader) {
         const gs = this.scene.get('GameScene');
@@ -1528,14 +1555,36 @@ export default class HudScene extends Phaser.Scene {
       gs.onMobKilled(ghost);   // участник получает свои XP / кредиты / лут
     };
 
-    ws.onopen = () => {};
+    // ── Friends callbacks ──────────────────────────────────────────────
+    this.groupSystem.onFriendList = (friends) => {
+      this._friendsList = friends;
+      this._rebuildFriendsWin();
+      this._updateSocialBtnStyles();
+    };
+    this.groupSystem.onFriendUpdate = ({ name, online, sector }) => {
+      const f = this._friendsList.find(f => f.name === name);
+      if (f) { f.online = online; if (sector !== undefined) f.sector = sector; }
+      this._rebuildFriendsWin();
+    };
+    this.groupSystem.onFriendRequest = ({ from }) => {
+      if (!this._friendsList.find(f => f.name === from)) {
+        this._friendsList.push({ name: from, status: 'pending', dir: 'in', online: true, sector: '' });
+      }
+      this._rebuildFriendsWin();
+      this._updateSocialBtnStyles();
+      this.pushChatMessage('general', 'System', `[Друзья] ${from} хочет добавить вас в друзья — откройте окно Друзья.`, {});
+    };
+
+    ws.onopen = () => {
+      this.groupSystem?.sectorUpdate(galaxy.current);
+    };
 
     ws.onmessage = evt => {
       let d;
       try { d = JSON.parse(evt.data); } catch { return; }
 
-      // Группо-сообщения роутим в GroupSystem
-      if (d.type?.startsWith('group_')) {
+      // Группо- и friend-сообщения роутим в GroupSystem
+      if (d.type?.startsWith('group_') || d.type?.startsWith('friend_')) {
         this.groupSystem?.handleMessage(d);
         return;
       }
@@ -1562,6 +1611,10 @@ export default class HudScene extends Phaser.Scene {
     ws.onclose = () => {
       this._chatWS = null;
       this.groupSystem = null;
+      this._friendsList = [];
+      this._rebuildFriendsWin();
+      this._rebuildGroupWin();
+      this._updateSocialBtnStyles();
       if (!this._chatWsDestroyed) setTimeout(() => this._connectChatWS(), 5000);
     };
     ws.onerror = () => {};
@@ -1571,84 +1624,265 @@ export default class HudScene extends Phaser.Scene {
     try { localStorage.setItem('sd_chat_state', JSON.stringify({ x: this._chatX, y: this._chatY, w: this._chatW, h: this._chatH })); } catch {}
   }
 
-  // ── Группа: UI-панель ─────────────────────────────────────────────────────
+  // ── HUD кнопки: ГРУППА и ДРУЗЬЯ ─────────────────────────────────────────
 
-  _buildGroupPanel() {
-    this._grpC = this.add.container(8, 92).setDepth(102);
-    this._rebuildGroupPanel();
+  _buildHudSocialButtons() {
+    const F = (sz, c) => ({ fontFamily: 'Inter, sans-serif', fontSize: sz, color: c, resolution: UI_RES });
+    this._grpBtn    = this.add.rectangle(8,   92, 106, 22, 0x0a1828, 0.92).setOrigin(0).setDepth(102)
+      .setStrokeStyle(1, 0x1e4060, 0.8).setInteractive({ useHandCursor: true });
+    this._grpBtnTxt = this.add.text(61,  103, 'ГРУППА', F('10px', '#3a7090')).setOrigin(0.5).setDepth(103);
+    this._frBtn     = this.add.rectangle(118, 92, 106, 22, 0x0a1828, 0.92).setOrigin(0).setDepth(102)
+      .setStrokeStyle(1, 0x1e4060, 0.8).setInteractive({ useHandCursor: true });
+    this._frBtnTxt  = this.add.text(171, 103, 'ДРУЗЬЯ  F', F('10px', '#3a7090')).setOrigin(0.5).setDepth(103);
+
+    this._grpBtn.on('pointerdown', () => this._toggleGroupWin());
+    this._grpBtn.on('pointerover', () => this._grpBtn.setFillStyle(0x102840));
+    this._grpBtn.on('pointerout',  () => this._updateSocialBtnStyles());
+    this._frBtn.on('pointerdown',  () => this._toggleFriendsWin());
+    this._frBtn.on('pointerover',  () => this._frBtn.setFillStyle(0x102840));
+    this._frBtn.on('pointerout',   () => this._updateSocialBtnStyles());
   }
 
-  _rebuildGroupPanel() {
+  _updateSocialBtnStyles() {
+    if (!this._grpBtn) return;
+    const grp     = this.groupSystem;
+    const grpOn   = this._groupWinVisible;
+    const frOn    = this._friendsWinVisible;
+    const pending = (this._friendsList || []).filter(f => f.status === 'pending' && f.dir === 'in').length;
+    const grpBadge = grp?.inGroup ? ` (${grp.memberCount})` : '';
+    const frBadge  = pending > 0 ? ` (${pending}!)` : '';
+
+    this._grpBtn.setFillStyle(grpOn ? 0x0f3040 : 0x0a1828);
+    this._grpBtn.setStrokeStyle(1, grpOn ? 0x4dd0e1 : (grp?.inGroup ? 0x2a6080 : 0x1e4060), 1);
+    this._grpBtnTxt.setText(`ГРУППА${grpBadge}`).setColor(grpOn || grp?.inGroup ? '#4dd0e1' : '#3a7090');
+
+    this._frBtn.setFillStyle(frOn ? 0x0f3040 : 0x0a1828);
+    this._frBtn.setStrokeStyle(1, frOn ? 0x4dd0e1 : (pending > 0 ? 0x806020 : 0x1e4060), 1);
+    this._frBtnTxt.setText(`ДРУЗЬЯ  F${frBadge}`).setColor(frOn ? '#4dd0e1' : (pending > 0 ? '#ffb74d' : '#3a7090'));
+  }
+
+  _toggleGroupWin()   { this._groupWinVisible   = !this._groupWinVisible;   this._rebuildGroupWin();   this._updateSocialBtnStyles(); }
+  _toggleFriendsWin() { this._friendsWinVisible = !this._friendsWinVisible; this._rebuildFriendsWin(); this._updateSocialBtnStyles(); }
+
+  // ── Окно ГРУППА ──────────────────────────────────────────────────────────
+
+  _buildGroupWin() {
+    this._grpWin = this.add.container(8, 118).setDepth(102);
+    this._rebuildGroupWin();
+  }
+
+  _rebuildGroupWin() {
+    this._grpWin?.removeAll(true);
+    if (!this._groupWinVisible) { this._grpWin?.setVisible(false); return; }
+    this._grpWin.setVisible(true);
+
     const grp = this.groupSystem;
-    this._grpC?.removeAll(true);
-    if (!grp?.inGroup) return;
+    const PW = 224, PAD = 8;
+    const F = (sz, c) => ({ fontFamily: 'Inter, sans-serif',    fontSize: sz, color: c, resolution: UI_RES });
+    const O = (sz, c) => ({ fontFamily: 'Orbitron, sans-serif', fontSize: sz, color: c, resolution: UI_RES });
+    const add = o => { this._grpWin.add(o); return o; };
 
-    const F  = (sz, c) => ({ fontFamily: 'Inter, sans-serif',    fontSize: sz, color: c, resolution: UI_RES });
-    const O  = (sz, c) => ({ fontFamily: 'Orbitron, sans-serif', fontSize: sz, color: c, resolution: UI_RES });
-    const PW = 192, PAD = 8;
+    if (!grp?.inGroup) {
+      // ── Нет группы: предложить создать ──
+      add(this.add.rectangle(0, 0, PW, 82, 0x020a14, 0.93).setOrigin(0).setStrokeStyle(1, 0x1a4060, 0.7));
+      add(this.add.text(PAD, 8, 'ГРУППА', O('10px', '#4dd0e1')));
+      add(this.add.rectangle(0, 26, PW, 1, 0x1a4060, 0.4).setOrigin(0));
+      add(this.add.text(PAD, 32, 'Создай группу и зови друзей!', F('10px', '#4a6880')));
+      const createBtn = add(this.add.rectangle(PAD, 50, PW - PAD * 2, 24, 0x0a2030, 1)
+        .setOrigin(0).setStrokeStyle(1, 0x1a5060, 0.8).setInteractive({ useHandCursor: true }));
+      add(this.add.text(PW / 2, 62, '+ Создать группу', F('11px', '#4dd0e1')).setOrigin(0.5));
+      createBtn.on('pointerover', () => createBtn.setFillStyle(0x0d3a4a));
+      createBtn.on('pointerout',  () => createBtn.setFillStyle(0x0a2030));
+      createBtn.on('pointerdown', () => {
+        this.groupSystem?.create(galaxy.current, false);
+        this.pushChatMessage('general', 'System', '[Группа] Группа создана. Пригласи друзей из окна Друзья!', {});
+      });
+      return;
+    }
+
+    // ── В группе ──
     const members = grp.members;
-    const rowH = 17;
+    const rowH    = 20;
     const showBossBar = this._groupBossHpRatio > 0 && this._groupBossHpRatio < 1;
-    const innerH = 20 + members.length * rowH + (grp.canAddMembers() ? 22 : 0) + (showBossBar ? 22 : 0) + PAD;
-    const c = this._grpC;
-    const add = o => { c.add(o); return o; };
+    const H = 32 + members.length * rowH + (grp.canAddMembers() ? 32 : 0) + (showBossBar ? 30 : 0) + PAD;
 
-    // фон
-    add(this.add.rectangle(0, 0, PW, innerH, 0x020a14, 0.88).setOrigin(0).setStrokeStyle(1, 0x1a4060, 0.6));
+    add(this.add.rectangle(0, 0, PW, H, 0x020a14, 0.93).setOrigin(0).setStrokeStyle(1, 0x1a4060, 0.7));
+    add(this.add.text(PAD, 8, `ГРУППА  ${members.length}/8`, O('10px', '#4dd0e1')));
 
-    // заголовок
-    add(this.add.text(PAD, 5, `ГРУППА (${members.length}/8)`, O('10px', '#4dd0e1')).setOrigin(0));
-
-    // кнопка выйти
-    const leaveBtn = add(this.add.text(PW - PAD, 5, '✕', F('11px', '#ef5350')).setOrigin(1, 0).setInteractive({ useHandCursor: true }));
+    const leaveBtn = add(this.add.text(PW - PAD, 8, '✕ выйти', F('10px', '#ef5350'))
+      .setOrigin(1, 0).setInteractive({ useHandCursor: true }));
     leaveBtn.on('pointerover', () => leaveBtn.setAlpha(0.7));
     leaveBtn.on('pointerout',  () => leaveBtn.setAlpha(1));
     leaveBtn.on('pointerdown', () => {
       this.groupSystem?.leave();
       const gs = this.scene.get('GameScene');
       if (gs) gs.groupSize = 0;
-      this._rebuildGroupPanel();
+      this._rebuildGroupWin();
+      this._updateSocialBtnStyles();
     });
 
-    // список участников
+    add(this.add.rectangle(0, 26, PW, 1, 0x1a4060, 0.4).setOrigin(0));
+
     const myName = this.gs?.playerName || '';
     members.forEach((name, i) => {
-      const isMe = name === myName;
+      const isMe     = name === myName;
+      const isLeader = i === 0;
       const dot = isMe ? '●' : '○';
       const col = isMe ? '#80cbc4' : '#9fb3b8';
-      add(this.add.text(PAD, 22 + i * rowH, `${dot} ${name}`, F('11px', col)));
+      add(this.add.text(PAD, 30 + i * rowH, `${dot} ${name}${isLeader ? '  ♛' : ''}`, F('11px', col)));
     });
 
-    let nextY = 22 + members.length * rowH + 4;
+    let nextY = 30 + members.length * rowH + 4;
 
-    // кнопка пригласить
     if (grp.canAddMembers()) {
-      const invBtn = add(this.add.rectangle(PAD, nextY, PW - PAD * 2, 18, 0x0a2030, 1)
+      const invBtn = add(this.add.rectangle(PAD, nextY, PW - PAD * 2, 24, 0x0a2030, 1)
         .setOrigin(0).setStrokeStyle(1, 0x1a4060, 0.5).setInteractive({ useHandCursor: true }));
-      add(this.add.text(PW / 2, nextY + 9, '+ Пригласить', F('10px', '#4dd0e1')).setOrigin(0.5));
-      invBtn.on('pointerover', () => invBtn.setFillStyle(0x0d2e40, 1));
-      invBtn.on('pointerout',  () => invBtn.setFillStyle(0x0a2030, 1));
+      add(this.add.text(PW / 2, nextY + 12, '+ Пригласить из друзей', F('10px', '#4dd0e1')).setOrigin(0.5));
+      invBtn.on('pointerover', () => invBtn.setFillStyle(0x0d2e40));
+      invBtn.on('pointerout',  () => invBtn.setFillStyle(0x0a2030));
       invBtn.on('pointerdown', () => {
-        // Фокусируем чат и вставляем префикс
-        if (this._chatInputEl) {
-          this._chatInputEl.value = '/пригласить ';
-          this._chatVisible = true;
-          this._rebuildChatPanel();
-          this._chatInputEl.focus();
-        }
+        if (!this._friendsWinVisible) { this._friendsWinVisible = true; this._rebuildFriendsWin(); this._updateSocialBtnStyles(); }
       });
-      nextY += 22;
+      nextY += 32;
     }
 
-    // полоса HP босса (если лидер прислал ratio)
     if (showBossBar) {
-      add(this.add.text(PAD, nextY, 'АПОФИС', O('8px', '#ef5350')).setOrigin(0));
-      const BAR_W = PW - PAD * 2, BAR_H = 7;
-      add(this.add.rectangle(PAD, nextY + 11, BAR_W, BAR_H, 0x1a0000, 1).setOrigin(0));
+      add(this.add.text(PAD, nextY + 2, 'БОСС', O('8px', '#ef5350')));
+      const BW = PW - PAD * 2, BH = 7;
+      add(this.add.rectangle(PAD, nextY + 14, BW, BH, 0x1a0000, 1).setOrigin(0));
       const ratio = Math.max(0, Math.min(1, this._groupBossHpRatio));
-      const col = ratio > 0.5 ? 0xef5350 : ratio > 0.25 ? 0xff7043 : 0xffa726;
-      add(this.add.rectangle(PAD, nextY + 11, Math.round(BAR_W * ratio), BAR_H, col, 1).setOrigin(0));
-      add(this.add.text(PAD + BAR_W - 2, nextY + 9, `${Math.round(ratio * 100)}%`, F('9px', '#ef9a9a')).setOrigin(1, 0));
+      const bCol  = ratio > 0.5 ? 0xef5350 : ratio > 0.25 ? 0xff7043 : 0xffa726;
+      add(this.add.rectangle(PAD, nextY + 14, Math.round(BW * ratio), BH, bCol, 1).setOrigin(0));
+      add(this.add.text(PAD + BW, nextY + 12, `${Math.round(ratio * 100)}%`, F('9px', '#ef9a9a')).setOrigin(1, 0));
     }
+  }
+
+  // ── Окно ДРУЗЬЯ ──────────────────────────────────────────────────────────
+
+  _buildFriendsWin() {
+    const W = this.scale.width;
+    this._frWin = this.add.container(W - 292, 40).setDepth(103);
+    this._rebuildFriendsWin();
+  }
+
+  _rebuildFriendsWin() {
+    this._frWin?.removeAll(true);
+    if (!this._friendsWinVisible) { this._frWin?.setVisible(false); return; }
+    this._frWin.setVisible(true);
+
+    const PW = 284, PAD = 8;
+    const F = (sz, c) => ({ fontFamily: 'Inter, sans-serif',    fontSize: sz, color: c, resolution: UI_RES });
+    const O = (sz, c) => ({ fontFamily: 'Orbitron, sans-serif', fontSize: sz, color: c, resolution: UI_RES });
+    const add = o => { this._frWin.add(o); return o; };
+
+    const friends  = this._friendsList || [];
+    const pending  = friends.filter(f => f.status === 'pending' && f.dir === 'in');
+    const accepted = friends.filter(f => f.status === 'accepted');
+    const online   = accepted.filter(f =>  f.online).sort((a, b) => a.name.localeCompare(b.name));
+    const offline  = accepted.filter(f => !f.online).sort((a, b) => a.name.localeCompare(b.name));
+    const onlineCnt = online.length;
+
+    // Вычисляем высоту заранее
+    const pendingH  = pending.length > 0 ? 22 + pending.length * 24 + 1 : 0;
+    const onlineH   = online.length  * 24;
+    const offlineH  = offline.length * 20;
+    const totalH    = 30 + pendingH + onlineH + offlineH + 34;
+
+    // Фон
+    add(this.add.rectangle(0, 0, PW, totalH, 0x020a14, 0.93).setOrigin(0).setStrokeStyle(1, 0x1a4060, 0.8));
+
+    // Заголовок
+    add(this.add.text(PAD, 8, `ДРУЗЬЯ${onlineCnt > 0 ? `   •   ${onlineCnt} онлайн` : ''}`, O('10px', '#4dd0e1')));
+    const closeBtn = add(this.add.text(PW - PAD, 8, '✕', F('12px', '#ef5350')).setOrigin(1, 0).setInteractive({ useHandCursor: true }));
+    closeBtn.on('pointerdown', () => { this._friendsWinVisible = false; this._rebuildFriendsWin(); this._updateSocialBtnStyles(); });
+
+    let y = 27;
+    add(this.add.rectangle(0, y, PW, 1, 0x1a4060, 0.5).setOrigin(0));
+    y += 1;
+
+    // Входящие запросы
+    if (pending.length > 0) {
+      add(this.add.text(PAD, y + 4, `⚠  Запросы: ${pending.length}`, F('10px', '#ffb74d')));
+      y += 22;
+      for (const f of pending) {
+        add(this.add.text(PAD, y + 4, `● ${f.name}`, F('11px', '#ffa726')));
+        // Принять
+        const accBtn = add(this.add.rectangle(PW - PAD - 58, y + 2, 28, 18, 0x0d2a1a, 1).setOrigin(0)
+          .setStrokeStyle(1, 0x1a4a2a, 0.9).setInteractive({ useHandCursor: true }));
+        add(this.add.text(PW - PAD - 44, y + 11, '✓', F('13px', '#66bb6a')).setOrigin(0.5));
+        accBtn.on('pointerover', () => accBtn.setFillStyle(0x143520));
+        accBtn.on('pointerout',  () => accBtn.setFillStyle(0x0d2a1a));
+        accBtn.on('pointerdown', () => this.groupSystem?.friendAccept(f.name));
+        // Отклонить
+        const decBtn = add(this.add.rectangle(PW - PAD - 26, y + 2, 28, 18, 0x200010, 1).setOrigin(0)
+          .setStrokeStyle(1, 0x400020, 0.9).setInteractive({ useHandCursor: true }));
+        add(this.add.text(PW - PAD - 12, y + 11, '✗', F('13px', '#ef5350')).setOrigin(0.5));
+        decBtn.on('pointerover', () => decBtn.setFillStyle(0x300015));
+        decBtn.on('pointerout',  () => decBtn.setFillStyle(0x200010));
+        decBtn.on('pointerdown', () => this.groupSystem?.friendDecline(f.name));
+        y += 24;
+      }
+      add(this.add.rectangle(0, y, PW, 1, 0x1a4060, 0.3).setOrigin(0));
+      y += 1;
+    }
+
+    // Онлайн-друзья
+    for (const f of online) {
+      add(this.add.text(PAD,      y + 4, '●', F('10px', '#4CAF50')));
+      add(this.add.text(PAD + 14, y + 4, f.name, F('11px', '#c8f0d0')));
+      if (f.sector) add(this.add.text(PAD + 14, y + 15, f.sector, F('8px', '#3a6858')));
+
+      // Кнопка «→Группа»
+      const invBtn = add(this.add.rectangle(PW - PAD - 56, y + 2, 30, 18, 0x0a2030, 1).setOrigin(0)
+        .setStrokeStyle(1, 0x1a4060, 0.8).setInteractive({ useHandCursor: true }));
+      add(this.add.text(PW - PAD - 41, y + 11, '→Гр', F('9px', '#4dd0e1')).setOrigin(0.5));
+      invBtn.on('pointerover', () => invBtn.setFillStyle(0x0d2e40));
+      invBtn.on('pointerout',  () => invBtn.setFillStyle(0x0a2030));
+      invBtn.on('pointerdown', () => {
+        const grp = this.groupSystem;
+        if (!grp) return;
+        if (!grp.inGroup) { grp.create(galaxy.current, false); this._updateSocialBtnStyles(); }
+        grp.invite(f.name, galaxy.current);
+        this.pushChatMessage('general', 'System', `[Группа] Приглашение отправлено: ${f.name}`, {});
+      });
+
+      // Кнопка удалить
+      const remBtn = add(this.add.rectangle(PW - PAD - 22, y + 2, 24, 18, 0x180008, 0.9).setOrigin(0)
+        .setStrokeStyle(1, 0x380015, 0.7).setInteractive({ useHandCursor: true }));
+      add(this.add.text(PW - PAD - 10, y + 11, '✕', F('11px', '#ef5350')).setOrigin(0.5));
+      remBtn.on('pointerdown', () => this.groupSystem?.friendRemove(f.name));
+
+      y += 24;
+    }
+
+    // Офлайн-друзья
+    for (const f of offline) {
+      add(this.add.text(PAD,      y + 3, '○', F('10px', '#455a64')));
+      add(this.add.text(PAD + 14, y + 3, f.name, F('11px', '#607d8b')));
+      const remBtn = add(this.add.rectangle(PW - PAD - 22, y + 1, 24, 16, 0x100008, 0.8).setOrigin(0)
+        .setStrokeStyle(1, 0x280010, 0.6).setInteractive({ useHandCursor: true }));
+      add(this.add.text(PW - PAD - 10, y + 9, '✕', F('10px', '#78909c')).setOrigin(0.5));
+      remBtn.on('pointerdown', () => this.groupSystem?.friendRemove(f.name));
+      y += 20;
+    }
+
+    // Нижняя линия
+    add(this.add.rectangle(0, y, PW, 1, 0x1a4060, 0.4).setOrigin(0));
+    y += 1;
+
+    // Кнопка «Добавить друга» → фокус на чат с префиксом
+    const addBtn = add(this.add.rectangle(PAD, y + 6, PW - PAD * 2, 24, 0x0a1828, 1).setOrigin(0)
+      .setStrokeStyle(1, 0x1e4060, 0.5).setInteractive({ useHandCursor: true }));
+    add(this.add.text(PW / 2, y + 18, '+ Добавить друга  /добавить [ник]', F('9px', '#4dd0e1')).setOrigin(0.5));
+    addBtn.on('pointerover', () => addBtn.setFillStyle(0x0d2e40));
+    addBtn.on('pointerout',  () => addBtn.setFillStyle(0x0a1828));
+    addBtn.on('pointerdown', () => {
+      if (this._chatInputEl) {
+        this._chatInputEl.value = '/добавить ';
+        this._chatVisible = true;
+        this._rebuildChatPanel();
+        this._chatInputEl.focus();
+      }
+    });
   }
 }

@@ -41,3 +41,13 @@ class ChatMessage(Base):
     username = Column(String(50), nullable=False)
     text     = Column(String(500), nullable=False)
     ts       = Column(Float, nullable=False)
+
+
+class Friendship(Base):
+    __tablename__ = "friendships"
+
+    id         = Column(Integer, primary_key=True)
+    user_a     = Column(String(50), nullable=False, index=True)   # who sent the request
+    user_b     = Column(String(50), nullable=False, index=True)   # recipient
+    status     = Column(String(10), nullable=False, default='pending')  # 'pending' | 'accepted'
+    created_at = Column(DateTime, default=datetime.utcnow)
