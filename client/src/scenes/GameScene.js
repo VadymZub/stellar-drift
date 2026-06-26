@@ -804,6 +804,7 @@ export default class GameScene extends Phaser.Scene {
           const b = miningBases[i % miningBases.length];
           // Эсминцы курсируют между базами с отклонением от прямой линии
           const dest = add('sec_destroyer', Lmax, b.x - cx + rnd(-200, 200), b.y - cy + rnd(-200, 200), { behavior: 'roam', targets: baseTargets, pathDeviation: 200 });
+          dest.isConfedBoss = true;
           for (let j = 0; j < config.dronesPerDest; j++) {
             add('sec_drone', Lmax, dest.spawnX - cx + rnd(-100, 100), dest.spawnY - cy + rnd(-100, 100), { leader: dest, orbitLeader: true });
           }
@@ -1037,6 +1038,7 @@ export default class GameScene extends Phaser.Scene {
       const gx = 1800, gy = 1140;
       const sectorBoss = add(boss, Lmax, gx, gy, { behavior: 'guard', patrolRadius: 180, leash: 480 });
       sectorBoss.isSectorBoss = true;
+      if (galaxy.current === 'helios_5') sectorBoss.isConfedBoss = true;
       for (const [ox, oy] of [[-240, -130], [250, -90], [-110, 250]]) {
         add(pool[0], rnd(Lmin, Lmax), gx + ox, gy + oy, { patrolRadius: 150, leash: 520, bossRef: sectorBoss, ...(isHomeSector ? { passive: true } : {}) });
       }
@@ -2595,10 +2597,17 @@ export default class GameScene extends Phaser.Scene {
       const rawSg = rollStarGold(mob);
       sg = rawSg > 0 ? Math.round(rawSg * (diff?.goldMult ?? 1) / 2) : 0;
     } else {
-      const sg_tpl = mob.tpl.starGold;
-      const goldChance = mob.bossRef ? 0.02 : 0.08;
-      sg = (sg_tpl && Phaser.Math.FloatBetween(0, 1) < goldChance)
-        ? Phaser.Math.Between(sg_tpl.min, sg_tpl.max) : 0;
+      if (mob.isConfedBoss) {
+        const sg_tpl = mob.tpl.starGold;
+        sg = (sg_tpl && Phaser.Math.FloatBetween(0, 1) < 0.02)
+          ? Phaser.Math.Between(sg_tpl.min, sg_tpl.max) : 0;
+      } else if (mob.isSectorBoss) {
+        const sg_tpl = mob.tpl.starGold;
+        sg = (sg_tpl && Phaser.Math.FloatBetween(0, 1) < 0.08)
+          ? Phaser.Math.Between(sg_tpl.min, sg_tpl.max) : 0;
+      } else {
+        sg = 0;
+      }
     }
     // Данж-босс в группе: сервер распределяет золото, не начисляем локально
     const _grpKill = this.groupSystem;
@@ -2694,8 +2703,28 @@ export default class GameScene extends Phaser.Scene {
       }
     }
     if (!mob.noRespawn && !SECTORS[galaxy.current]?.isDungeon) {
-      const respawnDelay = mob.isSectorBoss ? 300000 : mob.bossRef ? RESPAWN_MS : 60000;
-      this.time.delayedCall(respawnDelay, () => { if (!mob.alive) { mob.respawn(); this.log(i18n.t('log.respawn', { name, lvl })); } });
+      if (mob.bossRef) {
+        // эскорт босса: не респавнится сам — поднимается вместе с боссом
+      } else if (mob.isSectorBoss) {
+        this.time.delayedCall(300000, () => {
+          if (!mob.alive) {
+            mob.respawn();
+            this.log(i18n.t('log.respawn', { name, lvl }));
+            this.mobs.forEach(m => { if (m.bossRef === mob && !m.alive) m.respawn(); });
+          }
+        });
+      } else if (mob.isConfedBoss) {
+        this.time.delayedCall(300000, () => {
+          if (!mob.alive) {
+            const canRespawn = !sec?.pvp || this.miningBases?.some(b => b.corp === 'neutral');
+            if (canRespawn) { mob.respawn(); this.log(i18n.t('log.respawn', { name, lvl })); }
+          }
+        });
+      } else {
+        this.time.delayedCall(60000, () => {
+          if (!mob.alive) { mob.respawn(); this.log(i18n.t('log.respawn', { name, lvl })); }
+        });
+      }
     }
     // Mission hooks
     if (mob.tpl.key.startsWith('pirate')) this.advanceMission('daily_patrol', 0);

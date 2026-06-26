@@ -270,7 +270,7 @@ export function itemIconKey(item) {
 
 // ── Plasmate resource ─────────────────────────────────────────────────────────
 export const PLASMATE_PER_SLOT  = 500;   // units per cargo slot
-export const PLASMATE_DAILY_MAX = 7000;  // daily collection cap
+export const PLASMATE_DAILY_MAX = 20000;  // daily collection cap
 export const PLASMATE_GOLD_RATE = 500;   // units → 1 starGold
 
 // Add amount to inventory plasmate stacks; returns leftover that didn't fit.
