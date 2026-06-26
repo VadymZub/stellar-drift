@@ -884,6 +884,14 @@ export default class GameScene extends Phaser.Scene {
       d1e3.isBossEscort = true;
       const d1e4 = add('swarm_07', Lmax,  250, -2150, { behavior: 'guard', patrolRadius: 150, leash: 500 });
       d1e4.isBossEscort = true;
+      // разведчики (одиночки) и патрули (пары) в незанятых коридорах
+      add('swarm_01', rnd(Lmin, Lmax),    0, 1900, { patrolRadius: 250 });     // S-рукав: разведчик (глубокий юг)
+      add('swarm_03', rnd(Lmin, Lmax),  150, 1500, { patrolRadius: 200 });     // S-рукав: патруль (пара)
+      add('swarm_02', rnd(Lmin, Lmax), -150, 1500, { patrolRadius: 200 });
+      add('swarm_04', rnd(Lmin, Lmax), 1800,  250, { patrolRadius: 250 });     // E-рукав: патруль (пара)
+      add('swarm_02', rnd(Lmin, Lmax), 1800, -250, { patrolRadius: 250 });
+      add('swarm_01', rnd(Lmin, Lmax), -1800,  250, { patrolRadius: 250 });    // W-рукав: патруль (пара)
+      add('swarm_03', rnd(Lmin, Lmax), -1800, -250, { patrolRadius: 250 });
 
     } else if (galaxy.current === 'dungeon_2') {
       // D2: Корсары по Z-маршруту; ресурсы в тупиках; охрана босса в сев-вост комнате
@@ -897,14 +905,28 @@ export default class GameScene extends Phaser.Scene {
       add('corsair_04', rnd(Lmin, Lmax), -700, -1300, {});
       add('corsair_02', rnd(Lmin, Lmax), 800, -1200, {});
       add('corsair_08', Lmax, 1900, 1100, { behavior: 'guard', patrolRadius: 200, leash: 550 });
-      add('corsair_08', Lmax, -1900, -200, { behavior: 'guard', patrolRadius: 200, leash: 550 });
+      add('corsair_08', Lmax, -1900, -450, { behavior: 'guard', patrolRadius: 200, leash: 550 }); // W-тупик (был внутри стены — исправлено)
+      add('corsair_05', Lmax,  2200,  1000, { behavior: 'guard', patrolRadius: 200, leash: 500 }); // охрана нового SE-депо
+      add('corsair_06', rnd(Lmin, Lmax), -1900, 500, { behavior: 'guard', patrolRadius: 200, leash: 500 }); // охрана нового W-нижнего депо
       const d2boss = add('corsair_09', Lmax, 1800, -1800, { behavior: 'guard', patrolRadius: 180, leash: 480 });
       d2boss.isDungeonBoss = true;
-      // охрана босса
+      // охрана босса ×4
       const d2e1 = add('corsair_08', Lmax, 1500, -1800, { behavior: 'guard', patrolRadius: 150, leash: 500 });
       d2e1.isBossEscort = true;
       const d2e2 = add('corsair_08', Lmax, 2100, -1800, { behavior: 'guard', patrolRadius: 150, leash: 500 });
       d2e2.isBossEscort = true;
+      const d2e3 = add('corsair_08', Lmax, 1500, -1600, { behavior: 'guard', patrolRadius: 150, leash: 500 });
+      d2e3.isBossEscort = true;
+      const d2e4 = add('corsair_08', Lmax, 2100, -1600, { behavior: 'guard', patrolRadius: 150, leash: 500 });
+      d2e4.isBossEscort = true;
+      // разведчики (одиночки) в дальних углах дна
+      add('corsair_02', rnd(Lmin, Lmax), -2100, 1800, { patrolRadius: 350 });
+      add('corsair_04', rnd(Lmin, Lmax),  2100, 1800, { patrolRadius: 350 });
+      // патрули (пары) в боковых зонах
+      add('corsair_01', rnd(Lmin, Lmax),  2100, -500, { patrolRadius: 300 }); // сред.-право
+      add('corsair_03', rnd(Lmin, Lmax),  2100, -200, { patrolRadius: 300 });
+      add('corsair_02', rnd(Lmin, Lmax), -1800, -900,  { patrolRadius: 250 }); // лев. канал
+      add('corsair_04', rnd(Lmin, Lmax), -1800, -1100, { patrolRadius: 250 });
 
     } else if (galaxy.current === 'dungeon_3') {
       // D3: Синдикат в военной сетке; мини-боссы на постах; охрана босса в верхне-правой комнате
@@ -3530,7 +3552,7 @@ export default class GameScene extends Phaser.Scene {
       // D1 hub+крест: тупики в конце E/W рукавов + S рукав
       dungeon_1:    { res:   'biomech_fragment',                                guard: 'swarm_07',     amount: 10, spots: [[0, 1800], [3200, 0], [-3200, 0]] },
       // D2 Z-маршрут: W тупик, SE карман, верхний левый тупик
-      dungeon_2:    { res:   'quantum_shard',                                   guard: 'corsair_08',   amount: 12, spots: [[-2000, -400], [2000, 900], [-1500, -1300]] },
+      dungeon_2:    { res:   'quantum_shard',                                   guard: 'corsair_08',   amount: 12, spots: [[-2000, -400], [2000, 900], [-1500, -1300], [2200, 1000], [-1900, 500]] },
       // D3 военная сетка: нижнее лево, верхний центр, верхнее право (перед боссом)
       dungeon_3:    { res:   'plasma_strand',                                   guard: 'syndicate_07', amount: 14, spots: [[-1800, 700], [0, -1000], [1800, -700]] },
       // D4 обломки: между кластерами мусора
