@@ -226,7 +226,19 @@ export default class GameScene extends Phaser.Scene {
     this.connectorInventory = this.connectorInventory ?? [];
     this.chips              = this.chips ?? 0;
     this.equippedBoard      = this.equippedBoard  ?? null;
-    
+
+    // TEST_PROFILE: apply ship override (must come after ownedShips/activeShip init)
+    if (tp?.ship && SHIP_BY_KEY[tp.ship] && tp.ship !== 'argus') {
+      this.ownedShips.add(tp.ship);
+      this.activeShip = tp.ship;
+    }
+    // TEST_PROFILE: equip board of given tier if none equipped yet
+    if (tp?.boardTier > 0 && !this.equippedBoard) {
+      const tpBoard = rollBoard(tp.boardTier);
+      this.boardInventory.push(tpBoard);
+      this.equippedBoard = tpBoard;
+    }
+
     if (DEV_MODE) {
       this.input.keyboard.on('keydown-EIGHT', () => {
         this.ownedShips.add('argus');
@@ -312,7 +324,7 @@ export default class GameScene extends Phaser.Scene {
     this.corpSwitchCount = this.corpSwitchCount || 0;
 
     // Skill system (account-level, persistent across sector restarts)
-    this.skillLevels = this.skillLevels || {};
+    this.skillLevels = this.skillLevels || (tp?.skillLevels ?? {});
     this.actionBar   = this.actionBar   || Array(10).fill(null);
     this.respeckCount     = this.respeckCount     || 0;
     this.skillAchievementSP = this.skillAchievementSP || 0;
