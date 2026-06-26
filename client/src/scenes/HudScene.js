@@ -667,14 +667,12 @@ export default class HudScene extends Phaser.Scene {
       const _labelY = _r.y + _r.h + 4;
       if (!atBase && p.alive) {
         const gs = this.gs;
-        const _rx = Math.round(p.x - gs.worldWidth  / 2);
-        const _ry = Math.round(p.y - gs.worldHeight / 2);
-        const _sx = _rx >= 0 ? `+${_rx}` : `${_rx}`;
-        const _sy = _ry >= 0 ? `+${_ry}` : `${_ry}`;
+        const _cx2 = Math.round(p.x);
+        const _cy2 = Math.round(gs.worldHeight - p.y);
         this._mmSectorTxt.setPosition(_cx, _labelY)
           .setText(SECTORS[galaxy.current]?.name ?? '').setVisible(true);
         this._mmCoordTxt.setPosition(_cx, _labelY + 14)
-          .setText(`${_sx}  ·  ${_sy}`).setVisible(true);
+          .setText(`${_cx2}  ·  ${_cy2}`).setVisible(true);
       } else {
         this._mmSectorTxt.setVisible(false);
         this._mmCoordTxt.setVisible(false);
