@@ -56,8 +56,10 @@ export default class HudScene extends Phaser.Scene {
       ({ fontFamily: 'Orbitron, sans-serif', fontSize: size, color, resolution: UI_RES });
 
     // Подписи под миникартой — позиция пересчитывается каждый кадр под текущий размер карты
-    this._mmSectorTxt = this.add.text(0, 0, '', F('9px', '#607d8b', '400')).setOrigin(0.5, 0).setDepth(101);
-    this._mmCoordTxt  = this.add.text(0, 0, '', O('9px', '#2a7a8a')).setOrigin(0.5, 0).setDepth(101);
+    this._mmSectorTxt = this.add.text(0, 0, '', F('10px', '#c8dde4', '600')).setOrigin(0.5, 0).setDepth(102)
+      .setStroke('#060f18', 4);
+    this._mmCoordTxt  = this.add.text(0, 0, '', O('10px', '#4dd0e1')).setOrigin(0.5, 0).setDepth(102)
+      .setStroke('#060f18', 4);
 
     // Панель игрока (лев-верх) — фиксированный вертикальный layout
     // Bar rows: icon (left) + bar (center, 155px) + value (right of bar, white)
@@ -664,10 +666,15 @@ export default class HudScene extends Phaser.Scene {
       const _cx = _r.x + _r.w / 2;
       const _labelY = _r.y + _r.h + 4;
       if (!atBase && p.alive) {
+        const gs = this.gs;
+        const _rx = Math.round(p.x - gs.worldWidth  / 2);
+        const _ry = Math.round(p.y - gs.worldHeight / 2);
+        const _sx = _rx >= 0 ? `+${_rx}` : `${_rx}`;
+        const _sy = _ry >= 0 ? `+${_ry}` : `${_ry}`;
         this._mmSectorTxt.setPosition(_cx, _labelY)
           .setText(SECTORS[galaxy.current]?.name ?? '').setVisible(true);
-        this._mmCoordTxt.setPosition(_cx, _labelY + 13)
-          .setText(`${Math.round(p.x)}  ·  ${Math.round(p.y)}`).setVisible(true);
+        this._mmCoordTxt.setPosition(_cx, _labelY + 14)
+          .setText(`${_sx}  ·  ${_sy}`).setVisible(true);
       } else {
         this._mmSectorTxt.setVisible(false);
         this._mmCoordTxt.setVisible(false);
@@ -961,6 +968,14 @@ export default class HudScene extends Phaser.Scene {
       g.lineTo(p.x + Math.cos(h + 2.6) * sz * 0.75, p.y + Math.sin(h + 2.6) * sz * 0.75);
       g.lineTo(p.x + Math.cos(h - 2.6) * sz * 0.75, p.y + Math.sin(h - 2.6) * sz * 0.75);
       g.closePath(); g.fillPath();
+    }
+
+    // Тёмная плашка под миникартой — фон для подписей сектора/координат
+    if (!this.gs.atBase && this.gs.player?.alive) {
+      g.fillStyle(0x03090f, 0.82);
+      g.fillRect(r.x, r.y + r.h + 1, r.w, 31);
+      g.lineStyle(1, COLORS.primary, 0.12);
+      g.strokeRect(r.x, r.y + r.h + 1, r.w, 31);
     }
   }
 
