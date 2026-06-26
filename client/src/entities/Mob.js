@@ -29,6 +29,8 @@ export default class Mob {
     this.maxHull   = scaleStat(template.hull,   level);
     this.maxShield = scaleStat(template.shield, level);
     this.damage    = scaleStat(template.damage, level);
+    if (opts.hpMult  && opts.hpMult  !== 1) { this.maxHull = Math.round(this.maxHull * opts.hpMult); this.maxShield = Math.round(this.maxShield * opts.hpMult); }
+    if (opts.dmgMult && opts.dmgMult !== 1) { this.damage   = Math.round(this.damage  * opts.dmgMult); }
     this.hull      = this.maxHull;
     this.shield    = this.maxShield;
 

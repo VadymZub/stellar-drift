@@ -46,6 +46,52 @@ export const BASE_WORLD = {
 
 export const PVP_WORLD_SCALE = 2.4; // Площадь ×4 относительно PvE (PvE=1.2 → PvP=2.4, ratio площадей = 2.4²/1.2² = 4)
 
+// Множители сложности данжей. Применяются к мобам, наградам и ресурсам.
+export const DUNGEON_DIFF = {
+  normal: { mobCount: 1.0, mobHP: 1.0, mobDamage: 1.0, deposits: 1.0, goldMult: 1.0, xpMult: 1.0, dropBonus: 0.00 },
+  hard:   { mobCount: 1.5, mobHP: 1.7, mobDamage: 1.4, deposits: 1.5, goldMult: 1.5, xpMult: 1.2, dropBonus: 0.10 },
+  elite:  { mobCount: 2.5, mobHP: 2.8, mobDamage: 2.0, deposits: 2.0, goldMult: 2.5, xpMult: 1.5, dropBonus: 0.20 },
+};
+
+// Дроп плат и коннекторов с ГЛАВНОГО босса данжа по сложности.
+// null = нет дропа; boardChance/connChance — вероятность (0–1).
+export const DUNGEON_BOSS_DROPS = {
+  dungeon_1: {
+    normal: null,
+    hard:   { boardTier: 1, boardChance: 0.003, connTier: 1, connChance: 0.010 },
+    elite:  { boardTier: 1, boardChance: 0.006, connTier: 1, connChance: 0.020 },
+  },
+  dungeon_2: {
+    normal: null,
+    hard:   { boardTier: 1, boardChance: 0.005, connTier: 1, connChance: 0.020 },
+    elite:  { boardTier: 1, boardChance: 0.010, connTier: 1, connChance: 0.035 },
+  },
+  dungeon_3: {
+    normal: { boardTier: 1, boardChance: 0.010, connTier: 1, connChance: 0.035 },
+    hard:   { boardTier: 2, boardChance: 0.005, connTier: 2, connChance: 0.020 },
+    elite:  { boardTier: 2, boardChance: 0.010, connTier: 2, connChance: 0.035 },
+  },
+  dungeon_4: {
+    normal: { boardTier: 1, boardChance: 0.020, connTier: 1, connChance: 0.040 },
+    hard:   { boardTier: 2, boardChance: 0.005, connTier: 2, connChance: 0.020 },
+    elite:  { boardTier: 2, boardChance: 0.010, connTier: 2, connChance: 0.035 },
+  },
+  dungeon_5: {
+    normal: { boardTier: 2, boardChance: 0.020, connTier: 2, connChance: 0.050 },
+    hard:   { boardTier: 3, boardChance: 0.005, connTier: 3, connChance: 0.020 },
+    elite:  { boardTier: 3, boardChance: 0.010, connTier: 3, connChance: 0.035 },
+  },
+  dungeon_prem: {
+    normal: { boardTier: 3, boardChance: 0.020, connTier: 3, connChance: 0.040 },
+    hard:   { boardTier: 3, boardChance: 0.025, connTier: 3, connChance: 0.060 },
+    elite:  { boardTier: 3, boardChance: 0.030, connTier: 3, connChance: 0.070 },
+  },
+  // R-1-boss — фиксированная сложность (нет выбора), всегда используется 'normal'
+  'R-1-boss': {
+    normal: { boardTier: 3, boardChance: 0.030, connTier: 3, connChance: 0.080 },
+  },
+};
+
 // ── Игрок: корабль Wisp (baseline 1.0× по статам). ──────────────────────────
 // Числа упрощены для прототипа; в комментариях — целевые из content-scope.
 export const PLAYER = {

@@ -1,5 +1,5 @@
 import * as Phaser from 'https://cdn.jsdelivr.net/npm/phaser@4.1.0/dist/phaser.esm.js';
-import { COLORS, BASE_WORLD, PVP_WORLD_SCALE, PLAYER, MOBS, PROJECTILE, PROJ_TYPES, RESPAWN_MS, UI_RES, BOSS, DPR, HANDLING, ART_ANGLE_OFFSET, RANKS, BASE_SCAN_RADIUS, HONOR_PER_LVL50 } from '../constants.js';
+import { COLORS, BASE_WORLD, PVP_WORLD_SCALE, PLAYER, MOBS, PROJECTILE, PROJ_TYPES, RESPAWN_MS, UI_RES, BOSS, DPR, HANDLING, ART_ANGLE_OFFSET, RANKS, BASE_SCAN_RADIUS, HONOR_PER_LVL50, DUNGEON_DIFF, DUNGEON_BOSS_DROPS } from '../constants.js';
 import { minimapRect, minimapToWorld } from '../systems/minimap.js';
 import { i18n } from '../i18n.js';
 import Player from '../entities/Player.js';
@@ -222,6 +222,7 @@ export default class GameScene extends Phaser.Scene {
 
     this.ownedShips     = this.ownedShips     || new Set(['wisp']);
     this.activeShip     = this.activeShip     || 'wisp';
+    this.dungeonDifficulty  = this.dungeonDifficulty  ?? 'normal';
     this.boardInventory     = this.boardInventory ?? [];
     this.connectorInventory = this.connectorInventory ?? [];
     this.chips              = this.chips ?? 0;
@@ -747,8 +748,10 @@ export default class GameScene extends Phaser.Scene {
     const Lmin = sec.lvlMin, Lmax = Math.min(50, sec.lvlMax);
     const rnd = (a, b) => Phaser.Math.Between(a, b);
     let pool, boss;
+    const _diff = sec.isDungeon ? this._dungeonDiff() : null;
     const add = (k, lvl, ox, oy, opts) => {
-      const m = new Mob(this, M[k], lvl, cx + ox, cy + oy, opts);
+      const finalOpts = _diff ? { hpMult: _diff.mobHP, dmgMult: _diff.mobDamage, ...opts } : opts;
+      const m = new Mob(this, M[k], lvl, cx + ox, cy + oy, finalOpts);
       this.mobs.push(m);
       return m;
     };
@@ -814,12 +817,13 @@ export default class GameScene extends Phaser.Scene {
     }
 
     if (galaxy.current === 'R-1-boss') {
-      // Специальный спавн для босс-уровня Алгол: Зов Апофиса
-      const apophis = add('apophis', 50, 0, 0, { behavior: 'guard', patrolRadius: 100, leash: Infinity });
+      // Специальный спавн для босс-уровня Алгол: Зов Апофиса (все мобы ×3)
+      const apophis = add('apophis', 50, 0, 0, { behavior: 'guard', patrolRadius: 100, leash: Infinity, hpMult: 3, dmgMult: 3 });
       apophis.isDungeonBoss = true;
       apophis.sprite.setAlpha(0.92);
       this._apophisBoss = apophis;
       this._apophisRingsEnraged = false;
+      this._apophisPhase2Started = false;
       this._apophisRings = this._createApophisRings(cx, cy);
       // Пульс тела: медленное дыхание
       const sx = apophis.sprite.scaleX, sy = apophis.sprite.scaleY;
@@ -829,7 +833,10 @@ export default class GameScene extends Phaser.Scene {
         duration: 2200, yoyo: true, repeat: -1, ease: 'Sine.easeInOut',
       });
       const ringPts = [[1440, 1440], [-1440, 1440], [1440, -1440], [-1440, -1440]];
-      ringPts.forEach(o => add('ancient_06', 50, o[0], o[1], { behavior: 'guard', patrolRadius: 600, bossRef: apophis }));
+      ringPts.forEach(o => {
+        const g = add('ancient_06', 50, o[0], o[1], { behavior: 'guard', patrolRadius: 600, bossRef: apophis, hpMult: 3, dmgMult: 3 });
+        g.isBossEscort = true;
+      });
       return;
     }
 
@@ -1009,7 +1016,11 @@ export default class GameScene extends Phaser.Scene {
       const tde2 = add('ancient_10', Lmax, 2300, 1600, { behavior: 'guard', patrolRadius: 150, leash: 480 });
       tde2.isBossEscort = true;
 
-    } else {
+    }
+
+    if (sec.isDungeon) this._spawnDifficultyReinforcements(pool, cx, cy, Lmin, Lmax);
+
+    if (!sec.isDungeon && galaxy.current !== 'R-1-boss') {
       const ring = [[1200, -360], [-1320, 480], [480, 1260], [-1020, -840], [1800, 624], [-1800, -180]];
       ring.forEach((o, i) => add(pool[i % pool.length], rnd(Lmin, Lmax), o[0], o[1], isHomeSector ? { passive: true } : {}));
       const gx = 1800, gy = 1140;
@@ -1017,6 +1028,44 @@ export default class GameScene extends Phaser.Scene {
       for (const [ox, oy] of [[-240, -130], [250, -90], [-110, 250]]) {
         add(pool[0], rnd(Lmin, Lmax), gx + ox, gy + oy, { patrolRadius: 150, leash: 520, bossRef: sectorBoss, ...(isHomeSector ? { passive: true } : {}) });
       }
+    }
+  }
+
+  _dungeonDiff() {
+    return DUNGEON_DIFF[this.dungeonDifficulty ?? 'normal'];
+  }
+
+  _spawnDifficultyReinforcements(pool, cx, cy, Lmin, Lmax) {
+    const diff = this._dungeonDiff();
+    if (diff.mobCount <= 1.0) return;
+
+    // Предопределённые патрульные зоны для каждого данжа (offset от центра мира)
+    const ZONES = {
+      dungeon_1: [[0,-500],[1800,0],[-1800,0],[0,1500],[2800,400],[-2800,-400],[0,-1200],[1200,-800],[-1200,800]],
+      dungeon_2: [[0,800],[-1000,200],[1000,-500],[-2200,600],[2200,400],[-600,-800],[600,800],[-1500,500],[1500,-900]],
+      dungeon_3: [[1650,-500],[-1650,-500],[0,-500],[1650,400],[-1650,400],[0,400],[800,-1000],[-800,1000],[0,0]],
+      dungeon_4: [[0,-600],[0,600],[-1400,0],[1400,0],[-700,-900],[700,900],[-700,900],[700,-900],[0,0]],
+      dungeon_5: [[0,-800],[800,0],[-800,0],[0,800],[1200,-600],[-1200,600],[0,-1500],[1500,0],[-1500,0]],
+      dungeon_prem: [[-2000,-1200],[0,-900],[2000,-600],[-2000,300],[0,600],[2000,900],[-1000,-300],[1000,300],[0,0]],
+    };
+
+    const zones = ZONES[galaxy.current];
+    if (!zones) return;
+
+    const baseCount = this.mobs.filter(m => !m.isDungeonBoss && !m.isBossEscort && !m.isDepositGuard).length;
+    const extraCount = Math.round(baseCount * (diff.mobCount - 1.0));
+    const rnd = (a, b) => Phaser.Math.Between(a, b);
+    const M = MOBS;
+
+    for (let i = 0; i < extraCount; i++) {
+      const [oz, oz2] = zones[i % zones.length];
+      const jx = oz  + rnd(-180, 180);
+      const jy = oz2 + rnd(-180, 180);
+      const k  = pool[rnd(0, pool.length - 1)];
+      const lvl = rnd(Lmin, Lmax);
+      const m = new Mob(this, M[k], lvl, cx + jx, cy + jy,
+        { behavior: 'patrol', patrolRadius: 280, hpMult: diff.mobHP, dmgMult: diff.mobDamage });
+      this.mobs.push(m);
     }
   }
 
@@ -1059,7 +1108,13 @@ export default class GameScene extends Phaser.Scene {
       this._apophisBoss = null;
       return;
     }
-    if (!this._apophisRingsEnraged && boss.maxHull > 0 && (boss.hull / boss.maxHull) < 0.40) {
+    const hpRatio = boss.maxHull > 0 ? boss.hull / boss.maxHull : 1;
+    // Фаза 2: при 50% HP вызвать Жнецов и Левиафанов
+    if (!this._apophisPhase2Started && hpRatio < 0.50) {
+      this._apophisPhase2Started = true;
+      this._startApophisPhase2();
+    }
+    if (!this._apophisRingsEnraged && hpRatio < 0.40) {
       this._apophisRingsEnraged = true;
       for (const r of this._apophisRings) {
         r._rotSpeed *= 2.2;
@@ -1071,6 +1126,59 @@ export default class GameScene extends Phaser.Scene {
       r.y = boss.y;
       r.rotation += r._rotSpeed * dt;
     }
+  }
+
+  // ── Суточный лимит данжей (1 раз в сутки, сброс в 01:00) ─────────────────
+  // TODO: перенести cooldown в БД → player_state.state.dungeonCooldowns (таблица player_state уже есть)
+  _canEnterDungeon(key) {
+    try {
+      const stored = JSON.parse(localStorage.getItem('sd_dungeon_cd') || '{}');
+      const resetTs = stored[key];
+      if (!resetTs) return true;
+      return Date.now() >= resetTs;
+    } catch { return true; }
+  }
+
+  _recordDungeonClearance(key) {
+    try {
+      const stored = JSON.parse(localStorage.getItem('sd_dungeon_cd') || '{}');
+      const reset = new Date();
+      reset.setHours(1, 0, 0, 0);
+      if (reset <= new Date()) reset.setDate(reset.getDate() + 1);
+      stored[key] = reset.getTime();
+      localStorage.setItem('sd_dungeon_cd', JSON.stringify(stored));
+    } catch {}
+  }
+
+  _startApophisPhase2() {
+    const cx = this.worldWidth / 2, cy = this.worldHeight / 2;
+    this.log('Апофис входит во вторую фазу!');
+    let delay = 0;
+    // 3 Жнеца (ancient_10 ×3) последовательно с интервалом 2с
+    [[-400, 350], [0, 500], [400, 350]].forEach(([ox, oy]) => {
+      this.time.delayedCall(delay, () => {
+        if (!this._apophisBoss?.alive) return;
+        const m = new Mob(this, MOBS['ancient_10'], 50, cx + ox, cy + oy,
+          { behavior: 'guard', patrolRadius: 350, bossRef: this._apophisBoss, hpMult: 3, dmgMult: 3 });
+        m.isBossEscort = true;
+        this.mobs.push(m);
+        this.log('Жнец появляется!');
+      });
+      delay += 2000;
+    });
+    delay += 1000;
+    // 4 Левиафана (ancient_06 ×3) последовательно с интервалом 2с
+    [[-700, 0], [-230, 0], [230, 0], [700, 0]].forEach(([ox, oy]) => {
+      this.time.delayedCall(delay, () => {
+        if (!this._apophisBoss?.alive) return;
+        const m = new Mob(this, MOBS['ancient_06'], 50, cx + ox, cy + oy,
+          { behavior: 'guard', patrolRadius: 350, bossRef: this._apophisBoss, hpMult: 3, dmgMult: 3 });
+        m.isBossEscort = true;
+        this.mobs.push(m);
+        this.log('Левиафан появляется!');
+      });
+      delay += 2000;
+    });
   }
 
   _spawnHomeBase() {
@@ -1231,11 +1339,85 @@ export default class GameScene extends Phaser.Scene {
       if (isEnemyCorp) { this.log(i18n.t('log.jump_enemy_corp')); return; }
     }
     const sec = SECTORS[gate.target];
-    if (sec?.lvlMin && sec.lvlMin > this.pilotLevel + 5) {
-      this._showJumpDangerWarning(gate.target, sec.lvlMin, () => this.startJumpSequence(gate));
+
+    // Суточный лимит: 1 прохождение в сутки (кулдаун записывается после гибели босса)
+    if (sec?.isDungeon && !this._canEnterDungeon(gate.target)) {
+      this.log('Данж уже пройден сегодня. Доступ откроется в 01:00.');
       return;
     }
-    this.startJumpSequence(gate);
+
+    // R-1-boss: требуется группа ≥ 4 (в DEV_MODE разрешаем соло)
+    if (gate.target === 'R-1-boss' && !DEV_MODE) {
+      const hud = this.scene.get('HudScene');
+      const memberCount = hud?.groupSystem?.memberCount ?? 1;
+      if (memberCount < 4) {
+        this.log('Зов Апофиса требует группу минимум 4 пилота.');
+        return;
+      }
+    }
+
+    const proceed = () => {
+      if (sec?.lvlMin && sec.lvlMin > this.pilotLevel + 5) {
+        this._showJumpDangerWarning(gate.target, sec.lvlMin, () => this.startJumpSequence(gate));
+        return;
+      }
+      this.startJumpSequence(gate);
+    };
+
+    // R-1-boss — фиксированная сложность, модал не нужен
+    if (sec?.isDungeon && gate.target !== 'R-1-boss') {
+      this._showDungeonDifficultyModal(gate, proceed);
+    } else {
+      proceed();
+    }
+  }
+
+  _showDungeonDifficultyModal(gate, onConfirm) {
+    const W = this.scale.width, H = this.scale.height;
+    const OW = 360, OH = 230;
+    const ox = (W - OW) / 2, oy = (H - OH) / 2;
+    const objs = [];
+    const destroy = () => { objs.forEach(o => o?.destroy()); };
+
+    objs.push(this.add.rectangle(ox, oy, OW, OH, 0x060c14, 0.97)
+      .setOrigin(0, 0).setStrokeStyle(1.5, 0x4dd0e1, 0.5).setDepth(200).setScrollFactor(0));
+    objs.push(this.add.text(ox + OW / 2, oy + 18, 'ВЫБОР СЛОЖНОСТИ', {
+      fontFamily: 'Orbitron, sans-serif', fontSize: '13px', color: '#4dd0e1', resolution: 2,
+    }).setOrigin(0.5).setDepth(201).setScrollFactor(0));
+
+    const modes = [
+      { key: 'normal', label: 'NORMAL',  hint: 'Соло',                        fill: 0x0d1e0d, border: 0x388e3c, tc: '#81c784' },
+      { key: 'hard',   label: 'HARD',    hint: 'Рекомендуется 2–3 игрока',    fill: 0x1e1800, border: 0xf9a825, tc: '#fff176' },
+      { key: 'elite',  label: 'ELITE',   hint: 'Рекомендуется 4–5 игроков',   fill: 0x1e0808, border: 0xef5350, tc: '#ef9a9a' },
+    ];
+
+    modes.forEach((m, i) => {
+      const by = oy + 48 + i * 54;
+      const btn = this.add.rectangle(ox + OW / 2, by + 22, OW - 40, 46, m.fill, 1)
+        .setOrigin(0.5, 0.5).setStrokeStyle(1, m.border, 0.8).setDepth(201).setScrollFactor(0)
+        .setInteractive({ useHandCursor: true });
+      btn.on('pointerover', () => btn.setAlpha(0.85));
+      btn.on('pointerout',  () => btn.setAlpha(1));
+      btn.on('pointerdown', () => {
+        this.dungeonDifficulty = m.key;
+        destroy();
+        onConfirm();
+      });
+      objs.push(btn);
+      objs.push(this.add.text(ox + 35, by + 12, m.label, {
+        fontFamily: 'Orbitron, sans-serif', fontSize: '12px', color: m.tc, resolution: 2,
+      }).setOrigin(0, 0).setDepth(202).setScrollFactor(0));
+      objs.push(this.add.text(ox + 35, by + 30, m.hint, {
+        fontFamily: 'Inter, sans-serif', fontSize: '10px', color: '#667788', resolution: 2,
+      }).setOrigin(0, 0).setDepth(202).setScrollFactor(0));
+    });
+
+    const cancelY = oy + OH - 16;
+    const cancel = this.add.text(ox + OW / 2, cancelY, 'ОТМЕНА', {
+      fontFamily: 'Orbitron, sans-serif', fontSize: '10px', color: '#445566', resolution: 2,
+    }).setOrigin(0.5).setDepth(202).setScrollFactor(0).setInteractive({ useHandCursor: true });
+    cancel.on('pointerdown', () => destroy());
+    objs.push(cancel);
   }
 
   updateGates(dt) {
@@ -2345,42 +2527,92 @@ export default class GameScene extends Phaser.Scene {
     const lvlScale = 1 + 0.5 * (mob.level - 1);
     const _credMult = this.player?.creditBonusMod ?? 1;
     const credits = Math.round(mob.tpl.credits * lvlScale * _credMult);
-    const xp = Math.round(mob.tpl.xp * lvlScale);
+    const sec = SECTORS[galaxy.current];
+    const isDung = sec?.isDungeon === true;
+    const diff = isDung ? this._dungeonDiff() : null;
+    const xp = Math.round(mob.tpl.xp * lvlScale * (diff?.xpMult ?? 1));
     this.log(i18n.t('log.killed', { name, lvl })); this.log(i18n.t('log.reward', { credits, xp }));
     this.credits = (this.credits || 0) + credits; this.gainXp(xp);
     if (this.target === mob) {
       this.target = null; this.isFiring = false;
       if (this._targetFx?.active) { this.vfx?.stopLoop(this._targetFx); this._targetFx = null; }
     }
-    const sg = rollStarGold(mob); if (sg > 0) { this.starGold = (this.starGold || 0) + sg; this.log(i18n.t('log.stargold', { amount: sg })); }
-    if (Phaser.Math.FloatBetween(0, 1) < dropChance(mob) * (this.player?.dropChanceMult ?? 1)) {
-      const lootItem = mob.tpl.key === 'ancient_12' ? rollApophisLoot() : rollLootForMob(mob);
-      const isLegendary = mob.tpl.key === 'ancient_12' || mob.tpl.key === 'argus_boss'
-        || (mob.isBoss && SECTORS[galaxy.current]?.isDungeon);
-      const lootTier = isLegendary ? 'legendary' : (mob.isBoss || mob.tpl.elite) ? 'boss' : 'common';
-      const isPremium = lootItem.tier === 4 || lootItem.perk?.rarity === 'jackpot'
-        || lootItem.type === 'biomech_core' || lootItem.type === 'quantum_crystal' || lootItem.type === 'plasma_coil';
-      this.loot.push(new Loot(this, mob.x, mob.y, lootItem, isPremium ? 'jackpot' : lootTier));
+    let sg;
+    if (galaxy.current === 'R-1-boss') {
+      // Боссовый данж: мобы 20-40 ⭐, Апофис 250-280 ⭐ (делится в группе через GroupSystem)
+      sg = mob.isDungeonBoss
+        ? Phaser.Math.Between(250, 280)
+        : Phaser.Math.Between(20, 40);
+    } else {
+      const rawSg = rollStarGold(mob);
+      sg = rawSg > 0 ? Math.round(rawSg * (diff?.goldMult ?? 1)) : 0;
     }
+    if (sg > 0) { this.starGold = (this.starGold || 0) + sg; this.log(i18n.t('log.stargold', { amount: sg })); }
+
+    // Модульный дроп — solo: всегда игроку. Группа (будущее): владелец = последний наносивший урон 30с без перерыва.
+    const modDropChance = dropChance(mob) * (this.player?.dropChanceMult ?? 1) + (diff?.dropBonus ?? 0);
+    if (isDung && !mob.isBoss && !mob.tpl.elite && !mob.isBossEscort) {
+      // Обычный данж-моб (группа): 1 ящик → владелец урона (solo = всегда игрок)
+      if (Phaser.Math.FloatBetween(0, 1) < modDropChance) {
+        const lootItem = rollLootForMob(mob);
+        this.loot.push(new Loot(this, mob.x, mob.y, lootItem, 'common'));
+      }
+    } else if (isDung && (mob.isBoss || mob.tpl.elite || mob.isBossEscort)) {
+      // Босс/элита/минибосс (группа): каждый участник получает свой ящик; solo = 1 ящик
+      if (Phaser.Math.FloatBetween(0, 1) < modDropChance) {
+        const lootItem = mob.tpl.key === 'ancient_12' ? rollApophisLoot() : rollLootForMob(mob);
+        const isLegendary = mob.tpl.key === 'ancient_12' || mob.tpl.key === 'argus_boss' || mob.isBoss;
+        const lootTier = isLegendary ? 'legendary' : 'boss';
+        const isPremium = lootItem.tier === 4 || lootItem.perk?.rarity === 'jackpot';
+        this.loot.push(new Loot(this, mob.x, mob.y, lootItem, isPremium ? 'jackpot' : lootTier));
+      }
+    } else {
+      // Обычный сектор — прежняя логика
+      if (Phaser.Math.FloatBetween(0, 1) < dropChance(mob) * (this.player?.dropChanceMult ?? 1)) {
+        const lootItem = mob.tpl.key === 'ancient_12' ? rollApophisLoot() : rollLootForMob(mob);
+        const isLegendary = mob.tpl.key === 'ancient_12' || mob.tpl.key === 'argus_boss';
+        const lootTier = isLegendary ? 'legendary' : (mob.isBoss || mob.tpl.elite) ? 'boss' : 'common';
+        const isPremium = lootItem.tier === 4 || lootItem.perk?.rarity === 'jackpot'
+          || lootItem.type === 'biomech_core' || lootItem.type === 'quantum_crystal' || lootItem.type === 'plasma_coil';
+        this.loot.push(new Loot(this, mob.x, mob.y, lootItem, isPremium ? 'jackpot' : lootTier));
+      }
+    }
+
     const consDrop = rollConsumableDrop(mob);
     if (consDrop) {
       const ox = Phaser.Math.Between(-24, 24), oy = Phaser.Math.Between(-24, 24);
       this.loot.push(new Loot(this, mob.x + ox, mob.y + oy, consDrop, 'common'));
     }
-    // Board drop: 10% from regular mobs, 35% from bosses (dungeon/boss mobs give T2-T3)
-    const boardChance = mob.isBoss ? 0.35 : 0.10;
-    if (Phaser.Math.FloatBetween(0, 1) < boardChance) {
-      const sec = SECTORS[galaxy.current];
-      const isDung = sec?.isDungeon;
-      const boardTier = mob.isBoss ? (isDung ? 3 : 2) : (isDung ? 2 : Math.max(1, Math.min(2, Math.ceil(mob.level / 20))));
-      const board = rollBoard(boardTier);
-      this.boardInventory = this.boardInventory ?? [];
-      this.boardInventory.push(board);
-      const tierLabel = boardTier === 1 ? 'T1' : boardTier === 2 ? 'T2' : 'T3';
-      this.log(`📋 Найдена плата расширения ${tierLabel}`);
+
+    // Платы и коннекторы с ГЛАВНОГО босса данжа — по таблице сложности
+    if (isDung && mob.isDungeonBoss) {
+      const diffKey = galaxy.current === 'R-1-boss' ? 'normal' : (this.dungeonDifficulty ?? 'normal');
+      const dropCfg = DUNGEON_BOSS_DROPS[galaxy.current]?.[diffKey];
+      if (dropCfg) {
+        if (Phaser.Math.FloatBetween(0, 1) < dropCfg.boardChance) {
+          this.boardInventory = this.boardInventory ?? [];
+          this.boardInventory.push(rollBoard(dropCfg.boardTier));
+          this.log(`Найдена плата расширения T${dropCfg.boardTier}`);
+        }
+        if (Phaser.Math.FloatBetween(0, 1) < dropCfg.connChance) {
+          this.connectorInventory = this.connectorInventory ?? [];
+          this.connectorInventory.push(rollConnector(dropCfg.connTier));
+          this.log(`Найден коннектор T${dropCfg.connTier}`);
+        }
+      }
+    } else if (!isDung) {
+      // Вне данжа: старая логика (10% обычный / 35% босс)
+      const boardChance = mob.isBoss ? 0.35 : 0.10;
+      if (Phaser.Math.FloatBetween(0, 1) < boardChance) {
+        const boardTier = mob.isBoss ? 2 : Math.max(1, Math.min(2, Math.ceil(mob.level / 20)));
+        this.boardInventory = this.boardInventory ?? [];
+        this.boardInventory.push(rollBoard(boardTier));
+        this.log(`Найдена плата расширения T${boardTier}`);
+      }
     }
+
     // Dungeon boss material drop (2.5%)
-    if (mob.isBoss && SECTORS[galaxy.current]?.isDungeon && Math.random() < 0.025) {
+    if (mob.isBoss && isDung && Math.random() < 0.025) {
       const MATS = ['biomech_core', 'quantum_crystal', 'plasma_coil'];
       const matType = MATS[Math.floor(Math.random() * 3)];
       const matName = MATERIAL_NAMES[matType] || matType;
@@ -2403,12 +2635,15 @@ export default class GameScene extends Phaser.Scene {
     }
     // Mission hooks
     if (mob.tpl.key.startsWith('pirate')) this.advanceMission('daily_patrol', 0);
-    if (mob.isBoss && galaxy.current === 'R-1-boss') {
+    if (mob.isDungeonBoss && galaxy.current === 'R-1-boss') {
       this.advanceMission('story_signal', 1);
       this.advanceMission('story_signal', 2);
+      this._recordDungeonClearance('R-1-boss');
+    }
+    if (mob.isDungeonBoss && isDung && galaxy.current !== 'R-1-boss') {
+      this._recordDungeonClearance(galaxy.current);
     }
     // Honor hooks
-    const sec = SECTORS[galaxy.current];
     if (mob.tpl.key === 'ancient_12') {
       // Apophysis: each participant earns honor equal to 1× level-50 player kill
       this.gainHonor(HONOR_PER_LVL50);
@@ -3588,6 +3823,8 @@ export default class GameScene extends Phaser.Scene {
     const sec2 = SECTORS[galaxy.current];
     const guardLvl = sec2.lvlMax;
     const typeList = dcfg.types ? dcfg.types : [dcfg.res];
+    const depositMult = this._dungeonDiff().deposits;
+    const scaledAmount = Math.round(dcfg.amount * depositMult);
 
     const CLUSTER_R = 100; // радиус россыпи кристаллов вокруг центра точки
 
@@ -3597,8 +3834,8 @@ export default class GameScene extends Phaser.Scene {
       const resType = typeList[i % typeList.length];
       const zone = { xMin: x - CLUSTER_R, xMax: x + CLUSTER_R, yMin: y - CLUSTER_R, yMax: y + CLUSTER_R };
 
-      // Россыпь: dcfg.amount кристаллов вокруг точки, каждый даёт 1-3 ресурса
-      for (let c = 0; c < dcfg.amount; c++) {
+      // Россыпь: scaledAmount кристаллов вокруг точки, каждый даёт 1-3 ресурса
+      for (let c = 0; c < scaledAmount; c++) {
         const angle = (c / dcfg.amount) * Math.PI * 2 + Math.random() * 0.8;
         const r = 20 + Math.random() * (CLUSTER_R - 20);
         const kx = x + Math.cos(angle) * r;

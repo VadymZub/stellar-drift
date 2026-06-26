@@ -70,6 +70,111 @@ class ChatManager:
 chat_manager = ChatManager()
 
 
+# ── Group & Dungeon Instance Manager ──────────────────────────────────
+# TODO: перенести хранение групп и cooldown в БД (player_state.state.dungeonCooldowns)
+#       когда будет готова полная мультиплеер-инфраструктура.
+
+class DungeonInstance:
+    def __init__(self, dungeon_key: str, leader: str, instance_id: str, solo: bool = False):
+        self.dungeon_key  = dungeon_key
+        self.leader       = leader
+        self.instance_id  = instance_id
+        self.solo         = solo          # True → нельзя добавить игроков после старта
+        self.members: dict = {leader: {'damage': 0.0, 'heal': 0.0}}
+        self.boss_alive   = True
+        self.boss_hp_ratio = 1.0
+        self.locked       = False         # закрыт после гибели босса
+
+
+class GroupManager:
+    def __init__(self):
+        self.groups: dict[str, DungeonInstance] = {}   # leader_name → instance
+        self.player_group: dict[str, str] = {}         # player_name → leader_name
+
+    # ── создать группу / соло-инстанс ────────────────────────────────
+    def create(self, leader: str, dungeon_key: str, solo: bool = False) -> str:
+        self.leave(leader)  # покинуть предыдущую группу
+        iid = f"{dungeon_key}_{leader}_{int(time.time())}"
+        inst = DungeonInstance(dungeon_key, leader, iid, solo)
+        self.groups[leader] = inst
+        self.player_group[leader] = leader
+        return iid
+
+    # ── пригласить игрока (сервер только пересылает invite) ──────────
+    def can_join(self, leader: str) -> str | None:
+        inst = self.groups.get(leader)
+        if not inst:                   return "Группа не найдена"
+        if inst.locked:                return "Босс уже убит"
+        if inst.solo:                  return "Соло-режим, вход запрещён"
+        if not inst.boss_alive:        return "Данж завершён"
+        if len(inst.members) >= 8:    return "Группа заполнена (макс. 8)"
+        return None
+
+    # ── принять приглашение ──────────────────────────────────────────
+    def join(self, player: str, leader: str) -> tuple[str | None, str | None]:
+        reason = self.can_join(leader)
+        if reason:
+            return None, reason
+        self.leave(player)
+        inst = self.groups[leader]
+        inst.members[player] = {'damage': 0.0, 'heal': 0.0}
+        self.player_group[player] = leader
+        return inst.instance_id, None
+
+    # ── покинуть группу ──────────────────────────────────────────────
+    def leave(self, player: str):
+        leader = self.player_group.pop(player, None)
+        if not leader:
+            return
+        inst = self.groups.get(leader)
+        if not inst:
+            return
+        inst.members.pop(player, None)
+        if player == leader:
+            for m in list(inst.members.keys()):
+                self.player_group.pop(m, None)
+            del self.groups[leader]
+
+    # ── получить инстанс игрока ──────────────────────────────────────
+    def get_instance(self, player: str) -> DungeonInstance | None:
+        return self.groups.get(self.player_group.get(player, ''))
+
+    # ── записать урон ─────────────────────────────────────────────────
+    def record_damage(self, player: str, amount: float):
+        inst = self.get_instance(player)
+        if inst and player in inst.members:
+            inst.members[player]['damage'] += amount
+
+    def record_heal(self, player: str, amount: float):
+        inst = self.get_instance(player)
+        if inst and player in inst.members:
+            inst.members[player]['heal'] += amount
+
+    # ── босс убит → пропорциональное распределение золота ────────────
+    def boss_died(self, player: str, base_gold: int) -> dict[str, int]:
+        inst = self.get_instance(player)
+        if not inst:
+            return {player: base_gold}
+        inst.boss_alive = False
+        inst.locked = True
+        pool = {n: (v['damage'] + v['heal']) for n, v in inst.members.items()}
+        total = sum(pool.values())
+        if total == 0:
+            share = 1.0 / len(pool)
+            pool = {n: share for n in pool}
+        else:
+            pool = {n: v / total for n, v in pool.items()}
+        return {n: max(1, round(base_gold * r)) for n, r in pool.items()}
+
+    # ── список участников для UI ──────────────────────────────────────
+    def members_list(self, player: str) -> list[str]:
+        inst = self.get_instance(player)
+        return list(inst.members.keys()) if inst else []
+
+
+group_manager = GroupManager()
+
+
 def _fmt_time(ts: float) -> str:
     from datetime import datetime as _dt
     return _dt.utcfromtimestamp(ts).strftime('%H:%M')
@@ -294,5 +399,79 @@ async def chat_ws(
                 await chat_manager.send_pm(to_name, out)
                 await ws.send_json(out)  # echo to sender
 
+            # ── Группа: создать / соло-инстанс ───────────────────────
+            elif msg_type == 'group_create':
+                dungeon = str(data.get('dungeon', '')).strip()
+                solo    = bool(data.get('solo', False))
+                iid     = group_manager.create(user.username, dungeon, solo)
+                await ws.send_json({'type': 'group_created', 'instanceId': iid, 'members': [user.username]})
+
+            # ── Группа: пригласить игрока ─────────────────────────────
+            elif msg_type == 'group_invite':
+                to_name = str(data.get('to', '')).strip()
+                reason  = group_manager.can_join(user.username)
+                if reason:
+                    await ws.send_json({'type': 'group_error', 'text': reason})
+                else:
+                    await chat_manager.send_pm(to_name, {
+                        'type': 'group_invite', 'from': user.username,
+                        'dungeon': data.get('dungeon', ''),
+                    })
+
+            # ── Группа: принять приглашение ───────────────────────────
+            elif msg_type == 'group_join':
+                leader = str(data.get('leader', '')).strip()
+                iid, err = group_manager.join(user.username, leader)
+                if err:
+                    await ws.send_json({'type': 'group_error', 'text': err})
+                else:
+                    members = group_manager.members_list(user.username)
+                    await ws.send_json({'type': 'group_joined', 'instanceId': iid, 'members': members})
+                    # Уведомить остальных участников
+                    for m in members:
+                        if m != user.username:
+                            await chat_manager.send_pm(m, {
+                                'type': 'group_member_joined', 'name': user.username, 'members': members,
+                            })
+
+            # ── Группа: покинуть ──────────────────────────────────────
+            elif msg_type == 'group_leave':
+                members_before = group_manager.members_list(user.username)
+                group_manager.leave(user.username)
+                await ws.send_json({'type': 'group_left'})
+                for m in members_before:
+                    if m != user.username:
+                        await chat_manager.send_pm(m, {'type': 'group_member_left', 'name': user.username})
+
+            # ── Группа: записать урон / хил для пропорционального золота
+            elif msg_type == 'group_damage':
+                group_manager.record_damage(user.username, float(data.get('amount', 0)))
+            elif msg_type == 'group_heal':
+                group_manager.record_heal(user.username, float(data.get('amount', 0)))
+
+            # ── Группа: босс убит → распределить золото ───────────────
+            elif msg_type == 'group_boss_dead':
+                base_gold = int(data.get('baseGold', 0))
+                rewards   = group_manager.boss_died(user.username, base_gold)
+                # Отправить каждому его долю
+                for name, gold in rewards.items():
+                    if name == user.username:
+                        await ws.send_json({'type': 'group_gold_reward', 'gold': gold})
+                    else:
+                        await chat_manager.send_pm(name, {'type': 'group_gold_reward', 'gold': gold})
+
+            # ── Группа: синхронизировать HP босса ────────────────────
+            elif msg_type == 'group_boss_hp':
+                inst = group_manager.get_instance(user.username)
+                if inst:
+                    inst.boss_hp_ratio = float(data.get('ratio', 1.0))
+                    members = group_manager.members_list(user.username)
+                    for m in members:
+                        if m != user.username:
+                            await chat_manager.send_pm(m, {
+                                'type': 'group_boss_hp', 'ratio': inst.boss_hp_ratio,
+                            })
+
     except WebSocketDisconnect:
+        group_manager.leave(user.username)
         chat_manager.disconnect(ws)

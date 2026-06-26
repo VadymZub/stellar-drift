@@ -8,6 +8,7 @@ import { getActiveMissionSectorTargets } from '../data/missions.js';
 import { countConsumableInInventory } from '../items.js';
 import { prerenderTex } from '../utils/prerenderTex.js';
 import { loadSettings, saveSettings, getMinimapDims } from '../settings.js';
+import { GroupSystem } from '../systems/GroupSystem.js';
 
 const AB_TIPS = {
   'use:repair_pack':          { name: 'Ремонтный пакет',      desc: '+30% HP мгновенно\nКД 90с' },
@@ -1441,11 +1442,30 @@ export default class HudScene extends Phaser.Scene {
     } catch { return; }
     this._chatWS = ws;
 
+    // GroupSystem использует этот же WS
+    this.groupSystem = new GroupSystem(this.scene.get('GameScene'), ws);
+    this.groupSystem.onGoldReward = (gold) => {
+      const gs = this.scene.get('GameScene');
+      if (gs) { gs.starGold = (gs.starGold || 0) + gold; }
+    };
+    this.groupSystem.onError = (text) => {
+      this.pushChatMessage('general', 'System', text, {});
+    };
+    this.groupSystem.onInvite = ({ from, dungeon }) => {
+      this.pushChatMessage('general', 'System', `[Группа] ${from} приглашает в данж ${dungeon}. /принять ${from}`, {});
+    };
+
     ws.onopen = () => {};
 
     ws.onmessage = evt => {
       let d;
       try { d = JSON.parse(evt.data); } catch { return; }
+
+      // Группо-сообщения роутим в GroupSystem
+      if (d.type?.startsWith('group_')) {
+        this.groupSystem?.handleMessage(d);
+        return;
+      }
 
       if (d.type === 'history') {
         const arr = this._chatMessages[d.channel];
@@ -1468,6 +1488,7 @@ export default class HudScene extends Phaser.Scene {
 
     ws.onclose = () => {
       this._chatWS = null;
+      this.groupSystem = null;
       if (!this._chatWsDestroyed) setTimeout(() => this._connectChatWS(), 5000);
     };
     ws.onerror = () => {};
