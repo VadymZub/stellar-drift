@@ -181,8 +181,6 @@ export default class HudScene extends Phaser.Scene {
     this._lastSectorSent    = null;
     this._grpWinCollapsed   = _s.grpWinCollapsed  ?? false;
     this._frWinCollapsed    = _s.frWinCollapsed   ?? false;
-    this._grpWinAlphaIdx    = _s.grpWinAlphaIdx   ?? 0;
-    this._frWinAlphaIdx     = _s.frWinAlphaIdx    ?? 0;
     this._grpWinDrag        = { active: false, ox: 0, oy: 0 };
     this._frWinDrag         = { active: false, ox: 0, oy: 0 };
     this._buildHudSocialButtons();
@@ -1687,7 +1685,7 @@ export default class HudScene extends Phaser.Scene {
 
     const grp       = this.groupSystem;
     const collapsed = this._grpWinCollapsed;
-    const BG_ALPHA  = [0.93, 0.55, 0.22][this._grpWinAlphaIdx ?? 0];
+    const BG_ALPHA  = [0.93, 0.55, 0.22][loadSettings().grpWinAlphaIdx ?? 0];
     const PW = 224, PAD = 8, HDR = 28;
     const F  = (sz, c) => ({ fontFamily: 'Inter, sans-serif',    fontSize: sz, color: c, resolution: UI_RES });
     const O  = (sz, c) => ({ fontFamily: 'Orbitron, sans-serif', fontSize: sz, color: c, resolution: UI_RES });
@@ -1707,7 +1705,7 @@ export default class HudScene extends Phaser.Scene {
     add(this.add.rectangle(0, 0, PW, totalH, 0x020a14, BG_ALPHA).setOrigin(0).setStrokeStyle(1, 0x1a4060, 0.7));
 
     // ── Drag handle (левая часть заголовка) ──
-    const dragHandle = add(this.add.rectangle(0, 0, PW - 68, HDR, 0x000000, 0.001)
+    const dragHandle = add(this.add.rectangle(0, 0, PW - 46, HDR, 0x000000, 0.001)
       .setOrigin(0).setInteractive({ useHandCursor: true, cursor: 'grab' }));
     dragHandle.on('pointerdown', (p) => {
       this._grpWinDrag.active = true;
@@ -1719,16 +1717,7 @@ export default class HudScene extends Phaser.Scene {
     const titleStr = grp?.inGroup ? `ГРУППА  ${members.length}/8` : 'ГРУППА';
     add(this.add.text(PAD, 9, titleStr, O('10px', '#4dd0e1')));
 
-    // ── Кнопки заголовка (α | − | ✕) ──
-    const alphaColors = ['#4dd0e1', '#2a7080', '#154050'];
-    const alphaBtn = add(this.add.text(PW - 52, 9, 'α', F('11px', alphaColors[this._grpWinAlphaIdx ?? 0]))
-      .setInteractive({ useHandCursor: true }));
-    alphaBtn.on('pointerdown', () => {
-      this._grpWinAlphaIdx = ((this._grpWinAlphaIdx ?? 0) + 1) % 3;
-      const s = loadSettings(); s.grpWinAlphaIdx = this._grpWinAlphaIdx; saveSettings(s);
-      this._rebuildGroupWin();
-    });
-
+    // ── Кнопки заголовка (− | ✕) ──
     const colBtn = add(this.add.text(PW - 36, 9, collapsed ? '+' : '−', F('13px', '#4dd0e1'))
       .setInteractive({ useHandCursor: true }));
     colBtn.on('pointerdown', () => {
@@ -1823,7 +1812,7 @@ export default class HudScene extends Phaser.Scene {
     this._frWin.setVisible(true);
 
     const collapsed = this._frWinCollapsed;
-    const BG_ALPHA  = [0.93, 0.55, 0.22][this._frWinAlphaIdx ?? 0];
+    const BG_ALPHA  = [0.93, 0.55, 0.22][loadSettings().frWinAlphaIdx ?? 0];
     const PW = 284, PAD = 8, HDR = 28;
     const F  = (sz, c) => ({ fontFamily: 'Inter, sans-serif',    fontSize: sz, color: c, resolution: UI_RES });
     const O  = (sz, c) => ({ fontFamily: 'Orbitron, sans-serif', fontSize: sz, color: c, resolution: UI_RES });
@@ -1848,7 +1837,7 @@ export default class HudScene extends Phaser.Scene {
     add(this.add.rectangle(0, 0, PW, totalH, 0x020a14, BG_ALPHA).setOrigin(0).setStrokeStyle(1, 0x1a4060, 0.8));
 
     // ── Drag handle ──
-    const dragHandle = add(this.add.rectangle(0, 0, PW - 68, HDR, 0x000000, 0.001)
+    const dragHandle = add(this.add.rectangle(0, 0, PW - 46, HDR, 0x000000, 0.001)
       .setOrigin(0).setInteractive({ useHandCursor: true, cursor: 'grab' }));
     dragHandle.on('pointerdown', (p) => {
       this._frWinDrag.active = true;
@@ -1860,16 +1849,7 @@ export default class HudScene extends Phaser.Scene {
     const titleSuffix = onlineCnt > 0 ? `  •  ${onlineCnt} онлайн` : '';
     add(this.add.text(PAD, 9, `ДРУЗЬЯ${titleSuffix}`, O('10px', '#4dd0e1')));
 
-    // ── Кнопки заголовка (α | − | ✕) ──
-    const alphaColors = ['#4dd0e1', '#2a7080', '#154050'];
-    const alphaBtn = add(this.add.text(PW - 52, 9, 'α', F('11px', alphaColors[this._frWinAlphaIdx ?? 0]))
-      .setInteractive({ useHandCursor: true }));
-    alphaBtn.on('pointerdown', () => {
-      this._frWinAlphaIdx = ((this._frWinAlphaIdx ?? 0) + 1) % 3;
-      const s = loadSettings(); s.frWinAlphaIdx = this._frWinAlphaIdx; saveSettings(s);
-      this._rebuildFriendsWin();
-    });
-
+    // ── Кнопки заголовка (− | ✕) ──
     const colBtn = add(this.add.text(PW - 36, 9, collapsed ? '+' : '−', F('13px', '#4dd0e1'))
       .setInteractive({ useHandCursor: true }));
     colBtn.on('pointerdown', () => {

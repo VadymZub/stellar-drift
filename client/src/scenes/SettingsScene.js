@@ -127,6 +127,9 @@ export default class SettingsScene extends Phaser.Scene {
 
   _buildGameTab(y, LX, RX) {
     const T = 0;
+    const ALPHA_LABELS = ['100%', '55%', '22%'];
+    const ALPHA_VALS   = [0, 1, 2];
+
     this._section('ИНТЕРФЕЙС', T, LX, RX, y); y += 22;
     this._addStepper('UI Scale',  'uiScale',    UI_SCALE_STEPS.map(v => v + '%'), UI_SCALE_STEPS, T, LX, RX, y); y += 36;
     this._addStepper('Миникарта', 'minimapSize', MINIMAP_KEYS.map(k => MINIMAP_LABELS[k]), MINIMAP_KEYS, T, LX, RX, y); y += 36;
@@ -135,6 +138,10 @@ export default class SettingsScene extends Phaser.Scene {
     this._addToggle('Фон чата',       'chatBg', T, LX, RX, y); y += 36;
     this._addToggle('Фон информации', 'infoBg', T, LX, RX, y); y += 36;
     this._addToggle('Фон лога',       'logBg',  T, LX, RX, y); y += 36;
+
+    this._section('ПРОЗРАЧНОСТЬ ОКОН', T, LX, RX, y); y += 22;
+    this._addStepper('Окно «Группа»', 'grpWinAlphaIdx', ALPHA_LABELS, ALPHA_VALS, T, LX, RX, y); y += 36;
+    this._addStepper('Окно «Друзья»', 'frWinAlphaIdx',  ALPHA_LABELS, ALPHA_VALS, T, LX, RX, y); y += 36;
 
     this._section('ГЕЙМПЛЕЙ', T, LX, RX, y); y += 22;
     this._addToggle('Авто-цель (Tab)', 'autoTarget', T, LX, RX, y); y += 36;
@@ -405,6 +412,8 @@ export default class SettingsScene extends Phaser.Scene {
       hud._refreshInfoPanel?.();
       hud._refreshLogPanel?.();
       hud._rebuildChatPanel?.();
+      hud._rebuildGroupWin?.();
+      hud._rebuildFriendsWin?.();
     }
     if (gs) gs.magnetEnabled      = next.autoLoot;
     if (gs) gs._autoTargetEnabled = next.autoTarget;

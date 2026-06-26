@@ -38,6 +38,9 @@ export const DEFAULTS = {
   // Gear button position (null = default corner)
   gearX:        null,
   gearY:        null,
+  // Social windows transparency (0=100%, 1=55%, 2=22%)
+  grpWinAlphaIdx: 0,
+  frWinAlphaIdx:  0,
 };
 
 // In-memory cache — updated immediately on save/reset, read on every loadSettings() call.
