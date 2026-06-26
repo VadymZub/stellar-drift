@@ -917,9 +917,16 @@ export default class GameScene extends Phaser.Scene {
       add('corsair_04', rnd(Lmin, Lmax), -700, -1300, {});
       add('corsair_02', rnd(Lmin, Lmax), 800, -1200, {});
       add('corsair_08', Lmax, 1900, 1100, { behavior: 'guard', patrolRadius: 200, leash: 550 });
-      add('corsair_08', Lmax, -1900, -450, { behavior: 'guard', patrolRadius: 200, leash: 550 }); // W-тупик (был внутри стены — исправлено)
-      add('corsair_05', Lmax,  2200,  1000, { behavior: 'guard', patrolRadius: 200, leash: 500 }); // охрана нового SE-депо
-      add('corsair_06', rnd(Lmin, Lmax), -1900, 500, { behavior: 'guard', patrolRadius: 200, leash: 500 }); // охрана нового W-нижнего депо
+      add('corsair_08', Lmax, -1900, -450, { behavior: 'guard', patrolRadius: 200, leash: 550 });
+      add('corsair_05', Lmax,  2200,  1000, { behavior: 'guard', patrolRadius: 200, leash: 500 }); // охрана SE-депо
+      // правый тупик (x≈7747, y≈3564): депо + патруль + охрана
+      add('corsair_06', rnd(Lmin, Lmax), 3589, -1000, { patrolRadius: 300 }); // патруль
+      add('corsair_04', rnd(Lmin, Lmax), 3589, -1400, { patrolRadius: 300 });
+      add('corsair_08', Lmax, 3400, -1224, { behavior: 'guard', patrolRadius: 180, leash: 500 }); // охрана депо
+      // левый тупик (x≈707, y≈3327): депо + патруль + охрана
+      add('corsair_03', rnd(Lmin, Lmax), -3451, -700,  { patrolRadius: 300 }); // патруль
+      add('corsair_01', rnd(Lmin, Lmax), -3451, -1100, { patrolRadius: 300 });
+      add('corsair_07', Lmax, -3200, -987, { behavior: 'guard', patrolRadius: 180, leash: 500 }); // охрана депо
       const d2boss = add('corsair_09', Lmax, 1800, -1800, { behavior: 'guard', patrolRadius: 180, leash: 480 });
       d2boss.isDungeonBoss = true;
       // охрана босса ×4
@@ -931,13 +938,12 @@ export default class GameScene extends Phaser.Scene {
       d2e3.isBossEscort = true;
       const d2e4 = add('corsair_08', Lmax, 2100, -1600, { behavior: 'guard', patrolRadius: 150, leash: 500 });
       d2e4.isBossEscort = true;
-      // разведчики (одиночки) в дальних углах дна
+      // разведчики и патрули в основных зонах
       add('corsair_02', rnd(Lmin, Lmax), -2100, 1800, { patrolRadius: 350 });
       add('corsair_04', rnd(Lmin, Lmax),  2100, 1800, { patrolRadius: 350 });
-      // патрули (пары) в боковых зонах
-      add('corsair_01', rnd(Lmin, Lmax),  2100, -500, { patrolRadius: 300 }); // сред.-право
+      add('corsair_01', rnd(Lmin, Lmax),  2100, -500, { patrolRadius: 300 });
       add('corsair_03', rnd(Lmin, Lmax),  2100, -200, { patrolRadius: 300 });
-      add('corsair_02', rnd(Lmin, Lmax), -1800, -900,  { patrolRadius: 250 }); // лев. канал
+      add('corsair_02', rnd(Lmin, Lmax), -1800, -900,  { patrolRadius: 250 });
       add('corsair_04', rnd(Lmin, Lmax), -1800, -1100, { patrolRadius: 250 });
 
     } else if (galaxy.current === 'dungeon_3') {
@@ -3564,7 +3570,7 @@ export default class GameScene extends Phaser.Scene {
       // D1 hub+крест: тупики в конце E/W рукавов + S рукав
       dungeon_1:    { res:   'biomech_fragment',                                guard: 'swarm_07',     amount: 10, spots: [[0, 1800], [3200, 0], [-3200, 0]] },
       // D2 Z-маршрут: W тупик, SE карман, верхний левый тупик
-      dungeon_2:    { res:   'quantum_shard',                                   guard: 'corsair_08',   amount: 12, spots: [[-2000, -400], [2000, 900], [-1500, -1300], [2200, 1000], [-1900, 500]] },
+      dungeon_2:    { res:   'quantum_shard',                                   guard: 'corsair_08',   amount: 12, spots: [[-2000, -400], [3589, -1224], [-1500, -1300], [2200, 1000], [-3451, -987]] },
       // D3 военная сетка: нижнее лево, верхний центр, верхнее право (перед боссом)
       dungeon_3:    { res:   'plasma_strand',                                   guard: 'syndicate_07', amount: 14, spots: [[-1800, 700], [0, -1000], [1800, -700]] },
       // D4 обломки: между кластерами мусора
