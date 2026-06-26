@@ -818,7 +818,7 @@ export default class GameScene extends Phaser.Scene {
 
     if (galaxy.current === 'R-1-boss') {
       // Специальный спавн для босс-уровня Алгол: Зов Апофиса (все мобы ×3)
-      const apophis = add('apophis', 50, 0, 0, { behavior: 'guard', patrolRadius: 100, leash: Infinity, hpMult: 3, dmgMult: 3 });
+      const apophis = add('apophis', 50, 0, 0, { behavior: 'guard', patrolRadius: 100, leash: Infinity, hpMult: 3, dmgMult: 6 });
       apophis.isDungeonBoss = true;
       apophis.sprite.setAlpha(0.92);
       this._apophisBoss = apophis;
@@ -834,7 +834,7 @@ export default class GameScene extends Phaser.Scene {
       });
       const ringPts = [[1440, 1440], [-1440, 1440], [1440, -1440], [-1440, -1440]];
       ringPts.forEach(o => {
-        const g = add('ancient_06', 50, o[0], o[1], { behavior: 'guard', patrolRadius: 600, bossRef: apophis, hpMult: 3, dmgMult: 3 });
+        const g = add('ancient_06', 50, o[0], o[1], { behavior: 'guard', patrolRadius: 600, bossRef: apophis, hpMult: 3, dmgMult: 6 });
         g.isBossEscort = true;
       });
       return;
@@ -1036,6 +1036,7 @@ export default class GameScene extends Phaser.Scene {
       ring.forEach((o, i) => add(pool[i % pool.length], rnd(Lmin, Lmax), o[0], o[1], isHomeSector ? { passive: true } : {}));
       const gx = 1800, gy = 1140;
       const sectorBoss = add(boss, Lmax, gx, gy, { behavior: 'guard', patrolRadius: 180, leash: 480 });
+      sectorBoss.isSectorBoss = true;
       for (const [ox, oy] of [[-240, -130], [250, -90], [-110, 250]]) {
         add(pool[0], rnd(Lmin, Lmax), gx + ox, gy + oy, { patrolRadius: 150, leash: 520, bossRef: sectorBoss, ...(isHomeSector ? { passive: true } : {}) });
       }
@@ -1691,7 +1692,7 @@ export default class GameScene extends Phaser.Scene {
     this.input.keyboard.on('keydown-ESC', () => { this._exitToSpace(); });
     this.input.keyboard.on('keydown-F', () => {
       if (!this.player.alive) return;
-      if (this.atBase) { this._exitToSpace(); return; }
+      if (this.atBase) return; // F = Друзья (обрабатывается в HudScene)
       const nearMining = this.miningBases.find(b => Phaser.Math.Distance.Between(this.player.x, this.player.y, b.x, b.y) < 360);
       if (nearMining) { nearMining.interact(this.playerName); return; }
       const nearHome = this.homeBases.find(b => Phaser.Math.Distance.Between(this.player.x, this.player.y, b.x, b.y) < 380);
@@ -2588,11 +2589,16 @@ export default class GameScene extends Phaser.Scene {
     if (galaxy.current === 'R-1-boss') {
       // Боссовый данж: мобы 20-40 ⭐, Апофис 250-280 ⭐ (делится в группе через GroupSystem)
       sg = mob.isDungeonBoss
-        ? Phaser.Math.Between(250, 280)
-        : Phaser.Math.Between(20, 40);
-    } else {
+        ? Phaser.Math.Between(62, 70)
+        : Phaser.Math.Between(5, 10);
+    } else if (isDung) {
       const rawSg = rollStarGold(mob);
-      sg = rawSg > 0 ? Math.round(rawSg * (diff?.goldMult ?? 1)) : 0;
+      sg = rawSg > 0 ? Math.round(rawSg * (diff?.goldMult ?? 1) / 2) : 0;
+    } else {
+      const sg_tpl = mob.tpl.starGold;
+      const goldChance = mob.bossRef ? 0.02 : 0.08;
+      sg = (sg_tpl && Phaser.Math.FloatBetween(0, 1) < goldChance)
+        ? Phaser.Math.Between(sg_tpl.min, sg_tpl.max) : 0;
     }
     // Данж-босс в группе: сервер распределяет золото, не начисляем локально
     const _grpKill = this.groupSystem;
@@ -2688,7 +2694,8 @@ export default class GameScene extends Phaser.Scene {
       }
     }
     if (!mob.noRespawn && !SECTORS[galaxy.current]?.isDungeon) {
-      this.time.delayedCall(RESPAWN_MS, () => { if (!mob.alive) { mob.respawn(); this.log(i18n.t('log.respawn', { name, lvl })); } });
+      const respawnDelay = mob.isSectorBoss ? 300000 : mob.bossRef ? RESPAWN_MS : 60000;
+      this.time.delayedCall(respawnDelay, () => { if (!mob.alive) { mob.respawn(); this.log(i18n.t('log.respawn', { name, lvl })); } });
     }
     // Mission hooks
     if (mob.tpl.key.startsWith('pirate')) this.advanceMission('daily_patrol', 0);
@@ -3902,7 +3909,7 @@ export default class GameScene extends Phaser.Scene {
       }
 
       const guard = new Mob(this, MOBS[dcfg.guard], guardLvl, x + 130, y + 90,
-        { behavior: 'guard', patrolRadius: 150, leash: 400, passive: true });
+        { behavior: 'guard', patrolRadius: 150, leash: 400, passive: true, ...(galaxy.current === 'R-1-boss' ? { dmgMult: 2 } : {}) });
       guard.isDepositGuard = true;
       guard.depositGuardSleeping = true;
       this.mobs.push(guard);

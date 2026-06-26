@@ -183,9 +183,9 @@ export default class HudScene extends Phaser.Scene {
     this._buildGroupWin();
     this._buildFriendsWin();
 
-    // F key → toggle friends window
+    // F key → toggle friends window (работает и на базе, и в космосе)
     this.input.keyboard?.on('keydown-F', () => {
-      if (!this.gs?.atBase) this._toggleFriendsWin();
+      this._toggleFriendsWin();
     });
   }
 
