@@ -2178,7 +2178,8 @@ export default class GameScene extends Phaser.Scene {
 
   gainXp(amount) {
     if (this.pilotLevel >= MAX_LEVEL || amount <= 0) return;
-    this.pilotXp += Math.round(amount * (this.player?.xpBonusMod ?? 1));
+    const _premiumXp = this.premium ? 1.10 : 1.0;
+    this.pilotXp += Math.round(amount * (this.player?.xpBonusMod ?? 1) * _premiumXp);
     const newLevel = levelInfo(this.pilotXp).level;
     while (newLevel > this.pilotLevel && this.pilotLevel < MAX_LEVEL) {
       this.pilotLevel++;
@@ -2580,7 +2581,7 @@ export default class GameScene extends Phaser.Scene {
     const sec = SECTORS[galaxy.current];
     const isDung = sec?.isDungeon === true;
     const diff = isDung ? this._dungeonDiff() : null;
-    const xp = Math.round(mob.tpl.xp * lvlScale * (diff?.xpMult ?? 1));
+    const xp = Math.round(mob.tpl.xp * lvlScale * (diff?.xpMult ?? 1) / 60);
     this.log(i18n.t('log.killed', { name, lvl })); this.log(i18n.t('log.reward', { credits, xp }));
     this.credits = (this.credits || 0) + credits; this.gainXp(xp);
     if (this.target === mob) {
