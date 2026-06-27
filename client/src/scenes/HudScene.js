@@ -1659,8 +1659,11 @@ export default class HudScene extends Phaser.Scene {
   // ── HUD кнопки: ГРУППА и ДРУЗЬЯ ─────────────────────────────────────────
 
   _buildHudSocialButtons() {
-    const F  = (sz, c) => ({ fontFamily: 'Inter, sans-serif', fontSize: sz, color: c, resolution: UI_RES });
+    const F = (sz, c) => ({ fontFamily: 'Inter, sans-serif', fontSize: sz, color: c, resolution: UI_RES });
     const W = this.scale.width, H = this.scale.height;
+    const BH = 22, BW = 26;    // button size
+    const GX = 12, FX = GX + BW + 2;  // button local X positions (after grip)
+    const BAR_W = GX + BW + 2 + BW;   // total bar width = 66px
 
     // Restore saved position
     let bx = 8, by = 92;
@@ -1668,28 +1671,50 @@ export default class HudScene extends Phaser.Scene {
       const s = JSON.parse(localStorage.getItem('sd_social_btns') || 'null');
       if (s) { bx = s.x; by = s.y; }
     } catch {}
-    bx = Math.max(0, Math.min(W - 242, bx));
-    by = Math.max(0, Math.min(H - 26,  by));
+    bx = Math.max(0, Math.min(W - BAR_W - 2, bx));
+    by = Math.max(0, Math.min(H - BH - 2,    by));
 
     this._socialBtnC = this.add.container(bx, by).setDepth(104);
     const mk = o => { this._socialBtnC.add(o); return o; };
 
-    // Grip handle (drag zone)
-    const grip = mk(this.add.rectangle(0, 0, 14, 22, 0x060f1c, 0.9)
+    // ── Grip ────────────────────────────────────────────────────────────────
+    const grip = mk(this.add.rectangle(0, 0, GX - 2, BH, 0x060f1c, 0.9)
       .setOrigin(0).setStrokeStyle(1, 0x1e3050, 0.6).setInteractive({ useHandCursor: true, cursor: 'grab' }));
-    mk(this.add.text(7, 11, '⠿', F('11px', '#2a4060')).setOrigin(0.5));
+    mk(this.add.text((GX - 2) / 2, BH / 2, '⠿', F('9px', '#263a50')).setOrigin(0.5));
 
-    // ГРУППА button (x=18)
-    this._grpBtn    = mk(this.add.rectangle(18, 0, 106, 22, 0x0a1828, 0.92)
+    // ── ГРУППА button  ◈ ────────────────────────────────────────────────────
+    this._grpBtn    = mk(this.add.rectangle(GX, 0, BW, BH, 0x0a1828, 0.92)
       .setOrigin(0).setStrokeStyle(1, 0x1e4060, 0.8).setInteractive({ useHandCursor: true }));
-    this._grpBtnTxt = mk(this.add.text(71, 11, 'ГРУППА', F('10px', '#3a7090')).setOrigin(0.5));
+    this._grpBtnTxt = mk(this.add.text(GX + BW / 2, BH / 2, '⚔', F('12px', '#3a7090')).setOrigin(0.5));
+    // Badge: member count (top-right corner, tiny)
+    this._grpBadgeTxt = mk(this.add.text(GX + BW - 1, 1, '', F('7px', '#4dd0e1')).setOrigin(1, 0));
 
-    // ДРУЗЬЯ button (x=128)
-    this._frBtn     = mk(this.add.rectangle(128, 0, 106, 22, 0x0a1828, 0.92)
+    // ── ДРУЗЬЯ button  ★ ────────────────────────────────────────────────────
+    this._frBtn     = mk(this.add.rectangle(FX, 0, BW, BH, 0x0a1828, 0.92)
       .setOrigin(0).setStrokeStyle(1, 0x1e4060, 0.8).setInteractive({ useHandCursor: true }));
-    this._frBtnTxt  = mk(this.add.text(181, 11, 'ДРУЗЬЯ  F', F('10px', '#3a7090')).setOrigin(0.5));
+    this._frBtnTxt  = mk(this.add.text(FX + BW / 2, BH / 2, '★', F('13px', '#3a7090')).setOrigin(0.5));
+    // Badge: pending requests (top-right corner, red)
+    this._frBadgeTxt = mk(this.add.text(FX + BW - 1, 1, '', F('7px', '#ef5350')).setOrigin(1, 0));
 
-    // Drag
+    // ── Tooltip (outside _socialBtnC so it's not clipped) ───────────────────
+    this._socialTooltip    = this.add.container(0, 0).setDepth(210).setVisible(false);
+    const ttBg  = this.add.rectangle(0, 0, 110, 20, 0x030c18, 0.97)
+      .setOrigin(0.5).setStrokeStyle(1, 0x1a4060, 0.9);
+    const ttTxt = this.add.text(0, 0, '', F('10px', '#4dd0e1')).setOrigin(0.5);
+    this._socialTooltip.add([ttBg, ttTxt]);
+    this._socialTooltipTxt = ttTxt;
+    this._hideTip = () => this._socialTooltip.setVisible(false);
+
+    const showTip = (btnLX, label) => {
+      const cx = this._socialBtnC.x + btnLX + BW / 2;
+      const cy = this._socialBtnC.y;
+      // show below if near top, else above
+      const ty = cy < 44 ? cy + BH + 10 : cy - 10;
+      this._socialTooltipTxt.setText(label);
+      this._socialTooltip.setPosition(cx, ty).setVisible(true);
+    };
+
+    // ── Drag ────────────────────────────────────────────────────────────────
     this._socialBtnDrag = { active: false, moved: false, ox: 0, oy: 0 };
     grip.on('pointerdown', (p) => {
       this._socialBtnDrag.active = true;
@@ -1698,12 +1723,14 @@ export default class HudScene extends Phaser.Scene {
       this._socialBtnDrag.oy = p.y - this._socialBtnC.y;
     });
 
-    this._grpBtn.on('pointerdown', () => this._toggleGroupWin());
-    this._grpBtn.on('pointerover', () => this._grpBtn.setFillStyle(0x102840));
-    this._grpBtn.on('pointerout',  () => this._updateSocialBtnStyles());
-    this._frBtn.on('pointerdown',  () => this._toggleFriendsWin());
-    this._frBtn.on('pointerover',  () => this._frBtn.setFillStyle(0x102840));
-    this._frBtn.on('pointerout',   () => this._updateSocialBtnStyles());
+    // ── Button events ────────────────────────────────────────────────────────
+    this._grpBtn.on('pointerdown', () => { this._hideTip(); this._toggleGroupWin(); });
+    this._grpBtn.on('pointerover', () => { this._grpBtn.setFillStyle(0x102840); showTip(GX, 'ГРУППА'); });
+    this._grpBtn.on('pointerout',  () => { this._hideTip(); this._updateSocialBtnStyles(); });
+
+    this._frBtn.on('pointerdown', () => { this._hideTip(); this._toggleFriendsWin(); });
+    this._frBtn.on('pointerover', () => { this._frBtn.setFillStyle(0x102840); showTip(FX, 'ДРУЗЬЯ  [F]'); });
+    this._frBtn.on('pointerout',  () => { this._hideTip(); this._updateSocialBtnStyles(); });
 
     this._socialBtnC.setVisible(loadSettings().showSocialBtns !== false);
   }
@@ -1713,20 +1740,23 @@ export default class HudScene extends Phaser.Scene {
     const show = loadSettings().showSocialBtns !== false;
     this._socialBtnC.setVisible(show);
     if (!show) return;
+
     const grp     = this.groupSystem;
     const grpOn   = this._groupWinVisible;
     const frOn    = this._friendsWinVisible;
     const pending = (this._friendsList || []).filter(f => f.status === 'pending' && f.dir === 'in').length;
-    const grpBadge = grp?.inGroup ? ` (${grp.memberCount})` : '';
-    const frBadge  = pending > 0 ? ` (${pending}!)` : '';
 
+    // Group button
     this._grpBtn.setFillStyle(grpOn ? 0x0f3040 : 0x0a1828);
     this._grpBtn.setStrokeStyle(1, grpOn ? 0x4dd0e1 : (grp?.inGroup ? 0x2a6080 : 0x1e4060), 1);
-    this._grpBtnTxt.setText(`ГРУППА${grpBadge}`).setColor(grpOn || grp?.inGroup ? '#4dd0e1' : '#3a7090');
+    this._grpBtnTxt.setColor(grpOn || grp?.inGroup ? '#4dd0e1' : '#3a7090');
+    this._grpBadgeTxt?.setText(grp?.inGroup && grp.memberCount > 1 ? `${grp.memberCount}` : '');
 
+    // Friends button
     this._frBtn.setFillStyle(frOn ? 0x0f3040 : 0x0a1828);
     this._frBtn.setStrokeStyle(1, frOn ? 0x4dd0e1 : (pending > 0 ? 0x806020 : 0x1e4060), 1);
-    this._frBtnTxt.setText(`ДРУЗЬЯ  F${frBadge}`).setColor(frOn ? '#4dd0e1' : (pending > 0 ? '#ffb74d' : '#3a7090'));
+    this._frBtnTxt.setColor(frOn ? '#4dd0e1' : (pending > 0 ? '#ffb74d' : '#3a7090'));
+    this._frBadgeTxt?.setText(pending > 0 ? `${pending}` : '');
   }
 
   _toggleGroupWin()   { this._groupWinVisible   = !this._groupWinVisible;   this._rebuildGroupWin();   this._updateSocialBtnStyles(); }
@@ -2221,8 +2251,8 @@ export default class HudScene extends Phaser.Scene {
         this._frWin?.setPosition(nx, ny);
       }
       if (this._socialBtnDrag?.active && pointer.isDown) {
-        const nx = Math.max(0, Math.min(W - 242, pointer.x - this._socialBtnDrag.ox));
-        const ny = Math.max(0, Math.min(H - 26,  pointer.y - this._socialBtnDrag.oy));
+        const nx = Math.max(0, Math.min(W - 68, pointer.x - this._socialBtnDrag.ox));
+        const ny = Math.max(0, Math.min(H - 24, pointer.y - this._socialBtnDrag.oy));
         if (Math.abs(nx - this._socialBtnC.x) > 3 || Math.abs(ny - this._socialBtnC.y) > 3)
           this._socialBtnDrag.moved = true;
         this._socialBtnC?.setPosition(nx, ny);
