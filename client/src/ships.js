@@ -87,7 +87,7 @@ export function shipLevelMods(level) {
 function Phaser_clamp(v, a, b) { return Math.max(a, Math.min(b, v)); }
 
 // Суммарная стоимость прокачки до ур.10 — по тиру (ориентир content-scope).
-const TIER_TOTAL = { 'T1': 50000, 'T2': 150000, 'T3': 300000, 'T4': 600000, 'T4 elite': 900000 };
+const TIER_TOTAL = { 'T1': 50000, 'T2': 750000, 'T3': 4000000, 'T4': 6500000, 'T4 elite': 900000 };
 const CURVE_SUM = 285; // Σ L² для L=1..9 — нормировка слабо-экспоненциальной кривой
 
 // Кредиты для перехода ship-level `level` → `level+1` (level 1..9). null если уже макс.

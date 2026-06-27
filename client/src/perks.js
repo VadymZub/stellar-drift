@@ -4,7 +4,7 @@
 // Reroll: costs starGold (200⭐ base, escalates per day, resets daily).
 
 // Credit upgrade cost per step (0→1, 1→2, 2→3, 3→4, 4→5)
-export const PERK_CREDIT_COST = [1500, 3500, 8000, 20000, 50000];
+export const PERK_CREDIT_COST = [7000, 17000, 40000, 100000, 236000];
 // Star upgrade cost per step
 export const PERK_STAR_COST   = [10, 25, 50, 100, 250];
 // Reroll escalation (per item, resets 00:00 UTC)

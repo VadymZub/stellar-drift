@@ -2576,7 +2576,7 @@ export default class GameScene extends Phaser.Scene {
     const name = i18n.t(mob.tpl.nameKey); const lvl = `${i18n.t('mob.level')}${mob.level}`;
     const lvlScale = 1 + 0.5 * (mob.level - 1);
     const _credMult = this.player?.creditBonusMod ?? 1;
-    const credits = Math.round(mob.tpl.credits * lvlScale * _credMult);
+    const credits = Math.round(mob.tpl.credits * lvlScale * _credMult / 5);
     const sec = SECTORS[galaxy.current];
     const isDung = sec?.isDungeon === true;
     const diff = isDung ? this._dungeonDiff() : null;

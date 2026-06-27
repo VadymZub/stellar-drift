@@ -125,7 +125,7 @@ export const SLOT_KEY = { cannon: 'weapon', laser: 'weapon', shield: 'shield', a
 //  • кредитный — дёшево, слабо: 5 уровней, +1%/ур → до +5%;
 //  • ⭐ Звёздное золото — дорого, сильно: 5 уровней, +3%/ур → до +15%.
 // Пути НЕ складываются: старт ⭐-пути СБРАСЫВАЕТ кредитный прогресс (creditLvl→0). См. Гараж.
-export const CREDIT_UP_COST = [5000, 10000, 25000, 50000, 100000];  // кредиты за ур.1..5
+export const CREDIT_UP_COST = [15000, 30000, 75000, 150000, 330000];  // кредиты за ур.1..5
 export const STAR_UP_COST = [25, 40, 60, 80, 100];                  // ⭐ за ур.1..5 (Σ=305)
 export const MOD_MAX_CREDIT_LVL = 5;
 export const MOD_MAX_STAR_LVL = 5;
