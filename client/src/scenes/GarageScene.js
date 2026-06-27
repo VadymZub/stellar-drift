@@ -5,7 +5,8 @@ import { itemName, itemStats, itemSellPrice, itemIconKey, SLOT_KEY, creditUpgrad
          PLASMATE_GOLD_RATE, PLASMATE_PER_SLOT, totalPlasmateInInventory, removePlasmateFromInventory,
          AMMO_ICON, CONSUMABLES, addConsumableToInventory } from '../items.js';
 import { SHIPS, SHIP_BY_KEY, purchaseState, shipLevelCost, shipLevelCostGold, SHIP_MAX_LEVEL } from '../ships.js';
-import { PERK_MAP, RARITY_COLOR, RARITY_LABEL, rollPerk, perkBonus, creditUpgCost, starUpgCost, PERK_CREDIT_COST, PERK_STAR_COST, PERK_REROLL_BASE } from '../perks.js';
+import { PERK_MAP, RARITY_COLOR, RARITY_LABEL, rollPerk, perkBonus, creditUpgCost, starUpgCost, PERK_CREDIT_COST, PERK_STAR_COST, PERK_REROLL_BASE,
+         generateRoll, rollQualityInfo, refineRoll, REFINE_COST } from '../perks.js';
 import { prerenderTex } from '../utils/prerenderTex.js';
 import { rollBoard, rollConnector, CONNECTOR_SHAPES, getPoweredNodes, getBoardEffects, STAT_META, BUF_STATS, boardTierLabel, boardPreviewStats, bfsPowered, placedCount, effectiveMask, rotateMask, edgeSides, activeNodes, activeEdges } from '../boards.js';
 
@@ -1440,14 +1441,28 @@ export default class GarageScene extends Phaser.Scene {
     rbg.fillStyle(rarHex, 0.15); rbg.fillRoundedRect(cx - rlw / 2, cy, rlw, rlh, 5);
     rbg.lineStyle(1, rarHex, 0.6); rbg.strokeRoundedRect(cx - rlw / 2, cy, rlw, rlh, 5);
     this.add.text(cx, cy + rlh / 2, rarLabel, this.O('11px', rarColor)).setOrigin(0.5);
-    cy += rlh + 10;
+    cy += rlh + 6;
+
+    // Roll quality badge
+    const roll      = perk.roll ?? 1;
+    const qInfo     = rollQualityInfo(roll);
+    const qHex      = qInfo.color;
+    const qColor    = `#${qHex.toString(16).padStart(6, '0')}`;
+    const qbg = this.add.graphics();
+    const qlw = 160, qlh = 22;
+    qbg.fillStyle(qHex, 0.10); qbg.fillRoundedRect(cx - qlw / 2, cy, qlw, qlh, 5);
+    qbg.lineStyle(1, qHex, 0.5); qbg.strokeRoundedRect(cx - qlw / 2, cy, qlw, qlh, 5);
+    this.add.text(cx, cy + qlh / 2,
+      `Качество: ${Math.round(roll * 100)}%  ·  ${qInfo.label}`,
+      this.F('11px', qColor)).setOrigin(0.5);
+    cy += qlh + 10;
 
     // Name
     this.add.text(cx, cy, pDef.name, this.O('18px', rarColor)).setOrigin(0.5, 0);
     cy += 28;
 
     // Base effect — крупнее, это главный текст
-    this.add.text(cx, cy, pDef.desc(bonus), this.F('15px', '#aaccdd')).setOrigin(0.5, 0);
+    this.add.text(cx, cy, pDef.desc(bonus, roll), this.F('15px', '#aaccdd')).setOrigin(0.5, 0);
     cy += 24;
 
     // Bonus breakdown
@@ -1538,6 +1553,57 @@ export default class GarageScene extends Phaser.Scene {
 
     cy += 80;
 
+    // ── Refine quality section ───────────────────────────────────────────────
+    const refineCosts = REFINE_COST[item.tier] || REFINE_COST[4];
+    const isPerfect   = roll >= 1.0;
+    const refineLabels = ['Базовый', 'Улучш.', 'Премиум'];
+    const refineGainHint = ['+3–12%', '+8–22%', '+18–40%'];
+    const btnW = Math.floor((detW - 36) / 3);
+    const btnH = 30;
+
+    const sepG2 = this.add.graphics();
+    const smx2 = cx, smy2 = cy + 1, sds2 = 5;
+    sepG2.lineStyle(1, 0x1e3a50, 0.8);
+    sepG2.strokeLineShape(new Phaser.Geom.Line(detX + 16, smy2, smx2 - sds2 - 2, smy2));
+    sepG2.strokeLineShape(new Phaser.Geom.Line(smx2 + sds2 + 2, smy2, detX + detW - 16, smy2));
+    sepG2.fillStyle(0x2a6080, 0.9);
+    sepG2.beginPath(); sepG2.moveTo(smx2, smy2 - sds2); sepG2.lineTo(smx2 + sds2, smy2);
+    sepG2.lineTo(smx2, smy2 + sds2); sepG2.lineTo(smx2 - sds2, smy2); sepG2.closePath(); sepG2.fillPath();
+    cy += 12;
+
+    this.add.text(cx, cy, isPerfect ? '✦ КАЧЕСТВО МАКСИМАЛЬНОЕ' : 'УЛУЧШЕНИЕ КАЧЕСТВА',
+      this.O('12px', isPerfect ? qColor : '#2a5a6a')).setOrigin(0.5, 0);
+    cy += 18;
+
+    if (!isPerfect) {
+      for (let gi = 0; gi < 3; gi++) {
+        const cost    = refineCosts[gi];
+        const canRef  = (gs.starGold || 0) >= cost;
+        const bx      = detX + 12 + gi * (btnW + 6) + btnW / 2;
+        const rbgRef  = this.add.rectangle(bx, cy + btnH / 2, btnW, btnH,
+          canRef ? 0x0a1520 : 0x060810)
+          .setOrigin(0.5).setStrokeStyle(1, canRef ? qHex : 0x1a2a3a, canRef ? 0.7 : 0.3)
+          .setInteractive({ useHandCursor: canRef });
+        this.add.text(bx, cy + btnH / 2 - 7,
+          refineLabels[gi],
+          this.O('11px', canRef ? qColor : '#2a3a44')).setOrigin(0.5);
+        this.add.text(bx, cy + btnH / 2 + 6,
+          `${cost}⭐  ${refineGainHint[gi]}`,
+          this.F('10px', canRef ? '#6699aa' : '#1a2a30')).setOrigin(0.5);
+        if (canRef) {
+          rbgRef.on('pointerover', () => rbgRef.setFillStyle(0x152030));
+          rbgRef.on('pointerout',  () => rbgRef.setFillStyle(0x0a1520));
+          rbgRef.on('pointerdown', () => {
+            gs.starGold    = (gs.starGold || 0) - cost;
+            item.perk.roll = refineRoll(item.perk.roll ?? 1, gi);
+            gs._saveState?.();
+            this.scene.restart();
+          });
+        }
+      }
+    }
+    cy += btnH + 10;
+
     // Reroll section
     this._perkRerollBtn(detX, cy, detW, 0, item, selIdx, gs);
   }
@@ -1588,8 +1654,8 @@ export default class GarageScene extends Phaser.Scene {
       { text: itemStats(item), sty: this.F('11px', '#9fb3b8') },
     ];
     if (pDef) {
-      lineDefs.push({ text: pDef.name,                       sty: this.F('11px', rarColor) });
-      lineDefs.push({ text: pDef.desc(perkBonus(item.perk)), sty: this.F('11px', '#aaccdd') });
+      lineDefs.push({ text: pDef.name,                                           sty: this.F('11px', rarColor) });
+      lineDefs.push({ text: pDef.desc(perkBonus(item.perk), item.perk.roll ?? 1), sty: this.F('11px', '#aaccdd') });
     }
 
     // Первый проход — создаём тексты вне экрана, чтобы замерить реальную высоту с word-wrap
