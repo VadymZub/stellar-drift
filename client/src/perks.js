@@ -34,10 +34,10 @@ export const ROLL_QUALITY_TIERS = [
 
 // Refinement cost per tier (basic / advanced / premium), paid in starGold
 export const REFINE_COST = {
-  1: [30,  80,  200],
-  2: [60,  160, 400],
-  3: [100, 280, 700],
-  4: [160, 450, 1100],
+  1: [15,  40,  100],
+  2: [30,  80,  200],
+  3: [50,  140, 350],
+  4: [80,  220, 550],
 };
 
 // Credit bonus per level (additive fraction, level 1–5)
@@ -260,11 +260,11 @@ export function rollQualityInfo(roll) {
 
 // Attempt to improve a roll toward 1.0. Returns the new roll value.
 // Gain is absolute (added directly to roll), not a fraction of remaining gap.
-// gradeIdx: 0=basic (+0.5–2%), 1=advanced (+1.5–4.5%), 2=premium (+3–8%)
+// gradeIdx: 0=basic (+2–4%), 1=advanced (+4–8.5%), 2=premium (+8–15%)
 export function refineRoll(currentRoll, gradeIdx) {
   const r = currentRoll ?? 1;
   if (r >= 1.0) return 1.0;
-  const gainRanges = [[0.005, 0.020], [0.015, 0.045], [0.030, 0.080]];
+  const gainRanges = [[0.020, 0.040], [0.040, 0.085], [0.080, 0.150]];
   const [minG, maxG] = gainRanges[gradeIdx] || gainRanges[0];
   const gain = minG + Math.random() * (maxG - minG);
   return +Math.min(1.0, r + gain).toFixed(3);
