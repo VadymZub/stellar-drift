@@ -3,10 +3,20 @@
 // Stars upgrade path: 5 levels, +45% total bonus.
 // Reroll: costs starGold (200⭐ base, escalates per day, resets daily).
 
-// Credit upgrade cost per step (0→1, 1→2, 2→3, 3→4, 4→5)
-export const PERK_CREDIT_COST = [7000, 17000, 40000, 100000, 236000];
-// Star upgrade cost per step
-export const PERK_STAR_COST   = [10, 25, 50, 100, 250];
+// Credit upgrade cost per step (0→1..4→5), keyed by module tier 1–4
+export const PERK_CREDIT_COST = {
+  1: [1500, 3500,  8000,  20000,  47000],   // Σ = 80 000
+  2: [3000, 7000,  16000, 40000,  94000],   // Σ = 160 000
+  3: [5000, 12000, 29000, 72000,  170000],  // Σ = 288 000
+  4: [7000, 17000, 40000, 100000, 236000],  // Σ = 400 000
+};
+// Star upgrade cost per step, keyed by module tier 1–4
+export const PERK_STAR_COST = {
+  1: [2,  5,  10, 20,  53],   // Σ = 90 ⭐
+  2: [5,  10, 20, 40,  100],  // Σ = 175 ⭐
+  3: [7,  18, 35, 70,  175],  // Σ = 305 ⭐
+  4: [10, 25, 50, 100, 250],  // Σ = 435 ⭐
+};
 // Reroll escalation (per item, resets 00:00 UTC)
 export const PERK_REROLL_BASE = 200;
 
@@ -235,12 +245,12 @@ export function perkBonus(perk) {
   return (CREDIT_BONUS_PER_LVL[ci] ?? 0) + (STAR_BONUS_PER_LVL[si] ?? 0);
 }
 
-// Credit upgrade cost to go from creditLvl → creditLvl+1
-export function creditUpgCost(creditLvl) {
-  return PERK_CREDIT_COST[creditLvl] || null;
+// Credit upgrade cost to go from creditLvl → creditLvl+1 for given module tier (1–4)
+export function creditUpgCost(creditLvl, tier) {
+  return (PERK_CREDIT_COST[tier] || PERK_CREDIT_COST[4])[creditLvl] || null;
 }
 
-// Star upgrade cost to go from starLvl → starLvl+1
-export function starUpgCost(starLvl) {
-  return PERK_STAR_COST[starLvl] || null;
+// Star upgrade cost to go from starLvl → starLvl+1 for given module tier (1–4)
+export function starUpgCost(starLvl, tier) {
+  return (PERK_STAR_COST[tier] || PERK_STAR_COST[4])[starLvl] || null;
 }

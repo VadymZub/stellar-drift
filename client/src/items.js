@@ -125,8 +125,19 @@ export const SLOT_KEY = { cannon: 'weapon', laser: 'weapon', shield: 'shield', a
 //  • кредитный — дёшево, слабо: 5 уровней, +1%/ур → до +5%;
 //  • ⭐ Звёздное золото — дорого, сильно: 5 уровней, +3%/ур → до +15%.
 // Пути НЕ складываются: старт ⭐-пути СБРАСЫВАЕТ кредитный прогресс (creditLvl→0). См. Гараж.
-export const CREDIT_UP_COST = [15000, 30000, 75000, 150000, 330000];  // кредиты за ур.1..5
-export const STAR_UP_COST = [25, 40, 60, 80, 100];                  // ⭐ за ур.1..5 (Σ=305)
+// Стоимость апгрейда по тиру (1–4). T1 дёшево — выбрасывается раньше, T4 дорого — эндгейм.
+export const CREDIT_UP_COST = {
+  1: [3000,  6000,  15000,  30000,  66000],   // Σ = 120 000
+  2: [6000,  12000, 30000,  60000,  132000],  // Σ = 240 000
+  3: [11000, 22000, 54000,  108000, 237000],  // Σ = 432 000
+  4: [15000, 30000, 75000,  150000, 330000],  // Σ = 600 000
+};
+export const STAR_UP_COST = {
+  1: [5,  8,  12, 16, 19],   // Σ = 60 ⭐
+  2: [10, 16, 24, 32, 38],   // Σ = 120 ⭐
+  3: [18, 28, 42, 56, 76],   // Σ = 220 ⭐
+  4: [25, 40, 60, 80, 100],  // Σ = 305 ⭐
+};
 export const MOD_MAX_CREDIT_LVL = 5;
 export const MOD_MAX_STAR_LVL = 5;
 // Суммарный множитель статов модуля от обоих уровней (в норме активен только один путь).
@@ -134,12 +145,14 @@ export function modMult(item) { return 1 + 0.01 * (item.creditLvl || 0) + 0.03 *
 // Кредиты для следующего кредит-апгрейда; null если макс.
 export function creditUpgradeCost(item) {
   const lvl = item.creditLvl || 0;
-  return lvl >= MOD_MAX_CREDIT_LVL ? null : CREDIT_UP_COST[lvl];
+  if (lvl >= MOD_MAX_CREDIT_LVL) return null;
+  return (CREDIT_UP_COST[item.tier] || CREDIT_UP_COST[4])[lvl];
 }
 // ⭐ для следующего ⭐-апгрейда; null если макс.
 export function starUpgradeCost(item) {
   const lvl = item.starLvl || 0;
-  return lvl >= MOD_MAX_STAR_LVL ? null : STAR_UP_COST[lvl];
+  if (lvl >= MOD_MAX_STAR_LVL) return null;
+  return (STAR_UP_COST[item.tier] || STAR_UP_COST[4])[lvl];
 }
 
 // Цена продажи лута на складе (по тиру).

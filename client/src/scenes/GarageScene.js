@@ -925,7 +925,7 @@ export default class GarageScene extends Phaser.Scene {
   doStarPerkUpgrade(item) {
     const gs = this.gs;
     const sLvl = item.perk.starLvl || 0;
-    const cost = sLvl < 5 ? PERK_STAR_COST[sLvl] : null;
+    const cost = starUpgCost(sLvl, item.tier);
     if (cost == null || (gs.starGold || 0) < cost) return;
     gs.starGold -= cost;
     item.perk.creditLvl = 0;
@@ -1474,7 +1474,7 @@ export default class GarageScene extends Phaser.Scene {
     // Credits upgrade
     const goldLocked = sLvl > 0; // starLvl > 0 блокирует кредитный апгрейд
     const nextCLvl = cLvl + 1;
-    const cCost    = (!goldLocked && cLvl < 5) ? PERK_CREDIT_COST[cLvl] : null;
+    const cCost    = (!goldLocked && cLvl < 5) ? creditUpgCost(cLvl, item.tier) : null;
     const canCred  = cCost !== null && (gs.credits || 0) >= cCost;
 
     this.add.text(colLX + halfW / 2, cy, `💰 ПРОКАЧКА (кредиты)`,
@@ -1509,7 +1509,7 @@ export default class GarageScene extends Phaser.Scene {
 
     // Stars upgrade
     const nextSLvl = sLvl + 1;
-    const sCost    = sLvl < 5 ? PERK_STAR_COST[sLvl] : null;
+    const sCost    = starUpgCost(sLvl, item.tier);
     const canStar  = sCost !== null && (gs.starGold || 0) >= sCost;
 
     this.add.text(colRX + halfW / 2, cy, `⭐ ПРОКАЧКА (звёзды)`,
