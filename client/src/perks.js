@@ -259,15 +259,15 @@ export function rollQualityInfo(roll) {
 }
 
 // Attempt to improve a roll toward 1.0. Returns the new roll value.
-// gradeIdx: 0=basic (+3–12% of gap), 1=advanced (+8–22%), 2=premium (+18–40%)
+// Gain is absolute (added directly to roll), not a fraction of remaining gap.
+// gradeIdx: 0=basic (+0.5–2%), 1=advanced (+1.5–4.5%), 2=premium (+3–8%)
 export function refineRoll(currentRoll, gradeIdx) {
   const r = currentRoll ?? 1;
   if (r >= 1.0) return 1.0;
-  const gainRanges = [[0.03, 0.12], [0.08, 0.22], [0.18, 0.40]];
+  const gainRanges = [[0.005, 0.020], [0.015, 0.045], [0.030, 0.080]];
   const [minG, maxG] = gainRanges[gradeIdx] || gainRanges[0];
-  const gap = 1.0 - r;
   const gain = minG + Math.random() * (maxG - minG);
-  return +Math.min(1.0, r + gap * gain).toFixed(3);
+  return +Math.min(1.0, r + gain).toFixed(3);
 }
 
 // Roll a perk for a slot type

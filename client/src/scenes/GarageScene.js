@@ -1557,7 +1557,7 @@ export default class GarageScene extends Phaser.Scene {
     const refineCosts = REFINE_COST[item.tier] || REFINE_COST[4];
     const isPerfect   = roll >= 1.0;
     const refineLabels = ['Базовый', 'Улучш.', 'Премиум'];
-    const refineGainHint = ['+3–12%', '+8–22%', '+18–40%'];
+    const refineGainHint = ['+0.5–2%', '+1.5–4.5%', '+3–8%'];
     const btnW = Math.floor((detW - 36) / 3);
     const btnH = 30;
 
