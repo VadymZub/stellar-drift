@@ -6,7 +6,7 @@ import { itemName, itemStats, itemSellPrice, itemIconKey, SLOT_KEY, creditUpgrad
          AMMO_ICON, CONSUMABLES, addConsumableToInventory } from '../items.js';
 import { SHIPS, SHIP_BY_KEY, purchaseState, shipLevelCost, shipLevelCostGold, SHIP_MAX_LEVEL } from '../ships.js';
 import { PERK_MAP, RARITY_COLOR, RARITY_LABEL, rollPerk, perkBonus, creditUpgCost, starUpgCost, PERK_CREDIT_COST, PERK_STAR_COST, PERK_REROLL_BASE,
-         generateRoll, rollQualityInfo, refineRoll, REFINE_COST, perkMaxDesc } from '../perks.js';
+         generateRoll, rollQualityInfo, refineRoll, REFINE_COST, perkMaxBase, perkMaxUpgraded } from '../perks.js';
 import { prerenderTex } from '../utils/prerenderTex.js';
 import { rollBoard, rollConnector, CONNECTOR_SHAPES, getPoweredNodes, getBoardEffects, STAT_META, BUF_STATS, boardTierLabel, boardPreviewStats, bfsPowered, placedCount, effectiveMask, rotateMask, edgeSides, activeNodes, activeEdges } from '../boards.js';
 
@@ -1464,8 +1464,10 @@ export default class GarageScene extends Phaser.Scene {
     // Base effect — крупнее, это главный текст
     this.add.text(cx, cy, pDef.desc(bonus, roll), this.F('15px', '#aaccdd')).setOrigin(0.5, 0);
     cy += 20;
-    this.add.text(cx, cy, `макс: ${perkMaxDesc(pDef)}`, this.F('12px', '#1e4a5a')).setOrigin(0.5, 0);
-    cy += 18;
+    this.add.text(cx, cy, `макс база: ${perkMaxBase(pDef)}`, this.F('12px', '#2a5a6a')).setOrigin(0.5, 0);
+    cy += 16;
+    this.add.text(cx, cy, `макс ×: ${perkMaxUpgraded(pDef)}`, this.F('12px', '#4dd0e1')).setOrigin(0.5, 0);
+    cy += 20;
 
     // Bonus breakdown
     const cLvl = perk.creditLvl || 0, sLvl = perk.starLvl || 0;

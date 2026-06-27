@@ -25,11 +25,11 @@ export const PERK_REROLL_BASE = 200;
 // Roll is stored as perk.roll ∈ [0.6, 1.0]. Higher = stronger base effect.
 // Colors chosen not to conflict with RARITY_COLOR (green/purple/yellow/red).
 export const ROLL_QUALITY_TIERS = [
-  { min: 1.00, label: 'ПЕРФЕКТ',  color: 0xe8eaf6 }, // near-white
-  { min: 0.95, label: 'ОТЛИЧНОЕ', color: 0xff7043 }, // deep orange
-  { min: 0.85, label: 'СИЛЬНОЕ',  color: 0x00bcd4 }, // cyan
-  { min: 0.75, label: 'ХОРОШЕЕ',  color: 0x29b6f6 }, // light blue
-  { min: 0.00, label: 'СЛАБОЕ',   color: 0x78909c }, // blue-grey
+  { min: 1.000, label: 'ПЕРФЕКТ',  color: 0xe8eaf6 }, // ~0.06%
+  { min: 0.996, label: 'ОТЛИЧНОЕ', color: 0xff7043 }, // ~0.44%
+  { min: 0.980, label: 'СИЛЬНОЕ',  color: 0x00bcd4 }, // ~2%
+  { min: 0.946, label: 'ХОРОШЕЕ',  color: 0x29b6f6 }, // ~4.5%
+  { min: 0.000, label: 'СЛАБОЕ',   color: 0x78909c }, // ~93%
 ];
 
 // Refinement cost per tier (basic / advanced / premium), paid in starGold.
@@ -289,8 +289,13 @@ export function perkBonus(perk) {
   return (CREDIT_BONUS_PER_LVL[ci] ?? 0) + (STAR_BONUS_PER_LVL[si] ?? 0);
 }
 
-// Returns the description string at perfect roll and max star upgrade (the theoretical max)
-export function perkMaxDesc(def) {
+// Max at perfect roll, no upgrades (base ceiling)
+export function perkMaxBase(def) {
+  return def.desc(0, 1.0);
+}
+
+// Max at perfect roll + max star upgrade (credit and star upgrades are mutually exclusive)
+export function perkMaxUpgraded(def) {
   return def.desc(STAR_BONUS_PER_LVL[STAR_BONUS_PER_LVL.length - 1], 1.0);
 }
 

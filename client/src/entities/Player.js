@@ -452,7 +452,7 @@ export default class Player {
           const d = Phaser.Math.Distance.Between(this.sprite.x, this.sprite.y, m.x, m.y);
           if (d < bestD) { closest = m; bestD = d; }
         }
-        if (closest) closest.takeDamage(reflectDmg, this.scene);
+        if (closest) closest.takeDamage(reflectDmg, 0);
       }
     }
 
