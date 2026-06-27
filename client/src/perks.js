@@ -25,11 +25,11 @@ export const PERK_REROLL_BASE = 200;
 // Roll is stored as perk.roll ∈ [0.6, 1.0]. Higher = stronger base effect.
 // Colors chosen not to conflict with RARITY_COLOR (green/purple/yellow/red).
 export const ROLL_QUALITY_TIERS = [
-  { min: 1.000, label: 'ПЕРФЕКТ',  color: 0xe8eaf6 }, // ~0.06%
-  { min: 0.996, label: 'ОТЛИЧНОЕ', color: 0xff7043 }, // ~0.44%
-  { min: 0.980, label: 'СИЛЬНОЕ',  color: 0x00bcd4 }, // ~2%
-  { min: 0.946, label: 'ХОРОШЕЕ',  color: 0x29b6f6 }, // ~4.5%
-  { min: 0.000, label: 'СЛАБОЕ',   color: 0x78909c }, // ~93%
+  { min: 1.00, label: 'ПЕРФЕКТ',  color: 0xe8eaf6 }, // = 1.00       0.06%
+  { min: 0.90, label: 'ОТЛИЧНОЕ', color: 0xff7043 }, // 0.90 – 1.00  0.44%
+  { min: 0.80, label: 'СИЛЬНОЕ',  color: 0x00bcd4 }, // 0.80 – 0.90  2%
+  { min: 0.70, label: 'ХОРОШЕЕ',  color: 0x29b6f6 }, // 0.70 – 0.80  4.5%
+  { min: 0.00, label: 'СЛАБОЕ',   color: 0x78909c }, // 0.60 – 0.70  93%
 ];
 
 // Refinement cost per tier (basic / advanced / premium), paid in starGold.
@@ -248,9 +248,15 @@ function weightedPick(pool) {
   return pool[pool.length - 1];
 }
 
-// Generate a drop roll in [0.6, 1.0], skewed toward 0.6 (lower rolls are more common)
+// Generate a drop roll: tier picked by probability, then uniform within tier range.
+// Probabilities: СЛАБОЕ 93% | ХОРОШЕЕ 4.5% | СИЛЬНОЕ 2% | ОТЛИЧНОЕ 0.44% | ПЕРФЕКТ 0.06%
 export function generateRoll() {
-  return +(0.6 + 0.4 * Math.pow(Math.random(), 2)).toFixed(3);
+  const r = Math.random();
+  if (r < 0.9300) return +(0.60 + 0.10 * Math.random()).toFixed(3); // СЛАБОЕ   0.60–0.70
+  if (r < 0.9750) return +(0.70 + 0.10 * Math.random()).toFixed(3); // ХОРОШЕЕ  0.70–0.80
+  if (r < 0.9950) return +(0.80 + 0.10 * Math.random()).toFixed(3); // СИЛЬНОЕ  0.80–0.90
+  if (r < 0.9994) return +(0.90 + 0.10 * Math.random()).toFixed(3); // ОТЛИЧНОЕ 0.90–0.99
+  return 1.000;                                                       // ПЕРФЕКТ  = 1.00
 }
 
 // Return quality tier info for a given roll value
