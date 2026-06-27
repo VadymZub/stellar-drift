@@ -32,12 +32,13 @@ export const ROLL_QUALITY_TIERS = [
   { min: 0.00, label: 'СЛАБОЕ',   color: 0x78909c }, // blue-grey
 ];
 
-// Refinement cost per tier (basic / advanced / premium), paid in starGold
+// Refinement cost per tier (basic / advanced / premium), paid in starGold.
+// Premium is most cost-efficient per % gained (bulk-discount logic).
 export const REFINE_COST = {
-  1: [15,  40,  100],
-  2: [30,  80,  200],
-  3: [50,  140, 350],
-  4: [80,  220, 550],
+  1: [20,  40,  60],
+  2: [45,  75,  120],
+  3: [75,  125, 205],
+  4: [120, 200, 330],
 };
 
 // Credit bonus per level (additive fraction, level 1–5)
