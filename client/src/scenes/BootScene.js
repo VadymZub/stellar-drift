@@ -23,6 +23,28 @@ export const MOD_ICON_FILES = {
   mod_laser:     'laser_cannon.png',
 };
 
+// Programmatically generate rank tier icons that have no source PNG.
+// All drawn in white so Phaser tinting in Player.js applies the correct color.
+function _genRankTier(scene, tier, size) {
+  const key = `rank_tier${tier}`;
+  if (scene.textures.exists(key)) return;
+  const tex = scene.textures.createCanvas(key, size, size);
+  const ctx = tex.getContext();
+  const s = size;
+  ctx.fillStyle = '#ffffff';
+  if (tier === 8) {
+    // Single horizontal bar — classic enlisted bar insignia
+    const bh = Math.max(3, Math.round(s * 0.14));
+    ctx.fillRect(Math.round(s * 0.08), Math.round((s - bh) / 2), Math.round(s * 0.84), bh);
+  } else if (tier === 9) {
+    // Single pip (filled circle) — lowest rank insignia
+    ctx.beginPath();
+    ctx.arc(s / 2, s / 2, Math.round(s * 0.20), 0, Math.PI * 2);
+    ctx.fill();
+  }
+  tex.refresh();
+}
+
 // NPC portraits for MissionsScene — lazy-loaded from GameScene after boot.
 export const NPC_PORTRAITS = [
   ['npc_corvus',   'Бригадир Корвус.png'],
@@ -210,6 +232,8 @@ export default class BootScene extends Phaser.Scene {
       ...[..._mobTexMax].map(([k, ds]) => () => prepShipTex(this, k, ds * 2)),
       ...['drover_g', 'phantom_g', 'argosy_g', 'helion_g', 'drifter_g'].map(k => () => prepShipTex(this, k, 446)),
       ...Array.from({ length: 7 }, (_, i) => () => prepShipTex(this, `rank_tier${i + 1}`, 44)),
+      () => _genRankTier(this, 8, 44), // horizontal bar — Матрос
+      () => _genRankTier(this, 9, 44), // pip            — Кадет
       ...['helios', 'karax', 'tides'].map(c => () => prepShipTex(this, `emblem_${c}`, 36)),
       ...['sharpshooter','heavy_caliber','penetrating_rounds','overcharge_shot',
           'salvo','targeting_ai','berserker',

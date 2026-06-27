@@ -268,7 +268,15 @@ export const BASE_SCAN_RADIUS = 900;
 
 export const RESPAWN_MS = 8000; // моб возвращается в систему через 8 сек после смерти
 
-// Honor awarded for killing a level-50 player in PvP.
-// Scales linearly: honorForLevel(lvl) = Math.round(lvl * HONOR_PER_LVL50 / 50)
-// Argus = 10× this value.  Apophysis boss = 1× this value.
-export const HONOR_PER_LVL50 = 25000;
+export const HONOR = {
+  BOSS_HIGHER: 10,   // boss level > player level
+  BOSS_EQUAL:  5,    // boss level === player level
+  BOSS_LOWER:  1,    // boss level < player level
+  PVP_HIGHER:  100,  // victim level > player level
+  PVP_EQUAL:   50,
+  PVP_LOWER:   10,
+  ARENA_WIN:   100,
+  APOPHYSIS:   200,
+  ARGUS:       1000,
+  SHADOW_WIN:  20,   // shadow stronger than player
+};

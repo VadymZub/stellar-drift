@@ -3,9 +3,9 @@ import { levelInfo, MAX_LEVEL } from './leveling.js';
 
 // Нормализация для расчета рейтинга (40% XP + 60% Honor).
 // MAX_XP_NORM — примерный опыт на 50 уровне (≈2.8 млн).
-// MAX_HONOR_NORM — базовое значение для 100% веса чести (≈1 млн).
+// MAX_HONOR_NORM — ~50 актив-дней: Аргус=1000, боссы=10, арена=100.
 const MAX_XP_NORM = 2800000;
-const MAX_HONOR_NORM = 1000000;
+const MAX_HONOR_NORM = 50000;
 
 /**
  * Вычисляет нормализованный рейтинг игрока.

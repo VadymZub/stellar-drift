@@ -1,5 +1,5 @@
 import Mob from '../entities/Mob.js';
-import { MOBS, HONOR_PER_LVL50 } from '../constants.js';
+import { MOBS, HONOR } from '../constants.js';
 import { galaxy } from '../galaxy.js';
 
 const CHANNEL     = 'stellar-drift-admin';
@@ -7,7 +7,7 @@ const HEAL_CD     = 180;
 const HEAL_PCT    = 0.30;
 const TOP_REWARD  = 8;
 const REWARD_GOLD = 100;
-const HONOR_GAIN  = HONOR_PER_LVL50 * 10;
+const HONOR_GAIN  = HONOR.ARGUS;
 
 // Movement
 const ORBIT_R_TIGHT     = 380;

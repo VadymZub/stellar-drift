@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<title>Rank Badges Preview</title>
+<style>
+  body { background: #060e1a; color: #cfe9ee; font-family: sans-serif; padding: 24px; margin: 0; }
+  h2   { color: #4dd0e1; font-size: 13px; letter-spacing: 2px; margin: 0 0 18px; }
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: 10px;
+  }
+  .card {
+    background: #0d1828; border: 1px solid #1e3a5a; border-radius: 8px;
+    padding: 10px 14px; display: flex; align-items: center; gap: 12px;
+  }
+  canvas { flex-shrink: 0; image-rendering: pixelated; }
+  .name  { font-size: 11px; line-height: 1.4; }
+  .meta  { font-size: 10px; color: #3a6a8a; margin-top: 2px; }
+</style>
+</head>
+<body>
+<h2>RANK BADGES — все 20 рангов</h2>
+<div class="grid" id="grid"></div>
+<script>
+const SIZE = 44;
+
+const RANKS = [
+  { id:  1, name: 'Гранд-Адмирал',      tier: 1 },
+  { id:  2, name: 'Адмирал Флота',       tier: 1 },
+  { id:  3, name: 'Вице-Адмирал',        tier: 1 },
+  { id:  4, name: 'Контр-Адмирал',       tier: 2 },
+  { id:  5, name: 'Коммодор',            tier: 2 },
+  { id:  6, name: 'Капитан I ранга',     tier: 3 },
+  { id:  7, name: 'Капитан II ранга',    tier: 3 },
+  { id:  8, name: 'Капитан III ранга',   tier: 3 },
+  { id:  9, name: 'Командор',            tier: 3 },
+  { id: 10, name: 'Капитан-лейтенант',   tier: 4 },
+  { id: 11, name: 'Старший лейтенант',   tier: 4 },
+  { id: 12, name: 'Лейтенант',           tier: 4 },
+  { id: 13, name: 'Младший лейтенант',   tier: 4 },
+  { id: 14, name: 'Мичман',              tier: 5 },
+  { id: 15, name: 'Главный старшина',    tier: 5 },
+  { id: 16, name: 'Старшина I статьи',   tier: 6 },
+  { id: 17, name: 'Старшина II статьи',  tier: 6 },
+  { id: 18, name: 'Старший матрос',      tier: 7 },
+  { id: 19, name: 'Матрос',              tier: 8 },
+  { id: 20, name: 'Кадет',               tier: 9 },
+];
+
+const TINTS = {
+   1: [224, 64,251],  2: [255,215,  0],  3: [255,109,  0],
+   4: [245,245,245],  5: [158,158,158],
+   6: [255,215,  0],  7: [232,232,232],  8: [205,127, 50],  9: [  0,229,255],
+  10: [100,255,218], 11: [ 64,196,255], 12: [124, 77,255], 13: [206,147,216],
+  14: [105,240,174], 15: [ 38,166,154],
+  16: [255,204,128], 17: [255,138,101],
+  18: [207,216,220],
+  19: [120,144,156],
+  20: [ 84,110,122],
+};
+
+const TIER_LABEL = {
+  1:'⭐ звезда', 2:'💎 ромб', 3:'≡ 3 бара', 4:'🛡 щит',
+  5:'= двойная риска', 6:'˅˅ двойной шеврон', 7:'˅ шеврон',
+  8:'— планка', 9:'● pip'
+};
+
+// — PNG tiers (1-7): load via Image, draw+tint to canvas
+// — Generated tiers (8-9): draw shapes directly, no PNG needed
+
+function applyTint(ctx, [r, g, b]) {
+  const id = ctx.getImageData(0, 0, SIZE, SIZE);
+  const d  = id.data;
+  for (let i = 0; i < d.length; i += 4) {
+    d[i  ] = (d[i  ] * r / 255) | 0;
+    d[i+1] = (d[i+1] * g / 255) | 0;
+    d[i+2] = (d[i+2] * b / 255) | 0;
+  }
+  ctx.putImageData(id, 0, 0);
+}
+
+function drawGenerated(ctx, tier) {
+  ctx.fillStyle = '#ffffff';
+  const s = SIZE;
+  if (tier === 8) {
+    const bh = Math.max(3, Math.round(s * 0.14));
+    ctx.fillRect(Math.round(s * 0.08), Math.round((s - bh) / 2), Math.round(s * 0.84), bh);
+  } else if (tier === 9) {
+    ctx.beginPath();
+    ctx.arc(s / 2, s / 2, Math.round(s * 0.20), 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
+function makeCard(rank, pngImg) {
+  const card = document.createElement('div');
+  card.className = 'card';
+
+  const canvas = document.createElement('canvas');
+  canvas.width = canvas.height = SIZE;
+  const ctx = canvas.getContext('2d');
+  const tint = TINTS[rank.id] || [128,128,128];
+
+  if (pngImg) {
+    ctx.drawImage(pngImg, 0, 0, SIZE, SIZE);
+    applyTint(ctx, tint);
+  } else {
+    drawGenerated(ctx, rank.tier);
+    applyTint(ctx, tint);
+  }
+
+  const info = document.createElement('div');
+  info.innerHTML =
+    `<div class="name">${rank.name}</div>` +
+    `<div class="meta">tier ${rank.tier} · ${TIER_LABEL[rank.tier]}</div>`;
+
+  card.appendChild(canvas);
+  card.appendChild(info);
+  return card;
+}
+
+// Preload all 7 PNG files, then build the grid synchronously
+const pngCache = {};
+const pngTiers = [1,2,3,4,5,6,7];
+let loaded = 0;
+
+pngTiers.forEach(t => {
+  const img = new Image();
+  img.onload  = () => { pngCache[t] = img; check(); };
+  img.onerror = () => { pngCache[t] = null; check(); };
+  img.src = `assets/ranks/rank_tier${t}.png`;
+});
+
+function check() {
+  if (++loaded < pngTiers.length) return;
+  // All PNGs resolved — build grid
+  const grid = document.getElementById('grid');
+  RANKS.forEach(rank => {
+    const img = rank.tier <= 7 ? pngCache[rank.tier] : null;
+    grid.appendChild(makeCard(rank, img));
+  });
+}
+</script>
+</body>
+</html>

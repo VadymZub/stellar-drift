@@ -14,16 +14,16 @@ const CORP_META = {
 
 // Mock leaderboard — stable values, consistent across restarts
 const MOCK_PLAYERS = [
-  { name: 'NovaStar',    xp: 2780000, honor: 980000, corp: 'helios' },
-  { name: 'VoidRunner',  xp: 2650000, honor: 870000, corp: 'karax'  },
-  { name: 'StormEagle',  xp: 2520000, honor: 920000, corp: 'tides'  },
-  { name: 'IronPilot',   xp: 2410000, honor: 750000, corp: 'helios' },
-  { name: 'DarkMatter',  xp: 2300000, honor: 830000, corp: 'karax'  },
-  { name: 'StarForge',   xp: 2180000, honor: 710000, corp: 'tides'  },
-  { name: 'EchoWarden',  xp: 2050000, honor: 690000, corp: 'helios' },
-  { name: 'PulseRider',  xp: 1920000, honor: 660000, corp: 'karax'  },
-  { name: 'CrystalVeil', xp: 1800000, honor: 640000, corp: 'tides'  },
-  { name: 'NebulaCraft', xp: 1680000, honor: 600000, corp: 'helios' },
+  { name: 'NovaStar',    xp: 2780000, honor: 46200, corp: 'helios' },
+  { name: 'VoidRunner',  xp: 2650000, honor: 43500, corp: 'karax'  },
+  { name: 'StormEagle',  xp: 2520000, honor: 44800, corp: 'tides'  },
+  { name: 'IronPilot',   xp: 2410000, honor: 38100, corp: 'helios' },
+  { name: 'DarkMatter',  xp: 2300000, honor: 40600, corp: 'karax'  },
+  { name: 'StarForge',   xp: 2180000, honor: 35300, corp: 'tides'  },
+  { name: 'EchoWarden',  xp: 2050000, honor: 33700, corp: 'helios' },
+  { name: 'PulseRider',  xp: 1920000, honor: 31900, corp: 'karax'  },
+  { name: 'CrystalVeil', xp: 1800000, honor: 29400, corp: 'tides'  },
+  { name: 'NebulaCraft', xp: 1680000, honor: 27800, corp: 'helios' },
 ];
 
 // Mock corp baseline XP totals (real base points added on top)

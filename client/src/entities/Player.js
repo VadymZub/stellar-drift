@@ -8,8 +8,8 @@ import { SHIP_BY_KEY, shipLevelMods, SHIP_MAX_LEVEL } from '../ships.js';
 // Цвет тинта иконки по rank.id. Иконка = форма тира, тинт = суб-ранг внутри тира.
 // Каждый цвет выбран с максимальным визуальным контрастом к соседям по тиру.
 export const RANK_TINTS = {
-  // Tier 1 — звезда: белый / золото / глубокий оранжевый
-  1: 0xFFFFFF,  // Гранд-Адмирал   — brilliant white
+  // Tier 1 — звезда: фиолетовый-электрик / золото / глубокий оранжевый
+  1: 0xE040FB,  // Гранд-Адмирал   — bright orchid/legendary (уникальный, виден на тёмном фоне)
   2: 0xFFD700,  // Адмирал Флота   — gold
   3: 0xFF6D00,  // Вице-Адмирал    — deep orange
 
@@ -33,25 +33,31 @@ export const RANK_TINTS = {
   14: 0x69F0AE, // Мичман            — bright green
   15: 0x26A69A, // Главный старшина  — teal
 
-  // Tier 6 — двойной шеврон: светло-янтарный / насыщенный оранжевый
+  // Tier 6 — двойной шеврон: янтарный / коралловый (разные семьи, не просто темнее)
   16: 0xFFCC80, // Старшина I статьи — amber light
-  17: 0xFFA726, // Старшина II статьи — deep amber
+  17: 0xFF8A65, // Старшина II статьи — coral orange (was deep amber, too similar)
 
-  // Tier 7 — одиночный шеврон: от светлого стального к тёмному (максимальный диапазон)
+  // Tier 7 — одиночный шеврон: один ранг → один цвет
   18: 0xCFD8DC, // Старший матрос    — light steel
-  19: 0x78909C, // Матрос            — steel
-  20: 0x37474F, // Кадет             — dark steel
+
+  // Tier 8 — горизонтальная планка (новая иконка, canvas-generated)
+  19: 0x78909C, // Матрос            — mid steel-blue
+
+  // Tier 9 — pip (новая иконка, canvas-generated)
+  20: 0x546E7A, // Кадет             — dark steel-blue
 };
 
-// Номер тира по rank.id (7 тиров).
+// Номер тира по rank.id (9 тиров: 1–7 PNG, 8–9 canvas-generated).
 export function rankTier(id) {
-  if (id <= 3)  return 1;
-  if (id <= 5)  return 2;
-  if (id <= 9)  return 3;
-  if (id <= 13) return 4;
-  if (id <= 15) return 5;
-  if (id <= 17) return 6;
-  return 7;
+  if (id <= 3)  return 1; // звезда
+  if (id <= 5)  return 2; // ромб+крылья
+  if (id <= 9)  return 3; // три бара
+  if (id <= 13) return 4; // щит
+  if (id <= 15) return 5; // двойная риска
+  if (id <= 17) return 6; // двойной шеврон
+  if (id <= 18) return 7; // одиночный шеврон (1 ранг)
+  if (id <= 19) return 8; // горизонтальная планка (1 ранг)
+  return 9;               // pip (1 ранг)
 }
 
 // Корабль игрока. cfg = PLAYER — общие константы движения/регена (одинаковы для всех корпусов).
@@ -119,7 +125,9 @@ export default class Player {
     const id   = rank?.id ?? 20;
     const tier = rankTier(id);
     const tint = RANK_TINTS[id] ?? 0x888888;
-    this._npIcon.setTexture(`rank_tier${tier}`).setTint(tint);
+    const iconSz = id === 1 ? 30 : 22;
+    this._npIconSz = iconSz;
+    this._npIcon.setTexture(`rank_tier${tier}`).setTint(tint).setDisplaySize(iconSz, iconSz);
     if (clanTag) { this._npTag.setText(`[${clanTag}]`).setVisible(true); }
     else         { this._npTag.setText('').setVisible(false); }
     this._npText.setText(name || 'PILOT');
@@ -548,10 +556,11 @@ export default class Player {
     const hasTag  = this._npTag.visible;
     const hasEmbl = this._npEmblem.visible;
     const tagW    = hasTag ? this._npTag.width + 4 : 0;
-    const totalW  = 22 + 4 + tagW + this._npText.width + (hasEmbl ? 4 + 18 : 0);
+    const iconSz  = this._npIconSz ?? 22;
+    const totalW  = iconSz + 4 + tagW + this._npText.width + (hasEmbl ? 4 + 18 : 0);
     const npX     = this.x - totalW / 2;
-    this._npIcon.setPosition(npX + 11, npY);
-    let cursor = npX + 22 + 4;
+    this._npIcon.setPosition(npX + iconSz / 2, npY);
+    let cursor = npX + iconSz + 4;
     if (hasTag) { this._npTag.setPosition(cursor, npY); cursor += this._npTag.width + 4; }
     this._npText.setPosition(cursor, npY);
     if (hasEmbl) {

@@ -1,5 +1,5 @@
 import * as Phaser from 'https://cdn.jsdelivr.net/npm/phaser@4.1.0/dist/phaser.esm.js';
-import { COLORS, BASE_WORLD, PVP_WORLD_SCALE, PLAYER, MOBS, PROJECTILE, PROJ_TYPES, RESPAWN_MS, UI_RES, BOSS, DPR, HANDLING, ART_ANGLE_OFFSET, RANKS, BASE_SCAN_RADIUS, HONOR_PER_LVL50, DUNGEON_DIFF, DUNGEON_BOSS_DROPS } from '../constants.js';
+import { COLORS, BASE_WORLD, PVP_WORLD_SCALE, PLAYER, MOBS, PROJECTILE, PROJ_TYPES, RESPAWN_MS, UI_RES, BOSS, DPR, HANDLING, ART_ANGLE_OFFSET, RANKS, BASE_SCAN_RADIUS, HONOR, DUNGEON_DIFF, DUNGEON_BOSS_DROPS } from '../constants.js';
 import { minimapRect, minimapToWorld } from '../systems/minimap.js';
 import { i18n } from '../i18n.js';
 import Player from '../entities/Player.js';
@@ -2745,12 +2745,16 @@ export default class GameScene extends Phaser.Scene {
     }
     // Honor hooks
     if (mob.tpl.key === 'ancient_12') {
-      // Apophysis: each participant earns honor equal to 1× level-50 player kill
-      this.gainHonor(HONOR_PER_LVL50);
+      this.gainHonor(HONOR.APOPHYSIS);
+    } else if (mob.isDungeonBoss) {
+      const pl = this.pilotLevel || 1;
+      const bH = mob.level > pl ? HONOR.BOSS_HIGHER : mob.level === pl ? HONOR.BOSS_EQUAL : HONOR.BOSS_LOWER;
+      this.gainHonor(bH);
     }
     if ((sec?.pvp || sec?.isDungeon) && mob.isPlayerMob) {
-      // Future PvP: honor scales with victim level
-      this.gainHonor(Math.round(mob.level * HONOR_PER_LVL50 / 50));
+      const pl = this.pilotLevel || 1;
+      const pH = mob.level > pl ? HONOR.PVP_HIGHER : mob.level === pl ? HONOR.PVP_EQUAL : HONOR.PVP_LOWER;
+      this.gainHonor(pH);
     }
     if (sec?.isDungeon) this._checkDungeonBossDoor();
   }
@@ -4422,10 +4426,10 @@ export default class GameScene extends Phaser.Scene {
       credGain = 12000;
       const bPow = this.botPilot ? this._shadowBotPower() : 0;
       const pPow = this._shadowPlayerPower();
-      if (bPow > pPow) honorGain = Math.round(50 * (bPow / Math.max(1, pPow)));
+      if (bPow > pPow) honorGain = HONOR.SHADOW_WIN;
       this.gainXp(xpGain);
-      this.credits    = (this.credits    || 0) + credGain;
-      this.pilotHonor = (this.pilotHonor || 0) + honorGain;
+      this.credits = (this.credits || 0) + credGain;
+      if (honorGain > 0) this.gainHonor(honorGain);
     }
 
     const panH = 290, panW = 460;
