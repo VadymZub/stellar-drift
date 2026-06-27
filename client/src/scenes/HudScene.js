@@ -1659,13 +1659,44 @@ export default class HudScene extends Phaser.Scene {
   // ── HUD кнопки: ГРУППА и ДРУЗЬЯ ─────────────────────────────────────────
 
   _buildHudSocialButtons() {
-    const F = (sz, c) => ({ fontFamily: 'Inter, sans-serif', fontSize: sz, color: c, resolution: UI_RES });
-    this._grpBtn    = this.add.rectangle(8,   92, 106, 22, 0x0a1828, 0.92).setOrigin(0).setDepth(102)
-      .setStrokeStyle(1, 0x1e4060, 0.8).setInteractive({ useHandCursor: true });
-    this._grpBtnTxt = this.add.text(61,  103, 'ГРУППА', F('10px', '#3a7090')).setOrigin(0.5).setDepth(103);
-    this._frBtn     = this.add.rectangle(118, 92, 106, 22, 0x0a1828, 0.92).setOrigin(0).setDepth(102)
-      .setStrokeStyle(1, 0x1e4060, 0.8).setInteractive({ useHandCursor: true });
-    this._frBtnTxt  = this.add.text(171, 103, 'ДРУЗЬЯ  F', F('10px', '#3a7090')).setOrigin(0.5).setDepth(103);
+    const F  = (sz, c) => ({ fontFamily: 'Inter, sans-serif', fontSize: sz, color: c, resolution: UI_RES });
+    const W = this.scale.width, H = this.scale.height;
+
+    // Restore saved position
+    let bx = 8, by = 92;
+    try {
+      const s = JSON.parse(localStorage.getItem('sd_social_btns') || 'null');
+      if (s) { bx = s.x; by = s.y; }
+    } catch {}
+    bx = Math.max(0, Math.min(W - 242, bx));
+    by = Math.max(0, Math.min(H - 26,  by));
+
+    this._socialBtnC = this.add.container(bx, by).setDepth(104);
+    const mk = o => { this._socialBtnC.add(o); return o; };
+
+    // Grip handle (drag zone)
+    const grip = mk(this.add.rectangle(0, 0, 14, 22, 0x060f1c, 0.9)
+      .setOrigin(0).setStrokeStyle(1, 0x1e3050, 0.6).setInteractive({ useHandCursor: true, cursor: 'grab' }));
+    mk(this.add.text(7, 11, '⠿', F('11px', '#2a4060')).setOrigin(0.5));
+
+    // ГРУППА button (x=18)
+    this._grpBtn    = mk(this.add.rectangle(18, 0, 106, 22, 0x0a1828, 0.92)
+      .setOrigin(0).setStrokeStyle(1, 0x1e4060, 0.8).setInteractive({ useHandCursor: true }));
+    this._grpBtnTxt = mk(this.add.text(71, 11, 'ГРУППА', F('10px', '#3a7090')).setOrigin(0.5));
+
+    // ДРУЗЬЯ button (x=128)
+    this._frBtn     = mk(this.add.rectangle(128, 0, 106, 22, 0x0a1828, 0.92)
+      .setOrigin(0).setStrokeStyle(1, 0x1e4060, 0.8).setInteractive({ useHandCursor: true }));
+    this._frBtnTxt  = mk(this.add.text(181, 11, 'ДРУЗЬЯ  F', F('10px', '#3a7090')).setOrigin(0.5));
+
+    // Drag
+    this._socialBtnDrag = { active: false, moved: false, ox: 0, oy: 0 };
+    grip.on('pointerdown', (p) => {
+      this._socialBtnDrag.active = true;
+      this._socialBtnDrag.moved  = false;
+      this._socialBtnDrag.ox = p.x - this._socialBtnC.x;
+      this._socialBtnDrag.oy = p.y - this._socialBtnC.y;
+    });
 
     this._grpBtn.on('pointerdown', () => this._toggleGroupWin());
     this._grpBtn.on('pointerover', () => this._grpBtn.setFillStyle(0x102840));
@@ -1674,16 +1705,13 @@ export default class HudScene extends Phaser.Scene {
     this._frBtn.on('pointerover',  () => this._frBtn.setFillStyle(0x102840));
     this._frBtn.on('pointerout',   () => this._updateSocialBtnStyles());
 
-    const show = loadSettings().showSocialBtns !== false;
-    this._grpBtn.setVisible(show);    this._grpBtnTxt.setVisible(show);
-    this._frBtn.setVisible(show);     this._frBtnTxt.setVisible(show);
+    this._socialBtnC.setVisible(loadSettings().showSocialBtns !== false);
   }
 
   _updateSocialBtnStyles() {
-    if (!this._grpBtn) return;
+    if (!this._socialBtnC) return;
     const show = loadSettings().showSocialBtns !== false;
-    this._grpBtn.setVisible(show);    this._grpBtnTxt.setVisible(show);
-    this._frBtn.setVisible(show);     this._frBtnTxt.setVisible(show);
+    this._socialBtnC.setVisible(show);
     if (!show) return;
     const grp     = this.groupSystem;
     const grpOn   = this._groupWinVisible;
@@ -2192,6 +2220,13 @@ export default class HudScene extends Phaser.Scene {
         const ny = Math.max(0, Math.min(H - 32,  pointer.y - this._frWinDrag.oy));
         this._frWin?.setPosition(nx, ny);
       }
+      if (this._socialBtnDrag?.active && pointer.isDown) {
+        const nx = Math.max(0, Math.min(W - 242, pointer.x - this._socialBtnDrag.ox));
+        const ny = Math.max(0, Math.min(H - 26,  pointer.y - this._socialBtnDrag.oy));
+        if (Math.abs(nx - this._socialBtnC.x) > 3 || Math.abs(ny - this._socialBtnC.y) > 3)
+          this._socialBtnDrag.moved = true;
+        this._socialBtnC?.setPosition(nx, ny);
+      }
     });
     this.input.on('pointerup', () => {
       if (this._grpWinDrag?.active) {
@@ -2207,6 +2242,17 @@ export default class HudScene extends Phaser.Scene {
         s.frWinX = Math.round(this._frWin.x);
         s.frWinY = Math.round(this._frWin.y);
         saveSettings(s);
+      }
+      if (this._socialBtnDrag?.active) {
+        this._socialBtnDrag.active = false;
+        if (this._socialBtnDrag.moved) {
+          try {
+            localStorage.setItem('sd_social_btns', JSON.stringify({
+              x: Math.round(this._socialBtnC.x),
+              y: Math.round(this._socialBtnC.y),
+            }));
+          } catch {}
+        }
       }
     });
   }
