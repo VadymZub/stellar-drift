@@ -9,13 +9,13 @@ const GUILD_CREATE_ST  = 100;
 const GUILD_MIN_LVL    = 8;
 
 const VAULT_TIERS = [
-  { slots: 10,  cr: 0,        pts: 0       },
-  { slots: 15,  cr: 50000,    pts: 500     },
-  { slots: 20,  cr: 120000,   pts: 1500    },
-  { slots: 25,  cr: 250000,   pts: 4000    },
-  { slots: 30,  cr: 500000,   pts: 10000   },
-  { slots: 40,  cr: 1200000,  pts: 30000   },
-  { slots: 50,  cr: 3000000,  pts: 80000   },
+  { slots: 10,  cr: 0,         pts: 0       },
+  { slots: 15,  cr: 500000,    pts: 500     },
+  { slots: 20,  cr: 1200000,   pts: 1500    },
+  { slots: 25,  cr: 2500000,   pts: 4000    },
+  { slots: 30,  cr: 5000000,   pts: 10000   },
+  { slots: 40,  cr: 12000000,  pts: 30000   },
+  { slots: 50,  cr: 30000000,  pts: 80000   },
 ];
 
 const BUFF_PCT     = [0, 3, 6, 10, 15, 22];
@@ -902,7 +902,7 @@ export default class ClanScene extends Phaser.Scene {
       if (b.lvl < b.maxLvl) {
         const nPct    = BUFF_PCT[b.lvl + 1];
         const matCost = BUFF_MAT_COST[b.lvl + 1];
-        const crCost  = (b.lvl + 1) * 5000;
+        const crCost  = (b.lvl + 1) * 100000;
         const hasMat  = matInTreas >= matCost;
         const hasCr   = (treas.credits || 0) >= crCost;
         const canUpg  = isCapt && hasMat && hasCr;
