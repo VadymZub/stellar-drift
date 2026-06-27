@@ -37,7 +37,8 @@ export function prepShipTex(scene, key, targetMax) {
   newTex.setFilter(0); // FilterMode.LINEAR
 }
 
-// Removes near-white background pixels (threshold 240) from a canvas texture.
+// Removes near-white background pixels from a canvas texture using edge flood-fill.
+// Only pixels reachable from the image border are removed — interior white art is preserved.
 // Used for badge-style perk images that ship with a white background.
 export function removeWhiteBg(scene, key, threshold = 240) {
   const tex = scene.textures.get(key);
@@ -50,9 +51,35 @@ export function removeWhiteBg(scene, key, threshold = 240) {
   if (!w || !h) return;
   const imgData = ctx.getImageData(0, 0, w, h);
   const d = imgData.data;
-  for (let i = 0; i < d.length; i += 4) {
-    if (d[i] > threshold && d[i + 1] > threshold && d[i + 2] > threshold) d[i + 3] = 0;
+
+  const isWhite = (px) => d[px] > threshold && d[px + 1] > threshold && d[px + 2] > threshold && d[px + 3] > 0;
+
+  // Flood-fill BFS from all border pixels — only background white is removed.
+  const visited = new Uint8Array(w * h);
+  const queue = [];
+  for (let x = 0; x < w; x++) {
+    for (const y of [0, h - 1]) {
+      const idx = y * w + x;
+      if (!visited[idx] && isWhite(idx * 4)) { visited[idx] = 1; queue.push(idx); }
+    }
   }
+  for (let y = 1; y < h - 1; y++) {
+    for (const x of [0, w - 1]) {
+      const idx = y * w + x;
+      if (!visited[idx] && isWhite(idx * 4)) { visited[idx] = 1; queue.push(idx); }
+    }
+  }
+  let qi = 0;
+  while (qi < queue.length) {
+    const idx = queue[qi++];
+    d[idx * 4 + 3] = 0;
+    const x = idx % w, y = (idx / w) | 0;
+    if (y > 0)     { const n = idx - w; if (!visited[n] && isWhite(n * 4)) { visited[n] = 1; queue.push(n); } }
+    if (y < h - 1) { const n = idx + w; if (!visited[n] && isWhite(n * 4)) { visited[n] = 1; queue.push(n); } }
+    if (x > 0)     { const n = idx - 1; if (!visited[n] && isWhite(n * 4)) { visited[n] = 1; queue.push(n); } }
+    if (x < w - 1) { const n = idx + 1; if (!visited[n] && isWhite(n * 4)) { visited[n] = 1; queue.push(n); } }
+  }
+
   ctx.putImageData(imgData, 0, 0);
   tex.refresh();
 }

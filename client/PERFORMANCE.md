@@ -111,6 +111,24 @@ These files are already small (10–35 KB each) and must stay at their original 
 
 ---
 
+## Post-optimisation rendering fixes
+
+### Action bar — ship ability icons (`HudScene.js`)
+
+After moving ship ability PNGs to boot + running `prepShipTex` on them, `_ensureShipSkillTex` started returning the PNG texture key directly (line 440: `if (this.textures.exists(pngKey)) return pngKey`). The image was then displayed via GPU downscale (104 px → 52 px) without `prerenderTex`, unlike regular skill icons which go through `prerenderTex` and are stored at exact slot size.
+
+**Symptom:** ship ability icons looked softer/blurrier than regular skill icons.
+
+**Fix:** pass the result of `_ensureShipSkillTex` through `prerenderTex(this, srcKey, iconSz, iconSz)` — same pipeline as regular skills. The canvas is pre-rendered at 52×52 px with `imageSmoothingQuality:'high'` and cached; GPU renders 1:1 with no scaling.
+
+### Perk icons — `removeWhiteBg` damaged artwork (`prepShipTex.js`)
+
+`removeWhiteBg` used a simple per-pixel threshold: any pixel with R,G,B > 240 was made transparent. Perk artwork with bright highlights or near-white details had those pixels incorrectly zeroed → black patches visible over the dark background.
+
+**Fix:** replaced global threshold pass with **edge flood-fill BFS**. The fill seeds from all border pixels and spreads only to connected near-white neighbours — removing only pixels reachable from the image edge (the actual white background). Interior white/bright art pixels are unreachable from the edge and are left untouched.
+
+---
+
 ## File Reference
 
 | File | Change |

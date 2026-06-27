@@ -2248,6 +2248,10 @@ export default class HudScene extends Phaser.Scene {
   // ── Booster widget ────────────────────────────────────────────────────────
 
   _createBoosterWidget() {
+    const F = (size, color = '#cfe9ee', weight = '600') =>
+      ({ fontFamily: 'Inter, sans-serif', fontSize: size, color, fontStyle: weight, resolution: UI_RES });
+    const O = (size, color = '#4dd0e1') =>
+      ({ fontFamily: 'Orbitron, sans-serif', fontSize: size, color, resolution: UI_RES });
     const W = this.scale.width;
     let saved = {}; try { saved = JSON.parse(localStorage.getItem('sd_booster_win') || '{}'); } catch {}
     const WW = 200, hdrH = 26, rowH = 22;
@@ -2276,9 +2280,9 @@ export default class HudScene extends Phaser.Scene {
       this._bstDrag.oy = ptr.worldY - c.y;
     });
 
-    c.add(this.add.text(8, hdrH / 2, '⚡ БУСТЕРЫ', this.F('11px', '#ffd54f')).setOrigin(0, 0.5));
+    c.add(this.add.text(8, hdrH / 2, '⚡ БУСТЕРЫ', F('11px', '#ffd54f')).setOrigin(0, 0.5));
 
-    const closeBtn = this.add.text(WW - 8, hdrH / 2, '✕', this.F('12px', '#557788')).setOrigin(1, 0.5).setInteractive({ useHandCursor: true });
+    const closeBtn = this.add.text(WW - 8, hdrH / 2, '✕', F('12px', '#557788')).setOrigin(1, 0.5).setInteractive({ useHandCursor: true });
     closeBtn.on('pointerover', () => closeBtn.setColor('#aaccdd'));
     closeBtn.on('pointerout',  () => closeBtn.setColor('#557788'));
     closeBtn.on('pointerdown', () => {
@@ -2290,9 +2294,9 @@ export default class HudScene extends Phaser.Scene {
 
     this._bstRows = BOOSTER_DEFS.map((def, i) => {
       const ry = hdrH + i * rowH;
-      const icon  = this.add.text(8,      ry + rowH / 2, def.icon,  this.F('12px', def.color)).setOrigin(0, 0.5);
-      const label = this.add.text(26,     ry + rowH / 2, def.label, this.F('10px', '#7a9aaa')).setOrigin(0, 0.5);
-      const timer = this.add.text(WW - 8, ry + rowH / 2, '',        this.O('11px', def.color)).setOrigin(1, 0.5);
+      const icon  = this.add.text(8,      ry + rowH / 2, def.icon,  F('12px', def.color)).setOrigin(0, 0.5);
+      const label = this.add.text(26,     ry + rowH / 2, def.label, F('10px', '#7a9aaa')).setOrigin(0, 0.5);
+      const timer = this.add.text(WW - 8, ry + rowH / 2, '',        O('11px', def.color)).setOrigin(1, 0.5);
       c.add([icon, label, timer]);
       return { key: def.key, icon, label, timer };
     });
