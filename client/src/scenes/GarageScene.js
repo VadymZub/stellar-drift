@@ -1624,17 +1624,20 @@ export default class GarageScene extends Phaser.Scene {
 
     const ry = detH ? cy + detH - 68 : cy + 12;
     const rbtnW = detW - 24;
-    const rbtnH = 44;
+    const rbtnH = 58;
     const rbg = this.add.rectangle(cx, ry + rbtnH / 2, rbtnW, rbtnH,
       canReroll ? 0x100818 : 0x060810)
       .setOrigin(0.5).setStrokeStyle(1, canReroll ? 0x664488 : 0x2a1a3a, 0.9)
       .setInteractive({ useHandCursor: canReroll });
-    this.add.text(cx, ry + rbtnH / 2 - 11,
+    this.add.text(cx, ry + 8,
       '🔄 Реролл перка',
-      this.O('13px', canReroll ? '#bb88dd' : '#334455')).setOrigin(0.5);
-    this.add.text(cx, ry + rbtnH / 2 + 7,
+      this.O('13px', canReroll ? '#bb88dd' : '#334455')).setOrigin(0.5, 0);
+    this.add.text(cx, ry + 26,
       canReroll ? `${rerollCost} ⭐  ·  попытка ${rerollN + 1}` : `${rerollCost} ⭐  ·  недостаточно звёзд`,
-      this.F('12px', canReroll ? '#ffcc44' : '#2a3040')).setOrigin(0.5);
+      this.F('12px', canReroll ? '#ffcc44' : '#2a3040')).setOrigin(0.5, 0);
+    this.add.text(cx, ry + 43,
+      'Счётчик попыток сбрасывается в 00:00 UTC',
+      this.F('10px', '#2a4a60')).setOrigin(0.5, 0);
     if (canReroll) {
       rbg.on('pointerover', () => rbg.setFillStyle(0x180a24));
       rbg.on('pointerout',  () => rbg.setFillStyle(0x100818));
@@ -1646,10 +1649,6 @@ export default class GarageScene extends Phaser.Scene {
         this.scene.restart();
       });
     }
-
-    // Daily reset hint
-    this.add.text(cx, ry + rbtnH + 6, 'Счётчик попыток сбрасывается в 00:00 UTC',
-      this.F('11px', '#3a6080')).setOrigin(0.5, 0);
   }
 
   _showTooltip(wx, wy, item) {
