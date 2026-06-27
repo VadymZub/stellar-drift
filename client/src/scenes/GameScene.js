@@ -1,5 +1,5 @@
 import * as Phaser from 'https://cdn.jsdelivr.net/npm/phaser@4.1.0/dist/phaser.esm.js';
-import { COLORS, BASE_WORLD, PVP_WORLD_SCALE, PLAYER, MOBS, PROJECTILE, PROJ_TYPES, RESPAWN_MS, UI_RES, BOSS, DPR, HANDLING, ART_ANGLE_OFFSET, RANKS, BASE_SCAN_RADIUS, HONOR, DUNGEON_DIFF, DUNGEON_BOSS_DROPS } from '../constants.js';
+import { COLORS, BASE_WORLD, PVP_WORLD_SCALE, PLAYER, MOBS, PROJECTILE, PROJ_TYPES, RESPAWN_MS, UI_RES, BOSS, DPR, HANDLING, ART_ANGLE_OFFSET, RANKS, BASE_SCAN_RADIUS, HONOR, DUNGEON_DIFF, DUNGEON_BOSS_DROPS, DUNGEON_STAR_GOLD } from '../constants.js';
 import { minimapRect, minimapToWorld } from '../systems/minimap.js';
 import { i18n } from '../i18n.js';
 import Player from '../entities/Player.js';
@@ -223,6 +223,7 @@ export default class GameScene extends Phaser.Scene {
     this.ownedShips     = this.ownedShips     || new Set(['wisp']);
     this.activeShip     = this.activeShip     || 'wisp';
     this.dungeonDifficulty  = this.dungeonDifficulty  ?? 'normal';
+    galaxy.dungeonDiff = this.dungeonDifficulty;
     this.boardInventory     = this.boardInventory ?? [];
     this.connectorInventory = this.connectorInventory ?? [];
     this.chips              = this.chips ?? 0;
@@ -1429,6 +1430,7 @@ export default class GameScene extends Phaser.Scene {
       btn.on('pointerout',  () => btn.setAlpha(1));
       btn.on('pointerdown', () => {
         this.dungeonDifficulty = m.key;
+        galaxy.dungeonDiff = m.key;
         destroy();
         onConfirm();
       });
@@ -2595,8 +2597,14 @@ export default class GameScene extends Phaser.Scene {
         ? Phaser.Math.Between(62, 70)
         : Phaser.Math.Between(5, 10);
     } else if (isDung) {
-      const rawSg = rollStarGold(mob);
-      sg = rawSg > 0 ? Math.round(rawSg * (diff?.goldMult ?? 1) / 2) : 0;
+      if (mob.isDungeonBoss) {
+        const dsg = DUNGEON_STAR_GOLD[galaxy.current];
+        sg = dsg ? Phaser.Math.Between(dsg.bossMin, dsg.bossMax) : rollStarGold(mob);
+      } else {
+        const rawSg = rollStarGold(mob);
+        const dsg = DUNGEON_STAR_GOLD[galaxy.current];
+        sg = rawSg > 0 ? Math.round(rawSg * (dsg?.mobMult ?? 1)) : 0;
+      }
     } else {
       if (mob.isConfedBoss) {
         const sg_tpl = mob.tpl.starGold;
@@ -2623,16 +2631,16 @@ export default class GameScene extends Phaser.Scene {
     if (sg > 0) { this.starGold = (this.starGold || 0) + sg; this.log(i18n.t('log.stargold', { amount: sg })); }
 
     // Модульный дроп — solo: всегда игроку. Группа (будущее): владелец = последний наносивший урон 30с без перерыва.
-    const modDropChance = dropChance(mob) * (this.player?.dropChanceMult ?? 1) + (diff?.dropBonus ?? 0);
+    const mobDropRate = isDung ? (diff?.dropRate ?? 0.10) : dropChance(mob) * (this.player?.dropChanceMult ?? 1);
     if (isDung && !mob.isBoss && !mob.tpl.elite && !mob.isBossEscort) {
-      // Обычный данж-моб (группа): 1 ящик → владелец урона (solo = всегда игрок)
-      if (Phaser.Math.FloatBetween(0, 1) < modDropChance) {
+      // Обычный данж-моб: шанс дропа по сложности (10%/20%/35%)
+      if (Phaser.Math.FloatBetween(0, 1) < mobDropRate) {
         const lootItem = rollLootForMob(mob);
         this.loot.push(new Loot(this, mob.x, mob.y, lootItem, 'common'));
       }
     } else if (isDung && (mob.isBoss || mob.tpl.elite || mob.isBossEscort)) {
-      // Босс/элита/минибосс (группа): каждый участник получает свой ящик; solo = 1 ящик
-      if (Phaser.Math.FloatBetween(0, 1) < modDropChance) {
+      // Босс/элита/минибосс: 100% дроп
+      {
         const lootItem = mob.tpl.key === 'ancient_12' ? rollApophisLoot() : rollLootForMob(mob);
         const isLegendary = mob.tpl.key === 'ancient_12' || mob.tpl.key === 'argus_boss' || mob.isBoss;
         const lootTier = isLegendary ? 'legendary' : 'boss';

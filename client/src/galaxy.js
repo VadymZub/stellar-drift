@@ -90,7 +90,7 @@ export const EDGES = [
 ];
 
 // Текущий сектор (мутабельно; переживает scene.restart при прыжке).
-export const galaxy = { current: 'helios_1' };
+export const galaxy = { current: 'helios_1', dungeonDiff: 'normal' };
 
 // Соседи сектора (куда есть джапгейт).
 export function neighbors(key) {

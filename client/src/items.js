@@ -1,6 +1,7 @@
 import * as Phaser from 'https://cdn.jsdelivr.net/npm/phaser@4.1.0/dist/phaser.esm.js';
 import { i18n } from './i18n.js';
 import { rollPerk } from './perks.js';
+import { galaxy } from './galaxy.js';
 
 // Модули MVP: Плазма-пушки и Дефлекторы (щиты), тиры T1-T4.
 // Числа подобраны под играбельность прототипа (сохраняя дизайн-пропорции тиров).
@@ -343,14 +344,24 @@ export function rollStarGold(mob) {
   return Phaser.Math.Between(sg.min, sg.max);
 }
 
-// Тир модуля привязан к УРОВНЮ моба (= карте): T1 ур.1-10, T2 11-20, T3 21-30, T4 31+.
-// Так на первой карте падает только T1, а T4 — лишь с мобов/боссов 31+ ур. (HM4+).
-function tierForLevel(L) { return L >= 31 ? 4 : L >= 21 ? 3 : L >= 11 ? 2 : 1; }
+// Тир модуля по уровню моба: T1 ур.1-10, T2 11-25, T3 26-40, T4 41+.
+function tierForLevel(L) { return L >= 41 ? 4 : L >= 26 ? 3 : L >= 11 ? 2 : 1; }
 
-// Тир по уровню моба (+ шанс +1 тир у боссов/элиты) + случайный тип (пушка / щит / двигатель).
+// Максимальный тир по данжу и сложности — предотвращает ранний дроп T4 через элит-бамп.
+const DUNGEON_TIER = {
+  dungeon_1:    { normal: 1, hard: 2, elite: 2 },
+  dungeon_2:    { normal: 2, hard: 3, elite: 3 },
+  dungeon_3:    { normal: 3, hard: 3, elite: 3 },
+  dungeon_4:    { normal: 4, hard: 4, elite: 4 },
+  dungeon_5:    { normal: 4, hard: 4, elite: 4 },
+  dungeon_prem: { normal: 4, hard: 4, elite: 4 },
+};
+
 export function rollLootForMob(mob) {
   let tier = tierForLevel(mob.level);
   if ((mob.isBoss || mob.tpl.elite) && tier < 4 && Phaser.Math.Between(0, 99) < 30) tier++;
+  const tierCaps = DUNGEON_TIER[galaxy.current];
+  if (tierCaps) tier = Math.min(tier, tierCaps[galaxy.dungeonDiff] ?? tierCaps.normal);
   const r = Phaser.Math.Between(0, 99);          // 40% пушка / 30% щит / 20% двигатель / 10% броня
   const maker = r < 40 ? rollCannon : r < 70 ? rollShield : r < 90 ? rollEngine : rollArmor;
   return maker(tier, mob.level);
