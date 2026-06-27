@@ -41,6 +41,8 @@ export const DEFAULTS = {
   // Social windows transparency (0=100%, 1=55%, 2=22%)
   grpWinAlphaIdx: 0,
   frWinAlphaIdx:  0,
+  // Social buttons visibility
+  showSocialBtns: true,
 };
 
 // In-memory cache — updated immediately on save/reset, read on every loadSettings() call.

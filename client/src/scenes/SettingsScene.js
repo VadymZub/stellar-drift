@@ -142,6 +142,7 @@ export default class SettingsScene extends Phaser.Scene {
     this._section('ПРОЗРАЧНОСТЬ ОКОН', T, LX, RX, y); y += 22;
     this._addStepper('Окно «Группа»', 'grpWinAlphaIdx', ALPHA_LABELS, ALPHA_VALS, T, LX, RX, y); y += 36;
     this._addStepper('Окно «Друзья»', 'frWinAlphaIdx',  ALPHA_LABELS, ALPHA_VALS, T, LX, RX, y); y += 36;
+    this._addToggle('Кнопки Группа / Друзья', 'showSocialBtns', T, LX, RX, y); y += 36;
 
     this._section('ГЕЙМПЛЕЙ', T, LX, RX, y); y += 22;
     this._addToggle('Авто-цель (Tab)', 'autoTarget', T, LX, RX, y); y += 36;
@@ -414,6 +415,7 @@ export default class SettingsScene extends Phaser.Scene {
       hud._rebuildChatPanel?.();
       hud._rebuildGroupWin?.();
       hud._rebuildFriendsWin?.();
+      hud._updateSocialBtnStyles?.();
     }
     if (gs) gs.magnetEnabled      = next.autoLoot;
     if (gs) gs._autoTargetEnabled = next.autoTarget;

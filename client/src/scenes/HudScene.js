@@ -181,8 +181,11 @@ export default class HudScene extends Phaser.Scene {
     this._lastSectorSent    = null;
     this._grpWinCollapsed   = _s.grpWinCollapsed  ?? false;
     this._frWinCollapsed    = _s.frWinCollapsed   ?? false;
-    this._grpWinDrag        = { active: false, ox: 0, oy: 0 };
-    this._frWinDrag         = { active: false, ox: 0, oy: 0 };
+    this._grpWinDrag         = { active: false, ox: 0, oy: 0 };
+    this._frWinDrag          = { active: false, ox: 0, oy: 0 };
+    this._groupInviteTarget  = null;
+    this._groupPendingInvites = new Map();
+    this._groupEventLog      = [];
     this._buildHudSocialButtons();
     this._buildGroupWin();
     this._buildFriendsWin();
@@ -1371,11 +1374,15 @@ export default class HudScene extends Phaser.Scene {
       const nc = msg.isPm ? '#ffd54f' : (msg.from === (this.gs?.playerName || '') ? '#80cbc4' : '#66aacc');
       const nT = mk(this.add.text(6 + tmT.width, my, `${msg.from}:`, F(`${fSz}px`, nc)).setOrigin(0, 0).setInteractive({ useHandCursor: true }));
       nT.on('pointerdown', ptr => {
+        if (msg.from === (this.gs?.playerName || '')) return;
         const ctrl = ptr.event?.ctrlKey || false;
-        if (ctrl && msg.from !== (this.gs?.playerName || '')) {
+        if (ctrl) {
           this._chatPmTarget = msg.from;
           this._chatInputEl.placeholder = `→ ${msg.from}: `;
           this._chatInputEl.focus(); this._rebuildChatPanel();
+        } else {
+          // Обычный клик по нику → заполняем поле приглашения в окне группы
+          this._setGroupInviteTarget(msg.from);
         }
       });
       nT.on('pointerover', () => nT.setAlpha(0.7));
@@ -1443,22 +1450,29 @@ export default class HudScene extends Phaser.Scene {
     if (this.groupSystem) {
       if (text.startsWith('/принять ')) {
         const leader = text.slice(9).trim();
-        if (leader) { this.groupSystem.join(leader); this.pushChatMessage('general', 'System', `[Группа] Отправляем запрос на вступление к ${leader}…`, {}); }
+        if (leader) { this.groupSystem.join(leader); this._groupLog(`Запрос вступления к ${leader}…`); }
         return;
       }
       if (text.startsWith('/пригласить ')) {
         const name = text.slice(12).trim();
-        if (name) { this.groupSystem.invite(name, galaxy.current); this.pushChatMessage('general', 'System', `[Группа] Приглашение отправлено: ${name}`, {}); }
+        if (name) {
+          if (!this.groupSystem.inGroup) { this.groupSystem.create(galaxy.current, false); this._groupLog('Группа создана'); }
+          this.groupSystem.invite(name, galaxy.current);
+          this._groupPendingInvites?.set(name, 'pending');
+          this._groupLog(`Приглашение → ${name}`);
+          this._rebuildGroupWin();
+        }
         return;
       }
       if (text === '/группа') {
         this.groupSystem.create(galaxy.current, false);
-        this.pushChatMessage('general', 'System', '[Группа] Группа создана. Используй /пригласить [ник]', {});
+        this._groupLog('Группа создана');
         return;
       }
       if (text === '/выйти') {
         this.groupSystem.leave();
-        this.pushChatMessage('general', 'System', '[Группа] Вы вышли из группы.', {});
+        this._groupPendingInvites?.clear();
+        this._groupLog('Вы вышли из группы');
         this._rebuildGroupWin();
         this._updateSocialBtnStyles();
         return;
@@ -1509,11 +1523,24 @@ export default class HudScene extends Phaser.Scene {
       this.pushChatMessage('general', 'System', text, {});
     };
     this.groupSystem.onInvite = ({ from, dungeon }) => {
-      this.pushChatMessage('general', 'System', `[Группа] ${from} приглашает в данж ${dungeon}. /принять ${from}`, {});
+      this._groupLog(`${from} → приглашение в ${dungeon}. /принять ${from}`);
+      // Auto-show group window so the user notices
+      if (!this._groupWinVisible) {
+        this._groupWinVisible = true;
+        this._rebuildGroupWin();
+        this._updateSocialBtnStyles();
+      }
     };
     this.groupSystem.onUpdate = (members) => {
       const gs = this.scene.get('GameScene');
       if (gs) gs.groupSize = members.length;
+      // Mark accepted invites when the invited player appears in members
+      for (const [name, status] of (this._groupPendingInvites || new Map())) {
+        if (status === 'pending' && members.includes(name)) {
+          this._groupPendingInvites.set(name, 'accepted');
+          this._groupLog(`${name} принял приглашение`);
+        }
+      }
       this._rebuildGroupWin();
       this._updateSocialBtnStyles();
     };
@@ -1646,10 +1673,18 @@ export default class HudScene extends Phaser.Scene {
     this._frBtn.on('pointerdown',  () => this._toggleFriendsWin());
     this._frBtn.on('pointerover',  () => this._frBtn.setFillStyle(0x102840));
     this._frBtn.on('pointerout',   () => this._updateSocialBtnStyles());
+
+    const show = loadSettings().showSocialBtns !== false;
+    this._grpBtn.setVisible(show);    this._grpBtnTxt.setVisible(show);
+    this._frBtn.setVisible(show);     this._frBtnTxt.setVisible(show);
   }
 
   _updateSocialBtnStyles() {
     if (!this._grpBtn) return;
+    const show = loadSettings().showSocialBtns !== false;
+    this._grpBtn.setVisible(show);    this._grpBtnTxt.setVisible(show);
+    this._frBtn.setVisible(show);     this._frBtnTxt.setVisible(show);
+    if (!show) return;
     const grp     = this.groupSystem;
     const grpOn   = this._groupWinVisible;
     const frOn    = this._friendsWinVisible;
@@ -1675,36 +1710,104 @@ export default class HudScene extends Phaser.Scene {
     const _ws = loadSettings();
     const x = _ws.grpWinX ?? 8, y = _ws.grpWinY ?? 118;
     this._grpWin = this.add.container(x, y).setDepth(102);
+
+    // HTML invite input — positioned over the invite field inside the group window
+    const invInp = document.createElement('input');
+    invInp.type = 'text'; invInp.maxLength = 50;
+    invInp.placeholder = 'ник игрока...';
+    Object.assign(invInp.style, {
+      position: 'fixed', background: '#040e1c', border: '1px solid #1e3a54',
+      color: '#4dd0e1', fontFamily: 'Inter, sans-serif',
+      padding: '0 6px', outline: 'none', zIndex: '1001',
+      boxSizing: 'border-box', display: 'none',
+      pointerEvents: 'none',
+    });
+    invInp.addEventListener('focus', () => { invInp.style.pointerEvents = 'auto'; });
+    invInp.addEventListener('blur',  () => { invInp.style.pointerEvents = 'none'; });
+    invInp.addEventListener('keydown', e => {
+      if (e.key === 'Enter') {
+        const v = invInp.value.trim();
+        this._groupInviteTarget = v || null;
+        invInp.blur();
+        if (this._groupWinVisible) this._rebuildGroupWin();
+        e.preventDefault();
+      } else if (e.key === 'Escape') {
+        this._groupInviteTarget = null;
+        invInp.value = '';
+        invInp.blur();
+        if (this._groupWinVisible) this._rebuildGroupWin();
+      }
+      e.stopPropagation(); e.stopImmediatePropagation();
+    });
+    document.body.appendChild(invInp);
+    this._grpInviteInputEl   = invInp;
+    this._grpInviteFieldRect = null;
+
+    this.events.once('shutdown', () => {
+      this._grpInviteInputEl?.parentNode?.removeChild(this._grpInviteInputEl);
+      this._grpInviteInputEl = null;
+    });
+
     this._rebuildGroupWin();
   }
 
   _rebuildGroupWin() {
     this._grpWin?.removeAll(true);
-    if (!this._groupWinVisible) { this._grpWin?.setVisible(false); return; }
+    if (!this._groupWinVisible) {
+      this._grpWin?.setVisible(false);
+      this._grpInviteFieldRect = null;
+      this._posGrpInviteInput();
+      return;
+    }
     this._grpWin.setVisible(true);
 
-    const grp       = this.groupSystem;
+    const grp      = this.groupSystem;
     const collapsed = this._grpWinCollapsed;
     const BG_ALPHA  = [0.93, 0.55, 0.22][loadSettings().grpWinAlphaIdx ?? 0];
-    const PW = 224, PAD = 8, HDR = 28;
+    const PW = 248, PAD = 8, HDR = 28, INV_ROW = 30;
     const F  = (sz, c) => ({ fontFamily: 'Inter, sans-serif',    fontSize: sz, color: c, resolution: UI_RES });
     const O  = (sz, c) => ({ fontFamily: 'Orbitron, sans-serif', fontSize: sz, color: c, resolution: UI_RES });
     const add = o => { this._grpWin.add(o); return o; };
 
-    // ── Вычисляем полную высоту ──
-    const members     = grp?.members ?? [];
-    const showBossBar = !collapsed && this._groupBossHpRatio > 0 && this._groupBossHpRatio < 1;
+    const members    = grp?.members ?? [];
+    const myName     = this.gs?.playerName || '';
+    const showInvRow = !grp?.isSolo;
+
+    // Online friends in same sector, not yet in group
+    const nearbyFriends = (this._friendsList || []).filter(f =>
+      f.status === 'accepted' && f.online && f.sector === galaxy.current && !members.includes(f.name)
+    ).slice(0, 4);
+
+    // Pending invites not yet joined
+    const pendingRows = [];
+    for (const [name, status] of (this._groupPendingInvites || new Map())) {
+      if (status === 'pending' && !members.includes(name)) pendingRows.push(name);
+    }
+
+    const showBossBar = this._groupBossHpRatio > 0 && this._groupBossHpRatio < 1;
+    const logEntries  = (this._groupEventLog || []).slice(-4);
+
+    // ── Calculate height ──────────────────────────────────────────────────────
     let contentH = 0;
     if (!collapsed) {
-      if (!grp?.inGroup) contentH = 58;
-      else contentH = 6 + members.length * 20 + (grp.canAddMembers() ? 32 : 0) + (showBossBar ? 30 : 0) + PAD;
+      contentH += 1;
+      if (showInvRow) contentH += INV_ROW;
+      if (nearbyFriends.length > 0) contentH += 24;
+      contentH += 1;
+      const rowCount = members.length + pendingRows.length;
+      if (!grp?.inGroup && rowCount === 0) contentH += 22;
+      contentH += rowCount * 20;
+      if (showBossBar) contentH += 28;
+      if (grp?.inGroup) { contentH += 1; contentH += 26; }
+      if (logEntries.length > 0) { contentH += 1; contentH += 14 + logEntries.length * 13; }
+      contentH += 4;
     }
     const totalH = HDR + contentH;
 
-    // ── Фон ──
+    // ── Background ───────────────────────────────────────────────────────────
     add(this.add.rectangle(0, 0, PW, totalH, 0x020a14, BG_ALPHA).setOrigin(0).setStrokeStyle(1, 0x1a4060, 0.7));
 
-    // ── Drag handle (левая часть заголовка) ──
+    // ── Drag handle ──────────────────────────────────────────────────────────
     const dragHandle = add(this.add.rectangle(0, 0, PW - 46, HDR, 0x000000, 0.001)
       .setOrigin(0).setInteractive({ useHandCursor: true, cursor: 'grab' }));
     dragHandle.on('pointerdown', (p) => {
@@ -1713,11 +1816,11 @@ export default class HudScene extends Phaser.Scene {
       this._grpWinDrag.oy = p.y - this._grpWin.y;
     });
 
-    // ── Заголовок ──
+    // ── Title ────────────────────────────────────────────────────────────────
     const titleStr = grp?.inGroup ? `ГРУППА  ${members.length}/8` : 'ГРУППА';
     add(this.add.text(PAD, 9, titleStr, O('10px', '#4dd0e1')));
 
-    // ── Кнопки заголовка (− | ✕) ──
+    // ── Header buttons ───────────────────────────────────────────────────────
     const colBtn = add(this.add.text(PW - 36, 9, collapsed ? '+' : '−', F('13px', '#4dd0e1'))
       .setInteractive({ useHandCursor: true }));
     colBtn.on('pointerdown', () => {
@@ -1725,75 +1828,194 @@ export default class HudScene extends Phaser.Scene {
       const s = loadSettings(); s.grpWinCollapsed = this._grpWinCollapsed; saveSettings(s);
       this._rebuildGroupWin();
     });
-
     const closeBtn = add(this.add.text(PW - 16, 9, '✕', F('11px', '#ef5350'))
       .setInteractive({ useHandCursor: true }));
     closeBtn.on('pointerdown', () => this._toggleGroupWin());
 
-    if (collapsed) return;
-
-    // ── Разделитель ──
-    add(this.add.rectangle(0, HDR, PW, 1, 0x1a4060, 0.4).setOrigin(0));
-    let y = HDR + 6;
-
-    if (!grp?.inGroup) {
-      // Нет группы
-      add(this.add.text(PAD, y, 'Создай группу и зови друзей!', F('10px', '#4a6880')));
-      y += 18;
-      const createBtn = add(this.add.rectangle(PAD, y, PW - PAD * 2, 24, 0x0a2030, 1)
-        .setOrigin(0).setStrokeStyle(1, 0x1a5060, 0.8).setInteractive({ useHandCursor: true }));
-      add(this.add.text(PW / 2, y + 12, '+ Создать группу', F('11px', '#4dd0e1')).setOrigin(0.5));
-      createBtn.on('pointerover', () => createBtn.setFillStyle(0x0d3a4a));
-      createBtn.on('pointerout',  () => createBtn.setFillStyle(0x0a2030));
-      createBtn.on('pointerdown', () => {
-        this.groupSystem?.create(galaxy.current, false);
-        this.pushChatMessage('general', 'System', '[Группа] Группа создана. Пригласи друзей!', {});
-      });
+    if (collapsed) {
+      this._grpInviteFieldRect = null;
+      this._posGrpInviteInput();
       return;
     }
 
-    // Кнопка «выйти» в теле окна (не в заголовке)
-    const leaveBtn = add(this.add.text(PW - PAD, y, '← выйти', F('10px', '#ef5350'))
-      .setOrigin(1, 0).setInteractive({ useHandCursor: true }));
-    leaveBtn.on('pointerover', () => leaveBtn.setAlpha(0.7));
-    leaveBtn.on('pointerout',  () => leaveBtn.setAlpha(1));
-    leaveBtn.on('pointerdown', () => {
-      this.groupSystem?.leave();
-      const gs = this.scene.get('GameScene');
-      if (gs) gs.groupSize = 0;
-      this._rebuildGroupWin();
-      this._updateSocialBtnStyles();
-    });
+    // ── Content ──────────────────────────────────────────────────────────────
+    let y = HDR;
+    add(this.add.rectangle(0, y, PW, 1, 0x1a4060, 0.4).setOrigin(0)); y += 1;
 
-    const myName = this.gs?.playerName || '';
-    members.forEach((name, i) => {
-      const isMe = name === myName, isLeader = i === 0;
-      add(this.add.text(PAD, y + i * 20, `${isMe ? '●' : '○'} ${name}${isLeader ? '  ♛' : ''}`,
-        F('11px', isMe ? '#80cbc4' : '#9fb3b8')));
-    });
-    y += members.length * 20 + 4;
+    // ── Invite input row ─────────────────────────────────────────────────────
+    if (showInvRow) {
+      const FIELD_W = PW - PAD * 2 - 32;
+      const PLUS_W  = 28;
+      const FIELD_X = PAD, FIELD_Y = y + 4;
 
-    if (grp.canAddMembers()) {
-      const invBtn = add(this.add.rectangle(PAD, y, PW - PAD * 2, 24, 0x0a2030, 1)
-        .setOrigin(0).setStrokeStyle(1, 0x1a4060, 0.5).setInteractive({ useHandCursor: true }));
-      add(this.add.text(PW / 2, y + 12, '+ Пригласить из друзей', F('10px', '#4dd0e1')).setOrigin(0.5));
-      invBtn.on('pointerover', () => invBtn.setFillStyle(0x0d2e40));
-      invBtn.on('pointerout',  () => invBtn.setFillStyle(0x0a2030));
-      invBtn.on('pointerdown', () => {
-        if (!this._friendsWinVisible) { this._friendsWinVisible = true; this._rebuildFriendsWin(); this._updateSocialBtnStyles(); }
+      // Visual bg (HTML input sits on top)
+      add(this.add.rectangle(FIELD_X, FIELD_Y, FIELD_W, 22, 0x040e1c, 1)
+        .setOrigin(0).setStrokeStyle(1, 0x1e3a54, 0.9)
+        .setInteractive({ useHandCursor: true }))
+        .on('pointerdown', () => this._grpInviteInputEl?.focus());
+
+      this._grpInviteFieldRect = { x: FIELD_X, y: FIELD_Y, w: FIELD_W, h: 22 };
+
+      // [+] button
+      const plusX = PW - PAD - PLUS_W;
+      const plusBg = add(this.add.rectangle(plusX, FIELD_Y, PLUS_W, 22, 0x0a2030, 1)
+        .setOrigin(0).setStrokeStyle(1, 0x1a5040, 0.9)
+        .setInteractive({ useHandCursor: true }));
+      add(this.add.text(plusX + PLUS_W / 2, FIELD_Y + 11, '+', F('15px', '#66bb6a')).setOrigin(0.5));
+      plusBg.on('pointerover', () => plusBg.setFillStyle(0x0d3020));
+      plusBg.on('pointerout',  () => plusBg.setFillStyle(0x0a2030));
+      plusBg.on('pointerdown', () => {
+        const name = (this._grpInviteInputEl?.value.trim()) || this._groupInviteTarget;
+        if (!name) return;
+        const grp2 = this.groupSystem;
+        if (!grp2) return;
+        if (!grp2.inGroup) {
+          grp2.create(galaxy.current, false);
+          this._groupLog('Группа создана');
+        }
+        grp2.invite(name, galaxy.current);
+        this._groupPendingInvites.set(name, 'pending');
+        this._groupLog(`Приглашение → ${name}`);
+        this._groupInviteTarget = null;
+        if (this._grpInviteInputEl) this._grpInviteInputEl.value = '';
+        this._rebuildGroupWin();
+        this._updateSocialBtnStyles();
       });
-      y += 32;
+      y += INV_ROW;
+    } else {
+      this._grpInviteFieldRect = null;
     }
 
+    // ── Nearby online friends (same sector) ──────────────────────────────────
+    if (nearbyFriends.length > 0) {
+      const gap    = 4;
+      const chipW  = Math.floor((PW - PAD * 2 - gap * (nearbyFriends.length - 1)) / nearbyFriends.length);
+      let cx = PAD;
+      for (const f of nearbyFriends) {
+        const chipBg = add(this.add.rectangle(cx, y + 2, chipW, 18, 0x0a2030, 1)
+          .setOrigin(0).setStrokeStyle(1, 0x1a6040, 0.8).setInteractive({ useHandCursor: true }));
+        const label = f.name.length > 7 ? f.name.slice(0, 6) + '…' : f.name;
+        add(this.add.text(cx + chipW / 2, y + 11, '● ' + label, F('9px', '#4CAF50')).setOrigin(0.5));
+        chipBg.on('pointerover', () => chipBg.setFillStyle(0x0d2e40));
+        chipBg.on('pointerout',  () => chipBg.setFillStyle(0x0a2030));
+        chipBg.on('pointerdown', () => this._setGroupInviteTarget(f.name));
+        cx += chipW + gap;
+      }
+      y += 24;
+    }
+
+    // Separator before member list
+    add(this.add.rectangle(0, y, PW, 1, 0x1a4060, 0.25).setOrigin(0)); y += 1;
+
+    // ── Hint when no group and no pending ────────────────────────────────────
+    if (!grp?.inGroup && members.length === 0 && pendingRows.length === 0) {
+      add(this.add.text(PAD, y + 5, 'Введи ник выше и нажми +', F('10px', '#2a4a60')));
+      y += 22;
+    }
+
+    // ── Current members ──────────────────────────────────────────────────────
+    members.forEach((name, i) => {
+      const isMe = name === myName, isLeader = i === 0;
+      add(this.add.text(PAD, y + 4, `${isMe ? '●' : '○'} ${name}${isLeader ? '  ♛' : ''}`,
+        F('11px', isMe ? '#80cbc4' : '#9fb3b8')));
+      y += 20;
+    });
+
+    // ── Pending invites ──────────────────────────────────────────────────────
+    pendingRows.forEach(name => {
+      add(this.add.text(PAD, y + 4, `⌛ ${name}`, F('11px', '#7a9a6a')));
+      add(this.add.text(PW - PAD, y + 4, 'ожидание', F('9px', '#4a5a3a')).setOrigin(1, 0));
+      y += 20;
+    });
+
+    // ── Boss HP bar ──────────────────────────────────────────────────────────
     if (showBossBar) {
-      add(this.add.text(PAD, y + 2, 'БОСС', O('8px', '#ef5350')));
       const BW = PW - PAD * 2, BH = 7;
+      add(this.add.text(PAD, y + 2, 'БОСС', O('8px', '#ef5350')));
       add(this.add.rectangle(PAD, y + 14, BW, BH, 0x1a0000, 1).setOrigin(0));
       const ratio = Math.max(0, Math.min(1, this._groupBossHpRatio));
       const bCol  = ratio > 0.5 ? 0xef5350 : ratio > 0.25 ? 0xff7043 : 0xffa726;
       add(this.add.rectangle(PAD, y + 14, Math.round(BW * ratio), BH, bCol, 1).setOrigin(0));
       add(this.add.text(PAD + BW, y + 12, `${Math.round(ratio * 100)}%`, F('9px', '#ef9a9a')).setOrigin(1, 0));
+      y += 28;
     }
+
+    // ── Leave button ─────────────────────────────────────────────────────────
+    if (grp?.inGroup) {
+      add(this.add.rectangle(0, y, PW, 1, 0x1a4060, 0.3).setOrigin(0)); y += 1;
+      const leaveBtn = add(this.add.text(PAD, y + 5, '← Покинуть группу', F('10px', '#ef5350'))
+        .setInteractive({ useHandCursor: true }));
+      leaveBtn.on('pointerover', () => leaveBtn.setAlpha(0.7));
+      leaveBtn.on('pointerout',  () => leaveBtn.setAlpha(1));
+      leaveBtn.on('pointerdown', () => {
+        this.groupSystem?.leave();
+        this._groupPendingInvites?.clear();
+        this._groupLog('Вы вышли из группы');
+        const gs = this.scene.get('GameScene');
+        if (gs) gs.groupSize = 0;
+        this._rebuildGroupWin();
+        this._updateSocialBtnStyles();
+      });
+      y += 26;
+    }
+
+    // ── Group event log ──────────────────────────────────────────────────────
+    if (logEntries.length > 0) {
+      add(this.add.rectangle(0, y, PW, 1, 0x1a4060, 0.25).setOrigin(0)); y += 1;
+      add(this.add.text(PAD, y + 2, 'Лог:', F('9px', '#2a4a60'))); y += 14;
+      logEntries.forEach(entry => {
+        add(this.add.text(PAD, y, `• ${entry}`, F('9px', '#3a6878')));
+        y += 13;
+      });
+    }
+
+    this._posGrpInviteInput();
+  }
+
+  // ── Helper: group log ─────────────────────────────────────────────────────
+
+  _groupLog(text) {
+    if (!this._groupEventLog) this._groupEventLog = [];
+    const d = new Date();
+    const t = `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`;
+    this._groupEventLog.push(`${t} ${text}`);
+    if (this._groupEventLog.length > 20) this._groupEventLog.shift();
+    this.game.events.emit('hud-log', `[Группа] ${text}`);
+  }
+
+  /** Set invite target (from chat click or friend chip), auto-opens group window. */
+  _setGroupInviteTarget(name) {
+    this._groupInviteTarget = name || null;
+    if (this._grpInviteInputEl) this._grpInviteInputEl.value = name || '';
+    if (this._groupWinVisible && !this._grpWinCollapsed) {
+      this._rebuildGroupWin();
+    } else if (name) {
+      this._groupWinVisible  = true;
+      this._grpWinCollapsed  = false;
+      this._rebuildGroupWin();
+      this._updateSocialBtnStyles();
+    }
+  }
+
+  /** Reposition the HTML invite input over the group window field. */
+  _posGrpInviteInput() {
+    const inp = this._grpInviteInputEl;
+    if (!inp) return;
+    const rect = this._grpInviteFieldRect;
+    if (!rect || !this._groupWinVisible || this._grpWinCollapsed) {
+      inp.style.display = 'none'; return;
+    }
+    const r  = this.game.canvas.getBoundingClientRect();
+    const sx = r.width  / this.scale.width;
+    const sy = r.height / this.scale.height;
+    Object.assign(inp.style, {
+      display:  'block',
+      left:     `${Math.round(r.left + (this._grpWin.x + rect.x) * sx)}px`,
+      top:      `${Math.round(r.top  + (this._grpWin.y + rect.y) * sy)}px`,
+      width:    `${Math.round(rect.w * sx)}px`,
+      height:   `${Math.round(rect.h * sy)}px`,
+      fontSize: `${Math.round(11 * sy)}px`,
+    });
   }
 
   // ── Окно ДРУЗЬЯ ──────────────────────────────────────────────────────────
@@ -1907,9 +2129,15 @@ export default class HudScene extends Phaser.Scene {
       invBtn.on('pointerdown', () => {
         const grp = this.groupSystem;
         if (!grp) return;
-        if (!grp.inGroup) { grp.create(galaxy.current, false); this._updateSocialBtnStyles(); }
+        if (!grp.inGroup) {
+          grp.create(galaxy.current, false);
+          this._groupLog('Группа создана');
+          this._updateSocialBtnStyles();
+        }
         grp.invite(f.name, galaxy.current);
-        this.pushChatMessage('general', 'System', `[Группа] Приглашение отправлено: ${f.name}`, {});
+        this._groupPendingInvites?.set(f.name, 'pending');
+        this._groupLog(`Приглашение → ${f.name}`);
+        this._rebuildGroupWin();
       });
 
       const remBtn = add(this.add.rectangle(PW - PAD - 22, y + 2, 24, 18, 0x180008, 0.9).setOrigin(0)
@@ -1954,9 +2182,10 @@ export default class HudScene extends Phaser.Scene {
     const W = this.scale.width, H = this.scale.height;
     this.input.on('pointermove', (pointer) => {
       if (this._grpWinDrag?.active && pointer.isDown) {
-        const nx = Math.max(0, Math.min(W - 240, pointer.x - this._grpWinDrag.ox));
+        const nx = Math.max(0, Math.min(W - 260, pointer.x - this._grpWinDrag.ox));
         const ny = Math.max(0, Math.min(H - 32,  pointer.y - this._grpWinDrag.oy));
         this._grpWin?.setPosition(nx, ny);
+        this._posGrpInviteInput();
       }
       if (this._frWinDrag?.active && pointer.isDown) {
         const nx = Math.max(0, Math.min(W - 300, pointer.x - this._frWinDrag.ox));
