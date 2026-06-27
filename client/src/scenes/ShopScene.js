@@ -405,16 +405,16 @@ export default class ShopScene extends Phaser.Scene {
     const btn = this.add.rectangle(cx + cw / 2, btnY + btnH / 2, cw - 28, btnH, 0x2a1a00)
       .setStrokeStyle(1.5, 0xffd54f, 0.85).setInteractive({ useHandCursor: true });
     const btnTxt = this.add.text(cx + cw / 2, btnY + btnH / 2,
-      'КУПИТЬ  —  6 ⭐', this.O('10px', '#ffd54f')).setOrigin(0.5);
+      'КУПИТЬ  —  20 ⭐', this.O('10px', '#ffd54f')).setOrigin(0.5);
     ob.push(btn, btnTxt);
 
     btn.on('pointerover', () => btn.setFillStyle(0x4a2a00));
     btn.on('pointerout',  () => btn.setFillStyle(0x2a1a00));
     btn.on('pointerdown', () => {
-      if ((gs.starGold || 0) < 6) {
+      if ((gs.starGold || 0) < 20) {
         btn.setFillStyle(0x5a1010); this.time.delayedCall(300, () => btn.setFillStyle(0x2a1a00)); return;
       }
-      gs.starGold -= 6;
+      gs.starGold -= 20;
       gs.activeBoosters = gs.activeBoosters || {};
       // Stack on existing time if already active
       const base = Math.max(Date.now(), gs.activeBoosters[b.key] || 0);
@@ -422,7 +422,7 @@ export default class ShopScene extends Phaser.Scene {
       const rem = Math.ceil((gs.activeBoosters[b.key] - Date.now()) / 60000);
       statusTxt.setText(`АКТИВЕН  ${rem} мин.`);
       gs._saveState?.();
-      gs.log?.(`Куплен бустер: ${b.label} −6 ⭐`);
+      gs.log?.(`Куплен бустер: ${b.label} −20 ⭐`);
       this._refresh();
     });
   }
