@@ -9,10 +9,10 @@ const PREMIUM_PLANS = [
 ];
 
 const STAR_PACKS = [
-  { id: 'stars_pilot',    label: 'ПИЛОТ',   stars: 125,  price: '$4.99'  },
-  { id: 'stars_sergeant', label: 'СЕРЖАНТ', stars: 250,  price: '$9.99'  },
-  { id: 'stars_captain',  label: 'КАПИТАН', stars: 550,  price: '$19.99', badge: '+10%' },
-  { id: 'stars_admiral',  label: 'АДМИРАЛ', stars: 1200, price: '$39.99', badge: '+20%' },
+  { id: 'stars_pilot',    label: 'ПИЛОТ',   stars: 625,  price: '$4.99'  },
+  { id: 'stars_sergeant', label: 'СЕРЖАНТ', stars: 1250, price: '$9.99'  },
+  { id: 'stars_captain',  label: 'КАПИТАН', stars: 2750, price: '$19.99', badge: '+10%' },
+  { id: 'stars_admiral',  label: 'АДМИРАЛ', stars: 6000, price: '$39.99', badge: '+20%' },
 ];
 
 const PREMIUM_BENEFITS = [
