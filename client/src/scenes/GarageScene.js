@@ -1558,10 +1558,10 @@ export default class GarageScene extends Phaser.Scene {
     // ── Refine quality section ───────────────────────────────────────────────
     const refineCosts = REFINE_COST[item.tier] || REFINE_COST[4];
     const isPerfect   = roll >= 1.0;
-    const refineLabels = ['Базовый', 'Улучш.', 'Премиум'];
-    const refineGainHint = ['+0.5–2%', '+1.5–4.5%', '+3–8%'];
+    const refineLabels   = ['Базовый', 'Улучш.', 'Премиум'];
+    const refineGainHint = ['+0.5–2.0%', '+1.5–4.5%', '+3.0–8.0%'];
     const btnW = Math.floor((detW - 36) / 3);
-    const btnH = 30;
+    const btnH = 52;
 
     const sepG2 = this.add.graphics();
     const smx2 = cx, smy2 = cy + 1, sds2 = 5;
@@ -1586,12 +1586,15 @@ export default class GarageScene extends Phaser.Scene {
           canRef ? 0x0a1520 : 0x060810)
           .setOrigin(0.5).setStrokeStyle(1, canRef ? qHex : 0x1a2a3a, canRef ? 0.7 : 0.3)
           .setInteractive({ useHandCursor: canRef });
-        this.add.text(bx, cy + btnH / 2 - 7,
+        this.add.text(bx, cy + btnH / 2 - 18,
           refineLabels[gi],
-          this.O('11px', canRef ? qColor : '#2a3a44')).setOrigin(0.5);
-        this.add.text(bx, cy + btnH / 2 + 6,
-          `${cost}⭐  ${refineGainHint[gi]}`,
-          this.F('10px', canRef ? '#6699aa' : '#1a2a30')).setOrigin(0.5);
+          this.O('12px', canRef ? qColor : '#2a3a44')).setOrigin(0.5);
+        this.add.text(bx, cy + btnH / 2 - 2,
+          `${cost} ⭐`,
+          this.O('13px', canRef ? '#ffcc44' : '#2a3020')).setOrigin(0.5);
+        this.add.text(bx, cy + btnH / 2 + 16,
+          refineGainHint[gi] + ' к качеству',
+          this.F('10px', canRef ? '#5588aa' : '#1a2a30')).setOrigin(0.5);
         if (canRef) {
           rbgRef.on('pointerover', () => rbgRef.setFillStyle(0x152030));
           rbgRef.on('pointerout',  () => rbgRef.setFillStyle(0x0a1520));
