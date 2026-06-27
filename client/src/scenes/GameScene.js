@@ -8,7 +8,7 @@ import Projectile from '../entities/Projectile.js';
 import Loot from '../entities/Loot.js';       
 import Movement from '../systems/Movement.js';
 import { EXP_CLASSES, MOD_ICON_FILES, NPC_PORTRAITS } from './BootScene.js'; 
-import { rollLootForMob, dropChance, itemName, rollStarGold, starterCannon, starterShield, rollCannon, rollShield, rollEngine, rollLaser, rollArmor, rollApophisLoot, PLASMATE_PER_SLOT, PLASMATE_DAILY_MAX, addPlasmateToInventory, totalPlasmateInInventory, removePlasmateFromInventory, CONSUMABLES, addConsumableToInventory, countConsumableInInventory, removeConsumableFromInventory, rollConsumableDrop, MATERIAL_NAMES, RESOURCE_NAMES } from '../items.js';
+import { rollLootForMob, dropChance, itemName, rollStarGold, starterCannon, starterShield, rollCannon, rollShield, rollEngine, rollLaser, rollArmor, rollApophisLoot, PLASMATE_PER_SLOT, PLASMATE_DAILY_MAX, addPlasmateToInventory, totalPlasmateInInventory, removePlasmateFromInventory, CONSUMABLES, addConsumableToInventory, countConsumableInInventory, removeConsumableFromInventory, rollConsumableDrop, rollAmmoDrop, MATERIAL_NAMES, RESOURCE_NAMES } from '../items.js';
 import { rollBoard, rollConnector } from '../boards.js';
 import PlasmateDeposit from '../entities/PlasmateDeposit.js';
 import { rollPerk, perkBonus, PERK_DEFS } from '../perks.js';
@@ -2654,6 +2654,12 @@ export default class GameScene extends Phaser.Scene {
     if (consDrop) {
       const ox = Phaser.Math.Between(-24, 24), oy = Phaser.Math.Between(-24, 24);
       this.loot.push(new Loot(this, mob.x + ox, mob.y + oy, consDrop, 'common'));
+    }
+
+    const ammoDrop = rollAmmoDrop(mob, isDung, this.dungeonDifficulty);
+    if (ammoDrop) {
+      const ox = Phaser.Math.Between(-24, 24), oy = Phaser.Math.Between(-24, 24);
+      this.loot.push(new Loot(this, mob.x + ox, mob.y + oy, ammoDrop, 'common'));
     }
 
     // Платы и коннекторы с ГЛАВНОГО босса данжа — по таблице сложности

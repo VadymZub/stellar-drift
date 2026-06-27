@@ -245,7 +245,7 @@ const _MAT_KEYS  = _CONS_KEYS.filter(k => CONSUMABLES[k].category === 'material'
 const _USE_KEYS  = _CONS_KEYS.filter(k => CONSUMABLES[k].category === 'consumable');
 
 export function rollConsumableDrop(mob) {
-  const chance = (mob.isBoss || mob.tpl.elite) ? 0.40 : 0.12;
+  const chance = (mob.isBoss || mob.tpl.elite) ? 0.07 : 0.03;
   if (Phaser.Math.FloatBetween(0, 1) > chance) return null;
   if ((mob.isBoss || mob.tpl.elite) && Phaser.Math.FloatBetween(0, 1) < 0.5) {
     const type = _MAT_KEYS[Phaser.Math.Between(0, _MAT_KEYS.length - 1)];
@@ -253,6 +253,17 @@ export function rollConsumableDrop(mob) {
   }
   const type = _USE_KEYS[Phaser.Math.Between(0, _USE_KEYS.length - 1)];
   return { type, amount: Phaser.Math.Between(1, 3) };
+}
+
+// isDungeon — текущий сектор является данжем; dungeonDiff — 'normal'|'hard'|'elite'.
+// elite-патроны выпадают только в данжах на максимальной сложности (elite).
+export function rollAmmoDrop(mob, isDungeon, dungeonDiff) {
+  const isBoss = mob.isBoss || mob.isDungeonBoss || mob.isSectorBoss;
+  const chance = isBoss ? 0.33 : 0.10;
+  if (Phaser.Math.FloatBetween(0, 1) > chance) return null;
+  const type = (isDungeon && dungeonDiff === 'elite') ? 'ammo_plasma_elite' : 'ammo_plasma';
+  const amount = isBoss ? Phaser.Math.Between(5, 25) : Phaser.Math.Between(1, 10);
+  return { type, amount };
 }
 
 export function itemIconKey(item) {
