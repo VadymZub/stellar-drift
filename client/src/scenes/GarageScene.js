@@ -1622,13 +1622,19 @@ export default class GarageScene extends Phaser.Scene {
     const rerollCost = PERK_REROLL_BASE * Math.pow(2, rerollN); // 200, 400, 800...
     const canReroll  = (gs.starGold || 0) >= rerollCost;
 
-    const ry = detH ? cy + detH - 58 : cy + 12;
-    const rbg = this.add.rectangle(cx, ry, 220, 36, canReroll ? 0x100818 : 0x060810)
-      .setStrokeStyle(1, canReroll ? 0x664488 : 0x2a1a3a, 0.9)
+    const ry = detH ? cy + detH - 68 : cy + 12;
+    const rbtnW = detW - 24;
+    const rbtnH = 44;
+    const rbg = this.add.rectangle(cx, ry + rbtnH / 2, rbtnW, rbtnH,
+      canReroll ? 0x100818 : 0x060810)
+      .setOrigin(0.5).setStrokeStyle(1, canReroll ? 0x664488 : 0x2a1a3a, 0.9)
       .setInteractive({ useHandCursor: canReroll });
-    this.add.text(cx, ry,
-      canReroll ? `🔄 Реролл перка: ${rerollCost} ⭐  (попытка ${rerollN + 1})` : `🔄 Реролл: ${rerollCost} ⭐ (нет звёзд)`,
-      this.F('13px', canReroll ? '#bb88dd' : '#334455')).setOrigin(0.5);
+    this.add.text(cx, ry + rbtnH / 2 - 11,
+      '🔄 Реролл перка',
+      this.O('13px', canReroll ? '#bb88dd' : '#334455')).setOrigin(0.5);
+    this.add.text(cx, ry + rbtnH / 2 + 7,
+      canReroll ? `${rerollCost} ⭐  ·  попытка ${rerollN + 1}` : `${rerollCost} ⭐  ·  недостаточно звёзд`,
+      this.F('12px', canReroll ? '#ffcc44' : '#2a3040')).setOrigin(0.5);
     if (canReroll) {
       rbg.on('pointerover', () => rbg.setFillStyle(0x180a24));
       rbg.on('pointerout',  () => rbg.setFillStyle(0x100818));
@@ -1642,8 +1648,8 @@ export default class GarageScene extends Phaser.Scene {
     }
 
     // Daily reset hint
-    this.add.text(cx, ry + 24, 'Счётчик попыток сбрасывается в 00:00 UTC',
-      this.F('11px', '#1a2535')).setOrigin(0.5, 0);
+    this.add.text(cx, ry + rbtnH + 6, 'Счётчик попыток сбрасывается в 00:00 UTC',
+      this.F('11px', '#3a6080')).setOrigin(0.5, 0);
   }
 
   _showTooltip(wx, wy, item) {
