@@ -10,6 +10,13 @@ import { prerenderTex } from '../utils/prerenderTex.js';
 import { loadSettings, saveSettings, getMinimapDims } from '../settings.js';
 import { GroupSystem } from '../systems/GroupSystem.js';
 
+const BOOSTER_DEFS = [
+  { key: 'boost_damage', icon: '⚔', label: 'Урон +10%',  color: '#ff8c40' },
+  { key: 'boost_hull',   icon: '🛡', label: 'Броня +20%', color: '#4fc3f7' },
+  { key: 'boost_shield', icon: '💠', label: 'Щит +20%',   color: '#4db6ac' },
+  { key: 'boost_xp',    icon: '⚡', label: 'Опыт +25%',  color: '#ffd54f' },
+];
+
 const AB_TIPS = {
   'use:repair_pack':          { name: 'Ремонтный пакет',      desc: '+30% HP мгновенно\nКД 90с' },
   'use:speed_boost':          { name: 'Ускоритель',            desc: '+50% скорость на 15с\nКД 120с' },
@@ -190,6 +197,7 @@ export default class HudScene extends Phaser.Scene {
     this._buildGroupWin();
     this._buildFriendsWin();
     this._initSocialWinDrag();
+    this._createBoosterWidget();
 
     // F key → toggle friends window (работает и на базе, и в космосе)
     this.input.keyboard?.on('keydown-F', () => {
@@ -419,9 +427,10 @@ export default class HudScene extends Phaser.Scene {
 
       if (!key) return;
       if (key.startsWith('ship:') || key.startsWith('argus:')) {
-        const texKey = this._ensureShipSkillTex(key);
+        const srcKey = this._ensureShipSkillTex(key);
         const iconSz = slot.SW;
-        slot.iconImg = this.add.image(slot.sx + slot.SW / 2, slot.sy + slot.SH / 2, texKey)
+        slot.iconImg = this.add.image(slot.sx + slot.SW / 2, slot.sy + slot.SH / 2,
+            prerenderTex(this, srcKey, iconSz, iconSz))
           .setDisplaySize(iconSz, iconSz).setDepth(102);
         return;
       }
@@ -775,6 +784,8 @@ export default class HudScene extends Phaser.Scene {
       this._lastSectorSent = _curSec;
       this.groupSystem.sectorUpdate(_curSec);
     }
+
+    this._updateBoosterWidget();
   }
 
   bar(g, x, y, w, h, frac, color) {
@@ -2232,6 +2243,123 @@ export default class HudScene extends Phaser.Scene {
         this._chatInputEl.focus();
       }
     });
+  }
+
+  // ── Booster widget ────────────────────────────────────────────────────────
+
+  _createBoosterWidget() {
+    const W = this.scale.width;
+    let saved = {}; try { saved = JSON.parse(localStorage.getItem('sd_booster_win') || '{}'); } catch {}
+    const WW = 200, hdrH = 26, rowH = 22;
+    const bx = saved.x ?? (W - WW - 12);
+    const by = saved.y ?? 120;
+
+    this._bstClosed   = saved.closed || false;
+    this._bstDrag     = { active: false, ox: 0, oy: 0 };
+    this._bstPrevKeys = new Set();
+    this._bstLastVisCount = -1;
+    this._bstWW = WW; this._bstHdrH = hdrH; this._bstRowH = rowH;
+
+    const c = this.add.container(bx, by).setDepth(105);
+    this._bstCon = c;
+
+    const bg = this.add.graphics();
+    this._bstBg = bg;
+    c.add(bg);
+
+    // Drag zone — transparent header hit area
+    const hdrHit = this.add.rectangle(WW / 2, hdrH / 2, WW, hdrH, 0x000000, 0).setInteractive();
+    c.add(hdrHit);
+    hdrHit.on('pointerdown', (ptr) => {
+      this._bstDrag.active = true;
+      this._bstDrag.ox = ptr.worldX - c.x;
+      this._bstDrag.oy = ptr.worldY - c.y;
+    });
+
+    c.add(this.add.text(8, hdrH / 2, '⚡ БУСТЕРЫ', this.F('11px', '#ffd54f')).setOrigin(0, 0.5));
+
+    const closeBtn = this.add.text(WW - 8, hdrH / 2, '✕', this.F('12px', '#557788')).setOrigin(1, 0.5).setInteractive({ useHandCursor: true });
+    closeBtn.on('pointerover', () => closeBtn.setColor('#aaccdd'));
+    closeBtn.on('pointerout',  () => closeBtn.setColor('#557788'));
+    closeBtn.on('pointerdown', () => {
+      this._bstClosed = true;
+      this._bstSavePos();
+      c.setVisible(false);
+    });
+    c.add(closeBtn);
+
+    this._bstRows = BOOSTER_DEFS.map((def, i) => {
+      const ry = hdrH + i * rowH;
+      const icon  = this.add.text(8,      ry + rowH / 2, def.icon,  this.F('12px', def.color)).setOrigin(0, 0.5);
+      const label = this.add.text(26,     ry + rowH / 2, def.label, this.F('10px', '#7a9aaa')).setOrigin(0, 0.5);
+      const timer = this.add.text(WW - 8, ry + rowH / 2, '',        this.O('11px', def.color)).setOrigin(1, 0.5);
+      c.add([icon, label, timer]);
+      return { key: def.key, icon, label, timer };
+    });
+
+    c.setVisible(false);
+  }
+
+  _bstSavePos() {
+    const c = this._bstCon;
+    try { localStorage.setItem('sd_booster_win', JSON.stringify({ x: Math.round(c.x), y: Math.round(c.y), closed: this._bstClosed })); } catch {}
+  }
+
+  _updateBoosterWidget() {
+    const now = Date.now();
+    const ab  = this.gs.activeBoosters || {};
+
+    const activeKeys = new Set(BOOSTER_DEFS.map(d => d.key).filter(k => (ab[k] || 0) > now));
+
+    // Auto-reopen if a new booster was activated while widget was closed
+    const newKey = [...activeKeys].find(k => !this._bstPrevKeys.has(k));
+    if (newKey && this._bstClosed) {
+      this._bstClosed = false;
+      this._bstSavePos();
+    }
+    this._bstPrevKeys = activeKeys;
+
+    const c = this._bstCon;
+    if (!activeKeys.size || this._bstClosed) { c.setVisible(false); return; }
+    c.setVisible(true);
+
+    let visCount = 0;
+    for (const row of this._bstRows) {
+      const expiry = ab[row.key] || 0;
+      const active = expiry > now;
+      row.icon.setVisible(active); row.label.setVisible(active); row.timer.setVisible(active);
+      if (active) {
+        const rem = Math.ceil((expiry - now) / 1000);
+        row.timer.setText(`${String(Math.floor(rem / 60)).padStart(2, '0')}:${String(rem % 60).padStart(2, '0')}`);
+        visCount++;
+      }
+    }
+
+    // Redraw background only when visible row count changes
+    if (visCount !== this._bstLastVisCount) {
+      this._bstLastVisCount = visCount;
+      const WW = this._bstWW, hdrH = this._bstHdrH, rowH = this._bstRowH;
+      const totalH = hdrH + visCount * rowH;
+      this._bstBg.clear();
+      this._bstBg.fillStyle(0x060e1a, 0.93); this._bstBg.fillRoundedRect(0, 0, WW, totalH, 6);
+      this._bstBg.lineStyle(1, 0x2a5a7a, 0.8); this._bstBg.strokeRoundedRect(0, 0, WW, totalH, 6);
+      this._bstBg.lineStyle(1, 0x1a3a50, 0.6); this._bstBg.lineBetween(6, hdrH, WW - 6, hdrH);
+    }
+
+    // Drag handling
+    if (this._bstDrag?.active) {
+      const ptr = this.input.activePointer;
+      if (ptr.isDown) {
+        const W = this.scale.width, H = this.scale.height;
+        c.setPosition(
+          Math.max(0, Math.min(W - this._bstWW,   ptr.worldX - this._bstDrag.ox)),
+          Math.max(0, Math.min(H - this._bstHdrH, ptr.worldY - this._bstDrag.oy))
+        );
+      } else {
+        this._bstDrag.active = false;
+        this._bstSavePos();
+      }
+    }
   }
 
   // ── Drag / поведение окон ─────────────────────────────────────────────────
