@@ -288,6 +288,11 @@ export function perkBonus(perk) {
   return (CREDIT_BONUS_PER_LVL[ci] ?? 0) + (STAR_BONUS_PER_LVL[si] ?? 0);
 }
 
+// Returns the description string at perfect roll and max star upgrade (the theoretical max)
+export function perkMaxDesc(def) {
+  return def.desc(STAR_BONUS_PER_LVL[STAR_BONUS_PER_LVL.length - 1], 1.0);
+}
+
 // Credit upgrade cost to go from creditLvl → creditLvl+1 for given module tier (1–4)
 export function creditUpgCost(creditLvl, tier) {
   return (PERK_CREDIT_COST[tier] || PERK_CREDIT_COST[4])[creditLvl] || null;
