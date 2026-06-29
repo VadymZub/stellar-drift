@@ -332,8 +332,8 @@ export default class Player {
     this.cargoBonusMod        = BF('cargoBonus');
     // scanRadius: board and skill both additive from BASE_SCAN_RADIUS
     this.scene.scanRadius     = Math.round(BASE_SCAN_RADIUS * (1 + BF('scanRadius') + sl('scanner_boost') * 0.20));
-    this.autoAmmo        = BF('autoAmmo') > 0 || sl('auto_ammo') > 0;
-    this.autoConsumables = BF('autoConsumables') > 0 || sl('auto_consumables') > 0;
+    this.autoAmmo        = BF('autoAmmo') > 0;
+    this.autoConsumables = BF('autoConsumables') > 0;
 
     // ── Weapon accuracy + laser properties ────────────────────────────────────
     this.weaponType       = this.hasLaser && this.hasCannon ? 'mixed' : this.hasLaser ? 'laser' : 'cannon';

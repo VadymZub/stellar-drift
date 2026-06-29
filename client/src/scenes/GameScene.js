@@ -8,7 +8,7 @@ import Projectile from '../entities/Projectile.js';
 import Loot from '../entities/Loot.js';       
 import Movement from '../systems/Movement.js';
 import { EXP_CLASSES, MOD_ICON_FILES, NPC_PORTRAITS } from './BootScene.js'; 
-import { rollLootForMob, dropChance, itemName, rollStarGold, starterCannon, starterShield, rollCannon, rollShield, rollEngine, rollLaser, rollArmor, rollApophisLoot, PLASMATE_PER_SLOT, PLASMATE_DAILY_MAX, addPlasmateToInventory, totalPlasmateInInventory, removePlasmateFromInventory, CONSUMABLES, addConsumableToInventory, countConsumableInInventory, removeConsumableFromInventory, rollConsumableDrop, rollAmmoDrop, MATERIAL_NAMES, RESOURCE_NAMES } from '../items.js';
+import { rollLootForMob, rollHomeSectorLoot, dropChance, itemName, rollStarGold, starterCannon, starterShield, rollCannon, rollShield, rollEngine, rollLaser, rollArmor, rollApophisLoot, PLASMATE_PER_SLOT, PLASMATE_DAILY_MAX, addPlasmateToInventory, totalPlasmateInInventory, removePlasmateFromInventory, CONSUMABLES, addConsumableToInventory, countConsumableInInventory, removeConsumableFromInventory, rollConsumableDrop, rollAmmoDrop, MATERIAL_NAMES, RESOURCE_NAMES } from '../items.js';
 import { rollBoard, rollConnector } from '../boards.js';
 import PlasmateDeposit from '../entities/PlasmateDeposit.js';
 import { rollPerk, perkBonus, PERK_DEFS } from '../perks.js';
@@ -430,8 +430,9 @@ export default class GameScene extends Phaser.Scene {
     }
 
     const _cfg = loadSettings();
-    this.magnetEnabled      = _cfg.autoLoot;
-    this._autoTargetEnabled = _cfg.autoTarget;
+    this.magnetEnabled        = _cfg.autoLoot;
+    this._autoTargetEnabled   = _cfg.autoTarget;
+    this.autoCollectEnabled   = _cfg.autoCollect;
 
     this.aoeZones = [];
     this.aoeGfx = this.add.graphics().setDepth(36);
@@ -967,12 +968,12 @@ export default class GameScene extends Phaser.Scene {
       add('syndicate_04', rnd(Lmin, Lmax), 0, 0, {});
       add('syndicate_07', Lmax, -1650, -300, { behavior: 'guard', patrolRadius: 200, leash: 500 });
       add('syndicate_07', Lmax, 0, -300, { behavior: 'guard', patrolRadius: 200, leash: 500 });
-      const d3boss = add('syndicate_11', Lmax, 1650, -1800, { behavior: 'guard', patrolRadius: 180, leash: 420 });
+      const d3boss = add('syndicate_11', Lmax, 1650, -1600, { behavior: 'guard', patrolRadius: 180, leash: 420 });
       d3boss.isDungeonBoss = true;
       // охрана босса
-      const d3e1 = add('syndicate_07', Lmax, 1300, -1800, { behavior: 'guard', patrolRadius: 150, leash: 480 });
+      const d3e1 = add('syndicate_07', Lmax, 1200, -1600, { behavior: 'guard', patrolRadius: 150, leash: 480 });
       d3e1.isBossEscort = true;
-      const d3e2 = add('syndicate_07', Lmax, 2000, -1800, { behavior: 'guard', patrolRadius: 150, leash: 480 });
+      const d3e2 = add('syndicate_07', Lmax, 2100, -1600, { behavior: 'guard', patrolRadius: 150, leash: 480 });
       d3e2.isBossEscort = true;
 
     } else if (galaxy.current === 'dungeon_4') {
@@ -1059,10 +1060,10 @@ export default class GameScene extends Phaser.Scene {
     // Предопределённые патрульные зоны для каждого данжа (offset от центра мира)
     const ZONES = {
       dungeon_1: [[0,-500],[1800,0],[-1800,0],[0,1500],[2800,400],[-2800,-400],[0,-1200],[1200,-800],[-1200,800]],
-      dungeon_2: [[0,800],[-1000,200],[1000,-500],[-2200,600],[2200,400],[-600,-800],[600,800],[-1500,500],[1500,-900]],
+      dungeon_2: [[0,800],[-1000,200],[1000,-500],[-2200,600],[2200,400],[-600,-1300],[600,800],[-1500,500],[500,-1300]],
       dungeon_3: [[1650,-500],[-1650,-500],[0,-500],[1650,400],[-1650,400],[0,400],[800,-1000],[-800,1000],[0,0]],
       dungeon_4: [[0,-600],[0,600],[-1400,0],[1400,0],[-700,-900],[700,900],[-700,900],[700,-900],[0,0]],
-      dungeon_5: [[0,-800],[800,0],[-800,0],[0,800],[1200,-600],[-1200,600],[0,-1500],[1500,0],[-1500,0]],
+      dungeon_5: [[0,-1050],[800,0],[-800,0],[0,800],[800,-1200],[-1200,600],[0,-1500],[1500,0],[-1500,0]],
       dungeon_prem: [[-2000,-1200],[0,-900],[2000,-600],[-2000,300],[0,600],[2000,900],[-1000,-300],[1000,300],[0,0]],
     };
 
@@ -2648,14 +2649,25 @@ export default class GameScene extends Phaser.Scene {
         this.loot.push(new Loot(this, mob.x, mob.y, lootItem, isPremium ? 'jackpot' : lootTier));
       }
     } else {
-      // Обычный сектор — прежняя логика
-      if (Phaser.Math.FloatBetween(0, 1) < dropChance(mob) * (this.player?.dropChanceMult ?? 1)) {
-        const lootItem = mob.tpl.key === 'ancient_12' ? rollApophisLoot() : rollLootForMob(mob);
-        const isLegendary = mob.tpl.key === 'ancient_12' || mob.tpl.key === 'argus_boss';
-        const lootTier = isLegendary ? 'legendary' : (mob.isBoss || mob.tpl.elite) ? 'boss' : 'common';
-        const isPremium = lootItem.tier === 4 || lootItem.perk?.rarity === 'jackpot'
-          || lootItem.type === 'biomech_core' || lootItem.type === 'quantum_crystal' || lootItem.type === 'plasma_coil';
-        this.loot.push(new Loot(this, mob.x, mob.y, lootItem, isPremium ? 'jackpot' : lootTier));
+      // Обычный сектор (не данж): домашние карты — таблица по тиру/сектору; PvP — прежняя логика.
+      const _sIdx = parseInt(galaxy.current.split('_').pop());
+      const _isHome = !sec?.pvp && _sIdx >= 1 && _sIdx <= 5;
+      if (_isHome) {
+        const lootItem = rollHomeSectorLoot(mob, _sIdx, this.player?.dropChanceMult ?? 1);
+        if (lootItem) {
+          const lootTier = mob.isBoss ? 'boss' : 'common';
+          const isPremium = lootItem.tier === 4 || lootItem.perk?.rarity === 'jackpot';
+          this.loot.push(new Loot(this, mob.x, mob.y, lootItem, isPremium ? 'jackpot' : lootTier));
+        }
+      } else {
+        if (Phaser.Math.FloatBetween(0, 1) < dropChance(mob) * (this.player?.dropChanceMult ?? 1)) {
+          const lootItem = mob.tpl.key === 'ancient_12' ? rollApophisLoot() : rollLootForMob(mob);
+          const isLegendary = mob.tpl.key === 'ancient_12' || mob.tpl.key === 'argus_boss';
+          const lootTier = isLegendary ? 'legendary' : (mob.isBoss || mob.tpl.elite) ? 'boss' : 'common';
+          const isPremium = lootItem.tier === 4 || lootItem.perk?.rarity === 'jackpot'
+            || lootItem.type === 'biomech_core' || lootItem.type === 'quantum_crystal' || lootItem.type === 'plasma_coil';
+          this.loot.push(new Loot(this, mob.x, mob.y, lootItem, isPremium ? 'jackpot' : lootTier));
+        }
       }
     }
 
@@ -2943,15 +2955,15 @@ export default class GameScene extends Phaser.Scene {
   }
   _showRepairDialog(deathX, deathY) {
     const REPAIR_COST = {
-      wisp:     { credits: 0,       stars: 0 },
-      stiletto: { credits: 50000,   stars: 0 },
-      anvil:    { credits: 100000,  stars: 0 },
-      phantom:  { credits: 300000,  stars: 0 },
-      drover:   { credits: 150000,  stars: 0 },
-      aegis:    { credits: 150000,  stars: 0 },
-      helion:   { credits: 0,       stars: 3 },
-      argosy:   { credits: 0,       stars: 3 },
-      drifter:  { credits: 0,       stars: 3 },
+      wisp:     { credits: 0,      stars: 0 },
+      stiletto: { credits: 3500,   stars: 0 },
+      anvil:    { credits: 7000,   stars: 0 },
+      phantom:  { credits: 20000,  stars: 0 },
+      drover:   { credits: 10000,  stars: 0 },
+      aegis:    { credits: 10000,  stars: 0 },
+      helion:   { credits: 0,      stars: 3 },
+      argosy:   { credits: 0,      stars: 3 },
+      drifter:  { credits: 0,      stars: 3 },
     };
     const cam = this.cameras.main;
     const W = cam.width, H = cam.height;
@@ -3115,7 +3127,15 @@ export default class GameScene extends Phaser.Scene {
   }
   spawnBossAoe(mob, x, y) {
     const telegraph = mob.phase >= 2 ? BOSS.aoeTelegraphP2 : BOSS.aoeTelegraphP1;
-    const now = this.time.now; this.aoeZones.push({ x, y, radius: BOSS.aoeRadius, bornAt: now, detonateAt: now + telegraph, done: false }); this.log(i18n.t('log.boss_aoe'));
+    const now = this.time.now;
+    const COUNT = 5;
+    const missiles = Array.from({ length: COUNT }, (_, i) => {
+      const ang = (Math.PI * 2 * i / COUNT) + (i * 0.37);
+      const dist = 700 + i * 60;
+      return { sx: x + Math.cos(ang) * dist, sy: y + Math.sin(ang) * dist };
+    });
+    this.aoeZones.push({ x, y, radius: BOSS.aoeRadius, bornAt: now, detonateAt: now + telegraph, done: false, missiles });
+    this.log(i18n.t('log.boss_aoe'));
   }
   spawnApophisMinions() {
     const apophis = this.mobs.find(m => m.tpl.key === 'bigboss' && m.alive);
@@ -3133,14 +3153,37 @@ export default class GameScene extends Phaser.Scene {
     const now = this.time.now;
     for (const z of this.aoeZones) {
       const frac = Phaser.Math.Clamp((now - z.bornAt) / (z.detonateAt - z.bornAt), 0, 1);
+      // Danger circle telegraph
       this.aoeGfx.fillStyle(COLORS.danger, 0.08); this.aoeGfx.fillCircle(z.x, z.y, z.radius); this.aoeGfx.lineStyle(3, COLORS.danger, 0.9); this.aoeGfx.strokeCircle(z.x, z.y, z.radius);
       this.aoeGfx.fillStyle(COLORS.amber, 0.30); this.aoeGfx.fillCircle(z.x, z.y, z.radius * frac); this.aoeGfx.fillStyle(COLORS.danger, 0.22); this.aoeGfx.fillCircle(z.x, z.y, z.radius * 0.35);
+      // Incoming missiles converging on target
+      if (z.missiles) {
+        for (const m of z.missiles) {
+          const mx = Phaser.Math.Linear(m.sx, z.x, frac);
+          const my = Phaser.Math.Linear(m.sy, z.y, frac);
+          const tf = Math.max(0, frac - 0.18);
+          const tx = Phaser.Math.Linear(m.sx, z.x, tf);
+          const ty = Phaser.Math.Linear(m.sy, z.y, tf);
+          this.aoeGfx.lineStyle(2, 0xff6600, 0.85);
+          this.aoeGfx.beginPath(); this.aoeGfx.moveTo(tx, ty); this.aoeGfx.lineTo(mx, my); this.aoeGfx.strokePath();
+          this.aoeGfx.fillStyle(0xffcc00, 1); this.aoeGfx.fillCircle(mx, my, 4);
+        }
+      }
       if (now >= z.detonateAt) { z.done = true; this.detonateAoe(z); }
     }
     this.aoeZones = this.aoeZones.filter((z) => !z.done);
   }
   detonateAoe(z) {
-    this.explosion(z.x, z.y, 1.6); const p = this.player; if (!p.alive) return;
+    this.explosion(z.x, z.y, 1.6);
+    // Cluster impacts at each missile hit point
+    if (z.missiles) {
+      z.missiles.forEach((m, i) => {
+        const ex = z.x + (m.sx - z.x) * 0.15;
+        const ey = z.y + (m.sy - z.y) * 0.15;
+        this.time.delayedCall(40 + i * 55, () => this.explosion(ex, ey, 0.5));
+      });
+    }
+    const p = this.player; if (!p.alive) return;
     const d = Phaser.Math.Distance.Between(p.x, p.y, z.x, z.y);
     if (d <= z.radius) {
       const falloff = 1 - (d / z.radius) * (1 - BOSS.aoeEdgeFactor);
@@ -3219,6 +3262,7 @@ export default class GameScene extends Phaser.Scene {
     }
     
     this.player.update(dt, inSafe, faceAngle);
+    if (!this.player.alive && !this.playerRespawning) this.onPlayerKilled();
     if (this.steering && this.player.alive && !this.jumping) {
       const wpt = this.cameras.main.getWorldPoint(this.input.activePointer.x, this.input.activePointer.y);
       this.movement.steerMode = true;
@@ -3230,11 +3274,7 @@ export default class GameScene extends Phaser.Scene {
       const b = this.player.sprite.body;
       b.setVelocity(b.velocity.x * 0.45, b.velocity.y * 0.45);
     }
-    // Данж: охранники депозитов просыпаются, рой агрится стаей
-    if (this.player.alive && SECTORS[galaxy.current]?.isDungeon) {
-      this._updateDepositGuardSleep();
-      if (galaxy.current === 'dungeon_1') this._updateSwarmPack();
-    }
+    if (this.player.alive && galaxy.current === 'dungeon_1') this._updateSwarmPack();
     this.mobs.forEach((m) => {
       const tgt = (m.escortTarget?.alive) ? m.escortTarget : this.player;
       const victim = (m.escortTarget?.alive) ? this.escortTransport : this.player;
@@ -3252,6 +3292,7 @@ export default class GameScene extends Phaser.Scene {
     this.projectiles.forEach((p) => p.update(dt));
     this.updateLoot(dt); this.updateGates(dt);
     this._updateMagnet(dt);
+    this._updateAutoCollect(dt);
     const now2 = this.time.now;
     this.plasmateDeposits.forEach(d => d.update(now2));
     if (this.pendingGate && Phaser.Math.Distance.Between(this.player.x, this.player.y, this.pendingGate.x, this.pendingGate.y) < 60) { this.pendingGate = null; }
@@ -3298,22 +3339,6 @@ export default class GameScene extends Phaser.Scene {
       mobs:       this.mobs.filter(m => m.alive).length,
       alive:      p?.alive ?? false,
     });
-  }
-
-  // ── Данж: охранники депозитов — спят до 300px ────────────────────────────
-  _updateDepositGuardSleep() {
-    for (const mob of this.mobs) {
-      if (!mob.alive || !mob.depositGuardSleeping) continue;
-      const d = Phaser.Math.Distance.Between(mob.x, mob.y, this.player.x, this.player.y);
-      if (d < 300) {
-        mob.depositGuardSleeping = false;
-        mob.passive  = false;
-        mob.state    = 'aggro';
-        mob.sprite.setTint(0xff3333);
-        this.time.delayedCall(350, () => { if (mob.alive) mob.sprite.clearTint(); });
-        this.cameras.main.shake(160, 0.004);
-      }
-    }
   }
 
   // ── Данж: Рой — стайный агрос (pack trigger) ─────────────────────────────
@@ -3557,8 +3582,9 @@ export default class GameScene extends Phaser.Scene {
       }
     }
 
-    // ── Plasmate auto-collect (premium + loot_magnet skill affects radius) ──
-    if (this.premium) {
+    // ── Plasmate auto-collect (premium, when autoCollect setting is OFF) ──
+    // When autoCollect is ON, _updateAutoCollect handles all deposits instead.
+    if (this.premium && !this.autoCollectEnabled) {
       const limitReached = (this.plasmateToday || 0) >= PLASMATE_DAILY_MAX;
       const plasmateCargoFull = this.inventory.length >= this._cargoMax()
         && !this.inventory.some(i => i.type === 'plasmate' && i.amount < PLASMATE_PER_SLOT);
@@ -3613,6 +3639,63 @@ export default class GameScene extends Phaser.Scene {
           const pscale = ddist / SHRINK_DIST;
           dep.sprite.setDisplaySize(dep._origDisplayW * pscale, dep._origDisplayH * pscale);
         }
+      }
+    }
+  }
+
+  // Авто-сбор всех ресурсов (★ Премиум + настройка autoCollect).
+  // Работает в любом секторе, для плазмида и данж-ресурсов.
+  // Независим от autoLoot — магнит лута может быть выключен.
+  _updateAutoCollect(dt) {
+    if (!this.premium || !this.autoCollectEnabled) return;
+    if (!this.player?.alive || this.atBase || this.jumping) return;
+
+    const MAGNET_BASE = 180;
+    const radius = MAGNET_BASE * (this.player.lootPickupRadiusMult ?? 1.0);
+    const px = this.player.x, py = this.player.y;
+
+    for (const dep of this.plasmateDeposits) {
+      if (!dep.alive) continue;
+      if (dep === this.collectTarget) continue;
+      if (dep._magnetCooldownUntil && this.time.now < dep._magnetCooldownUntil) continue;
+      // Не тянем плазмид если лимит или трюм полон
+      if (dep.isPlasmate) {
+        if ((this.plasmateToday || 0) >= PLASMATE_DAILY_MAX) continue;
+        if (this.inventory.length >= this._cargoMax()
+          && !this.inventory.some(i => i.type === 'plasmate' && i.amount < PLASMATE_PER_SLOT)) continue;
+      }
+
+      const dx = px - dep.sprite.x, dy = py - dep.sprite.y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+
+      if (!dep._magnetPull) {
+        if (dist >= radius) continue;
+        dep._magnetPull = true;
+        dep._origDisplayW = dep.sprite.displayWidth;
+        dep._origDisplayH = dep.sprite.displayHeight;
+      } else if (dist > radius * 2) {
+        dep._magnetPull = false;
+        dep.sprite.setDisplaySize(dep._origDisplayW ?? 40, dep._origDisplayH ?? 40);
+        continue;
+      }
+
+      if (dist < 8) {
+        dep._magnetPull = false;
+        dep.sprite.setDisplaySize(dep._origDisplayW ?? 40, dep._origDisplayH ?? 40);
+        this._collectPlasmateDeposit(dep); // внутри диспетчеризует на данж-ресурс если нужно
+        if (dep.alive) dep._magnetCooldownUntil = this.time.now + 5000;
+        continue;
+      }
+
+      const t = Math.max(0, 1 - dist / radius);
+      const speed = (150 + 450 * t) * dt;
+      dep.sprite.x += (dx / dist) * speed;
+      dep.sprite.y += (dy / dist) * speed;
+
+      const SHRINK_DIST = 50;
+      if (dist < SHRINK_DIST) {
+        const scale = dist / SHRINK_DIST;
+        dep.sprite.setDisplaySize(dep._origDisplayW * scale, dep._origDisplayH * scale);
       }
     }
   }
@@ -3811,7 +3894,7 @@ export default class GameScene extends Phaser.Scene {
       addWall(cx - 1875, cy + 100, 1650, 300);                // горизонт. ряд, лево
       addWall(cx, cy + 100, 1100, 300);                       // горизонт. ряд, центр
       addWall(cx + 1875, cy + 100, 1650, 300);                // горизонт. ряд, право
-      addBossDoor(cx + 1650, cy - 1600, 1600, 300);           // верхне-правая комната
+      addBossDoor(cx + 1750, cy - 1300, 1600, 300);           // верхне-правая комната: x cx+950..cx+2550, y cy-1450..cy-1150
 
     } else if (galaxy.current === 'dungeon_4') {
       // Поле обломков: фиксированные осколки с небольшим jitter
@@ -3819,16 +3902,20 @@ export default class GameScene extends Phaser.Scene {
       const CHUNKS = [
         [ 500, -1300, 480, 260], [-900, -900, 380, 240], [1500, -700, 320, 200],
         [-1600, -500, 420, 180], [ 900,  300, 360, 220], [-300,  900, 500, 200],
-        [1600,  900, 340, 190], [-1200, 1100, 280, 260], [ 400, -500, 260, 300],
+        [-1200, 1100, 280, 260], [ 400, -500, 260, 300],
         [-500, -1500, 300, 200], [1900,  100, 260, 340], [-1900, 700, 300, 280],
-        [-400, 1400, 440, 200], [1300, 1300, 360, 200], [ 800, -1700, 280, 240],
+        [-400, 1400, 440, 200], [ 800, -1700, 280, 240],
         [-1100,  300, 200, 380], [ 200, 1700, 300, 200], [-1600, -1300, 260, 200],
       ];
       CHUNKS.forEach(([ox, oy, w, h]) => {
         const jx = rnd4.between(-40, 40), jy = rnd4.between(-30, 30);
         addWall(cx + ox + jx, cy + oy + jy, w, h);
       });
-      addBossDoor(cx + 1900, cy + 1100, 300, 1000);           // юго-восточный угол
+      // Боссовая комната (SE): интерьер cx+1400..cx+3000, cy+1250..cy+1950; вход с севера
+      addWall(cx + 1250, cy + 1600, 300, 700);           // левая стена
+      addWall(cx + 3150, cy + 1600, 300, 700);           // правая стена
+      addWall(cx + 2200, cy + 2100, 1600, 300);          // южная стена
+      addBossDoor(cx + 2200, cy + 1100, 1600, 300);      // северная стена (вход, boss door)
 
     } else if (galaxy.current === 'dungeon_5') {
       // Три кольца обороны: внешнее (N/S/E/W проходы), среднее (крест-бары), внутреннее (арена)
@@ -3891,7 +3978,7 @@ export default class GameScene extends Phaser.Scene {
 
   _checkDungeonBossDoor() {
     if (!this.dungeonBossDoor) return;
-    const remaining = this.mobs.filter(m => m.alive && !m.isDungeonBoss && !m.isBossEscort).length;
+    const remaining = this.mobs.filter(m => m.alive && !m.isDungeonBoss && !m.isBossEscort && !m.isDepositGuard).length;
     if (remaining === 0) this._openDungeonBossDoor();
   }
 
@@ -3958,9 +4045,8 @@ export default class GameScene extends Phaser.Scene {
       }
 
       const guard = new Mob(this, MOBS[dcfg.guard], guardLvl, x + 130, y + 90,
-        { behavior: 'guard', patrolRadius: 150, leash: 400, passive: true, ...(galaxy.current === 'R-1-boss' ? { dmgMult: 2 } : {}) });
+        { behavior: 'guard', patrolRadius: 150, leash: 400, ...(galaxy.current === 'R-1-boss' ? { dmgMult: 2 } : {}) });
       guard.isDepositGuard = true;
-      guard.depositGuardSleeping = true;
       this.mobs.push(guard);
     });
   }

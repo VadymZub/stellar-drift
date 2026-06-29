@@ -23,6 +23,7 @@ export const DEFAULTS = {
   // Gameplay
   autoTarget:   true,
   autoLoot:     true,
+  autoCollect:  false,  // premium: auto-collect dungeon resources within magnet radius
   // Graphics
   engineTrails: true,
   cameraShake:  true,

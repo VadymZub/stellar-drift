@@ -367,6 +367,31 @@ export function rollLootForMob(mob) {
   return maker(tier, mob.level);
 }
 
+// Дроп для домашних секторов (1-5). Фиксированные шансы по тиру; не применяется в данжах и PvP.
+// Моб: 10% total. Босс: 50% total. dropMult применяется к обоим.
+const HOME_SECTOR_TABLE = {
+  1: { mobTiers: [[1, 1.0]],        mobTotal: 0.10, bossTiers: [[1, 1.0]],        bossTotal: 0.50 },
+  2: { mobTiers: [[1, 0.4],[2,1.0]], mobTotal: 0.10, bossTiers: [[1, 0.2],[2,1.0]], bossTotal: 0.50 },
+  3: { mobTiers: [[2, 0.4],[3,1.0]], mobTotal: 0.10, bossTiers: [[2, 0.2],[3,1.0]], bossTotal: 0.50 },
+  4: { mobTiers: [[3, 0.4],[4,1.0]], mobTotal: 0.10, bossTiers: [[3, 0.2],[4,1.0]], bossTotal: 0.50 },
+  5: { mobTiers: [[4, 1.0]],        mobTotal: 0.10, bossTiers: [[4, 1.0]],        bossTotal: 0.50 },
+};
+
+export function rollHomeSectorLoot(mob, sectorIdx, dropMult) {
+  const tbl = HOME_SECTOR_TABLE[sectorIdx];
+  if (!tbl) return null;
+  const isBoss = mob.isBoss;
+  const total = (isBoss ? tbl.bossTotal : tbl.mobTotal) * (dropMult ?? 1);
+  if (Phaser.Math.FloatBetween(0, 1) >= total) return null;
+  const tiers = isBoss ? tbl.bossTiers : tbl.mobTiers;
+  const r = Phaser.Math.FloatBetween(0, 1);
+  let tier = tiers[tiers.length - 1][0];
+  for (const [t, cum] of tiers) { if (r < cum) { tier = t; break; } }
+  const rType = Phaser.Math.Between(0, 99);
+  const maker = rType < 40 ? rollCannon : rType < 70 ? rollShield : rType < 90 ? rollEngine : rollArmor;
+  return maker(tier, mob.level);
+}
+
 // Имя предмета (через i18n).
 export function itemName(item) {
   if (item.type === 'plasmate') return `${i18n.t('item.plasmate')} ×${item.amount}`;

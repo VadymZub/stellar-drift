@@ -91,12 +91,6 @@ const SKILLS_DEF = [
   { key: 'stealth_sprint',    branch: 'trading',     type: 'active',  nameRu: 'Скрытный рывок',
     maxLevel: 1, icon: '👻', requires: [['cargo_expand', 1]],
     effects: ['+35% скор + стелс 8c, КД 55c'] },
-  { key: 'auto_ammo',         branch: 'trading',     type: 'passive', nameRu: 'Авто-боеприпасы',
-    maxLevel: 1, requires: [['merchants_eye', 1]],
-    effects: ['Автопокупка патронов при входе в сектор'] },
-  { key: 'auto_consumables',  branch: 'trading',     type: 'passive', nameRu: 'Авто-расходники',
-    maxLevel: 1, requires: [['merchants_eye', 1]],
-    effects: ['Автопокупка расходников при входе на базу'] },
 ];
 
 const SKILL_MAP = {};
@@ -131,8 +125,6 @@ function layoutFor(branch, cx, sy, rh, f) {
       scanner_boost:     { x: cx - f, y: sy + rh * 3 },
       cargo_expand:      { x: cx + f, y: sy + rh * 3 },
       stealth_sprint:    { x: cx + f, y: sy + rh * 4 },
-      auto_ammo:         { x: cx - f, y: sy + rh * 4 },
-      auto_consumables:  { x: cx - f, y: sy + rh * 5 },
     },
   };
   return L[branch] || {};

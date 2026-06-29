@@ -45,8 +45,6 @@ const SKILL_TREE = [
   { key: 'scanner_boost',      max: 3, req: [['merchants_eye', 1]] },
   { key: 'cargo_expand',       max: 3, req: [['merchants_eye', 1]] },
   { key: 'stealth_sprint',     max: 1, req: [['cargo_expand', 1]] },
-  { key: 'auto_ammo',          max: 1, req: [['merchants_eye', 1]] },
-  { key: 'auto_consumables',   max: 1, req: [['merchants_eye', 1]] },
 ];
 
 // Greedy SP distribution — fills one point at a time in tree order, respecting deps.

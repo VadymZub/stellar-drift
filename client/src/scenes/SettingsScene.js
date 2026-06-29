@@ -33,7 +33,7 @@ export default class SettingsScene extends Phaser.Scene {
     dim.on('pointerdown', () => this.scene.stop());
 
     // Panel
-    const PW = 500, PH = 560;
+    const PW = 500, PH = 660;
     const px = Math.round((W - PW) / 2), py = Math.round((H - PH) / 2);
 
     const panel = this.add.graphics().setDepth(1);
@@ -145,8 +145,14 @@ export default class SettingsScene extends Phaser.Scene {
     this._addToggle('Кнопки Группа / Друзья', 'showSocialBtns', T, LX, RX, y); y += 36;
 
     this._section('ГЕЙМПЛЕЙ', T, LX, RX, y); y += 22;
-    this._addToggle('Авто-цель (Tab)', 'autoTarget', T, LX, RX, y); y += 36;
-    this._addToggle('Авто-лут',        'autoLoot',   T, LX, RX, y);
+    this._addToggle('Авто-цель (Tab)', 'autoTarget',  T, LX, RX, y); y += 36;
+    this._addToggle('Авто-лут',        'autoLoot',    T, LX, RX, y); y += 36;
+    this._addToggle('Авто-сбор ресурсов', 'autoCollect', T, LX, RX, y);
+    this._track(
+      this.add.text(LX + 168, y + 18, '(премиум)', { fontFamily: 'Inter, sans-serif', fontSize: '10px', fontStyle: 'italic', color: '#2a7a5a', resolution: UI_RES }).setOrigin(0, 0.5).setDepth(5),
+      T
+    );
+    y += 36;
   }
 
   _buildGraphicsTab(y, LX, RX) {
@@ -417,8 +423,9 @@ export default class SettingsScene extends Phaser.Scene {
       hud._rebuildFriendsWin?.();
       hud._updateSocialBtnStyles?.();
     }
-    if (gs) gs.magnetEnabled      = next.autoLoot;
-    if (gs) gs._autoTargetEnabled = next.autoTarget;
+    if (gs) gs.magnetEnabled        = next.autoLoot;
+    if (gs) gs._autoTargetEnabled   = next.autoTarget;
+    if (gs) gs.autoCollectEnabled   = next.autoCollect;
 
     if (next.uiScale !== prev.uiScale && hud) {
       this.scene.stop('HudScene');

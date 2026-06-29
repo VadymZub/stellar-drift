@@ -13,12 +13,7 @@ export default class CargoScene extends Phaser.Scene {
   O(s, c) { return { fontFamily: 'Orbitron, sans-serif', fontSize: s, color: c, resolution: UI_RES }; }
   F(s, c) { return { fontFamily: 'Inter, sans-serif', fontSize: s, color: c, resolution: UI_RES }; }
 
-  _cargoMax() {
-    const gs = this.gs; const sl = gs.skillLevels?.cargo_expand || 0;
-    const drover = gs.activeShip === 'drover' ? 4 : 0;
-    const prem   = gs.premium ? 8 : 0;
-    return 8 + drover + ([0,3,8,16][sl]||0) + prem;
-  }
+  _cargoMax() { return this.gs._cargoMax(); }
   _whMax() { const gs = this.gs; const sl = gs.skillLevels?.cargo_expand || 0; return 8 + ([0,3,8,16][sl]||0) + (gs.premium ? 8 : 0); }
 
   _addConsumableToBar(type) {

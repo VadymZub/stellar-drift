@@ -420,12 +420,7 @@ export default class GarageScene extends Phaser.Scene {
 
   // Универсальная слот-сетка: 5 колонок × N рядов, clip-маска + колесо мыши для скролла.
   // type = 'inventory' (трюм, надеть/продать) | 'warehouse' (склад, → трюм)
-  _cargoMax() {
-    const gs = this.gs; const sl = gs.skillLevels?.cargo_expand || 0;
-    const drover = gs.activeShip === 'drover' ? 4 : 0;
-    const prem   = gs.premium ? 8 : 0;
-    return 8 + drover + ([0,3,8,16][sl]||0) + prem;
-  }
+  _cargoMax() { return this.gs._cargoMax(); }
   _whMax() { const gs = this.gs; const sl = gs.skillLevels?.cargo_expand || 0; return 8 + ([0,3,8,16][sl]||0) + (gs.premium ? 8 : 0); }
 
   // clipBotH: высота нижней полосы-заглушки (null = до низа панели, число = ровно столько)

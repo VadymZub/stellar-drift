@@ -270,7 +270,7 @@ export default class Mob {
       if (this.isBoss && this.tpl.bossType === 'roaming') {
         moveSpeed = this._updateRoaming(dt, dist, player, speedMult);
         this._updateBossAoe(dt, dist);
-        this._updateScatterShot(dt, fireProjectile);
+        this._updateScatterShot(dt, player, fireProjectile);
         this.fireCooldown -= dt;
         if (this.fireCooldown <= 0 && dist <= this.tpl.range) {
           this.fireCooldown = 1 / (this.tpl.fireRate * fireMult * berserkFire);
@@ -534,17 +534,17 @@ export default class Mob {
     return this.tpl.speed * 0.7 * speedMult;
   }
 
-  _updateScatterShot(dt, fireProjectile) {
+  _updateScatterShot(dt, player, fireProjectile) {
     this._scatterTimer -= dt;
     if (this._scatterTimer <= 0) {
       this._scatterTimer = 8;
-      const baseAng = this.heading;
+      const baseAng = Math.atan2(player.y - this.y, player.x - this.x);
       const SHOTS = 5;
+      const SPREAD = Math.PI / 6; // 30° total, ±15° от центра
       for (let i = 0; i < SHOTS; i++) {
-        const ang = baseAng + (i - Math.floor(SHOTS / 2)) * (Math.PI / (SHOTS - 1));
-        // Временно меняем heading для fireProjectile
-        const tx = this.x + Math.cos(ang) * 600;
-        const ty = this.y + Math.sin(ang) * 600;
+        const ang = baseAng + (i - Math.floor(SHOTS / 2)) * (SPREAD / (SHOTS - 1));
+        const tx = this.x + Math.cos(ang) * 800;
+        const ty = this.y + Math.sin(ang) * 800;
         fireProjectile(this, tx, ty);
       }
     }
