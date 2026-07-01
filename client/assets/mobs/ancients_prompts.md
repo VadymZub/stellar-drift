@@ -158,11 +158,11 @@ top-down 2D game sprite of an alien ancient boss entity Apophis, colossal multi-
 
 ---
 
-### ancient_13.png — Апофис Разбуженный (Apophis Enraged — Phase 2)
-Роль: BOSS фаза 2 (hp < 40%) · core fragment breaks free · агрессивный
+### ancient_13.png — Реаниматор (Reanimator)
+Роль: хилер-дрон · фаза 4 босса · hull 600 · bossHealer — лечит Апофиса изнутри арены
 
 ```
-top-down 2D game sprite of an alien ancient boss entity Apophis enraged phase 2, the outer crystal rings have shattered into orbiting debris fragments — dozens of sharp crystal shards spinning in a chaotic halo around the central core, the core itself has cracked open revealing blinding orange-white plasma interior (#ff6f00 through #fff9c4), massive jagged crystal spires erupt from the core in eight directions like a broken star, purple and gold energy arcs (#ce93d8, #ffd54f) constantly discharge between the debris fragments, the silhouette is now spiky and chaotic compared to the orderly phase 1 — pure unbridled destruction, still massive — fills the frame, top-down view, no smoke, no fog, no exhaust trails, no atmospheric effects, pure transparency only, isolated on transparent background, alien crystalline ancient cosmic aesthetic, painterly stylized top-down RTS unit art, AAA mobile game quality, no text, no characters
+top-down 2D game sprite of an alien ancient nano-healer drone spacecraft, small rounded orb-shaped crystal body approximately 88px across with four thin flexible manipulator tentacles extending outward symmetrically, main body color dark teal (#00BCD4) semi-transparent crystal with green energy accents (#69F0AE) glowing along each tentacle, a central bright green-white healing core (#00E676) pulses with a soft medical rhythm, the tentacles curve gently toward a target — organic and fluid compared to the angular Ancients warriors, when healing the tentacles glow intensely bright green and visually reach toward the boss, top-down view, nose pointing downward, no smoke, no fog, no exhaust trails, no atmospheric effects, pure transparency only, isolated on transparent background, alien crystalline ancient cosmic aesthetic, painterly stylized top-down RTS unit art, AAA mobile game quality, no text, no characters
 ```
 
 ---
@@ -245,7 +245,7 @@ top-down view of a single isolated crystalline ring for a sci-fi alien boss spac
 "mob.ancient_10": "Левиафан",
 "mob.ancient_11": "Жнец",
 "mob.ancient_12": "АПОФИС",
-"mob.ancient_13": "АПОФИС — ГНЕВ"
+"mob.ancient_13": "Реаниматор"
 ```
 
 ## Порядок работы

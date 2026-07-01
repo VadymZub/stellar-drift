@@ -112,12 +112,14 @@ const PVP_GATES = {
     helios_5: [-9658,     0],                 // left edge, center
     karax_5:  [+9658, -2640],                 // right edge, upper
     tides_5:  [+9658, +2640],                 // right edge, lower
+    pvp_5:    [    0, -5296],                 // top edge, center → Сердце Бездны
   },
   pvp_5: {                                    // Layout D
     helios_5:   [-9658, -5296],               // NW corner
     karax_5:    [+9658, -5296],               // NE corner
     tides_5:    [    0, +5296],               // S-center
     'R-1-boss': [+9658,     0],               // right edge, center
+    pvp_4:      [-9658,     0],               // left edge, center → Нейтральная Зона
   },
 };
 
@@ -141,7 +143,7 @@ export default class GameScene extends Phaser.Scene {
     // PvE-секторы (не данж, не PvP, не персональный) — +20% по каждой стороне
     const scale = isPvp ? PVP_WORLD_SCALE : (isDungeon || isPersonal) ? 1.0 : 1.2;
 
-    const worldScale = galaxy.current === 'shadow_arena' ? 0.5 : galaxy.current === 'R-1-boss' ? 2.0 : scale;
+    const worldScale = galaxy.current === 'shadow_arena' ? 0.5 : galaxy.current === 'R-1-boss' ? 2.5 : scale;
     this.worldWidth = BASE_WORLD.width * worldScale;
     this.worldHeight = BASE_WORLD.height * worldScale;
     this.safeZoneRadius = BASE_WORLD.safeZoneRadius;
@@ -820,26 +822,75 @@ export default class GameScene extends Phaser.Scene {
     }
 
     if (galaxy.current === 'R-1-boss') {
-      // Специальный спавн для босс-уровня Алгол: Зов Апофиса (все мобы ×3)
-      const apophis = add('apophis', 50, 0, 0, { behavior: 'guard', patrolRadius: 100, leash: Infinity, hpMult: 3, dmgMult: 6 });
+      // Зов Апофиса: вертикальная звезда, 5 открытых коридоров, центральный круг закрыт
+      const apophis = add('apophis', 50, 0, 0, { behavior: 'guard', patrolRadius: 100, leash: Infinity, hpMult: 15, dmgMult: 6 });
       apophis.isDungeonBoss = true;
       apophis.sprite.setAlpha(0.92);
-      this._apophisBoss = apophis;
+      this._apophisBoss    = apophis;
       this._apophisRingsEnraged = false;
-      this._apophisPhase2Started = false;
-      this._apophisRings = this._createApophisRings(cx, cy);
-      // Пульс тела: медленное дыхание
-      const sx = apophis.sprite.scaleX, sy = apophis.sprite.scaleY;
+      this._clearedCorridors    = new Set();
+      this._apophisRings   = this._createApophisRings(cx, cy);
+      const _sx = apophis.sprite.scaleX, _sy = apophis.sprite.scaleY;
       this._apophisPulseTween = this.tweens.add({
-        targets: apophis.sprite,
-        scaleX: sx * 1.12, scaleY: sy * 1.12,
+        targets: apophis.sprite, scaleX: _sx * 1.12, scaleY: _sy * 1.12,
         duration: 2200, yoyo: true, repeat: -1, ease: 'Sine.easeInOut',
       });
-      const ringPts = [[1440, 1440], [-1440, 1440], [1440, -1440], [-1440, -1440]];
-      ringPts.forEach(o => {
-        const g = add('ancient_06', 50, o[0], o[1], { behavior: 'guard', patrolRadius: 600, bossRef: apophis, hpMult: 3, dmgMult: 6 });
-        g.isBossEscort = true;
-      });
+      // Вертикальная 5-конечная звезда (вершина — вверх): BASE_ANGLE = -π/2
+      const arenaR = 1600, corrLen = 3200;
+      const CORR_ANGLES = [
+        -Math.PI / 2,                          // 0: вверх (вертикальный луч)
+        -Math.PI / 2 + 2 * Math.PI / 5,        // 1: верхне-правый
+        -Math.PI / 2 + 4 * Math.PI / 5,        // 2: нижне-правый
+        -Math.PI / 2 + 6 * Math.PI / 5,        // 3: нижне-левый
+        -Math.PI / 2 + 8 * Math.PI / 5,        // 4: верхне-левый
+      ];
+      const CORR_HW = [310, 440, 440, 440, 440]; // вертикальный луч уже, боковые шире
+      // 6 стражников на коридор (утроено): равномерно по глубине
+      const GUARD_DEPTHS = [0.18, 0.32, 0.46, 0.56, 0.70, 0.84];
+      const GUARD_PERPS  = [0, 0.28, -0.28, 0.28, -0.28, 0];
+      for (let ci = 0; ci < 5; ci++) {
+        const a = CORR_ANGLES[ci];
+        const cosA = Math.cos(a), sinA = Math.sin(a);
+        const pX = -sinA, pY = cosA;
+        const hw = CORR_HW[ci];
+        GUARD_DEPTHS.forEach((t, gi) => {
+          const d = arenaR + corrLen * t;
+          const pOff = hw * GUARD_PERPS[gi];
+          const g = add('ancient_05', 50, d * cosA + pOff * pX, d * sinA + pOff * pY,
+            { behavior: 'guard', patrolRadius: 380, leash: 1400 });
+          g.corridorIndex = ci;
+        });
+        // Гравитационная ловушка-моб + отражатель в коридоре
+        const ga07 = add('ancient_07', 50,
+          (arenaR + corrLen * 0.40) * cosA + hw * 0.5 * pX,
+          (arenaR + corrLen * 0.40) * sinA + hw * 0.5 * pY,
+          { behavior: 'guard', patrolRadius: 200, leash: 800 });
+        ga07.corridorIndex = ci;
+        const ga07r = add('ancient_07_1', 50,
+          (arenaR + corrLen * 0.62) * cosA - hw * 0.5 * pX,
+          (arenaR + corrLen * 0.62) * sinA - hw * 0.5 * pY,
+          { behavior: 'guard', patrolRadius: 200, leash: 800 });
+        ga07r.corridorIndex = ci;
+        // 2 кластера по 3 бомбы (ancient_04b) в коридоре
+        [0.35, 0.65].forEach(bt => {
+          const bd = arenaR + corrLen * bt;
+          [0, 1, 2].forEach(bi => {
+            const bAng = bi * (Math.PI * 2 / 3);
+            const bomb = add('ancient_04b', 50,
+              bd * cosA + Math.cos(bAng) * 90,
+              bd * sinA + Math.sin(bAng) * 90,
+              { behavior: 'guard', patrolRadius: 80, leash: 700 });
+            bomb.corridorIndex = ci;
+          });
+        });
+      }
+      // 5 начальных эскортов вокруг Апофиса (до первой фазы)
+      for (let i = 0; i < 5; i++) {
+        const a = (i / 5) * Math.PI * 2;
+        const esc = add('ancient_06', 50, Math.cos(a) * 700, Math.sin(a) * 700,
+          { behavior: 'guard', patrolRadius: 350, bossRef: apophis, hpMult: 2, dmgMult: 2 });
+        esc.isBossEscort = true;
+      }
       return;
     }
 
@@ -1134,16 +1185,12 @@ export default class GameScene extends Phaser.Scene {
       const grp = this.groupSystem;
       if (grp?.inGroup && grp.isLeader) grp.syncBossHp(hpRatio);
     }
-    // Фаза 2: при 50% HP вызвать Жнецов и Левиафанов
-    if (!this._apophisPhase2Started && hpRatio < 0.50) {
-      this._apophisPhase2Started = true;
-      this._startApophisPhase2();
-    }
-    if (!this._apophisRingsEnraged && hpRatio < 0.40) {
+    // Кольца ускоряются и краснеют при фазе 4 (25% HP)
+    if (!this._apophisRingsEnraged && hpRatio < 0.25) {
       this._apophisRingsEnraged = true;
       for (const r of this._apophisRings) {
-        r._rotSpeed *= 2.2;
-        r.setTint(0xff4444);
+        r._rotSpeed *= 2.5;
+        r.setTint(0xff3333);
       }
     }
     for (const r of this._apophisRings) {
@@ -1175,41 +1222,31 @@ export default class GameScene extends Phaser.Scene {
     } catch {}
   }
 
-  _startApophisPhase2() {
-    const cx = this.worldWidth / 2, cy = this.worldHeight / 2;
-    this.log('Апофис входит во вторую фазу!');
-    let delay = 0;
-    // 3 Жнеца (ancient_10 ×3) последовательно с интервалом 2с
-    [[-400, 350], [0, 500], [400, 350]].forEach(([ox, oy]) => {
-      this.time.delayedCall(delay, () => {
-        if (!this._apophisBoss?.alive) return;
-        const m = new Mob(this, MOBS['ancient_10'], 50, cx + ox, cy + oy,
-          { behavior: 'guard', patrolRadius: 350, bossRef: this._apophisBoss, hpMult: 3, dmgMult: 3 });
+  onApophisPhase(phase) {
+    const boss = this._apophisBoss;
+    if (!boss?.alive) return;
+    const bx = boss.x, by = boss.y;
+    this.log(i18n.t(`log.apophis_phase${phase}`));
+    const spawnRing = (tplKey, count, radius, opts = {}) => {
+      for (let i = 0; i < count; i++) {
+        const a = (i / count) * Math.PI * 2;
+        const m = new Mob(this, MOBS[tplKey], 50,
+          bx + Math.cos(a) * radius, by + Math.sin(a) * radius,
+          { patrolRadius: 450, bossRef: boss, hpMult: 2, dmgMult: 2, ...opts });
         m.isBossEscort = true;
         m._groupMobId = this._nextGroupMobId++;
-        const _grp2 = this.groupSystem;
-        if (_grp2?.inGroup && !_grp2.isLeader) m.ghostBoss = true;
+        const grp = this.groupSystem;
+        if (grp?.inGroup && !grp.isLeader) m.ghostBoss = true;
         this.mobs.push(m);
-        this.log('Жнец появляется!');
-      });
-      delay += 2000;
-    });
-    delay += 1000;
-    // 4 Левиафана (ancient_06 ×4) последовательно с интервалом 2с
-    [[-700, 0], [-230, 0], [230, 0], [700, 0]].forEach(([ox, oy]) => {
-      this.time.delayedCall(delay, () => {
-        if (!this._apophisBoss?.alive) return;
-        const m = new Mob(this, MOBS['ancient_06'], 50, cx + ox, cy + oy,
-          { behavior: 'guard', patrolRadius: 350, bossRef: this._apophisBoss, hpMult: 3, dmgMult: 3 });
-        m.isBossEscort = true;
-        m._groupMobId = this._nextGroupMobId++;
-        const _grp2 = this.groupSystem;
-        if (_grp2?.inGroup && !_grp2.isLeader) m.ghostBoss = true;
-        this.mobs.push(m);
-        this.log('Левиафан появляется!');
-      });
-      delay += 2000;
-    });
+        this.physics.add.collider(m.sprite, this.walls);
+      }
+    };
+    if (phase === 2) spawnRing('ancient_10', 6, 800);             // 6 Жнецов
+    if (phase === 3) spawnRing('ancient_06', 5, 1000);            // 5 Левиафанов
+    if (phase === 4) {
+      spawnRing('ancient_11', 4, 1200);                           // 4 Звёздных бойца
+      spawnRing('ancient_13', 2, 500, { behavior: 'guard', patrolRadius: 380 }); // 2 Реаниматора
+    }
   }
 
   _spawnHomeBase() {
@@ -2776,7 +2813,13 @@ export default class GameScene extends Phaser.Scene {
       const pH = mob.level > pl ? HONOR.PVP_HIGHER : mob.level === pl ? HONOR.PVP_EQUAL : HONOR.PVP_LOWER;
       this.gainHonor(pH);
     }
-    if (sec?.isDungeon) this._checkDungeonBossDoor();
+    if (sec?.isDungeon) {
+      if (galaxy.current === 'R-1-boss' && mob.corridorIndex !== undefined) {
+        this._checkCorridorClear(mob.corridorIndex);
+      } else {
+        this._checkDungeonBossDoor();
+      }
+    }
   }
 
   _trackClanContrib(type, amount) {
@@ -3299,6 +3342,10 @@ export default class GameScene extends Phaser.Scene {
     this.argusCtrl?.update(dt);
     this.confedGuards?.update(dt, this.player);
     if (this._apophisRings) this._updateApophisRings(dt);
+    this._updateRingDamage(dt);
+    this._updateGravTraps(dt);
+    this._updateMines(dt);
+    if (this._apophisBoss) this._updateHealerEffects(dt);
     this._updateBotPilot(dt);
     this._updateEscort(dt);
 
@@ -3959,17 +4006,85 @@ export default class GameScene extends Phaser.Scene {
       addBossDoor(cx + 2475, cy + 1650, 450, 250); // горизонтальный boss door в восточном проходе
 
     } else if (galaxy.current === 'R-1-boss') {
-      // Алтарь: 5 пар колонн — позиции и размер ×2 под удвоенную карту
-      addWall(cx + 4400, cy - 1400, 1200, 1200);
-      addWall(cx + 4400, cy + 1400, 1200, 1200);
-      addWall(cx + 2200, cy - 3900, 1200, 1200);
-      addWall(cx + 4200, cy - 2800, 1200, 1200);
-      addWall(cx - 2200, cy - 3900, 1200, 1200);
-      addWall(cx - 4200, cy - 2800, 1200, 1200);
-      addWall(cx - 2200, cy + 3900, 1200, 1200);
-      addWall(cx - 4200, cy + 2800, 1200, 1200);
-      addWall(cx + 2200, cy + 3900, 1200, 1200);
-      addWall(cx + 4200, cy + 2800, 1200, 1200);
+      // Вертикальная 5-конечная звезда (вершина вверх): коридоры открыты, только центральный круг закрыт
+      const arenaR = 1600, corrLen = 3200, wT = 480;
+      // Вертикальный луч (i=0) уже, горизонтальные шире
+      const CORR_HW = [310, 440, 440, 440, 440];
+      const ANGLES  = [
+        -Math.PI / 2,                          // 0: вверх (вертикальный)
+        -Math.PI / 2 + 2 * Math.PI / 5,        // 1: верхне-правый
+        -Math.PI / 2 + 4 * Math.PI / 5,        // 2: нижне-правый
+        -Math.PI / 2 + 6 * Math.PI / 5,        // 3: нижне-левый
+        -Math.PI / 2 + 8 * Math.PI / 5,        // 4: верхне-левый
+      ];
+
+      // Съёмные стены арены (удаляются при открытии центра)
+      const addArenaWall = (x, y, w, h) => {
+        const wall = this.add.rectangle(x, y, w, h, 0x000000, 0);
+        this.physics.add.existing(wall, true);
+        this.walls.add(wall);
+        const vis = this.add.graphics().setDepth(2);
+        vis.fillStyle(ws.fill, ws.fillA);
+        vis.fillRect(x - w / 2, y - h / 2, w, h);
+        vis.lineStyle(3, ws.edge, 0.9); vis.strokeRect(x - w / 2, y - h / 2, w, h);
+        this.arenaWalls.push(wall);
+        this.arenaWallsVis.push(vis);
+      };
+
+      this.arenaWalls    = [];
+      this.arenaWallsVis = [];
+      this.gravTraps     = [];
+      this.mines         = [];
+
+      // ── Стены центральной арены: перекрытия между коридорами + ворота в каждом коридоре ──
+      for (let i = 0; i < 5; i++) {
+        // Большой квадрат между двумя соседними коридорами (wT*6 = 2880px — перекрывает весь зазор)
+        const midA = (ANGLES[i] + ANGLES[(i + 1) % 5]) / 2;
+        addArenaWall(
+          cx + arenaR * Math.cos(midA),
+          cy + arenaR * Math.sin(midA),
+          wT * 6, wT * 6
+        );
+        // Внутренние ворота: перегородка поперёк коридора у арены (блокирует вход)
+        const a = ANGLES[i], cosA = Math.cos(a), sinA = Math.sin(a);
+        const hw = CORR_HW[i];
+        const dW = Math.abs(sinA) * (hw * 2 + 80) + Math.abs(cosA) * wT + 60;
+        const dH = Math.abs(cosA) * (hw * 2 + 80) + Math.abs(sinA) * wT + 60;
+        addArenaWall(cx + arenaR * cosA, cy + arenaR * sinA, dW, dH);
+      }
+
+      // ── Стены коридоров (открытые снаружи — только боковые стены) ────────────
+      for (let i = 0; i < 5; i++) {
+        const a    = ANGLES[i];
+        const cosA = Math.cos(a), sinA = Math.sin(a);
+        const pX   = -sinA, pY = cosA;   // перпендикуляр (лево)
+        const hw   = CORR_HW[i];
+        const N    = 5;                   // сегментов боковой стены на коридор
+
+        for (let k = 0; k < N; k++) {
+          const d   = arenaR + (k + 0.5) * corrLen / N;
+          const seg = corrLen / N + 120;
+          for (const side of [-1, 1]) {
+            const wx = cx + d * cosA + side * (hw + wT * 0.5) * pX;
+            const wy = cy + d * sinA + side * (hw + wT * 0.5) * pY;
+            // AABB-аппроксимация диагональных стен
+            const wW = Math.abs(cosA) * seg + Math.abs(sinA) * wT + 60;
+            const wH = Math.abs(sinA) * seg + Math.abs(cosA) * wT + 60;
+            addWall(wx, wy, wW, wH, true);
+          }
+        }
+
+        // Гравитационные ловушки: 2 на коридор
+        [0.28, 0.72].forEach(t => {
+          const d2 = arenaR + corrLen * t;
+          this._spawnGravTrap(cx + d2 * cosA, cy + d2 * sinA);
+        });
+
+        // Мина в середине коридора
+        const mineD = arenaR + corrLen * 0.50;
+        this._spawnMine(cx + mineD * cosA, cy + mineD * sinA);
+
+      }
     }
 
     this.physics.add.collider(this.player.sprite, this.walls);
@@ -3993,6 +4108,198 @@ export default class GameScene extends Phaser.Scene {
     this.log(i18n.t('log.boss_door_open'));
   }
 
+  _checkCorridorClear(corridorIndex) {
+    if (!this._clearedCorridors || this._clearedCorridors.has(corridorIndex)) return;
+    const remaining = this.mobs.filter(m => m.alive && m.corridorIndex === corridorIndex).length;
+    if (remaining > 0) return;
+    this._clearedCorridors.add(corridorIndex);
+    this.log(i18n.t('log.corridor_open', { n: corridorIndex + 1 }));
+    if (this._clearedCorridors.size === 5) this._openBossArena();
+  }
+
+  _openBossArena() {
+    for (const w of (this.arenaWalls ?? [])) this.walls.remove(w, true, true);
+    for (const v of (this.arenaWallsVis ?? [])) v.destroy();
+    this.arenaWalls    = [];
+    this.arenaWallsVis = [];
+    this.log(i18n.t('log.apophis_awakened'));
+  }
+
+  // Зелёный луч от Реаниматора к боссу + всплывающие + над боссом
+  _updateHealerEffects(dt) {
+    const boss = this._apophisBoss;
+    if (!boss?.alive) { this._healBeamGfx?.clear(); return; }
+    if (!this._healBeamGfx) {
+      this._healBeamGfx = this.add.graphics().setDepth(48);
+    }
+    this._healBeamGfx.clear();
+    let anyHealing = false;
+    for (const m of this.mobs) {
+      if (!m.alive || !m.tpl.bossHealer || !m._isHealing) continue;
+      anyHealing = true;
+      // Луч: зелёная линия от хилера к боссу
+      this._healBeamGfx.lineStyle(3, 0x00e676, 0.75);
+      this._healBeamGfx.beginPath();
+      this._healBeamGfx.moveTo(m.x, m.y);
+      this._healBeamGfx.lineTo(boss.x, boss.y);
+      this._healBeamGfx.strokePath();
+      // Pulse glow core on beam
+      this._healBeamGfx.lineStyle(8, 0x00ff88, 0.25);
+      this._healBeamGfx.beginPath();
+      this._healBeamGfx.moveTo(m.x, m.y);
+      this._healBeamGfx.lineTo(boss.x, boss.y);
+      this._healBeamGfx.strokePath();
+    }
+    // Всплывающие "+" над боссом когда хилят
+    if (anyHealing) {
+      this._healPlusTimer = (this._healPlusTimer ?? 0) + dt;
+      if (this._healPlusTimer >= 0.35) {
+        this._healPlusTimer = 0;
+        const px = boss.x + Phaser.Math.Between(-50, 50);
+        const py = boss.y - 60;
+        const plus = this.add.text(px, py, '+', {
+          fontFamily: 'Inter, sans-serif', fontSize: '20px', color: '#00e676',
+          fontStyle: 'bold', resolution: 2,
+        }).setOrigin(0.5, 1).setDepth(60).setAlpha(1);
+        this.tweens.add({
+          targets: plus, y: py - 80, alpha: 0, duration: 900, ease: 'Quad.easeOut',
+          onComplete: () => plus.destroy(),
+        });
+      }
+    } else {
+      this._healPlusTimer = 0;
+    }
+  }
+
+  // Детонация бомбы-моба: урон 10% от (shield+hull), цепная реакция
+  onBombDetonate(bomb) {
+    const bx = bomb.x, by = bomb.y;
+    const br = bomb.tpl.bombBlastRadius ?? 320;
+    const cr = bomb.tpl.bombChainRadius ?? 400;
+    this.explosion(bx, by, 1.0);
+    // Урон игроку
+    if (this.player?.alive) {
+      const pdist = Phaser.Math.Distance.Between(bx, by, this.player.x, this.player.y);
+      if (pdist <= br) {
+        const totalHp = (this.player.hull ?? 0) + (this.player.shield ?? 0);
+        const dmg = Math.max(totalHp * 0.10, 60);
+        const falloff = 1 - (pdist / br) * 0.5;
+        const res = this.player.takeDamage(dmg * falloff, 0.2);
+        this.showDamage(this.player.x, this.player.y, res);
+        if (!this.player.alive) this.onPlayerKilled();
+      }
+    }
+    // Цепная реакция: активируем соседние бомбы
+    for (const m of this.mobs) {
+      if (m === bomb || !m.alive || m.tpl.aiClass !== 'bomb') continue;
+      if (m._bombTriggered) continue;
+      const cd = Phaser.Math.Distance.Between(bx, by, m.x, m.y);
+      if (cd <= cr) {
+        m._bombTriggered = true;
+        m._bombFuseTimer = 0.3; // короткий фитиль при цепи
+        m.sprite.setTint(0xff4444);
+        this.tweens.add({ targets: m.sprite, alpha: { from: 1, to: 0.3 }, duration: 100, yoyo: true, repeat: -1 });
+      }
+    }
+    bomb.alive = false;
+    bomb.sprite?.setVisible(false);
+    bomb.label?.setVisible(false);
+    bomb.bar?.clear();
+    if (bomb.corridorIndex !== undefined) this._checkCorridorClear(bomb.corridorIndex);
+  }
+
+  _updateRingDamage(dt) {
+    const boss = this._apophisBoss;
+    if (!boss?.alive || !this.player?.alive) return;
+    this._ringDmgTimer = (this._ringDmgTimer || 0) + dt;
+    if (this._ringDmgTimer < 0.35) return;
+    this._ringDmgTimer = 0;
+    const ZONES = [
+      { r: 220, hw: 28, dmg: 45 },
+      { r: 165, hw: 22, dmg: 30 },
+      { r: 110, hw: 18, dmg: 20 },
+    ];
+    const dist = Phaser.Math.Distance.Between(this.player.x, this.player.y, boss.x, boss.y);
+    for (const z of ZONES) {
+      if (dist >= z.r - z.hw && dist <= z.r + z.hw) {
+        const res = this.player.takeDamage(z.dmg, 0);
+        this.showDamage(this.player.x, this.player.y, res);
+        if (!this.player.alive) { this.onPlayerKilled(); return; }
+        this.cameras.main.flash(100, 255, 200, 120, true);
+        break;
+      }
+    }
+  }
+
+  _updateGravTraps(dt) {
+    if (!this.gravTraps?.length || !this.player?.alive) return;
+    for (const trap of this.gravTraps) {
+      const dx = trap.x - this.player.x, dy = trap.y - this.player.y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      if (dist < trap.range && dist > 20) {
+        const t = 1 - dist / trap.range;
+        // Гравитационное притяжение
+        const force = trap.strength * t * dt;
+        this.player.sprite.body.velocity.x += (dx / dist) * force;
+        this.player.sprite.body.velocity.y += (dy / dist) * force;
+        // Торможение скорости — корабль с трудом улетает
+        const drag = Math.pow(1 - t * 0.82, dt);
+        this.player.sprite.body.velocity.x *= drag;
+        this.player.sprite.body.velocity.y *= drag;
+      }
+    }
+  }
+
+  _updateMines(dt) {
+    if (!this.mines?.length) return;
+    for (let i = this.mines.length - 1; i >= 0; i--) {
+      const mine = this.mines[i];
+      if (!mine.alive) { this.mines.splice(i, 1); continue; }
+      if (!mine.triggered && this.player?.alive) {
+        const d = Phaser.Math.Distance.Between(mine.x, mine.y, this.player.x, this.player.y);
+        if (d < mine.triggerRange) {
+          mine.triggered = true;
+          this.tweens.killTweensOf(mine.gfx);
+          this.tweens.add({ targets: mine.gfx, alpha: { from: 0.3, to: 1 }, duration: 120, yoyo: true, repeat: -1 });
+        }
+      }
+      if (mine.triggered) {
+        mine.fuseMs -= dt * 1000;
+        if (mine.fuseMs <= 0) {
+          mine.alive = false;
+          mine.gfx.destroy();
+          this.explosion(mine.x, mine.y, 1.2);
+          if (this.player?.alive) {
+            const blastDist = Phaser.Math.Distance.Between(mine.x, mine.y, this.player.x, this.player.y);
+            if (blastDist <= mine.blastRadius) {
+              const falloff = 1 - (blastDist / mine.blastRadius) * 0.6;
+              const res = this.player.takeDamage(mine.damage * falloff, mine.penetration);
+              this.showDamage(this.player.x, this.player.y, res);
+              if (!this.player.alive) this.onPlayerKilled();
+            }
+          }
+          this.mines.splice(i, 1);
+        }
+      }
+    }
+  }
+
+  _spawnGravTrap(x, y) {
+    const gfx = this.add.graphics().setDepth(10);
+    gfx.lineStyle(3, 0xce93d8, 0.8); gfx.strokeCircle(x, y, 80);
+    gfx.fillStyle(0x4a0080, 0.3); gfx.fillCircle(x, y, 80);
+    this.tweens.add({ targets: gfx, alpha: { from: 0.4, to: 1.0 }, duration: 900, yoyo: true, repeat: -1 });
+    this.gravTraps.push({ x, y, range: 700, strength: 4800, gfx });
+  }
+
+  _spawnMine(x, y) {
+    const gfx = this.add.graphics().setDepth(11);
+    gfx.fillStyle(0xff2222, 0.8); gfx.fillCircle(x, y, 22);
+    gfx.lineStyle(2, 0xff8888, 1); gfx.strokeCircle(x, y, 22);
+    this.tweens.add({ targets: gfx, alpha: { from: 0.5, to: 1 }, duration: 600, yoyo: true, repeat: -1 });
+    this.mines.push({ x, y, triggerRange: 150, blastRadius: 280, damage: 300, penetration: 0.25, fuseMs: 2000, triggered: false, alive: true, gfx });
+  }
+
   spawnDungeonDeposits() {
     if (!SECTORS[galaxy.current]?.isDungeon) return;
     const cx = this.worldWidth / 2, cy = this.worldHeight / 2;
@@ -4014,8 +4321,9 @@ export default class GameScene extends Phaser.Scene {
       dungeon_5:    { types: ['biomech_fragment', 'quantum_shard', 'plasma_strand'], guard: 'ancient_08', amount: 18, spots: [[0, -1800], [0, 1800], [1700, 0], [-1800, 0]] },
       // D-prem лабиринт: три зоны между горизонтальными барьерами
       dungeon_prem: { types: ['biomech_fragment', 'quantum_shard', 'plasma_strand'], guard: 'ancient_10', amount: 20, spots: [[-1800, -1300], [-400, -500], [1600, 900]] },
-      // R-1-boss арена: 6 точек между колоннами (карта ×2, депозитов ×3)
-      'R-1-boss':   { types: ['biomech_fragment', 'quantum_shard', 'plasma_strand'], guard: 'ancient_11', amount: 20, spots: [[2400, 2400], [-2400, -2400], [0, 2000], [0, -2000], [3000, 0], [-3000, 0]] },
+      // R-1-boss звезда: по 1 депозиту внутри каждого луча (вертикальная звезда, BASE=-π/2)
+      // arenaR=1600, corrLen=3200 → середина луча ≈ 3100 от центра
+      'R-1-boss':   { types: ['biomech_fragment', 'quantum_shard', 'plasma_strand'], guard: 'ancient_11', amount: 20, spots: [[0,-3100], [2948,-958], [1823,2509], [-1823,2509], [-2948,-958], [0,-4200]] },
     };
     const dcfg = DUNGEON_DEPOSITS[galaxy.current];
     if (!dcfg) return;
@@ -4717,6 +5025,14 @@ export default class GameScene extends Phaser.Scene {
     for (const r of (this._apophisRings ?? [])) r.destroy();
     this._apophisRings = null;
     this._apophisBoss = null;
+    for (const v of (this.arenaWallsVis ?? [])) v.destroy();
+    this.arenaWalls = []; this.arenaWallsVis = [];
+    this._clearedCorridors = null;
+    this._healBeamGfx?.destroy(); this._healBeamGfx = null;
+    for (const trap of (this.gravTraps ?? [])) trap.gfx?.destroy();
+    this.gravTraps = [];
+    for (const mine of (this.mines ?? [])) { if (mine.alive) mine.gfx?.destroy(); }
+    this.mines = [];
     this._adminCh?.postMessage({ type: 'GAME_STATE', alive: false, playerName: this.playerName ?? 'Player' });
     this._adminCh?.close();
     this._adminCh = null;

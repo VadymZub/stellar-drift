@@ -231,5 +231,13 @@
   "log.cargo_full": "Трюм полон",
   "log.plasmate_cargo_full": "Трюм полон — плазмит не помещается",
   "log.plasmate_exchanged": "Обмен плазмита: −{amount} → +{gold} ⭐",
-  "cargo.exchange_plasmate": "⭐ Обменять 500 → 1 золото"
+  "cargo.exchange_plasmate": "⭐ Обменять 500 → 1 золото",
+  "mob.ancient_07_1": "Гравитационный отражатель",
+  "mob.ancient_04b": "Гравитационная мина",
+  "mob.ancient_13": "Реаниматор",
+  "log.corridor_open": "Коридор {n} открыт",
+  "log.apophis_awakened": "АПОФИС ПРОБУЖДЁН",
+  "log.apophis_phase2": "☠ Апофис — фаза 2: Жнецы!",
+  "log.apophis_phase3": "☠ Апофис — фаза 3: Левиафаны!",
+  "log.apophis_phase4": "☠ Апофис — фаза 4: ФИНАЛЬНАЯ!"
 }

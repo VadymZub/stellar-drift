@@ -66,8 +66,9 @@ export const EDGES = [
   // Tides — данжи
   ['tides_1', 'dungeon_1'], ['tides_2', 'dungeon_2'], ['tides_3', 'dungeon_3'],
   ['tides_4', 'dungeon_4'], ['tides_5', 'dungeon_5'],
-  // Премиум данж — вход из dungeon_5 (только с Premium)
+  // Премиум данж — вход из dungeon_5 и из 5-х секторов всех корпораций (только с Premium)
   ['dungeon_5', 'dungeon_prem'],
+  ['helios_5', 'dungeon_prem'], ['karax_5', 'dungeon_prem'], ['tides_5', 'dungeon_prem'],
   // Helios → PvP (со второго сектора)
   ['helios_2', 'pvp_1'], ['helios_3', 'pvp_2'], ['helios_4', 'pvp_3'], ['helios_5', 'pvp_4'],
 
@@ -81,8 +82,9 @@ export const EDGES = [
   // Tides → PvP (со второго сектора)
   ['tides_2', 'pvp_1'], ['tides_3', 'pvp_2'], ['tides_4', 'pvp_3'], ['tides_5', 'pvp_4'],
 
-  // PvP-5 — доступен напрямую из топовых секторов каждого корпа
+  // PvP-5 — доступен напрямую из топовых секторов каждого корпа + из pvp_4
   ['helios_5', 'pvp_5'], ['karax_5', 'pvp_5'], ['tides_5', 'pvp_5'],
+  ['pvp_4', 'pvp_5'],
   ['pvp_5', 'R-1-boss'],
 
   // Тёмный Риф — ответвление от tides_4

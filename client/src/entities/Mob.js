@@ -214,6 +214,27 @@ export default class Mob {
       this.hull = Math.min(this.maxHull, this.hull + this.maxHull * MOB_REGEN.bossHullPctPerSec * dt);
     }
 
+    // Boss healer: 7 сек хила — 3 сек откат, 1000 HP/сек непрерывно
+    if (this.tpl.bossHealer && this.bossRef?.alive) {
+      const hdist = Phaser.Math.Distance.Between(this.x, this.y, this.bossRef.x, this.bossRef.y);
+      if (hdist < (this.tpl.healRange ?? 650)) {
+        if (!this._healPhase) this._healPhase = 'healing';
+        this._healPhaseTimer = (this._healPhaseTimer ?? 0) + dt;
+        if (this._healPhase === 'healing') {
+          this._isHealing = true;
+          this.bossRef.hull = Math.min(this.bossRef.maxHull, this.bossRef.hull + (this.tpl.healRate ?? 1000) * dt);
+          if (this._healPhaseTimer >= 7.0) { this._healPhase = 'cooldown'; this._healPhaseTimer = 0; }
+        } else {
+          this._isHealing = false;
+          if (this._healPhaseTimer >= 3.0) { this._healPhase = 'healing'; this._healPhaseTimer = 0; }
+        }
+      } else {
+        this._isHealing = false;
+        this._healPhase = null;
+        this._healPhaseTimer = 0;
+      }
+    }
+
     const dist = Phaser.Math.Distance.Between(this.x, this.y, player.x, player.y);
     const playerStealthed = (this.scene._stealthEndTime || 0) > now || (this.scene._phantomCloakEndTime || 0) > now;
 
@@ -294,6 +315,15 @@ export default class Mob {
           moveSpeed = this.tpl.speed * speedMult * berserkSpeed;
         }
 
+        // AI-класс: bomb
+        if (this.tpl.aiClass === 'bomb') {
+          this._updateBomb(dt, player);
+          if (!this.alive) return;
+          if (!this._bombTriggered) moveSpeed = this.tpl.speed;
+          this._applyVelocity(moveSpeed);
+          this._updateVisuals();
+          return;
+        }
         // AI-класс: dasher
         if (this.tpl.aiClass === 'dasher') {
           this._updateDasher(dt, dist, speedMult);
@@ -456,19 +486,46 @@ export default class Mob {
     this._abilityTimer -= dt;
     if (this._abilityTimer <= 0) {
       this._abilityTimer = 10;
-      // Телепорт на ±300px перпендикулярно к направлению игрока
       const perpAng = Math.atan2(player.y - this.y, player.x - this.x) + Math.PI / 2 * (Math.random() < 0.5 ? 1 : -1);
-      const dist = Phaser.Math.FloatBetween(200, 300);
-      const nx = this.x + Math.cos(perpAng) * dist;
-      const ny = this.y + Math.sin(perpAng) * dist;
-      // Плавное исчезновение-появление
+      const tdist = Phaser.Math.FloatBetween(200, 300);
+      // Clamp to world bounds with margin
+      const margin = 350;
+      const nx = Phaser.Math.Clamp(this.x + Math.cos(perpAng) * tdist, margin, this.scene.worldWidth - margin);
+      const ny = Phaser.Math.Clamp(this.y + Math.sin(perpAng) * tdist, margin, this.scene.worldHeight - margin);
+      // Skip if outside leash radius from spawn point
+      if (Phaser.Math.Distance.Between(nx, ny, this.spawnX, this.spawnY) > (this.leash ?? 640)) return;
       this.scene.tweens.add({
         targets: this.sprite, alpha: 0, duration: 150, ease: 'Quad.easeIn',
         onComplete: () => {
-          this.sprite.setPosition(nx, ny);
+          if (!this.alive) return;
+          this.sprite.body.reset(nx, ny);
           this.scene.tweens.add({ targets: this.sprite, alpha: 1, duration: 150, ease: 'Quad.easeOut' });
         }
       });
+    }
+  }
+
+  _updateBomb(dt, player) {
+    if (!this._bombArmed) { this._bombArmed = true; this._bombFuseTimer = 0; this._bombTriggered = false; }
+    if (this._bombTriggered) {
+      this._bombFuseTimer -= dt;
+      if (this._bombFuseTimer <= 0) {
+        this.scene.onBombDetonate?.(this);
+        this.alive = false;
+      }
+      return;
+    }
+    // Approach player
+    if (player?.alive) {
+      const toAng = Math.atan2(player.y - this.y, player.x - this.x);
+      this.heading = toAng;
+      const dist = Phaser.Math.Distance.Between(this.x, this.y, player.x, player.y);
+      if (dist < (this.tpl.bombTriggerRange ?? 110)) {
+        this._bombTriggered = true;
+        this._bombFuseTimer = this.tpl.bombFuse ?? 1.0;
+        this.sprite.setTint(0xff4444);
+        this.scene.tweens.add({ targets: this.sprite, alpha: { from: 1, to: 0.3 }, duration: 200, yoyo: true, repeat: -1 });
+      }
     }
   }
 
@@ -555,20 +612,22 @@ export default class Mob {
     const hpRatio = this.hull / this.maxHull;
 
     // Фазы Апофиса
-    if (this._apophisPhase === 1 && hpRatio < 0.70) {
+    if (this._apophisPhase === 1 && hpRatio < 0.75) {
       this._apophisPhase = 2;
       this.tpl = { ...this.tpl, projectileType: 'acid' };
       this.sprite.setTint(0x76ff03);
-      this.scene.log('☠ АПОФИС переходит в фазу 2 — кислотные залпы!');
+      this.scene.onApophisPhase?.(2);
     }
-    if (this._apophisPhase === 2 && hpRatio < 0.40) {
+    if (this._apophisPhase === 2 && hpRatio < 0.50) {
       this._apophisPhase = 3;
       this.enterEnrage();
-      if (!this._apophisSummonDone) {
-        this._apophisSummonDone = true;
-        this.scene.spawnApophisMinions?.();
-      }
-      this.scene.log('☠ АПОФИС — фаза 3: Призыв стражей + войд-залп!');
+      this.sprite.setTint(0xff9966);
+      this.scene.onApophisPhase?.(3);
+    }
+    if (this._apophisPhase === 3 && hpRatio < 0.25) {
+      this._apophisPhase = 4;
+      this.sprite.setTint(0xff3333);
+      this.scene.onApophisPhase?.(4);
     }
 
     // Фаза 3: войд-залп каждые 15 сек
