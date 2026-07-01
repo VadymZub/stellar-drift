@@ -1,4 +1,4 @@
-# ДРЕВНИЕ — кристаллическая раса. Промты для 13 моделей + Апофис
+# ДРЕВНИЕ — кристаллическая раса. Промты для 13 моделей + Апофис + Кристальный щит
 
 ## Лор и роль
 
@@ -248,8 +248,20 @@ top-down view of a single isolated crystalline ring for a sci-fi alien boss spac
 "mob.ancient_13": "Реаниматор"
 ```
 
+---
+
+## ancient_shield.png — Кристальный щит Апофиса (орбитальный блокировщик)
+
+**Роль:** орбитальный мини-дрон, поглощает 90% урона по Апофису пока жив. Появляется группами по 3 при пороговых значениях HP.
+
+top-down view of a single isolated alien crystalline shield drone for a sci-fi boss encounter, a flat hexagonal crystal about 90px wide, slightly tilted in perspective to show faceting, base color is icy translucent blue (#80DEEA) with deep violet veins (#CE93D8) tracing the crystal edges, the core glows with a pulsing white-violet inner light (#E1BEE7), six flat facets with slight prismatic sheen catching light from below, when active the core pulses white (#FFFFFF) and thin energy rings radiate outward, outer rim has a thin crackling arc border of pale violet, crystal body is semi-transparent so the inner light shows through, top-down view, isolated on transparent background, no background elements, alien crystalline ancient aesthetic matching ancient_06 and ancient_12 palette, painterly stylized AAA mobile game art, no text, no characters, single sprite 128×128px
+
+**Имя:** `mob.ancient_shield` → `"Кристальный щит"` (добавить в `ru.json`)  
+**Файл:** `ancient_shield.png` (128×128px, прозрачный фон, нос вниз)  
+**Использование:** `constants.js` → `ancient_shield`, `GameScene.js` → `onApophisPhase` (будущая механика кристальных щитов)
+
 ## Порядок работы
-1. Сгенерировать 13 спрайтов (+ 3 кольца для анимации Апофиса)
+1. Сгенерировать 13 спрайтов + 3 кольца Апофиса + ancient_shield
 2. Сохранить → `client/assets/mobs/`
 3. Добавить моб-шаблоны в `constants.js`
 4. Реализовать многослойную анимацию Апофиса в `Mob.js` или `ArgusController.js` по образцу
