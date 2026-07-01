@@ -1242,10 +1242,13 @@ export default class GameScene extends Phaser.Scene {
       }
     };
     if (phase === 2) spawnRing('ancient_10', 6, 800);             // 6 Жнецов
-    if (phase === 3) spawnRing('ancient_06', 5, 1000);            // 5 Левиафанов
-    if (phase === 4) {
-      spawnRing('ancient_11', 4, 1200);                           // 4 Звёздных бойца
+    if (phase === 3) {
+      spawnRing('ancient_06', 5, 1000);                                          // 5 Левиафанов
       spawnRing('ancient_13', 2, 500, { behavior: 'guard', patrolRadius: 380 }); // 2 Реаниматора
+    }
+    if (phase === 4) {
+      spawnRing('ancient_11', 4, 1200);                                          // 4 Звёздных бойца
+      spawnRing('ancient_13', 2, 500, { behavior: 'guard', patrolRadius: 380 }); // ещё 2 Реаниматора
     }
   }
 
@@ -2410,8 +2413,9 @@ export default class GameScene extends Phaser.Scene {
     const hit    = Math.random() < (p.laserAccuracy ?? 0.80);
     const isCrit = hit && p.critChance > 0 && Math.random() < p.critChance;
 
-    // Beam visual: OC=thick bright-yellow, crit=medium-yellow, normal=amber, miss=dim
-    const beamColor = isOC ? 0xffcc00 : isCrit ? 0xffff44 : 0xffaa00;
+    // Beam visual: OC=thick bright-yellow, crit=medium-yellow, normal=amber (purple if all-laser loadout), miss=dim
+    const allLasers = p.allLasers;
+    const beamColor = isOC ? 0xffcc00 : isCrit ? 0xffff44 : allLasers ? 0xce93d8 : 0xffaa00;
     const beamWidth = isOC ? 12 : isCrit ? 6 : 3;
     this._laserBeam(p.x, p.y, t.x, t.y, beamColor, hit ? 1.0 : 0.25, beamWidth);
     this.muzzleFlash(p.x, p.y, beamColor);
@@ -2508,7 +2512,7 @@ export default class GameScene extends Phaser.Scene {
     return amount - rem;
   }
 
-  _laserBeam(x1, y1, x2, y2, color, alpha, width = 3) {
+  _laserBeam(x1, y1, x2, y2, color, alpha, width = 3, duration = 200) {
     const g = this.add.graphics().setDepth(65).setBlendMode('ADD');
     const line = () => { g.beginPath(); g.moveTo(x1, y1); g.lineTo(x2, y2); g.strokePath(); };
     // Outer glow — wide, dim
@@ -2517,7 +2521,7 @@ export default class GameScene extends Phaser.Scene {
     g.lineStyle(width * 2.5, color, 0.35 * alpha); line();
     // Bright core
     g.lineStyle(Math.max(1, width * 0.6), 0xffffff, 0.90 * alpha); line();
-    this.tweens.add({ targets: g, alpha: 0, duration: 200, ease: 'Expo.easeOut', onComplete: () => g.destroy() });
+    this.tweens.add({ targets: g, alpha: 0, duration, ease: 'Expo.easeOut', onComplete: () => g.destroy() });
   }
   fireMobWeapon(mob, tx, ty, victim = this.player, extraOpts = {}) {
     const pType = mob.tpl.projectileType || 'plasma';
@@ -4038,12 +4042,14 @@ export default class GameScene extends Phaser.Scene {
 
       // ── Стены центральной арены: перекрытия между коридорами + ворота в каждом коридоре ──
       for (let i = 0; i < 5; i++) {
-        // Большой квадрат между двумя соседними коридорами (wT*6 = 2880px — перекрывает весь зазор)
-        const midA = (ANGLES[i] + ANGLES[(i + 1) % 5]) / 2;
+        // Квадрат между двумя соседними коридорами — корректная средняя точка с учётом обёртки угла
+        let _a1 = ANGLES[(i + 1) % 5];
+        if (_a1 < ANGLES[i]) _a1 += Math.PI * 2; // фикс wraparound (i=4: 198°→270° а не -90°)
+        const midA = (ANGLES[i] + _a1) / 2;
         addArenaWall(
-          cx + arenaR * Math.cos(midA),
-          cy + arenaR * Math.sin(midA),
-          wT * 6, wT * 6
+          cx + arenaR * 0.72 * Math.cos(midA),
+          cy + arenaR * 0.72 * Math.sin(midA),
+          wT * 3, wT * 3
         );
         // Внутренние ворота: перегородка поперёк коридора у арены (блокирует вход)
         const a = ANGLES[i], cosA = Math.cos(a), sinA = Math.sin(a);
@@ -4125,6 +4131,72 @@ export default class GameScene extends Phaser.Scene {
     this.log(i18n.t('log.apophis_awakened'));
   }
 
+  // Веер из 8 void-лучей: 2 ближних к каждому игроку наводятся и бьют
+  _apophisVoidRing(boss) {
+    const NUM = 8;
+    const BEAM_LEN     = 3000;
+    const DETECT_RANGE = 2500;
+
+    // Собираем живых игроков в радиусе (сейчас 1, дизайн на 8)
+    const players = [];
+    if (this.player.alive &&
+        Phaser.Math.Distance.Between(boss.x, boss.y, this.player.x, this.player.y) < DETECT_RANGE) {
+      players.push(this.player);
+    }
+
+    // Базовые направления лучей (равномерно по кругу)
+    const baseAngles = Array.from({ length: NUM }, (_, i) => i * Math.PI * 2 / NUM);
+
+    // Назначаем лучи игрокам: до 2 ближних луча на игрока, луч занять только 1 раз
+    const beamTarget = new Array(NUM).fill(null);
+    for (const p of players) {
+      const pAng = Math.atan2(p.y - boss.y, p.x - boss.x);
+      const sorted = baseAngles.map((a, i) => {
+        let d = ((pAng - a) % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2);
+        if (d > Math.PI) d = Math.PI * 2 - d;
+        return { i, d };
+      }).sort((a, b) => a.d - b.d);
+      let hits = 0;
+      for (const { i } of sorted) {
+        if (hits >= 2) break;
+        if (beamTarget[i] !== null) continue;
+        beamTarget[i] = p;
+        hits++;
+      }
+    }
+
+    // Пульс-кольцо от центра босса при залпе (без мигания экрана)
+    this.explosion?.(boss.x, boss.y, 0.7);
+    const _pulse = this.add.graphics().setDepth(64).setBlendMode('ADD');
+    _pulse.lineStyle(18, 0xce93d8, 0.9);
+    _pulse.strokeCircle(boss.x, boss.y, boss.tpl.displaySize * 0.6);
+    this.tweens.add({ targets: _pulse, scaleX: 4.5, scaleY: 4.5, alpha: 0, duration: 700,
+      ease: 'Quad.easeOut', onComplete: () => _pulse.destroy() });
+
+    // Рисуем лучи и наносим урон
+    for (let i = 0; i < NUM; i++) {
+      const tgt = beamTarget[i];
+      let ex, ey;
+      if (tgt) {
+        ex = tgt.x; ey = tgt.y;
+      } else {
+        ex = boss.x + Math.cos(baseAngles[i]) * BEAM_LEN;
+        ey = boss.y + Math.sin(baseAngles[i]) * BEAM_LEN;
+      }
+      if (tgt) {
+        // Наводящиеся лучи: яркие, толстые, держатся 900мс
+        this._laserBeam(boss.x, boss.y, ex, ey, 0xce93d8, 1.0, 8, 900);
+      } else {
+        // Фоновые лучи: тонкие, полупрозрачные, 600мс
+        this._laserBeam(boss.x, boss.y, ex, ey, 0xb03eff, 0.55, 3, 600);
+      }
+      if (tgt) {
+        const res = tgt.takeDamage(boss.damage, 0.6, { ignoreMovEvasion: true });
+        this.onProjectileHit({ owner: 'mob', victim: tgt, type: 'void', effect: null, effectCfg: PROJ_TYPES.void }, res);
+      }
+    }
+  }
+
   // Зелёный луч от Реаниматора к боссу + всплывающие + над боссом
   _updateHealerEffects(dt) {
     const boss = this._apophisBoss;
@@ -4172,6 +4244,22 @@ export default class GameScene extends Phaser.Scene {
   }
 
   // Детонация бомбы-моба: урон 10% от (shield+hull), цепная реакция
+  _spawnLayerMines(layer, count) {
+    for (let i = 0; i < count; i++) {
+      const ang = Math.random() * Math.PI * 2;
+      const r   = 60 + i * 55;
+      const mx  = layer.x + Math.cos(ang) * r;
+      const my  = layer.y + Math.sin(ang) * r;
+      const mine = new Mob(this, MOBS.ancient_04b, layer.level, mx, my, {
+        patrolRadius: 80, leash: 700,
+      });
+      mine.corridorIndex = layer.corridorIndex; // наследует принадлежность к коридору
+      mine.isBossEscort  = layer.isBossEscort;
+      this.mobs.push(mine);
+      this.physics.add.collider(mine.sprite, this.walls);
+    }
+  }
+
   onBombDetonate(bomb) {
     const bx = bomb.x, by = bomb.y;
     const br = bomb.tpl.bombBlastRadius ?? 320;

@@ -200,6 +200,7 @@ export default class Player {
     const laserW  = W.filter(w => w.type === 'laser');
     this.hasCannon = cannonW.length > 0 || (isAdmin && laserW.length === 0);
     this.hasLaser  = laserW.length > 0;
+    this.allLasers = laserW.length > 0 && laserW.length === ship.wSlots && cannonW.length === 0;
 
     const sl  = k => ((this.scene.skillLevels || {})[k] || 0);
     const boardFx = getBoardEffects(this.scene.equippedBoard);
@@ -291,7 +292,7 @@ export default class Player {
     // Boosters are additive with upgPct/skillPct/perkPct/boardPct — applied to the same
     // BASE that already includes ship-level upgrades (user intent: "базовые = с апгрейдом").
     this.cannonDamage = Math.round(BASE_cannon * (1 + cannonUpgPct + sl('heavy_caliber') * 0.06 + cannonPerkPct + BF('cannonDmg') + boostDmg));
-    this.laserDamage  = Math.round(BASE_laser  * (1 + laserUpgPct  + sl('heavy_caliber') * 0.06 + BF('laserDmg') + boostDmg));
+    this.laserDamage  = Math.round(BASE_laser  * (1 + laserUpgPct  + sl('heavy_caliber') * 0.06 + BF('laserDmg') + boostDmg + (this.allLasers ? 0.05 : 0)));
     this.maxHull      = Math.round(BASE_hull   * (1 + sl('reinforced_hull') * 0.06 + BF('hullMax') + boostHull)) + armorHullFlat;
     this.maxShield    = Math.round(BASE_shield  * (1 + shieldUpgPct + sl('shield_optimizer') * 0.05 + BF('shieldMax') + boostShield));
     this.baseSpeed    = Math.round(BASE_speed   * (1 + speedUpgPct  + engineThrustPct + BF('speed') + speedBoostPct));

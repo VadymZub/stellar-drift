@@ -97,7 +97,7 @@ export default class Mob {
     this._apophisPhase  = 1;
     this._apophisSummonDone = false;
     this._apophisDashTimer  = 0;
-    this._apophisVoidTimer  = 0;
+    this._apophisVoidTimer  = 10; // первый залп через 10 сек после входа в фазу 3
   }
 
   get x() { return this.sprite.x; }
@@ -337,6 +337,8 @@ export default class Mob {
         if (this.tpl.aiClass === 'shielder') {
           this._updateShielder(dt);
         }
+        // Минный установщик
+        if (this.tpl.minelayer) this._updateMinelayer(dt);
 
         // Стрельба
         this.fireCooldown -= dt;
@@ -347,8 +349,8 @@ export default class Mob {
           fireProjectile(this, player.x, player.y);
         }
 
-        // AoE для static/default боссов
-        if (this.isBoss) this._updateBossAoe(dt, dist);
+        // AoE только для главного босса, не для эскортов
+        if (this.isBoss && !this.isBossEscort) this._updateBossAoe(dt, dist);
       }
 
     } else {
@@ -381,6 +383,15 @@ export default class Mob {
     this.sprite.rotation = this.heading + (this.tpl.artAngleOffset ?? ART_ANGLE_OFFSET);
     this.label.setPosition(this.x, this.y + this.sprite.displayHeight * 0.55);
     this.drawBar();
+  }
+
+  // ── Минный установщик: спавн 1-3 бомб каждые N сек ──────────────────────
+  _updateMinelayer(dt) {
+    this._mineLayTimer = (this._mineLayTimer ?? (this.tpl.mineInterval ?? 6)) - dt;
+    if (this._mineLayTimer > 0) return;
+    this._mineLayTimer = (this.tpl.mineInterval ?? 6) + Phaser.Math.FloatBetween(-1, 1);
+    const count = Phaser.Math.Between(1, 3);
+    this.scene._spawnLayerMines?.(this, count);
   }
 
   // ── Орбита вокруг точки (для дронов и охранников) ────────────────────────
@@ -633,18 +644,14 @@ export default class Mob {
     // Фаза 3: войд-залп каждые 15 сек
     if (this._apophisPhase >= 3) {
       this._apophisVoidTimer -= dt;
+      if (this._apophisVoidTimer <= 2.0 && !this._voidWarnSent) {
+        this._voidWarnSent = true;
+        this.scene.log('⚠ Апофис заряжает АННИГИЛЯЦИЮ — уходи в сторону!');
+      }
       if (this._apophisVoidTimer <= 0) {
         this._apophisVoidTimer = 15;
-        for (let i = 0; i < 6; i++) {
-          const ang = (i / 6) * Math.PI * 2;
-          const tx = this.x + Math.cos(ang) * 500;
-          const ty = this.y + Math.sin(ang) * 500;
-          // Временно устанавливаем void тип для залпа
-          const origType = this.tpl.projectileType;
-          this.tpl = { ...this.tpl, projectileType: 'void' };
-          fireProjectile(this, tx, ty);
-          this.tpl = { ...this.tpl, projectileType: origType };
-        }
+        this._voidWarnSent = false;
+        this.scene._apophisVoidRing?.(this);
       }
     }
 
