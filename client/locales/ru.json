@@ -239,5 +239,9 @@
   "log.apophis_awakened": "АПОФИС ПРОБУЖДЁН",
   "log.apophis_phase2": "☠ Апофис — фаза 2: Жнецы!",
   "log.apophis_phase3": "☠ Апофис — фаза 3: Левиафаны!",
-  "log.apophis_phase4": "☠ Апофис — фаза 4: ФИНАЛЬНАЯ!"
+  "log.apophis_phase4": "☠ Апофис — фаза 4: ФИНАЛЬНАЯ!",
+  "log.boss_shockwave": "⚠ Апофис — ШОКВАВ! Непробиваем 3 сек!",
+  "log.boss_enrage_burst": "☠ ЯРОСТЬ АПОФИСА! (20 сек)",
+  "log.boss_enrage_end": "Ярость Апофиса спадает... (откат 30 сек)",
+  "log.portal_open": "⚠ Портал подкреплений открылся!"
 }

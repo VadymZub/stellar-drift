@@ -105,6 +105,7 @@ export default class Mob {
 
   takeDamage(amount, penetration = 0, opts = {}) {
     if (!this.alive) return { shieldHit: 0, hullHit: 0, killed: false };
+    if (this._invulTimer > 0) return { shieldHit: 0, hullHit: 0, killed: false, dodged: true };
     this.lastDamageAt = this.scene.time.now;
 
     if (!opts.ignoreMovEvasion) {
@@ -202,6 +203,8 @@ export default class Mob {
 
   update(dt, player, playerInSafeZone, fireProjectile) {
     if (!this.alive) return;
+
+    if (this._invulTimer > 0) this._invulTimer -= dt;
 
     const now = this.scene.time.now;
     const sinceDmg = now - this.lastDamageAt;
@@ -625,20 +628,29 @@ export default class Mob {
     // Фазы Апофиса
     if (this._apophisPhase === 1 && hpRatio < 0.75) {
       this._apophisPhase = 2;
+      this._phaseTint = 0x76ff03;
       this.tpl = { ...this.tpl, projectileType: 'acid' };
       this.sprite.setTint(0x76ff03);
       this.scene.onApophisPhase?.(2);
+      this.scene._apophisPhaseShockwave?.(this);
+      this._invulTimer = 3.0;
     }
     if (this._apophisPhase === 2 && hpRatio < 0.50) {
       this._apophisPhase = 3;
+      this._phaseTint = 0xff9966;
       this.enterEnrage();
       this.sprite.setTint(0xff9966);
       this.scene.onApophisPhase?.(3);
+      this.scene._apophisPhaseShockwave?.(this);
+      this._invulTimer = 3.0;
     }
     if (this._apophisPhase === 3 && hpRatio < 0.25) {
       this._apophisPhase = 4;
+      this._phaseTint = 0xff3333;
       this.sprite.setTint(0xff3333);
       this.scene.onApophisPhase?.(4);
+      this.scene._apophisPhaseShockwave?.(this);
+      this._invulTimer = 3.0;
     }
 
     // Фаза 3: войд-залп каждые 15 сек
@@ -649,7 +661,7 @@ export default class Mob {
         this.scene.log('⚠ Апофис заряжает АННИГИЛЯЦИЮ — уходи в сторону!');
       }
       if (this._apophisVoidTimer <= 0) {
-        this._apophisVoidTimer = 15;
+        this._apophisVoidTimer = (this._rageSpeedMult ?? 1) > 1 ? 9 : 15;
         this._voidWarnSent = false;
         this.scene._apophisVoidRing?.(this);
       }
@@ -665,12 +677,14 @@ export default class Mob {
     if (this._dashTimer > 0) {
       this._dashTimer -= dt;
       this.heading = this._dashAng;
-      return this.tpl.speed * 2.5;
+      const _rageSpd = this._rageSpeedMult ?? 1;
+      return this.tpl.speed * 2.5 * _rageSpd;
     }
 
     // Стандартное движение: minimal orbit вокруг спавна
+    const _rageSpd = this._rageSpeedMult ?? 1;
     this.heading = Math.atan2(this.spawnY - this.y, this.spawnX - this.x);
-    return dist > this.patrolRadius * 0.5 ? this.tpl.speed * 0.4 * speedMult : 0;
+    return dist > this.patrolRadius * 0.5 ? this.tpl.speed * 0.4 * speedMult * _rageSpd : 0;
   }
 
   // ── Полоска HP/Shield ────────────────────────────────────────────────────

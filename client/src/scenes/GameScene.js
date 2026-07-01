@@ -883,6 +883,14 @@ export default class GameScene extends Phaser.Scene {
             bomb.corridorIndex = ci;
           });
         });
+        // Уникальный мини-босс в середине коридора
+        const CORR_MINIBOSS = ['ancient_09', 'ancient_08', 'ancient_10', 'ancient_11', 'ancient_03'];
+        const mb = add(CORR_MINIBOSS[ci], 50,
+          (arenaR + corrLen * 0.50) * cosA,
+          (arenaR + corrLen * 0.50) * sinA,
+          { behavior: 'guard', patrolRadius: 320, leash: 1300, hpMult: 3, dmgMult: 2 });
+        mb.corridorIndex = ci;
+        mb._isMiniBoss = true;
       }
       // 5 начальных эскортов вокруг Апофиса (до первой фазы)
       for (let i = 0; i < 5; i++) {
@@ -2222,7 +2230,8 @@ export default class GameScene extends Phaser.Scene {
   gainXp(amount) {
     if (this.pilotLevel >= MAX_LEVEL || amount <= 0) return;
     const _premiumXp = this.premium ? 1.10 : 1.0;
-    this.pilotXp += Math.round(amount * (this.player?.xpBonusMod ?? 1) * _premiumXp);
+    const _mapXp = 1 + (this.player?.mapXpBonus ?? 0);
+    this.pilotXp += Math.round(amount * (this.player?.xpBonusMod ?? 1) * _premiumXp * _mapXp);
     const newLevel = levelInfo(this.pilotXp).level;
     while (newLevel > this.pilotLevel && this.pilotLevel < MAX_LEVEL) {
       this.pilotLevel++;
@@ -3350,6 +3359,8 @@ export default class GameScene extends Phaser.Scene {
     this._updateGravTraps(dt);
     this._updateMines(dt);
     if (this._apophisBoss) this._updateHealerEffects(dt);
+    if (this._bossArenaOpenedAt !== undefined) this._updateBossArena(dt);
+    if (this._corridorChests?.length) this._updateCorridorChests();
     this._updateBotPilot(dt);
     this._updateEscort(dt);
 
@@ -4120,6 +4131,7 @@ export default class GameScene extends Phaser.Scene {
     if (remaining > 0) return;
     this._clearedCorridors.add(corridorIndex);
     this.log(i18n.t('log.corridor_open', { n: corridorIndex + 1 }));
+    this._spawnCorridorChest(corridorIndex);
     if (this._clearedCorridors.size === 5) this._openBossArena();
   }
 
@@ -4129,6 +4141,207 @@ export default class GameScene extends Phaser.Scene {
     this.arenaWalls    = [];
     this.arenaWallsVis = [];
     this.log(i18n.t('log.apophis_awakened'));
+    // Сохранить базовый урон для системы ярости
+    const boss = this._apophisBoss;
+    if (boss) boss._baseDamage = boss.damage;
+    // Ярость через 10 мин; порталы — первый через 50с, потом каждые 60-80с
+    this._bossArenaOpenedAt = this.time.now;
+    this._bossEnrageActive  = false;
+    this._bossRageCycle     = 0;   // первый раз: ярость включится сразу по истечении 10 мин
+    this._portalTimer       = 50;
+  }
+
+  // Шоквав при переходе фаз: 16 лучей, 3с неуязвимость
+  _apophisPhaseShockwave(boss) {
+    const NUM = 16, BEAM_LEN = 3800;
+    for (let i = 0; i < NUM; i++) {
+      const a = i * Math.PI * 2 / NUM;
+      this._laserBeam(boss.x, boss.y,
+        boss.x + Math.cos(a) * BEAM_LEN, boss.y + Math.sin(a) * BEAM_LEN,
+        0xce93d8, 0.85, 6, 1200);
+    }
+    const ring1 = this.add.graphics().setDepth(65).setBlendMode('ADD');
+    ring1.lineStyle(28, 0xce93d8, 1.0);
+    ring1.strokeCircle(boss.x, boss.y, boss.tpl.displaySize * 0.55);
+    this.tweens.add({ targets: ring1, scaleX: 10, scaleY: 10, alpha: 0, duration: 1400,
+      ease: 'Quad.easeOut', onComplete: () => ring1.destroy() });
+    this.cameras.main.shake(300, 0.012);
+    this.log(i18n.t('log.boss_shockwave'));
+  }
+
+  // Ярость + порталы после открытия арены
+  _updateBossArena(dt) {
+    const boss = this._apophisBoss;
+    if (!boss?.alive) return;
+
+    // Ярость: активируется через 10 мин (600с) после открытия арены
+    const elapsed = (this.time.now - this._bossArenaOpenedAt) / 1000;
+    if (elapsed >= 600) {
+      this._bossRageCycle = (this._bossRageCycle ?? 0) - dt;
+      if (this._bossRageCycle <= 0) {
+        this._bossEnrageActive = !this._bossEnrageActive;
+        this._bossRageCycle = this._bossEnrageActive ? 20 : 30;
+        if (this._bossEnrageActive) {
+          boss.damage          = Math.round((boss._baseDamage ?? boss.damage) * 1.5);
+          boss._rageSpeedMult  = 1.5;
+          boss.sprite.setTint(0xff0000);
+          this.log(i18n.t('log.boss_enrage_burst'));
+        } else {
+          boss.damage         = boss._baseDamage ?? boss.damage;
+          boss._rageSpeedMult = 1;
+          boss.sprite.setTint(boss._phaseTint ?? 0xff3333);
+          this.log(i18n.t('log.boss_enrage_end'));
+        }
+      }
+    }
+
+    // Порталы с подкреплениями
+    if (this._portalTimer !== undefined) {
+      this._portalTimer -= dt;
+      if (this._portalTimer <= 0) {
+        this._portalTimer = 55 + Math.random() * 25;
+        this._spawnPortal();
+      }
+    }
+  }
+
+  // Вихревой портал — вырывается из пустоты, выпускает мобов, схлопывается
+  _spawnPortal() {
+    const boss = this._apophisBoss;
+    const bx = boss?.x ?? this.worldWidth / 2;
+    const by = boss?.y ?? this.worldHeight / 2;
+    const ang = Math.random() * Math.PI * 2;
+    const r   = 800 + Math.random() * 700;
+    const px  = bx + Math.cos(ang) * r;
+    const py  = by + Math.sin(ang) * r;
+
+    const gfx = this.add.graphics().setDepth(12);
+    const proxy = { t: 0 };
+    const drawVortex = (t, alpha) => {
+      gfx.clear();
+      for (let ring = 0; ring < 4; ring++) {
+        const rc = (18 + ring * 22) * t;
+        const col = ring % 2 === 0 ? 0x7b2ff7 : 0xce93d8;
+        gfx.lineStyle(3, col, (0.9 - ring * 0.15) * alpha);
+        gfx.strokeCircle(px, py, rc);
+      }
+    };
+
+    // Открытие: 2.5с
+    this.tweens.add({
+      targets: proxy, t: 1, duration: 2500, ease: 'Back.easeOut',
+      onUpdate: () => drawVortex(proxy.t, Math.min(1, proxy.t * 2)),
+      onComplete: () => {
+        this.log(i18n.t('log.portal_open'));
+        const PORTAL_MOBS = ['ancient_01', 'ancient_02', 'ancient_03', 'ancient_04'];
+        const count = 3 + Math.floor(Math.random() * 3);
+        for (let i = 0; i < count; i++) {
+          const tplKey = PORTAL_MOBS[Math.floor(Math.random() * PORTAL_MOBS.length)];
+          const sa = ang + (Math.random() - 0.5) * 0.8;
+          const mob = new Mob(this, MOBS[tplKey], 50,
+            px + Math.cos(sa) * 50, py + Math.sin(sa) * 50,
+            { patrolRadius: 500, leash: 2000, hpMult: 1.5, dmgMult: 1.5 });
+          mob.isBossEscort = true;
+          mob._groupMobId = this._nextGroupMobId++;
+          this.mobs.push(mob);
+          this.physics.add.collider(mob.sprite, this.walls);
+        }
+        // Схлопывание: 2с после 0.5с паузы
+        const proxy2 = { t: 1 };
+        this.tweens.add({
+          targets: proxy2, t: 0, duration: 2000, ease: 'Quad.easeIn', delay: 500,
+          onUpdate: () => drawVortex(proxy2.t * 0.8 + 0.2, proxy2.t),
+          onComplete: () => gfx.destroy(),
+        });
+      },
+    });
+  }
+
+  // Лут-ящик в конце коридора — открывается при зачистке
+  _spawnCorridorChest(corridorIndex) {
+    const cx = this.worldWidth / 2, cy = this.worldHeight / 2;
+    const arenaR = 1600, corrLen = 3200;
+    const CORR_ANGLES = [
+      -Math.PI / 2,
+      -Math.PI / 2 + 2 * Math.PI / 5,
+      -Math.PI / 2 + 4 * Math.PI / 5,
+      -Math.PI / 2 + 6 * Math.PI / 5,
+      -Math.PI / 2 + 8 * Math.PI / 5,
+    ];
+    const a = CORR_ANGLES[corridorIndex];
+    const d = arenaR + corrLen * 0.92;
+    const chX = cx + Math.cos(a) * d;
+    const chY = cy + Math.sin(a) * d;
+
+    const gfx = this.add.graphics().setDepth(30);
+    gfx.fillStyle(0xf5a623, 1.0); gfx.fillRect(chX - 20, chY - 20, 40, 40);
+    gfx.lineStyle(3, 0xffd700, 1); gfx.strokeRect(chX - 20, chY - 20, 40, 40);
+    gfx.lineStyle(2, 0xffd700, 0.8); gfx.beginPath(); gfx.moveTo(chX - 20, chY); gfx.lineTo(chX + 20, chY); gfx.strokePath();
+    const label = this.add.text(chX, chY - 34, '📦', {
+      fontFamily: 'Inter, sans-serif', fontSize: '22px', resolution: 2,
+    }).setOrigin(0.5, 0.5).setDepth(31);
+    this.tweens.add({ targets: label, y: chY - 38, duration: 900, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
+
+    this._corridorChests = this._corridorChests ?? [];
+    this._corridorChests.push({ gfx, label, x: chX, y: chY, corridorIndex, open: false });
+  }
+
+  _updateCorridorChests() {
+    if (!this.player?.alive) return;
+    for (const ch of this._corridorChests) {
+      if (ch.open) continue;
+      const d = Phaser.Math.Distance.Between(this.player.x, this.player.y, ch.x, ch.y);
+      if (d < 90) {
+        ch.open = true;
+        ch.gfx?.destroy();
+        ch.label?.destroy();
+        this._openCorridorChest(ch.corridorIndex);
+      }
+    }
+    this._corridorChests = this._corridorChests.filter(c => !c.open);
+  }
+
+  _openCorridorChest(corridorIndex) {
+    const AMMO_TYPES = ['ammo_plasma', 'ammo_laser', 'ammo_plasma_elite'];
+    const CONSUMABLE_TYPES = ['repair_pack', 'speed_boost', 'scanner_pulse'];
+    const whMax = 8 + ([0, 3, 8, 16][this.skillLevels?.cargo_expand || 0] || 0) + (this.premium ? 8 : 0);
+    this._mapBoosters = this._mapBoosters ?? {};
+
+    // Рандомный дроп (1 из 5 вариантов)
+    const r = Math.random();
+    if (r < 0.20) {
+      // Очки чести
+      const honor = 80 + Math.floor(Math.random() * 80);
+      this.gainHonor(honor);
+      this.log(`🎁 Ящик коридора ${corridorIndex + 1}: +${honor} ⚔ чести`);
+    } else if (r < 0.40) {
+      // Боеприпасы → склад
+      const aType = AMMO_TYPES[Math.floor(Math.random() * AMMO_TYPES.length)];
+      const qty   = 20 + Math.floor(Math.random() * 30);
+      const left  = addConsumableToInventory(this.warehouse, aType, qty, whMax);
+      if (left > 0) this.warehouse.push({ type: aType, amount: left, _temp: true });
+      this.log(`🎁 Ящик коридора ${corridorIndex + 1}: +${qty} ${i18n.t('item.' + aType) || aType}`);
+    } else if (r < 0.60) {
+      // Расходник → склад
+      const cType = CONSUMABLE_TYPES[Math.floor(Math.random() * CONSUMABLE_TYPES.length)];
+      const qty   = 1 + Math.floor(Math.random() * 2);
+      const left  = addConsumableToInventory(this.warehouse, cType, qty, whMax);
+      if (left > 0) this.warehouse.push({ type: cType, amount: left, _temp: true });
+      this.log(`🎁 Ящик коридора ${corridorIndex + 1}: ${i18n.t('item.' + cType) || cType} ×${qty}`);
+    } else {
+      // Мини-бустер (сессионный)
+      const boosterTypes = [
+        { key: 'dmg',    label: '+урон',   pct: () => 0.01 + Math.random() * 0.01 },
+        { key: 'hull',   label: '+корпус', pct: () => 0.02 + Math.random() * 0.01 },
+        { key: 'shield', label: '+щит',    pct: () => 0.03 + Math.random() * 0.01 },
+        { key: 'xp',     label: '+XP',     pct: () => 0.05 + Math.random() * 0.01 },
+      ];
+      const bt = boosterTypes[Math.floor(Math.random() * boosterTypes.length)];
+      const pct = bt.pct();
+      this._mapBoosters[bt.key] = (this._mapBoosters[bt.key] || 0) + pct;
+      this.player?.recomputeStats?.();
+      this.log(`🎁 Ящик коридора ${corridorIndex + 1}: мини-бустер ${bt.label} +${Math.round(pct * 100)}% (до конца карты)`);
+    }
   }
 
   // Веер из 8 void-лучей: 2 ближних к каждому игроку наводятся и бьют
@@ -5116,6 +5329,11 @@ export default class GameScene extends Phaser.Scene {
     for (const v of (this.arenaWallsVis ?? [])) v.destroy();
     this.arenaWalls = []; this.arenaWallsVis = [];
     this._clearedCorridors = null;
+    this._bossArenaOpenedAt = undefined;
+    this._portalTimer       = undefined;
+    this._mapBoosters       = null;
+    for (const ch of (this._corridorChests ?? [])) { ch.gfx?.destroy(); ch.label?.destroy(); }
+    this._corridorChests = [];
     this._healBeamGfx?.destroy(); this._healBeamGfx = null;
     for (const trap of (this.gravTraps ?? [])) trap.gfx?.destroy();
     this.gravTraps = [];

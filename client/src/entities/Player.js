@@ -287,14 +287,20 @@ export default class Player {
     const boostXp     = _ab.boost_xp    > _now ? 0.25 : 0;
     // Consumed-item speed multipliers (speed_boost consumable, stealth)
     const speedBoostPct = (this.scene._speedBoostMult ?? 1.0) * (this.scene._stealthMult ?? 1.0) - 1.0;
+    // Session mini-boosters (corridor chests in R-1-boss): reset on map exit
+    const _mb     = this.scene._mapBoosters ?? {};
+    const mbDmg    = _mb.dmg    || 0;
+    const mbHull   = _mb.hull   || 0;
+    const mbShield = _mb.shield || 0;
+    this.mapXpBonus = _mb.xp || 0;
 
     // ── Step 7: FINAL STATS — BASE × (1 + Σ all % sources) ──────────────────
     // Boosters are additive with upgPct/skillPct/perkPct/boardPct — applied to the same
     // BASE that already includes ship-level upgrades (user intent: "базовые = с апгрейдом").
-    this.cannonDamage = Math.round(BASE_cannon * (1 + cannonUpgPct + sl('heavy_caliber') * 0.06 + cannonPerkPct + BF('cannonDmg') + boostDmg));
-    this.laserDamage  = Math.round(BASE_laser  * (1 + laserUpgPct  + sl('heavy_caliber') * 0.06 + BF('laserDmg') + boostDmg + (this.allLasers ? 0.05 : 0)));
-    this.maxHull      = Math.round(BASE_hull   * (1 + sl('reinforced_hull') * 0.06 + BF('hullMax') + boostHull)) + armorHullFlat;
-    this.maxShield    = Math.round(BASE_shield  * (1 + shieldUpgPct + sl('shield_optimizer') * 0.05 + BF('shieldMax') + boostShield));
+    this.cannonDamage = Math.round(BASE_cannon * (1 + cannonUpgPct + sl('heavy_caliber') * 0.06 + cannonPerkPct + BF('cannonDmg') + boostDmg + mbDmg));
+    this.laserDamage  = Math.round(BASE_laser  * (1 + laserUpgPct  + sl('heavy_caliber') * 0.06 + BF('laserDmg') + boostDmg + (this.allLasers ? 0.05 : 0) + mbDmg));
+    this.maxHull      = Math.round(BASE_hull   * (1 + sl('reinforced_hull') * 0.06 + BF('hullMax') + boostHull + mbHull)) + armorHullFlat;
+    this.maxShield    = Math.round(BASE_shield  * (1 + shieldUpgPct + sl('shield_optimizer') * 0.05 + BF('shieldMax') + boostShield + mbShield));
     this.baseSpeed    = Math.round(BASE_speed   * (1 + speedUpgPct  + engineThrustPct + BF('speed') + speedBoostPct));
     this.shieldRegenPerSec = Math.round(BASE_regen * (1 + regenUpgPct + regenPerkPct + BF('shieldRegen')));
 
