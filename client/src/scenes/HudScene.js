@@ -775,16 +775,19 @@ export default class HudScene extends Phaser.Scene {
     this._editBtnTxt?.setVisible(!atBase && !inMap);
 
     // ── Лог (внутри панели, снизу вверх) ──
-    const LOG_PH = 24 + Math.max(7 * 18 + 10, this._logContentH() + 10);
-    const logBottom = this._logY + LOG_PH - 20;
+    // logBottom = нижняя граница контентной области (Y куда упирается низ самого нового элемента).
+    const LOG_PH = Math.max(24 + 7 * 18 + 10, 24 + this._logContentH() + 10);
+    const logBottom = this._logY + LOG_PH - 8;
     const logVisible = !this._logCollapsed;
     this._logBtn?.setVisible(true);
     this._logBtnTxt?.setVisible(true);
     let yOff = 0;
     for (let i = this.logEntries.length - 1; i >= 0; i--) {
       const e = this.logEntries[i];
-      e.t.setX(this._logX + 10).setY(logBottom - yOff).setVisible(logVisible).setAlpha(1);
-      yOff += Math.max(16, Math.ceil(e.t.height)) + 2;
+      const h = Math.max(16, Math.ceil(e.t.height));
+      yOff += h + 2;
+      // setY ставит верхний край текста; низ = Y + h = logBottom - yOff + 2 + h = logBottom - (gap)
+      e.t.setX(this._logX + 10).setY(logBottom - yOff + 2).setVisible(logVisible).setAlpha(1);
     }
 
     // ── Sector tracking for friends online status ──
@@ -1078,7 +1081,7 @@ export default class HudScene extends Phaser.Scene {
   _refreshLogPanel() {
     const x = this._logX, y = this._logY;
     const BW = 52, BH = 24, PW = 300;
-    const PH = BH + Math.max(7 * 18 + 10, this._logContentH() + 10);
+    const PH = Math.max(BH + 7 * 18 + 10, BH + this._logContentH() + 10);
 
     this._logBtn.setPosition(x, y);
     this._logBtnTxt.setPosition(x + BW / 2, y + BH / 2).setText(this._logCollapsed ? 'L ▶' : 'L ◀');
