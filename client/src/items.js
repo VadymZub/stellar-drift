@@ -46,14 +46,36 @@ const ENGINE_TIERS = {
 // Special: -20% dmg to shields, +50% dmg to bare hull, 70% base accuracy.
 const LASER_DMG = 126; // T4 plasma (105) × 1.20 — 20% stronger than base T4
 
-const roll = () => Phaser.Math.FloatBetween(0.85, 1.15);
+// Взвешенный бросок качества стата: 45% слабое / 35% среднее / 16% сильное / 3.5% отличное / 0.5% перфект
+function roll() {
+  const r = Math.random();
+  if (r < 0.45)  return Phaser.Math.FloatBetween(0.85, 0.92); // СЛАБОЕ
+  if (r < 0.80)  return Phaser.Math.FloatBetween(0.93, 0.99); // СРЕДНЕЕ
+  if (r < 0.96)  return Phaser.Math.FloatBetween(1.00, 1.07); // СИЛЬНОЕ
+  if (r < 0.995) return Phaser.Math.FloatBetween(1.08, 1.14); // ОТЛИЧНОЕ
+  return 1.15;                                                  // ПЕРФЕКТ
+}
+
+// Качество броска стата (диапазон и цвет для UI)
+export const STAT_ROLL_QUALITY = [
+  { min: 1.15, label: 'ПЕРФЕКТ',  color: 0xe8eaf6 },
+  { min: 1.08, label: 'ОТЛИЧНОЕ', color: 0xff9800 },
+  { min: 1.00, label: 'СИЛЬНОЕ',  color: 0x00bcd4 },
+  { min: 0.93, label: 'СРЕДНЕЕ',  color: 0x81c784 },
+  { min: 0.00, label: 'СЛАБОЕ',   color: 0x9e9e9e },
+];
+export function statRollQuality(statRoll) {
+  const r = statRoll ?? 1.0;
+  return STAT_ROLL_QUALITY.find(t => r >= t.min) ?? STAT_ROLL_QUALITY[STAT_ROLL_QUALITY.length - 1];
+}
 
 export function rollCannon(tier, mobLevel) {
   const t = CANNON_TIERS[tier];
   const scale = 1 + Math.max(0, mobLevel - t.min) / 50;
+  const r = roll();
   return {
-    type: 'cannon', tier,
-    damage: Math.round(t.dmg * roll() * scale),
+    type: 'cannon', tier, statRoll: r,
+    damage: Math.round(t.dmg * r * scale),
     penetration: +(t.pen * roll()).toFixed(3),
     fireRate: 1.0,
     perk: rollPerk('cannon'),
@@ -63,9 +85,10 @@ export function rollCannon(tier, mobLevel) {
 export function rollShield(tier, mobLevel) {
   const t = SHIELD_TIERS[tier];
   const scale = 1 + Math.max(0, mobLevel - t.min) / 50;
+  const r = roll();
   return {
-    type: 'shield', tier,
-    durability: Math.round(t.dur * roll() * scale),
+    type: 'shield', tier, statRoll: r,
+    durability: Math.round(t.dur * r * scale),
     regen: Math.round(t.regen * roll()),
     evasion: +(t.eva * roll()).toFixed(3),
     perk: rollPerk('shield'),
@@ -75,15 +98,17 @@ export function rollShield(tier, mobLevel) {
 export function rollEngine(tier, mobLevel) {
   const t = ENGINE_TIERS[tier];
   const scale = 1 + Math.max(0, mobLevel - t.min) / 50;
-  return { type: 'engine', tier, speed: Math.round(t.speed * roll() * scale), perk: rollPerk('engine') };
+  const r = roll();
+  return { type: 'engine', tier, statRoll: r, speed: Math.round(t.speed * r * scale), perk: rollPerk('engine') };
 }
 
 export function rollArmor(tier, mobLevel) {
   const t = ARMOR_TIERS[tier];
   const scale = 1 + Math.max(0, mobLevel - t.min) / 50;
+  const r = roll();
   return {
-    type: 'armor', tier,
-    hullBonus: Math.round(t.hull * roll() * scale),
+    type: 'armor', tier, statRoll: r,
+    hullBonus: Math.round(t.hull * r * scale),
     perk: rollPerk('armor'),
   };
 }
@@ -134,26 +159,54 @@ export const CREDIT_UP_COST = {
   4: [15000, 30000, 75000,  150000, 330000],  // Σ = 600 000
 };
 export const STAR_UP_COST = {
-  1: [5,  8,  12, 16, 19],   // Σ = 60 ⭐
+  1: [5,  8,  12, 16, 19],   // Σ = 60 ⭐  (силовые)
   2: [10, 16, 24, 32, 38],   // Σ = 120 ⭐
   3: [18, 28, 42, 56, 76],   // Σ = 220 ⭐
   4: [25, 40, 60, 80, 100],  // Σ = 305 ⭐
 };
+// Цена одной нормализующей звезды по тиру (фиксированная за каждую норм. звезду).
+// Рассчитана так, чтобы СЛАБОЕ/ПЕРФЕКТ соотношение = T1:1.5 T2:1.8 T3:2.0 T4:3.0
+export const NORM_STAR_COST = { 1: 8, 2: 24, 3: 55, 4: 152 };
 export const MOD_MAX_CREDIT_LVL = 5;
-export const MOD_MAX_STAR_LVL = 5;
-// Суммарный множитель статов модуля от обоих уровней (в норме активен только один путь).
-export function modMult(item) { return 1 + 0.01 * (item.creditLvl || 0) + 0.03 * (item.starLvl || 0); }
+export const MOD_MAX_STAR_LVL   = 5; // только силовые уровни; норм. уровни добавляются сверху
+
+// Количество нормализующих звёзд для предмета (зависит от statRoll).
+// ПЕРФЕКТ(1.15)→0, ОТЛИЧНОЕ(1.08-1.14)→1, СИЛЬНОЕ(1.00-1.07)→2, СРЕДНЕЕ(0.93-0.99)→3, СЛАБОЕ(<0.93)→4
+export function normLevelsNeeded(item) {
+  const r = item.statRoll ?? 1.0;
+  if (r >= 1.15) return 0;
+  if (r >= 1.08) return 1;
+  if (r >= 1.00) return 2;
+  if (r >= 0.93) return 3;
+  return 4;
+}
+
+// Суммарный множитель статов: нормализация переводит roll → 1.15, затем силовые звёзды дают +3%/ур.
+// Старые предметы без statRoll считаются roll=1.0 (0 норм. уровней).
+export function modMult(item) {
+  const roll   = item.statRoll ?? 1.0;
+  const norms  = normLevelsNeeded(item);
+  const sl     = item.starLvl || 0;
+  const doneN  = Math.min(sl, norms);
+  const powSl  = Math.max(0, sl - norms);
+  // Эффективный ролл: линейно от roll до 1.15 по мере нормализации
+  const effRoll = norms > 0 ? roll + (1.15 - roll) * (doneN / norms) : roll;
+  return (effRoll / roll) * (1 + 0.01 * (item.creditLvl || 0) + 0.03 * powSl);
+}
+
 // Кредиты для следующего кредит-апгрейда; null если макс.
 export function creditUpgradeCost(item) {
   const lvl = item.creditLvl || 0;
   if (lvl >= MOD_MAX_CREDIT_LVL) return null;
   return (CREDIT_UP_COST[item.tier] || CREDIT_UP_COST[4])[lvl];
 }
-// ⭐ для следующего ⭐-апгрейда; null если макс.
+// ⭐ для следующего ⭐-апгрейда; null если достигнут максимум (норм. + 5 силовых).
 export function starUpgradeCost(item) {
-  const lvl = item.starLvl || 0;
-  if (lvl >= MOD_MAX_STAR_LVL) return null;
-  return (STAR_UP_COST[item.tier] || STAR_UP_COST[4])[lvl];
+  const sl    = item.starLvl || 0;
+  const norms = normLevelsNeeded(item);
+  if (sl >= norms + MOD_MAX_STAR_LVL) return null;
+  if (sl < norms) return NORM_STAR_COST[item.tier] ?? NORM_STAR_COST[4]; // норм. звезда
+  return (STAR_UP_COST[item.tier] || STAR_UP_COST[4])[sl - norms];       // силовая звезда
 }
 
 // Цена продажи лута на складе (по тиру).

@@ -2,6 +2,7 @@ import * as Phaser from 'https://cdn.jsdelivr.net/npm/phaser@4.1.0/dist/phaser.e
 import { COLORS, UI_RES } from '../constants.js';
 import { i18n } from '../i18n.js';
 import { itemName, itemStats, itemSellPrice, itemIconKey, SLOT_KEY, creditUpgradeCost, starUpgradeCost, modMult,
+         normLevelsNeeded, MOD_MAX_STAR_LVL, statRollQuality, STAT_ROLL_QUALITY,
          PLASMATE_GOLD_RATE, PLASMATE_PER_SLOT, totalPlasmateInInventory, removePlasmateFromInventory,
          AMMO_ICON, CONSUMABLES, addConsumableToInventory } from '../items.js';
 import { SHIPS, SHIP_BY_KEY, purchaseState, shipLevelCost, shipLevelCostGold, SHIP_MAX_LEVEL } from '../ships.js';
@@ -746,8 +747,16 @@ export default class GarageScene extends Phaser.Scene {
       ri.push([this.add.rectangle(x, baseY, w, rowH, 0x10202b, 0.95).setOrigin(0, 0).setStrokeStyle(1, COLORS.primary, 0.2), 0, false]);
 
       const cl = it.creditLvl || 0, sl = it.starLvl || 0, onStar = sl > 0;
+      const norms = normLevelsNeeded(it);
       const pctNow = Math.round((modMult(it) - 1) * 1000) / 10;
-      const lvlStr = onStar ? `⭐ ${sl}/5` : `${i18n.t('garage.credit_lvl')} ${cl}/5`;
+      const maxSl = norms + MOD_MAX_STAR_LVL;
+      const normDone = Math.min(sl, norms);
+      const powDone  = Math.max(0, sl - norms);
+      const lvlStr = onStar
+        ? (normDone < norms
+            ? `🔧 ${normDone}/${norms}  ⭐ ${powDone}/5`
+            : `⭐ ${powDone}/5`)
+        : `${i18n.t('garage.credit_lvl')} ${cl}/5`;
       ri.push([this.add.text(x + 12, baseY + 8, `${itemName(it)}   ·   ${lvlStr}   (+${pctNow}%)`, this.O('13px', '#ffe0b2')), 8, false]);
       ri.push([this.add.text(x + 12, baseY + 32, this.upgradePreview(it), { ...this.F('11px', '#a5d6a7'), wordWrap: { width: bxAbs - x - 24 } }), 32, false]);
 

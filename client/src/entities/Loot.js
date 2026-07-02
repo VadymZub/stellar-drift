@@ -22,6 +22,26 @@ export default class Loot {
 
     const tint = TINT[tier];
     if (tint) this.sprite.setTint(tint);
+
+    // Эффект дропа для ОТЛИЧНОЕ (statRoll ≥ 1.08) и ПЕРФЕКТ (statRoll = 1.15)
+    const sr = item?.statRoll ?? 0;
+    if (sr >= 1.08) this._spawnDropBurst(scene, x, y, sr >= 1.15);
+  }
+
+  _spawnDropBurst(scene, x, y, isPerfect) {
+    const color  = isPerfect ? 0xffffff : 0xff9800;
+    const rings  = isPerfect ? 5 : 3;
+    const maxR   = isPerfect ? 90 : 60;
+    if (isPerfect) scene.cameras?.main?.flash(160, 255, 230, 180, true);
+    for (let i = 0; i < rings; i++) {
+      const circle = scene.add.circle(x, y, 8 + i * 6, color, 0.75 - i * 0.1).setDepth(60);
+      scene.tweens.add({
+        targets: circle, scaleX: (maxR + i * 18) / (8 + i * 6),
+        scaleY:  (maxR + i * 18) / (8 + i * 6),
+        alpha: 0, duration: 450 + i * 100, delay: i * 70,
+        ease: 'Quad.easeOut', onComplete: () => circle.destroy(),
+      });
+    }
   }
 
   get x() { return this.sprite.x; }
