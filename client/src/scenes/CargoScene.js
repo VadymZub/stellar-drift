@@ -3,7 +3,7 @@ import { COLORS, UI_RES } from '../constants.js';
 import { i18n } from '../i18n.js';
 import { itemName, itemStats, itemIconKey, itemSellPrice, PLASMATE_PER_SLOT, PLASMATE_GOLD_RATE, removePlasmateFromInventory, totalPlasmateInInventory, CONSUMABLES, AMMO_ICON, addConsumableToInventory } from '../items.js';
 import { prerenderTex } from '../utils/prerenderTex.js';
-import { PERK_MAP, RARITY_COLOR, RARITY_LABEL, perkBonus } from '../perks.js';
+import { PERK_MAP, RARITY_COLOR, RARITY_LABEL, perkBonus, rollQualityInfo } from '../perks.js';
 
 // Трюм (хоткей C). Доступен всегда — в космосе и на базе.
 // На базе добавляет колонку СКЛАД и кнопки переноса предметов.
@@ -590,18 +590,24 @@ export default class CargoScene extends Phaser.Scene {
     ];
     if (pDef) {
       const rarLabel = RARITY_LABEL[pDef.rarity] ?? pDef.rarity.toUpperCase();
-      lineDefs.push({ text: rarLabel,                         sty: this.F('10px', rarColor) });
-      lineDefs.push({ text: `✦ ${pDef.name}`,                sty: this.F('11px', rarColor) });
-      lineDefs.push({ text: pDef.desc(perkBonus(item.perk)), sty: this.F('11px', '#aaccdd') });
+      const qInfo    = rollQualityInfo(item.perk?.roll ?? 1);
+      const qColor   = `#${qInfo.color.toString(16).padStart(6, '0')}`;
+      lineDefs.push({ text: rarLabel, sty: this.F('10px', rarColor) });
+      lineDefs.push({ text: `✦ ${pDef.name}`, sty: this.F('11px', rarColor) });
+      lineDefs.push({
+        text: pDef.desc(perkBonus(item.perk), item.perk?.roll ?? 1),
+        sty:  this.F('11px', '#aaccdd'),
+        right: { text: qInfo.label, sty: this.F('10px', qColor) },
+      });
     }
 
     // Первый проход — создаём тексты вне экрана, чтобы замерить реальную высоту с word-wrap
-    const textObjs = lineDefs
-      .filter(l => l.text)
-      .map(l => this.add.text(-9999, -9999, l.text,
-        { ...l.sty, wordWrap: { width: TW - 20 } }).setDepth(201));
+    const textObjs = lineDefs.filter(l => l.text).map(l => ({
+      left:  this.add.text(-9999, -9999, l.text, { ...l.sty, wordWrap: { width: TW - 20 } }).setDepth(201),
+      right: l.right ? this.add.text(-9999, -9999, l.right.text, { ...l.right.sty }).setDepth(201) : null,
+    }));
 
-    const TH = 10 + textObjs.reduce((s, t) => s + t.height + GAP, 0);
+    const TH = 10 + textObjs.reduce((s, t) => s + t.left.height + GAP, 0);
     let tx = wx + 16, ty = wy - TH / 2;
     if (tx + TW > W - 8) tx = wx - TW - 8;
     if (ty < 4) ty = 4;
@@ -613,9 +619,16 @@ export default class CargoScene extends Phaser.Scene {
 
     // Второй проход — расставляем тексты по финальным координатам
     let ly = ty + 8;
-    textObjs.forEach(t => { t.setPosition(tx + 10, ly); ly += t.height + GAP; });
+    const allTObjs = [];
+    textObjs.forEach(({ left, right }) => {
+      left.setPosition(tx + 10, ly);
+      if (right) right.setPosition(tx + TW - 10, ly).setOrigin(1, 0);
+      allTObjs.push(left);
+      if (right) allTObjs.push(right);
+      ly += left.height + GAP;
+    });
 
-    this._tooltipObjs = [g, ...textObjs];
+    this._tooltipObjs = [g, ...allTObjs];
   }
 
   _hideTooltip() {
@@ -854,12 +867,17 @@ export default class CargoScene extends Phaser.Scene {
       labelBg.width = labelTxt.width + 8;
       objs.push(labelBg, labelTxt);
       nextY += 22;
-      // Название + показатели перка
+      // Название + показатели перка (реальный roll, метка качества справа)
+      const qInfo  = rollQualityInfo(item.perk?.roll ?? 1);
+      const qColor = `#${qInfo.color.toString(16).padStart(6, '0')}`;
       t(mx + 12, nextY, `✦ ${pDef.name}`,
         { fontFamily: 'Inter, sans-serif', fontSize: '13px', color: rarColor, wordWrap: { width: MW - 24 } });
       nextY += 20;
-      t(mx + 12, nextY, pDef.desc(perkBonus(item.perk)),
-        { fontFamily: 'Inter, sans-serif', fontSize: '12px', color: '#c5cce8', wordWrap: { width: MW - 24 } });
+      const descTxt = pDef.desc(perkBonus(item.perk), item.perk?.roll ?? 1);
+      t(mx + 12, nextY, descTxt,
+        { fontFamily: 'Inter, sans-serif', fontSize: '12px', color: '#c5cce8', wordWrap: { width: MW - 80 } });
+      t(mx + MW - 12, nextY, qInfo.label,
+        { fontFamily: 'Orbitron, sans-serif', fontSize: '10px', color: qColor, resolution: UI_RES }).setOrigin(1, 0);
       nextY += 22;
     }
 
