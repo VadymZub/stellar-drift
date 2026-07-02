@@ -857,19 +857,19 @@ export default class GameScene extends Phaser.Scene {
           const d = arenaR + corrLen * t;
           const pOff = hw * GUARD_PERPS[gi];
           const g = add('ancient_05', 50, d * cosA + pOff * pX, d * sinA + pOff * pY,
-            { behavior: 'guard', patrolRadius: 380, leash: 1400 });
+            { behavior: 'guard', patrolRadius: 380, leash: 3000 });
           g.corridorIndex = ci;
         });
         // Гравитационная ловушка-моб + отражатель в коридоре
         const ga07 = add('ancient_07', 50,
           (arenaR + corrLen * 0.40) * cosA + hw * 0.5 * pX,
           (arenaR + corrLen * 0.40) * sinA + hw * 0.5 * pY,
-          { behavior: 'guard', patrolRadius: 200, leash: 800 });
+          { behavior: 'guard', patrolRadius: 200, leash: 1500 });
         ga07.corridorIndex = ci;
         const ga07r = add('ancient_07_1', 50,
           (arenaR + corrLen * 0.62) * cosA - hw * 0.5 * pX,
           (arenaR + corrLen * 0.62) * sinA - hw * 0.5 * pY,
-          { behavior: 'guard', patrolRadius: 200, leash: 800 });
+          { behavior: 'guard', patrolRadius: 200, leash: 1500 });
         ga07r.corridorIndex = ci;
         // 2 кластера по 3 бомбы (ancient_04b) в коридоре
         [0.35, 0.65].forEach(bt => {
@@ -887,7 +887,7 @@ export default class GameScene extends Phaser.Scene {
         const mb = add('ancient_miniboss', 50,
           (arenaR + corrLen * 0.86) * cosA,
           (arenaR + corrLen * 0.86) * sinA,
-          { behavior: 'guard', patrolRadius: 320, leash: 1300, hpMult: 3, dmgMult: 2 });
+          { behavior: 'guard', patrolRadius: 320, leash: 3000, hpMult: 3, dmgMult: 2 });
         mb.corridorIndex = ci;
         mb._isMiniBoss = true;
       }
