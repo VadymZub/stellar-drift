@@ -884,8 +884,7 @@ export default class GameScene extends Phaser.Scene {
           });
         });
         // Уникальный мини-босс в конце коридора (после всех стражников, перед сундуком)
-        const CORR_MINIBOSS = ['ancient_09', 'ancient_08', 'ancient_10', 'ancient_11', 'ancient_03'];
-        const mb = add(CORR_MINIBOSS[ci], 50,
+        const mb = add('ancient_miniboss', 50,
           (arenaR + corrLen * 0.86) * cosA,
           (arenaR + corrLen * 0.86) * sinA,
           { behavior: 'guard', patrolRadius: 320, leash: 1300, hpMult: 3, dmgMult: 2 });
