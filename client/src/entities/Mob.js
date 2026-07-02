@@ -117,6 +117,22 @@ export default class Mob {
       }
     }
 
+    // Кристальные щиты: ближайший живой shieldDrone поглощает 90% входящего урона по боссу
+    if (this.isDungeonBoss && this.scene?.mobs) {
+      let nearest = null, nearestDist = 1200;
+      for (const m of this.scene.mobs) {
+        if (!m.alive || !m.tpl?.shieldDrone) continue;
+        const d = Phaser.Math.Distance.Between(m.x, m.y, this.x, this.y);
+        if (d < nearestDist) { nearest = m; nearestDist = d; }
+      }
+      if (nearest) {
+        nearest.takeDamage(amount * 0.9, penetration, { ignoreMovEvasion: true });
+        amount *= 0.1;
+        nearest.sprite?.setTint(0x88ccff);
+        this.scene.time.delayedCall(150, () => nearest.sprite?.clearTint());
+      }
+    }
+
     // Пассивные мобы агрятся при атаке игрока
     if (this.passive) {
       this.passive = false;

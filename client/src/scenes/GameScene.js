@@ -1253,10 +1253,13 @@ export default class GameScene extends Phaser.Scene {
     if (phase === 3) {
       spawnRing('ancient_06', 5, 1000);                                          // 5 Левиафанов
       spawnRing('ancient_13', 2, 500, { behavior: 'guard', patrolRadius: 380 }); // 2 Реаниматора
+      spawnRing('ancient_shield', 3, 420, { behavior: 'guard', patrolRadius: 200 }); // Кристальные щиты
+      this.log(i18n.t('log.shield_drone_active'));
     }
     if (phase === 4) {
       spawnRing('ancient_11', 4, 1200);                                          // 4 Звёздных бойца
       spawnRing('ancient_13', 2, 500, { behavior: 'guard', patrolRadius: 380 }); // ещё 2 Реаниматора
+      spawnRing('ancient_shield', 3, 380, { behavior: 'guard', patrolRadius: 200 }); // ещё Кристальные щиты
     }
   }
 
