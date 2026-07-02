@@ -288,8 +288,34 @@ ancient crystal loot chest, space game 2D top-down sprite, hexagonal crystalline
 
 ---
 
+## ancient_miniboss.png — Хранитель Коридора (Corridor Sentinel)
+
+**Роль:** уникальный мини-босс в конце каждого из 5 коридоров. HP ×3, урон ×2 по сравнению с обычными мобами. Должен визуально читаться как командирский юнит — явно крупнее и тяжелее обычных Ancient'ов, но меньше Апофиса.
+
+**Концепция:** тяжёлый кристаллический страж с двумя массивными пушечными кристаллами по бокам и многослойной бронёй. Асимметрия намеренная — намекает на то, что это не серийный юнит, а индивидуальный командир. Насыщенные фиолетово-золотые тона ближе к Апофису, чем к рядовым мобам.
+
+```
+top-down 2D game sprite of an alien ancient crystalline corridor sentinel mini-boss spacecraft, large imposing silhouette — a thick armored central crystal body with heavy layered crystal armor plates stacked over each other like scales of a deep-sea creature, two massive elongated crystal cannon spires extending diagonally forward-left and forward-right (asymmetric — left spire slightly longer), each cannon spire glows intensely at the tip with compressed void-purple energy (#7b2ff7), the armor plates are dark deep-blue crystal (#0d0a2e) with gold energy veins (#ffd54f) running between the plate seams, central power core is large — a bright white-gold blinding singularity visible through a gap in the armor, four smaller crystal fins extend backward for propulsion, the overall form feels heavy and deliberate — this unit does not rush, it crushes, body width is about 55% of canvas making it clearly larger than normal mobs, top-down view, nose pointing downward, no smoke, no fog, no exhaust trails, no atmospheric effects, pure transparency only, isolated on transparent background, alien crystalline ancient cosmic aesthetic consistent with ancient_06 and ancient_12 palette, painterly stylized top-down RTS unit art, AAA mobile game quality, 512x512px, no text, no characters
+```
+
+**Визуальные характеристики:**
+- Форма: асимметричный тяжёлый командирский корпус, ~270px полезной области в 512px
+- Цвет брони: тёмно-синий-чёрный кристалл (`#0d0a2e`) с фиолетовыми прожилками
+- Пушки: два больших кристалла-орудия с void-фиолетовым (`#7b2ff7`) свечением на концах
+- Золотые швы между бронеплитами (`#ffd54f`) — заметнее, чем у рядовых мобов
+- Центральное ядро: ярко-белое с золотым оттенком, крупнее чем у ancient_05/09
+- Ощущение: тяжёлый, медленный, бронированный — не стремительный, а давящий
+
+**Ключ в игре:** `ancient_miniboss`  
+**Имя:** `mob.ancient_miniboss` → `"Хранитель"` (добавить в `ru.json`)  
+**Файл:** `ancient_miniboss.png` (512×512px, прозрачный фон, нос вниз)  
+**displaySize:** 160px (крупнее обычных, меньше Апофиса 210px)  
+**Использование:** заменяет `CORR_MINIBOSS` в `GameScene.js` — все 5 мини-боссов используют этот спрайт с одинаковыми HP/dmg мультипликаторами, но разными `aiClass` через opts
+
+---
+
 ## Порядок работы
-1. Сгенерировать 13 спрайтов + 3 кольца Апофиса + ancient_shield + corridor_chest
+1. Сгенерировать 13 спрайтов + 3 кольца Апофиса + ancient_shield + corridor_chest + ancient_miniboss
 2. Сохранить → `client/assets/mobs/`
 3. Добавить моб-шаблоны в `constants.js`
 4. Реализовать многослойную анимацию Апофиса в `Mob.js` или `ArgusController.js` по образцу

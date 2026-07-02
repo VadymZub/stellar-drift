@@ -3,7 +3,7 @@ import { COLORS, UI_RES } from '../constants.js';
 import { i18n } from '../i18n.js';
 import { itemName, itemStats, itemIconKey, itemSellPrice, PLASMATE_PER_SLOT, PLASMATE_GOLD_RATE, removePlasmateFromInventory, totalPlasmateInInventory, CONSUMABLES, AMMO_ICON, addConsumableToInventory } from '../items.js';
 import { prerenderTex } from '../utils/prerenderTex.js';
-import { PERK_MAP, RARITY_COLOR, perkBonus } from '../perks.js';
+import { PERK_MAP, RARITY_COLOR, RARITY_LABEL, perkBonus } from '../perks.js';
 
 // Трюм (хоткей C). Доступен всегда — в космосе и на базе.
 // На базе добавляет колонку СКЛАД и кнопки переноса предметов.
@@ -55,7 +55,7 @@ export default class CargoScene extends Phaser.Scene {
 
     const title = atBase ? 'СКЛАД' : 'ТРЮМ';
     this.add.text(px + 22, py + 16, title, this.O('20px', '#4dd0e1')).setDepth(14);
-    this.add.text(px + pw - 20, py + 20, 'C / ESC', this.F('11px', '#445566')).setOrigin(1, 0).setDepth(14);
+    this.add.text(px + pw - 20, py + 20, 'I / ESC', this.F('11px', '#445566')).setOrigin(1, 0).setDepth(14);
 
     const cargoMax = this._cargoMax(), whMax = this._whMax();
     const cargoCount = (this.gs.inventory || []).length;
@@ -170,13 +170,41 @@ export default class CargoScene extends Phaser.Scene {
         });
       }
     } else {
+      // Remote sell mode: premium + не на базе + кулдаун не активен
+      const _now = Date.now();
+      const _cdUntil = this.gs._remoteSellCooldownUntil ?? 0;
+      this._remoteMode = !!(this.gs.premium && _now >= _cdUntil);
+      this._remoteSellUsed = false;
+
+      if (this.gs.premium) {
+        if (this._remoteMode) {
+          this.add.text(px + pw - 14, py + 36, '🛒 удалённая продажа', this.F('10px', '#66bb6a'))
+            .setOrigin(1, 0).setDepth(14);
+        } else {
+          const _secsLeft = Math.max(0, Math.ceil((_cdUntil - _now) / 1000));
+          const _cdTxt = this.add.text(px + pw - 14, py + 36,
+            `🛒 ${Math.floor(_secsLeft / 60)}:${(_secsLeft % 60).toString().padStart(2, '0')}`,
+            this.F('10px', '#e57373')).setOrigin(1, 0).setDepth(14);
+          this.time.addEvent({ delay: 1000, repeat: _secsLeft, callback: () => {
+            const _rem = Math.max(0, Math.ceil(((this.gs._remoteSellCooldownUntil ?? 0) - Date.now()) / 1000));
+            if (_rem <= 0) { _cdTxt.setText('🛒 удалённая продажа'); _cdTxt.setColor('#66bb6a'); return; }
+            _cdTxt.setText(`🛒 ${Math.floor(_rem / 60)}:${(_rem % 60).toString().padStart(2, '0')}`);
+          }});
+        }
+      }
+
       this._renderSlotGrid(px + 12, py + 72, pw - 24, ph - 90, this.gs.inventory || [], cargoMax, 'cargo_nosell', undefined, 6);
     }
 
     const gs2 = this.gs;
     if (gs2._moveMsg) { this._showMoveMsg(gs2._moveMsg); gs2._moveMsg = null; }
 
-    this.input.keyboard.on('keydown-ESC', () => this.scene.stop());
+    const _closeScene = () => {
+      if (this._remoteSellModalObjs) { this._hideRemoteSellModal(); return; }
+      if (this._remoteSellUsed) this.gs._remoteSellCooldownUntil = Date.now() + 120_000;
+      this.scene.stop();
+    };
+    this.input.keyboard.on('keydown-ESC', _closeScene);
   }
 
   // ── Ammo texture for inventory display ───────────────────────────────────
@@ -402,16 +430,26 @@ export default class CargoScene extends Phaser.Scene {
           .setStrokeStyle(1, bdrHex, 0.6).setInteractive({ useHandCursor: true });
         box.on('pointerover', (p) => this._showTooltip(p.x, p.y, item));
         box.on('pointerout',  ()  => this._hideTooltip());
-        const dropStrip = this.add.rectangle(sx, sy + BODY_H, SZ, STRIP_H, 0x1a0808, 0.9).setOrigin(0, 0)
-          .setStrokeStyle(1, 0x6a2020, 0.5).setInteractive({ useHandCursor: true });
-        const dropT = this.add.text(sx + SZ / 2, sy + BODY_H + STRIP_H / 2, '× выкинуть',
-          this.F('9px', '#ef9a9a')).setOrigin(0.5);
-        dropStrip.on('pointerdown', () => this._showDropConfirm(item));
         const iconK = itemIconKey(item);
         const iconImg = iconK
           ? this.add.image(sx + SZ / 2, sy + BODY_H / 2, prerenderTex(this, iconK, 48, 48)).setDisplaySize(48, 48).setOrigin(0.5)
           : this.add.text(sx + SZ / 2, sy + BODY_H / 2, `T${item.tier}`, this.O('14px', '#ffe0b2')).setOrigin(0.5);
-        container.add([box, dropStrip, dropT, iconImg]);
+        if (this._remoteMode) {
+          const sellPrice = Math.floor(itemSellPrice(item) * 0.9);
+          const sellStrip = this.add.rectangle(sx, sy + BODY_H, SZ, STRIP_H, 0x0a1f0a, 0.9).setOrigin(0, 0)
+            .setStrokeStyle(1, 0x2a6a2a, 0.6).setInteractive({ useHandCursor: true });
+          const sellT = this.add.text(sx + SZ / 2, sy + BODY_H + STRIP_H / 2,
+            `💰 ${sellPrice.toLocaleString()}`, this.F('9px', '#81c784')).setOrigin(0.5);
+          sellStrip.on('pointerdown', () => { this._hideTooltip(); this._showRemoteSellModal(item); });
+          container.add([box, sellStrip, sellT, iconImg]);
+        } else {
+          const dropStrip = this.add.rectangle(sx, sy + BODY_H, SZ, STRIP_H, 0x1a0808, 0.9).setOrigin(0, 0)
+            .setStrokeStyle(1, 0x6a2020, 0.5).setInteractive({ useHandCursor: true });
+          const dropT = this.add.text(sx + SZ / 2, sy + BODY_H + STRIP_H / 2, '× выкинуть',
+            this.F('9px', '#ef9a9a')).setOrigin(0.5);
+          dropStrip.on('pointerdown', () => this._showDropConfirm(item));
+          container.add([box, dropStrip, dropT, iconImg]);
+        }
       } else {
         // Warehouse module item — body (52px) + single action strip (16px)
         // Action label/destination driven by the global gs._whGuildMode checkbox
@@ -761,6 +799,113 @@ export default class CargoScene extends Phaser.Scene {
   _hideSellConfirm() {
     this._sellConfirmObjs?.forEach(o => o?.destroy());
     this._sellConfirmObjs = null;
+  }
+
+  _showRemoteSellModal(item) {
+    this._hideRemoteSellModal();
+    const W = this.scale.width, H = this.scale.height;
+    const gs = this.gs;
+    const pDef    = item.perk ? PERK_MAP[item.perk.key] : null;
+    const name    = itemName(item);
+    const stats   = itemStats(item);
+    const basePrice = itemSellPrice(item);
+    const net     = Math.floor(basePrice * 0.9);
+    const penalty = basePrice - net;
+
+    const MW = 322, MH = pDef ? 274 : 242;
+    const mx = Math.round((W - MW) / 2);
+    const my = Math.round((H - MH) / 2);
+    const objs = [];
+    const t = (x, y, s, style) => { const o = this.add.text(x, y, s, { resolution: UI_RES, ...style }).setDepth(202); objs.push(o); return o; };
+
+    const dim = this.add.rectangle(0, 0, W, H, 0x000000, 0.5).setOrigin(0).setDepth(200).setInteractive();
+    dim.on('pointerdown', () => this._hideRemoteSellModal());
+    objs.push(dim);
+
+    const panel = this.add.graphics().setDepth(201);
+    panel.fillStyle(0x060c18, 0.98); panel.fillRoundedRect(mx, my, MW, MH, 10);
+    panel.lineStyle(1.5, 0x2a6040, 0.9); panel.strokeRoundedRect(mx, my, MW, MH, 10);
+    objs.push(panel);
+
+    // Иконка
+    const iconK = itemIconKey(item);
+    if (iconK) objs.push(this.add.image(mx + 36, my + 36, prerenderTex(this, iconK, 48, 48)).setDisplaySize(48, 48).setOrigin(0.5).setDepth(202));
+
+    // Название
+    t(mx + 68, my + 16, name, { fontFamily: 'Orbitron, sans-serif', fontSize: '14px', color: '#e0e8ff', wordWrap: { width: MW - 80 } });
+
+    // Статы
+    if (stats) t(mx + 12, my + 52, stats, { fontFamily: 'Inter, sans-serif', fontSize: '12px', color: '#7a9ab8', wordWrap: { width: MW - 24 } });
+
+    let nextY = my + 106;
+
+    // Перк: плашка редкости + название + показатель
+    if (pDef) {
+      const rarHex   = RARITY_COLOR[pDef.rarity];
+      const rarColor = `#${(rarHex & 0xffffff).toString(16).padStart(6, '0')}`;
+      const rarLabel = RARITY_LABEL[pDef.rarity] ?? pDef.rarity.toUpperCase();
+      // Плашка редкости
+      const labelBg = this.add.rectangle(mx + 12, nextY, 0, 18, rarHex, 0.18).setOrigin(0, 0).setDepth(201);
+      const labelTxt = this.add.text(mx + 16, nextY + 2, rarLabel,
+        { fontFamily: 'Orbitron, sans-serif', fontSize: '9px', color: rarColor, resolution: UI_RES }).setDepth(202);
+      labelBg.width = labelTxt.width + 8;
+      objs.push(labelBg, labelTxt);
+      nextY += 22;
+      // Название + показатели перка
+      t(mx + 12, nextY, `✦ ${i18n.t(`perk.${pDef.key}`)}`,
+        { fontFamily: 'Inter, sans-serif', fontSize: '13px', color: rarColor, wordWrap: { width: MW - 24 } });
+      nextY += 20;
+      t(mx + 12, nextY, perkBonus(item.perk),
+        { fontFamily: 'Inter, sans-serif', fontSize: '12px', color: '#c5cce8', wordWrap: { width: MW - 24 } });
+      nextY += 22;
+    }
+
+    // Разделитель
+    const div = this.add.graphics().setDepth(201);
+    div.lineStyle(1, 0x1a3a28, 0.8);
+    div.beginPath(); div.moveTo(mx + 12, nextY); div.lineTo(mx + MW - 12, nextY); div.strokePath();
+    objs.push(div);
+    nextY += 12;
+
+    // Цена
+    t(mx + 12, nextY,      `Выручка:   +${net.toLocaleString()} кр.`,                      { fontFamily: 'Inter, sans-serif', fontSize: '14px', color: '#81c784' });
+    t(mx + 12, nextY + 22, `Комиссия:  −${penalty.toLocaleString()} кр.  (−10% вне базы)`, { fontFamily: 'Inter, sans-serif', fontSize: '11px', color: '#e57373' });
+
+    // Кнопки
+    const BW = 124, BH = 30, btnY = my + MH - BH - 12;
+    const btnSell = this.add.rectangle(mx + 12, btnY, BW, BH, 0x0a2010).setOrigin(0, 0)
+      .setStrokeStyle(1, 0x3a8040, 0.9).setInteractive({ useHandCursor: true }).setDepth(201);
+    const btnSellT = this.add.text(mx + 12 + BW / 2, btnY + BH / 2, 'ПРОДАТЬ',
+      { fontFamily: 'Orbitron, sans-serif', fontSize: '12px', color: '#4dc060', resolution: UI_RES }).setOrigin(0.5).setDepth(202);
+    const btnCancel = this.add.rectangle(mx + MW - BW - 12, btnY, BW, BH, 0x200808).setOrigin(0, 0)
+      .setStrokeStyle(1, 0x884040, 0.9).setInteractive({ useHandCursor: true }).setDepth(201);
+    const btnCancelT = this.add.text(mx + MW - BW / 2 - 12, btnY + BH / 2, 'ОТМЕНА',
+      { fontFamily: 'Orbitron, sans-serif', fontSize: '12px', color: '#c06060', resolution: UI_RES }).setOrigin(0.5).setDepth(202);
+    objs.push(btnSell, btnSellT, btnCancel, btnCancelT);
+
+    btnSell.on('pointerover', () => btnSell.setFillStyle(0x164030));
+    btnSell.on('pointerout',  () => btnSell.setFillStyle(0x0a2010));
+    btnCancel.on('pointerover', () => btnCancel.setFillStyle(0x3a1010));
+    btnCancel.on('pointerout',  () => btnCancel.setFillStyle(0x200808));
+
+    btnSell.on('pointerdown', () => {
+      const inv = gs.inventory || [];
+      const idx = inv.indexOf(item); if (idx < 0) return;
+      inv.splice(idx, 1);
+      gs.credits = (gs.credits || 0) + net;
+      gs.log?.(`🛒 ${name} → +${net.toLocaleString()} кр. (−10% комиссия)`);
+      gs._saveState?.();
+      this._remoteSellUsed = true;
+      this.scene.restart();
+    });
+    btnCancel.on('pointerdown', () => this._hideRemoteSellModal());
+
+    this._remoteSellModalObjs = objs;
+  }
+
+  _hideRemoteSellModal() {
+    this._remoteSellModalObjs?.forEach(o => o?.destroy());
+    this._remoteSellModalObjs = null;
   }
 
   _moveToWarehouse(item, isClanWarehouse = false) {
