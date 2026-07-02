@@ -4118,13 +4118,16 @@ export default class GameScene extends Phaser.Scene {
 
   _openDungeonBossDoor() {
     if (!this.dungeonBossDoor) return;
-    this.walls.remove(this.dungeonBossDoor, true, true);
+    const door = this.dungeonBossDoor;
     this.dungeonBossDoor = null;
-    if (this.dungeonBossDoorVis) {
-      for (const obj of this.dungeonBossDoorVis) obj.destroy();
-      this.dungeonBossDoorVis = null;
-    }
+    const vis = this.dungeonBossDoorVis;
+    this.dungeonBossDoorVis = null;
     this.log(i18n.t('log.boss_door_open'));
+    // Defer wall removal to next frame — avoid modifying StaticPhysicsGroup mid-physics-update
+    this.time.delayedCall(0, () => {
+      if (door?.active) { this.walls.remove(door, true, false); door.destroy(); }
+      if (vis) { for (const obj of vis) obj.destroy(); }
+    });
   }
 
   _checkCorridorClear(corridorIndex) {
@@ -4138,10 +4141,15 @@ export default class GameScene extends Phaser.Scene {
   }
 
   _openBossArena() {
-    for (const w of (this.arenaWalls ?? [])) this.walls.remove(w, true, true);
-    for (const v of (this.arenaWallsVis ?? [])) v.destroy();
+    const walls = [...(this.arenaWalls ?? [])];
+    const vis   = [...(this.arenaWallsVis ?? [])];
     this.arenaWalls    = [];
     this.arenaWallsVis = [];
+    // Defer wall removal to next frame — avoid modifying StaticPhysicsGroup mid-physics-update
+    this.time.delayedCall(0, () => {
+      for (const w of walls) { if (w?.active) { this.walls.remove(w, true, false); w.destroy(); } }
+      for (const v of vis)   { v?.destroy(); }
+    });
     this.log(i18n.t('log.apophis_awakened'));
     // Сохранить базовый урон для системы ярости
     const boss = this._apophisBoss;
