@@ -602,12 +602,16 @@ export default class CargoScene extends Phaser.Scene {
     }
 
     // Первый проход — создаём тексты вне экрана, чтобы замерить реальную высоту с word-wrap
-    const textObjs = lineDefs.filter(l => l.text).map(l => ({
-      left:  this.add.text(-9999, -9999, l.text, { ...l.sty, wordWrap: { width: TW - 20 } }).setDepth(201),
-      right: l.right ? this.add.text(-9999, -9999, l.right.text, { ...l.right.sty }).setDepth(201) : null,
-    }));
+    const SINGLE_LINE_H = 18; // порог для 11px шрифта; выше → текст перенёсся
+    const textObjs = lineDefs.filter(l => l.text).map(l => {
+      const left  = this.add.text(-9999, -9999, l.text, { ...l.sty, wordWrap: { width: TW - 20 } }).setDepth(201);
+      const right = l.right ? this.add.text(-9999, -9999, l.right.text, { ...l.right.sty }).setDepth(201) : null;
+      const wrap  = !!(right && left.height > SINGLE_LINE_H); // перенос → метка идёт ниже
+      return { left, right, wrap };
+    });
 
-    const TH = 10 + textObjs.reduce((s, t) => s + t.left.height + GAP, 0);
+    const TH = 10 + textObjs.reduce((s, { left, right, wrap }) =>
+      s + left.height + GAP + (wrap && right ? right.height + 2 : 0), 0);
     let tx = wx + 16, ty = wy - TH / 2;
     if (tx + TW > W - 8) tx = wx - TW - 8;
     if (ty < 4) ty = 4;
@@ -620,12 +624,15 @@ export default class CargoScene extends Phaser.Scene {
     // Второй проход — расставляем тексты по финальным координатам
     let ly = ty + 8;
     const allTObjs = [];
-    textObjs.forEach(({ left, right }) => {
+    textObjs.forEach(({ left, right, wrap }) => {
       left.setPosition(tx + 10, ly);
-      if (right) right.setPosition(tx + TW - 10, ly).setOrigin(1, 0);
+      if (right) {
+        if (wrap) right.setPosition(tx + TW - 10, ly + left.height + 2).setOrigin(1, 0);
+        else      right.setPosition(tx + TW - 10, ly).setOrigin(1, 0);
+      }
       allTObjs.push(left);
       if (right) allTObjs.push(right);
-      ly += left.height + GAP;
+      ly += left.height + GAP + (wrap && right ? right.height + 2 : 0);
     });
 
     this._tooltipObjs = [g, ...allTObjs];
