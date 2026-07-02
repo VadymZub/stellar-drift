@@ -589,7 +589,9 @@ export default class CargoScene extends Phaser.Scene {
       { text: itemStats(item), sty: this.F('11px', '#9fb3b8') },
     ];
     if (pDef) {
-      lineDefs.push({ text: pDef.name,                       sty: this.F('11px', rarColor) });
+      const rarLabel = RARITY_LABEL[pDef.rarity] ?? pDef.rarity.toUpperCase();
+      lineDefs.push({ text: rarLabel,                         sty: this.F('10px', rarColor) });
+      lineDefs.push({ text: `✦ ${pDef.name}`,                sty: this.F('11px', rarColor) });
       lineDefs.push({ text: pDef.desc(perkBonus(item.perk)), sty: this.F('11px', '#aaccdd') });
     }
 
