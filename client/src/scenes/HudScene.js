@@ -624,6 +624,13 @@ export default class HudScene extends Phaser.Scene {
     }).setDepth(101);
     this.logEntries.push({ t, born: this.time.now });
     while (this.logEntries.length > 7) this.logEntries.shift().t.destroy();
+    this._refreshLogPanel();
+  }
+
+  _logContentH() {
+    let h = 0;
+    for (const e of this.logEntries) h += Math.max(16, Math.ceil(e.t.height)) + 2;
+    return h;
   }
 
   update() {
@@ -768,14 +775,16 @@ export default class HudScene extends Phaser.Scene {
     this._editBtnTxt?.setVisible(!atBase && !inMap);
 
     // ── Лог (внутри панели, снизу вверх) ──
-    const LOG_PH = 24 + 7 * 18 + 10;
+    const LOG_PH = 24 + Math.max(7 * 18 + 10, this._logContentH() + 10);
     const logBottom = this._logY + LOG_PH - 20;
     const logVisible = !this._logCollapsed;
     this._logBtn?.setVisible(true);
     this._logBtnTxt?.setVisible(true);
-    for (let i = this.logEntries.length - 1, row = 0; i >= 0; i--, row++) {
+    let yOff = 0;
+    for (let i = this.logEntries.length - 1; i >= 0; i--) {
       const e = this.logEntries[i];
-      e.t.setX(this._logX + 10).setY(logBottom - row * 18).setVisible(logVisible).setAlpha(1);
+      e.t.setX(this._logX + 10).setY(logBottom - yOff).setVisible(logVisible).setAlpha(1);
+      yOff += Math.max(16, Math.ceil(e.t.height)) + 2;
     }
 
     // ── Sector tracking for friends online status ──
@@ -1068,7 +1077,8 @@ export default class HudScene extends Phaser.Scene {
 
   _refreshLogPanel() {
     const x = this._logX, y = this._logY;
-    const BW = 52, BH = 24, PW = 300, PH = BH + 7 * 18 + 10; // = 160px
+    const BW = 52, BH = 24, PW = 300;
+    const PH = BH + Math.max(7 * 18 + 10, this._logContentH() + 10);
 
     this._logBtn.setPosition(x, y);
     this._logBtnTxt.setPosition(x + BW / 2, y + BH / 2).setText(this._logCollapsed ? 'L ▶' : 'L ◀');
