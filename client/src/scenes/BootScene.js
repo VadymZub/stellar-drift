@@ -90,6 +90,7 @@ export default class BootScene extends Phaser.Scene {
     this.load.image('ring_apophis_outer',  'assets/mobs/ring_apophis_outer.png');
     this.load.image('ring_apophis_mid',    'assets/mobs/ring_apophis_mid.png');
     this.load.image('ring_apophis_inner',  'assets/mobs/ring_apophis_inner.png');
+    this.load.image('corridor_chest',      'assets/mobs/corridor_chest.png');
 
     // Иконки рангов (7 тиров)
     for (let t = 1; t <= 7; t++) this.load.image(`rank_tier${t}`, `assets/ranks/rank_tier${t}.png`);

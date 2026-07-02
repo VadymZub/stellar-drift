@@ -260,8 +260,36 @@ top-down view of a single isolated alien crystalline shield drone for a sci-fi b
 **Файл:** `ancient_shield.png` (128×128px, прозрачный фон, нос вниз)  
 **Использование:** `constants.js` → `ancient_shield`, `GameScene.js` → `onApophisPhase` (будущая механика кристальных щитов)
 
+---
+
+## corridor_chest.png — Лут-сундук коридора (приз за зачистку)
+
+**Роль:** реквизит-объект (не моб), появляется в конце каждого из 5 коридоров после полной зачистки. Содержит случайную награду: боеприпасы / расходник / честь / мини-бустер.
+
+**Промт (Midjourney v6):**
+```
+ancient crystal loot chest, space game 2D top-down sprite, hexagonal crystalline container, deep violet and electric blue faceted gemstone panels, glowing cyan void energy seeping from cracks between panels, ornate angular gold trim along edges, pulsing inner light source through translucent crystal walls, slight levitation glow beneath, faint purple runic engravings on surface, dark space background, centered on transparent background, game asset style, clean silhouette, 128x128px
+--style raw --stylize 750 --no shadow text watermark logo border frame
+```
+
+**Визуальные характеристики:**
+- Форма: октагональный/гексагональный контейнер, слегка приподнятый над поверхностью
+- Основной цвет: глубокий фиолетово-синий (`#1a0a2e`) с гранями цвета `#4a1f7a`
+- Акцент: пульсирующий голубой void-свет (`#00e5ff`) из щелей
+- Золотые угловые накладки (`#ffd700`)
+- Руны: слабые фиолетовые символы Древних
+- Размер: примерно 80×80 полезной области внутри 128×128 спрайта
+
+**Анимация (если нужна):** лёгкое покачивание + мигание внутреннего свечения (реализовано tween-ом в GameScene, не нужна spritesheet)
+
+**Файл:** `corridor_chest.png` (128×128px, прозрачный фон)  
+**Использование:** `GameScene._spawnCorridorChest()` → `this.add.image(x, y, 'corridor_chest')`  
+**Загрузка:** `BootScene.js` → `this.load.image('corridor_chest', 'assets/mobs/corridor_chest.png')`
+
+---
+
 ## Порядок работы
-1. Сгенерировать 13 спрайтов + 3 кольца Апофиса + ancient_shield
+1. Сгенерировать 13 спрайтов + 3 кольца Апофиса + ancient_shield + corridor_chest
 2. Сохранить → `client/assets/mobs/`
 3. Добавить моб-шаблоны в `constants.js`
 4. Реализовать многослойную анимацию Апофиса в `Mob.js` или `ArgusController.js` по образцу

@@ -883,11 +883,11 @@ export default class GameScene extends Phaser.Scene {
             bomb.corridorIndex = ci;
           });
         });
-        // Уникальный мини-босс в середине коридора
+        // Уникальный мини-босс в конце коридора (после всех стражников, перед сундуком)
         const CORR_MINIBOSS = ['ancient_09', 'ancient_08', 'ancient_10', 'ancient_11', 'ancient_03'];
         const mb = add(CORR_MINIBOSS[ci], 50,
-          (arenaR + corrLen * 0.50) * cosA,
-          (arenaR + corrLen * 0.50) * sinA,
+          (arenaR + corrLen * 0.86) * cosA,
+          (arenaR + corrLen * 0.86) * sinA,
           { behavior: 'guard', patrolRadius: 320, leash: 1300, hpMult: 3, dmgMult: 2 });
         mb.corridorIndex = ci;
         mb._isMiniBoss = true;
@@ -4151,7 +4151,7 @@ export default class GameScene extends Phaser.Scene {
     this._bossArenaOpenedAt = this.time.now;
     this._bossEnrageActive  = false;
     this._bossRageCycle     = 0;   // первый раз: ярость включится сразу по истечении 10 мин
-    this._portalTimer       = 50;
+    this._portalTimer       = 90;
   }
 
   // Шоквав при переходе фаз: 16 лучей, 3с неуязвимость
@@ -4202,8 +4202,9 @@ export default class GameScene extends Phaser.Scene {
     if (this._portalTimer !== undefined) {
       this._portalTimer -= dt;
       if (this._portalTimer <= 0) {
-        this._portalTimer = 55 + Math.random() * 25;
-        this._spawnPortal();
+        this._portalTimer = 120 + Math.random() * 60;
+        const portalMobCount = this.mobs.filter(m => m.alive && m.isBossEscort && m.tpl?.faction === 'ancient' && !m.isDungeonBoss).length;
+        if (portalMobCount <= 8) this._spawnPortal();
       }
     }
   }
@@ -4237,7 +4238,7 @@ export default class GameScene extends Phaser.Scene {
       onComplete: () => {
         this.log(i18n.t('log.portal_open'));
         const PORTAL_MOBS = ['ancient_01', 'ancient_02', 'ancient_03', 'ancient_04'];
-        const count = 3 + Math.floor(Math.random() * 3);
+        const count = 2 + Math.floor(Math.random() * 2);
         for (let i = 0; i < count; i++) {
           const tplKey = PORTAL_MOBS[Math.floor(Math.random() * PORTAL_MOBS.length)];
           const sa = ang + (Math.random() - 0.5) * 0.8;
@@ -4276,17 +4277,16 @@ export default class GameScene extends Phaser.Scene {
     const chX = cx + Math.cos(a) * d;
     const chY = cy + Math.sin(a) * d;
 
-    const gfx = this.add.graphics().setDepth(30);
-    gfx.fillStyle(0xf5a623, 1.0); gfx.fillRect(chX - 20, chY - 20, 40, 40);
-    gfx.lineStyle(3, 0xffd700, 1); gfx.strokeRect(chX - 20, chY - 20, 40, 40);
-    gfx.lineStyle(2, 0xffd700, 0.8); gfx.beginPath(); gfx.moveTo(chX - 20, chY); gfx.lineTo(chX + 20, chY); gfx.strokePath();
-    const label = this.add.text(chX, chY - 34, '📦', {
-      fontFamily: 'Inter, sans-serif', fontSize: '22px', resolution: 2,
-    }).setOrigin(0.5, 0.5).setDepth(31);
-    this.tweens.add({ targets: label, y: chY - 38, duration: 900, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
+    const glow = this.add.graphics().setDepth(29).setBlendMode('ADD');
+    glow.fillStyle(0xffd700, 0.18); glow.fillCircle(chX, chY, 56);
+
+    const img = this.add.image(chX, chY, 'corridor_chest')
+      .setDisplaySize(88, 88).setDepth(30);
+    this.tweens.add({ targets: img, y: chY - 6, duration: 1100, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
+    this.tweens.add({ targets: glow, alpha: { from: 0.6, to: 1.0 }, duration: 900, yoyo: true, repeat: -1 });
 
     this._corridorChests = this._corridorChests ?? [];
-    this._corridorChests.push({ gfx, label, x: chX, y: chY, corridorIndex, open: false });
+    this._corridorChests.push({ img, glow, x: chX, y: chY, corridorIndex, open: false });
   }
 
   _updateCorridorChests() {
@@ -4296,8 +4296,8 @@ export default class GameScene extends Phaser.Scene {
       const d = Phaser.Math.Distance.Between(this.player.x, this.player.y, ch.x, ch.y);
       if (d < 90) {
         ch.open = true;
-        ch.gfx?.destroy();
-        ch.label?.destroy();
+        ch.img?.destroy();
+        ch.glow?.destroy();
         this._openCorridorChest(ch.corridorIndex);
       }
     }
@@ -5335,7 +5335,7 @@ export default class GameScene extends Phaser.Scene {
     this._bossArenaOpenedAt = undefined;
     this._portalTimer       = undefined;
     this._mapBoosters       = null;
-    for (const ch of (this._corridorChests ?? [])) { ch.gfx?.destroy(); ch.label?.destroy(); }
+    for (const ch of (this._corridorChests ?? [])) { ch.img?.destroy(); ch.glow?.destroy(); }
     this._corridorChests = [];
     this._healBeamGfx?.destroy(); this._healBeamGfx = null;
     for (const trap of (this.gravTraps ?? [])) trap.gfx?.destroy();
