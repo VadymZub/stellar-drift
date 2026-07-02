@@ -225,7 +225,7 @@ export const MOBS = {
   apophis: { key: 'ancient_12', nameKey: 'mob.apophis', faction: 'ancient', artAngleOffset: 0, displaySize: 210, hull: 1800, shield: 1100, damage: 48, speed: 120, aggro: 1100, range: 600, fireRate: 0.5, credits: 5000, xp: 1200, patrolRadius: 240, leash: Infinity, boss: true, bossType: 'dungeon', starGold: { min: 20, max: 40, chance: 1 }, projectileType: 'acid' },
 
   // ── АРГУС (Admin-only) ──
-  argus_boss: { key: 'argus_boss', nameKey: 'mob.argus_boss', faction: 'admin', artAngleOffset: -Math.PI / 2, displaySize: 220, hull: 12000, shield: 8000, damage: 189, speed: 180, aggro: 1400, range: 620, fireRate: 1.5, credits: 0, xp: 0, patrolRadius: 300, leash: Infinity, boss: true, projectileType: 'plasma' },
+  argus_boss: { key: 'argus_boss', nameKey: 'mob.argus_boss', faction: 'admin', artAngleOffset: -Math.PI / 2, displaySize: 220, hull: 24000, shield: 16000, damage: 189, speed: 180, aggro: 1400, range: 620, fireRate: 1.5, credits: 0, xp: 0, patrolRadius: 300, leash: Infinity, boss: true, projectileType: 'plasma' },
 };
 
 // ── Боссы: фазы (ярость) + телеграфированный AoE-залп ──────────────────────────
