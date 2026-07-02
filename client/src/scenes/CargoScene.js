@@ -831,8 +831,9 @@ export default class CargoScene extends Phaser.Scene {
     const iconK = itemIconKey(item);
     if (iconK) objs.push(this.add.image(mx + 36, my + 36, prerenderTex(this, iconK, 48, 48)).setDisplaySize(48, 48).setOrigin(0.5).setDepth(202));
 
-    // Название
+    // Название + тир
     t(mx + 68, my + 16, name, { fontFamily: 'Orbitron, sans-serif', fontSize: '14px', color: '#e0e8ff', wordWrap: { width: MW - 80 } });
+    t(mx + 68, my + 38, `Класс T${item.tier ?? '?'}`, { fontFamily: 'Inter, sans-serif', fontSize: '12px', color: '#7a9ab8' });
 
     // Статы
     if (stats) t(mx + 12, my + 52, stats, { fontFamily: 'Inter, sans-serif', fontSize: '12px', color: '#7a9ab8', wordWrap: { width: MW - 24 } });
@@ -852,10 +853,10 @@ export default class CargoScene extends Phaser.Scene {
       objs.push(labelBg, labelTxt);
       nextY += 22;
       // Название + показатели перка
-      t(mx + 12, nextY, `✦ ${i18n.t(`perk.${pDef.key}`)}`,
+      t(mx + 12, nextY, `✦ ${pDef.name}`,
         { fontFamily: 'Inter, sans-serif', fontSize: '13px', color: rarColor, wordWrap: { width: MW - 24 } });
       nextY += 20;
-      t(mx + 12, nextY, perkBonus(item.perk),
+      t(mx + 12, nextY, pDef.desc(perkBonus(item.perk)),
         { fontFamily: 'Inter, sans-serif', fontSize: '12px', color: '#c5cce8', wordWrap: { width: MW - 24 } });
       nextY += 22;
     }
