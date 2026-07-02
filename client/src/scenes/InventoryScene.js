@@ -1,7 +1,7 @@
 import * as Phaser from 'https://cdn.jsdelivr.net/npm/phaser@4.1.0/dist/phaser.esm.js';
 import { COLORS, UI_RES } from '../constants.js';
 import { i18n } from '../i18n.js';
-import { itemName, itemStats } from '../items.js';
+import { itemName, itemStats, statRollStr } from '../items.js';
 
 // Экран «Склад» (хоткей I). Показывает подобранные предметы и их статы.
 export default class InventoryScene extends Phaser.Scene {
@@ -42,6 +42,11 @@ export default class InventoryScene extends Phaser.Scene {
         this.add.image(px + 52, y + rowH / 2, 'lootbox').setDisplaySize(34, 34);
         this.add.text(px + 84, y + 10, itemName(it), O('16px', '#ffe0b2'));
         this.add.text(px + 84, y + 36, itemStats(it), F('13px', '#cfe9ee'));
+        const srInfo = statRollStr(it);
+        if (srInfo) {
+          const srHex = `#${srInfo.color.toString(16).padStart(6, '0')}`;
+          this.add.text(px + 84, y + 52, srInfo.label, F('10px', srHex));
+        }
         y += rowH + gap;
       });
       if (inv.length > maxRows) {

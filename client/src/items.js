@@ -68,6 +68,17 @@ export function statRollQuality(statRoll) {
   const r = statRoll ?? 1.0;
   return STAT_ROLL_QUALITY.find(t => r >= t.min) ?? STAT_ROLL_QUALITY[STAT_ROLL_QUALITY.length - 1];
 }
+// "СИЛЬНОЕ · 87% макс" — строка для UI, null если statRoll не задан.
+// Показывает ЭФФЕКТИВНОЕ качество (с учётом нормализации), а не сырой ролл.
+export function statRollStr(item) {
+  if (item?.statRoll == null) return null;
+  const norms  = normLevelsNeeded(item);
+  const doneN  = Math.min(item.starLvl || 0, norms);
+  const effRoll = norms > 0 ? item.statRoll + (1.15 - item.statRoll) * (doneN / norms) : item.statRoll;
+  const q   = statRollQuality(effRoll);
+  const pct = Math.round(((effRoll - 0.85) / 0.30) * 100);
+  return { label: `${q.label} · ${pct}% макс`, color: q.color };
+}
 
 export function rollCannon(tier, mobLevel) {
   const t = CANNON_TIERS[tier];
@@ -114,9 +125,10 @@ export function rollArmor(tier, mobLevel) {
 }
 
 export function rollLaser() {
+  const r = roll();
   return {
-    type: 'laser', tier: 4,
-    damage: Math.round(LASER_DMG * roll()),
+    type: 'laser', tier: 4, statRoll: r,
+    damage: Math.round(LASER_DMG * r),
     penetration: 0,
     fireRate: 1.0,
     perk: rollPerk('laser'),

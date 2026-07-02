@@ -1,7 +1,7 @@
 import * as Phaser from 'https://cdn.jsdelivr.net/npm/phaser@4.1.0/dist/phaser.esm.js';
 import { COLORS, UI_RES } from '../constants.js';
 import { i18n } from '../i18n.js';
-import { itemName, itemStats, itemIconKey, itemSellPrice, PLASMATE_PER_SLOT, PLASMATE_GOLD_RATE, removePlasmateFromInventory, totalPlasmateInInventory, CONSUMABLES, AMMO_ICON, addConsumableToInventory } from '../items.js';
+import { itemName, itemStats, itemIconKey, itemSellPrice, PLASMATE_PER_SLOT, PLASMATE_GOLD_RATE, removePlasmateFromInventory, totalPlasmateInInventory, CONSUMABLES, AMMO_ICON, addConsumableToInventory, statRollStr } from '../items.js';
 import { prerenderTex } from '../utils/prerenderTex.js';
 import { PERK_MAP, RARITY_COLOR, RARITY_LABEL, perkBonus, rollQualityInfo } from '../perks.js';
 
@@ -584,10 +584,15 @@ export default class CargoScene extends Phaser.Scene {
     const rarColor = pDef ? `#${RARITY_COLOR[pDef.rarity].toString(16).padStart(6, '0')}` : null;
     const TW = 240, GAP = 5;
 
+    const srInfo = statRollStr(item);
     const lineDefs = [
       { text: itemName(item),  sty: this.O('13px', '#ffe0b2') },
       { text: itemStats(item), sty: this.F('11px', '#9fb3b8') },
     ];
+    if (srInfo) {
+      const srColorHex = `#${srInfo.color.toString(16).padStart(6, '0')}`;
+      lineDefs.push({ text: srInfo.label, sty: this.F('10px', srColorHex) });
+    }
     if (pDef) {
       const rarLabel = RARITY_LABEL[pDef.rarity] ?? pDef.rarity.toUpperCase();
       const qInfo    = rollQualityInfo(item.perk?.roll ?? 1);
@@ -836,7 +841,18 @@ export default class CargoScene extends Phaser.Scene {
     const net     = Math.floor(basePrice * 0.9);
     const penalty = basePrice - net;
 
-    const MW = 322, MH = pDef ? 274 : 242;
+    const srInfo = statRollStr(item);
+    // Измеряем высоту блока статов (может переноситься) чтобы качество ролла шло после него
+    const MW = 322;
+    let statsH = 14;
+    if (stats) {
+      const tmp = this.add.text(-9999, -9999, stats,
+        { fontFamily: 'Inter, sans-serif', fontSize: '12px', resolution: UI_RES, wordWrap: { width: MW - 24 } });
+      statsH = tmp.height;
+      tmp.destroy();
+    }
+    const srBlockH = srInfo ? statsH + 4 + 16 : statsH; // stats + gap + quality line
+    const MH = (pDef ? 274 : 242) + Math.max(0, srBlockH - 34);
     const mx = Math.round((W - MW) / 2);
     const my = Math.round((H - MH) / 2);
     const objs = [];
@@ -862,7 +878,13 @@ export default class CargoScene extends Phaser.Scene {
     // Статы
     if (stats) t(mx + 12, my + 52, stats, { fontFamily: 'Inter, sans-serif', fontSize: '12px', color: '#7a9ab8', wordWrap: { width: MW - 24 } });
 
-    let nextY = my + 106;
+    // Качество базового ролла — после блока статов (позиция динамическая)
+    if (srInfo) {
+      const srColorHex = `#${srInfo.color.toString(16).padStart(6, '0')}`;
+      t(mx + 12, my + 52 + statsH + 4, srInfo.label, { fontFamily: 'Orbitron, sans-serif', fontSize: '10px', color: srColorHex });
+    }
+
+    let nextY = Math.max(my + 106, my + 52 + srBlockH + 8);
 
     // Перк: плашка редкости + название + показатель
     if (pDef) {

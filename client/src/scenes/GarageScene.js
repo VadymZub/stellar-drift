@@ -2,7 +2,7 @@ import * as Phaser from 'https://cdn.jsdelivr.net/npm/phaser@4.1.0/dist/phaser.e
 import { COLORS, UI_RES } from '../constants.js';
 import { i18n } from '../i18n.js';
 import { itemName, itemStats, itemSellPrice, itemIconKey, SLOT_KEY, creditUpgradeCost, starUpgradeCost, modMult,
-         normLevelsNeeded, MOD_MAX_STAR_LVL, statRollQuality, STAT_ROLL_QUALITY,
+         normLevelsNeeded, MOD_MAX_STAR_LVL, statRollQuality, STAT_ROLL_QUALITY, statRollStr,
          PLASMATE_GOLD_RATE, PLASMATE_PER_SLOT, totalPlasmateInInventory, removePlasmateFromInventory,
          AMMO_ICON, CONSUMABLES, addConsumableToInventory } from '../items.js';
 import { SHIPS, SHIP_BY_KEY, purchaseState, shipLevelCost, shipLevelCostGold, SHIP_MAX_LEVEL } from '../ships.js';
@@ -735,8 +735,8 @@ export default class GarageScene extends Phaser.Scene {
     for (const k of ['weapon', 'shield', 'engine']) (p.slots[k] || []).forEach((it) => { if (it) mods.push(it); });
     if (!mods.length) { this.add.text(x, y, i18n.t('garage.no_modules'), this.F('14px', '#5e7378')); return; }
 
-    const rowH = 64, gap = 6, rowSpan = rowH + gap;
-    const bw = 150, bh = 24, bxAbs = x + w - bw - 8;
+    const rowH = 84, gap = 6, rowSpan = rowH + gap;
+    const bw = 152, bh = 26, bxAbs = x + w - bw - 8;
     const { py, ph } = this.box;
 
     // No container — absolute positions, setY on scroll
@@ -744,44 +744,83 @@ export default class GarageScene extends Phaser.Scene {
       const baseY = y + r * rowSpan;
       const ri = []; // [obj, dy, isBtn]
 
-      ri.push([this.add.rectangle(x, baseY, w, rowH, 0x10202b, 0.95).setOrigin(0, 0).setStrokeStyle(1, COLORS.primary, 0.2), 0, false]);
-
       const cl = it.creditLvl || 0, sl = it.starLvl || 0, onStar = sl > 0;
       const norms = normLevelsNeeded(it);
-      const pctNow = Math.round((modMult(it) - 1) * 1000) / 10;
-      const maxSl = norms + MOD_MAX_STAR_LVL;
       const normDone = Math.min(sl, norms);
       const powDone  = Math.max(0, sl - norms);
-      const lvlStr = onStar
-        ? (normDone < norms
-            ? `🔧 ${normDone}/${norms}  ⭐ ${powDone}/5`
-            : `⭐ ${powDone}/5`)
-        : `${i18n.t('garage.credit_lvl')} ${cl}/5`;
-      ri.push([this.add.text(x + 12, baseY + 8, `${itemName(it)}   ·   ${lvlStr}   (+${pctNow}%)`, this.O('13px', '#ffe0b2')), 8, false]);
-      ri.push([this.add.text(x + 12, baseY + 32, this.upgradePreview(it), { ...this.F('11px', '#a5d6a7'), wordWrap: { width: bxAbs - x - 24 } }), 32, false]);
-
+      const kNow = modMult(it);
       const sCost = starUpgradeCost(it);
-      const sbdy = onStar ? (rowH - bh) / 2 : 34;
+
+      // Предпросмотр следующего ⭐-апгрейда
+      const srVal = it.statRoll ?? 1.0;
+      const slNext = sl + 1;
+      const normDoneNext = Math.min(slNext, norms);
+      const powDoneNext  = Math.max(0, slNext - norms);
+      const effRollNext  = norms > 0 ? srVal + (1.15 - srVal) * (normDoneNext / norms) : srVal;
+      const kNext = (effRollNext / srVal) * (1 + 0.015 * cl + 0.03 * powDoneNext);
+      const nextGainPct = Math.round((kNext / kNow - 1) * 1000) / 10;
+
+      // Основной стат для отображения
+      const mainStat = it.type === 'cannon' || it.type === 'laser' ? it.damage
+                     : it.type === 'engine' ? it.speed
+                     : it.type === 'armor'  ? it.hullBonus
+                     : it.durability;
+      const statLabel = it.type === 'cannon' || it.type === 'laser' ? i18n.t('stat.damage')
+                      : it.type === 'engine' ? i18n.t('stat.speed')
+                      : it.type === 'armor'  ? i18n.t('stat.hull')
+                      : i18n.t('stat.durability');
+      const curVal = Math.round(mainStat * kNow * 10) / 10;
+      const nxtVal = sCost != null ? Math.round(mainStat * kNext * 10) / 10 : null;
+      const statStr = nxtVal != null
+        ? `${statLabel}: ${curVal}  →  ${nxtVal}  (+${nextGainPct}%)`
+        : `${statLabel}: ${curVal}`;
+
+      // Строка уровней апгрейда с расшифровкой
+      const lvlParts = [];
+      if (!onStar) lvlParts.push(`Кред. ${cl}/5`);
+      if (norms > 0) lvlParts.push(`🔧 Норм ${normDone}/${norms}`);
+      if (onStar) lvlParts.push(`⭐ Сила ${powDone}/5`);
+      const lvlStr = lvlParts.join('   ');
+
+      ri.push([this.add.rectangle(x, baseY, w, rowH, 0x10202b, 0.95).setOrigin(0, 0).setStrokeStyle(1, COLORS.primary, 0.2), 0, false]);
+      // Строка 1: имя
+      ri.push([this.add.text(x + 12, baseY + 8, itemName(it), this.O('13px', '#ffe0b2')), 8, false]);
+      // Строка 2: уровни апгрейда
+      ri.push([this.add.text(x + 12, baseY + 28, lvlStr, this.F('10px', '#9fb3b8')), 28, false]);
+      // Строка 3: текущий стат → след. апгрейд
+      ri.push([this.add.text(x + 12, baseY + 44, statStr, { ...this.F('11px', '#a5d6a7'), wordWrap: { width: bxAbs - x - 24 } }), 44, false]);
+      // Строка 4: качество ролла
+      const srInfo = statRollStr(it);
+      if (srInfo) {
+        ri.push([this.add.text(x + 12, baseY + 64, srInfo.label, this.F('10px', `#${srInfo.color.toString(16).padStart(6, '0')}`)), 64, false]);
+      }
+
+      const sbdy = onStar ? Math.round((rowH - bh) / 2) : 42;
       if (sCost == null) {
         ri.push([this.add.text(bxAbs + bw / 2, baseY + sbdy + bh / 2, `⭐ ${i18n.t('garage.max')}`, this.F('11px', '#7e9398')).setOrigin(0.5), sbdy + bh / 2, false]);
       } else {
         const can = (gs.starGold || 0) >= sCost;
+        const isNorm = normDone < norms;
+        const sBtnLabel = isNorm
+          ? `🔧 Норм. +${nextGainPct}%   ${sCost}⭐`
+          : `⭐ +3% к стату   ${sCost}⭐`;
         const b = this.add.rectangle(bxAbs, baseY + sbdy, bw, bh, can ? 0x3a2c12 : 0x1a2a30, 0.95).setOrigin(0, 0).setStrokeStyle(1, can ? COLORS.amber : 0x33484f, 0.85);
         ri.push([b, sbdy, can]);
-        ri.push([this.add.text(bxAbs + bw / 2, baseY + sbdy + bh / 2, `⭐ ${i18n.t('garage.mod_upgrade')} ${sCost}`, this.F('11px', can ? '#ffd54f' : '#5e7378')).setOrigin(0.5), sbdy + bh / 2, false]);
+        ri.push([this.add.text(bxAbs + bw / 2, baseY + sbdy + bh / 2, sBtnLabel, this.F('11px', can ? '#ffd54f' : '#5e7378')).setOrigin(0.5), sbdy + bh / 2, false]);
         if (can) b.setInteractive({ useHandCursor: true }).on('pointerdown', () => this.tryStarUpgrade(it));
       }
 
       if (!onStar) {
         const cCost = creditUpgradeCost(it);
-        const cbdy = 6;
+        const cbdy = 8;
         if (cCost == null) {
           ri.push([this.add.text(bxAbs + bw / 2, baseY + cbdy + bh / 2, `кред. ${i18n.t('garage.max')}`, this.F('11px', '#7e9398')).setOrigin(0.5), cbdy + bh / 2, false]);
         } else {
+          const creditPct = Math.round((1.015 ** (cl + 1) - 1.015 ** cl) * 1000) / 10 || 1.5;
           const can = (gs.credits || 0) >= cCost;
           const b = this.add.rectangle(bxAbs, baseY + cbdy, bw, bh, can ? 0x14331c : 0x1a2a30, 0.95).setOrigin(0, 0).setStrokeStyle(1, can ? COLORS.emerald : 0x33484f, 0.8);
           ri.push([b, cbdy, can]);
-          ri.push([this.add.text(bxAbs + bw / 2, baseY + cbdy + bh / 2, `${i18n.t('garage.mod_upgrade')} ${cCost.toLocaleString('ru')}`, this.F('11px', can ? '#a5d6a7' : '#5e7378')).setOrigin(0.5), cbdy + bh / 2, false]);
+          ri.push([this.add.text(bxAbs + bw / 2, baseY + cbdy + bh / 2, `+${creditPct}% к стату   ${cCost.toLocaleString('ru')}₵`, this.F('11px', can ? '#a5d6a7' : '#5e7378')).setOrigin(0.5), cbdy + bh / 2, false]);
           if (can) b.setInteractive({ useHandCursor: true }).on('pointerdown', () => this.upgradeModule(it));
         }
       }
@@ -1665,10 +1704,14 @@ export default class GarageScene extends Phaser.Scene {
     const rarColor = pDef ? `#${RARITY_COLOR[pDef.rarity].toString(16).padStart(6, '0')}` : null;
     const TW = 240, GAP = 5;
 
+    const srInfo = statRollStr(item);
     const lineDefs = [
       { text: itemName(item),  sty: this.O('13px', '#ffe0b2') },
       { text: itemStats(item), sty: this.F('11px', '#9fb3b8') },
     ];
+    if (srInfo) {
+      lineDefs.push({ text: srInfo.label, sty: this.F('10px', `#${srInfo.color.toString(16).padStart(6, '0')}`) });
+    }
     if (pDef) {
       lineDefs.push({ text: pDef.name,                                           sty: this.F('11px', rarColor) });
       lineDefs.push({ text: pDef.desc(perkBonus(item.perk), item.perk.roll ?? 1), sty: this.F('11px', '#aaccdd') });
