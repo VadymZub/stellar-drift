@@ -602,11 +602,13 @@ export default class CargoScene extends Phaser.Scene {
     }
 
     // Первый проход — создаём тексты вне экрана, чтобы замерить реальную высоту с word-wrap
+    // Правый текст создаётся первым, чтобы знать его ширину и оставить место в основном тексте
     const SINGLE_LINE_H = 18; // порог для 11px шрифта; выше → текст перенёсся
     const textObjs = lineDefs.filter(l => l.text).map(l => {
-      const left  = this.add.text(-9999, -9999, l.text, { ...l.sty, wordWrap: { width: TW - 20 } }).setDepth(201);
-      const right = l.right ? this.add.text(-9999, -9999, l.right.text, { ...l.right.sty }).setDepth(201) : null;
-      const wrap  = !!(right && left.height > SINGLE_LINE_H); // перенос → метка идёт ниже
+      const right     = l.right ? this.add.text(-9999, -9999, l.right.text, { ...l.right.sty }).setDepth(201) : null;
+      const leftWrap  = TW - 20 - (right ? right.width + 8 : 0);
+      const left      = this.add.text(-9999, -9999, l.text, { ...l.sty, wordWrap: { width: leftWrap } }).setDepth(201);
+      const wrap      = !!(right && left.height > SINGLE_LINE_H); // если всё равно перенёсся → метка ниже
       return { left, right, wrap };
     });
 
