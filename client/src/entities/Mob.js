@@ -60,6 +60,7 @@ export default class Mob {
     this.neutral = template.neutral || false;
     // passive: не агрится на игрока (даже при атаке не переходит в aggro)
     this.passive = opts.passive || false;
+    this._basePassive = this.passive;
     this.alive   = true;
     this.state   = 'idle';
 
@@ -201,6 +202,7 @@ export default class Mob {
     this.alive   = true;
     this.state   = 'idle';
     this.neutral = this.tpl.neutral || false;
+    this.passive = this._basePassive;
     this.phase   = 1;
     this.aoeTimer = this.isBoss ? BOSS.aoeCooldownP1 : 0;
     this._returning      = false;

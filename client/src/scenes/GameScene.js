@@ -1093,14 +1093,60 @@ export default class GameScene extends Phaser.Scene {
     }
 
     if (!sec.isDungeon && galaxy.current !== 'R-1-boss') {
-      const ring = [[1200, -360], [-1320, 480], [480, 1260], [-1020, -840], [1800, 624], [-1800, -180]];
-      ring.forEach((o, i) => add(pool[i % pool.length], rnd(Lmin, Lmax), o[0], o[1], isHomeSector ? { passive: true } : {}));
-      const gx = 1800, gy = 1140;
-      const sectorBoss = add(boss, Lmax, gx, gy, { behavior: 'guard', patrolRadius: 180, leash: 480 });
-      sectorBoss.isSectorBoss = true;
-      if (galaxy.current === 'helios_5') sectorBoss.isConfedBoss = true;
-      for (const [ox, oy] of [[-240, -130], [250, -90], [-110, 250]]) {
-        add(pool[0], rnd(Lmin, Lmax), gx + ox, gy + oy, { patrolRadius: 150, leash: 520, bossRef: sectorBoss, ...(isHomeSector ? { passive: true } : {}) });
+      const isMap12  = Lmax <= 20;            // карты 1-2 каждой корп — большинство мобов пассивны
+      const isMap345 = Lmax > 20 && !sec.pvp; // карты 3-5 — добавляем блуждающего босса
+      const passOpts = isMap12 ? { passive: true } : {};
+      const pLen     = pool.length;
+
+      if (!sec.pvp) {
+        // ── Корпоративные карты: расширенный спавн без пустых зон ──────────
+        // N-зона
+        add(pool[1%pLen], rnd(Lmin,Lmax),  -200, -1900, { patrolRadius: 320, leash: 760, ...passOpts });
+        add(pool[2%pLen], rnd(Lmin,Lmax),   550, -2300, { patrolRadius: 260, leash: 640, ...passOpts });
+        add(pool[0],      rnd(Lmin,Lmax),  -900, -1700, { patrolRadius: 400, leash: 900, ...passOpts });
+        // S-зона
+        add(pool[3%pLen], rnd(Lmin,Lmax),   200,  1900, { patrolRadius: 320, leash: 760, ...passOpts });
+        add(pool[4%pLen], rnd(Lmin,Lmax),  -600,  2200, { patrolRadius: 260, leash: 640, ...passOpts });
+        add(pool[2%pLen], rnd(Lmin,Lmax),   900,  1750, { patrolRadius: 390, leash: 870, ...passOpts });
+        // E-зона
+        add(pool[5%pLen], rnd(Lmin,Lmax),  2400,  -300, { patrolRadius: 440, leash: 980, ...passOpts });
+        add(pool[0],      rnd(Lmin,Lmax),  3100,   800, { patrolRadius: 360, leash: 810, ...passOpts });
+        add(pool[1%pLen], rnd(Lmin,Lmax),  2800, -1500, { patrolRadius: 300, leash: 700, ...passOpts });
+        // W-зона
+        add(pool[6%pLen], rnd(Lmin,Lmax), -2450,   200, { patrolRadius: 440, leash: 980, ...passOpts });
+        add(pool[3%pLen], rnd(Lmin,Lmax), -3000,  -900, { patrolRadius: 360, leash: 810, ...passOpts });
+        add(pool[5%pLen], rnd(Lmin,Lmax), -2700,  1350, { patrolRadius: 300, leash: 700, ...passOpts });
+        // Дальние углы
+        add(pool[4%pLen], rnd(Lmin,Lmax),  3600, -1800, { patrolRadius: 380, leash: 860, ...passOpts });
+        add(pool[2%pLen], rnd(Lmin,Lmax), -3500,  1700, { patrolRadius: 380, leash: 860, ...passOpts });
+        add(pool[6%pLen], rnd(Lmin,Lmax), -3400, -1900, { patrolRadius: 340, leash: 800, ...passOpts });
+        add(pool[1%pLen], rnd(Lmin,Lmax),  3700,  1900, { patrolRadius: 340, leash: 800, ...passOpts });
+
+        // ── Сектор-босс с охраной (всегда агрессивны) ──────────────────────
+        const gx = 3200, gy = 1700;
+        const sectorBoss = add(boss, Lmax, gx, gy, { behavior: 'guard', patrolRadius: 180, leash: 480 });
+        sectorBoss.isSectorBoss = true;
+        if (galaxy.current === 'helios_5') sectorBoss.isConfedBoss = true;
+        for (const [ox, oy] of [[-250, -140], [260, -100], [-120, 260]]) {
+          add(pool[0], rnd(Lmin,Lmax), gx+ox, gy+oy, { patrolRadius: 150, leash: 520, bossRef: sectorBoss });
+        }
+
+        // ── Блуждающий одиночный босс (карты 3-5): roam по всей карте, пассивен до атаки ─
+        if (isMap345) {
+          const wb = add(boss, Lmax, -3500, -2200, { behavior: 'roam', passive: true, leash: Infinity, patrolRadius: 0 });
+          wb.isWanderBoss = true;
+          wb.isSectorBoss = true;
+        }
+      } else {
+        // ── PvP-сектора: оригинальный спавн ────────────────────────────────
+        const ring = [[1200,-360],[-1320,480],[480,1260],[-1020,-840],[1800,624],[-1800,-180]];
+        ring.forEach((o, i) => add(pool[i%pLen], rnd(Lmin,Lmax), o[0], o[1], {}));
+        const gx = 1800, gy = 1140;
+        const sectorBoss = add(boss, Lmax, gx, gy, { behavior: 'guard', patrolRadius: 180, leash: 480 });
+        sectorBoss.isSectorBoss = true;
+        for (const [ox, oy] of [[-240,-130],[250,-90],[-110,250]]) {
+          add(pool[0], rnd(Lmin,Lmax), gx+ox, gy+oy, { patrolRadius: 150, leash: 520, bossRef: sectorBoss });
+        }
       }
     }
   }
@@ -1109,6 +1155,18 @@ export default class GameScene extends Phaser.Scene {
 
   _dungeonDiff() {
     return DUNGEON_DIFF[this.dungeonDifficulty ?? 'normal'];
+  }
+
+  _randomRespawnPoint() {
+    const cx = this.worldWidth / 2, cy = this.worldHeight / 2;
+    const margin = 500;
+    let x, y, tries = 0;
+    do {
+      x = Phaser.Math.Between(margin, this.worldWidth - margin);
+      y = Phaser.Math.Between(margin, this.worldHeight - margin);
+      tries++;
+    } while (Phaser.Math.Distance.Between(x, y, cx, cy) < 900 && tries < 20);
+    return { x, y };
   }
 
   _spawnDifficultyReinforcements(pool, cx, cy, Lmin, Lmax) {
@@ -2801,7 +2859,14 @@ export default class GameScene extends Phaser.Scene {
         });
       } else {
         this.time.delayedCall(60000, () => {
-          if (!mob.alive) { mob.respawn(); this.log(i18n.t('log.respawn', { name, lvl })); }
+          if (!mob.alive) {
+            if (!SECTORS[galaxy.current]?.isDungeon) {
+              const pt = this._randomRespawnPoint();
+              mob.spawnX = pt.x; mob.spawnY = pt.y;
+            }
+            mob.respawn();
+            this.log(i18n.t('log.respawn', { name, lvl }));
+          }
         });
       }
     }
