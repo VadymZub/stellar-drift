@@ -3316,6 +3316,9 @@ export default class GameScene extends Phaser.Scene {
           this.player.fireCooldown = time + 1000 / this.player.weaponFireRate;
           this.player.lastAttackAt = time;
         }
+      } else if (this.isFiring && time > (this._outOfRangeMsgCd || 0)) {
+        this._outOfRangeMsgCd = time + 2000;
+        this.log('📡 Вне дальности огня');
       }
     }
     
@@ -4993,7 +4996,7 @@ export default class GameScene extends Phaser.Scene {
 
     // ── Auto-fire at player (predictive aim) ───────────────────────────────
     b.fireCooldown -= dt;
-    if (b.fireCooldown <= 0 && dist < 1400 && b._aiState !== 'flee') {
+    if (b.fireCooldown <= 0 && dist < 600 && b._aiState !== 'flee') {
       b.fireCooldown = b.baseFireRate;
       const pBody = p.sprite?.body;
       const pvx = pBody ? pBody.velocity.x / DPR : 0;
@@ -5045,7 +5048,7 @@ export default class GameScene extends Phaser.Scene {
       this.log(`Тень: ремонт корабля +${heal} HP`);
       return;
     }
-    if (sKey === 'ship:helion_volley' && dist < 900 && cdReady(sKey, 40000)) {
+    if (sKey === 'ship:helion_volley' && dist < 600 && cdReady(sKey, 40000)) {
       // Залп — 5 выстрелов с интервалом 100мс
       for (let i = 0; i < 5; i++) {
         this.time.delayedCall(i * 110, () => {
@@ -5111,7 +5114,7 @@ export default class GameScene extends Phaser.Scene {
     }
 
     // ── overcharge_shot ────────────────────────────────────────────────────
-    if (dist < 650 && !b._overcharge && cdReady('overcharge_shot', 25000)) {
+    if (dist < 600 && !b._overcharge && cdReady('overcharge_shot', 25000)) {
       b._overcharge = true;
       return;
     }
