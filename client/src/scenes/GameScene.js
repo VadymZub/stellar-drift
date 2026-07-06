@@ -2481,6 +2481,7 @@ export default class GameScene extends Phaser.Scene {
   _fireLaser(skillMult = 1, isOC = false) {
     const t = this.target, p = this.player;
     if (!t?.alive || !p.alive) return;
+    if (this._hasWallBetween(p.x, p.y, t.x, t.y)) return;
 
     const hit    = Math.random() < (p.laserAccuracy ?? 0.80);
     const isCrit = hit && p.critChance > 0 && Math.random() < p.critChance;
@@ -2601,6 +2602,7 @@ export default class GameScene extends Phaser.Scene {
 
     // void — хитскан: мгновенный луч, урон без снаряда
     if (cfg.hitscan) {
+      if (this._hasWallBetween(mob.x, mob.y, victim.x, victim.y)) return;
       const pen = cfg.penetration ?? 0.6;
       const res = victim.takeDamage(mob.damage, pen, { ignoreMovEvasion: true, ...extraOpts });
       this._laserBeam(mob.x, mob.y, victim.x, victim.y, 0xce93d8, 0.85, 4);
@@ -3435,6 +3437,7 @@ export default class GameScene extends Phaser.Scene {
     if (this._apophisBoss) this._updateHealerEffects(dt);
     if (this._bossArenaOpenedAt !== undefined) this._updateBossArena(dt);
     if (this._corridorChests?.length) this._updateCorridorChests();
+    if (this._corridorButtons?.length) this._updateCorridorButtons();
     this._updateBotPilot(dt);
     this._updateEscort(dt);
 
@@ -4095,8 +4098,9 @@ export default class GameScene extends Phaser.Scene {
       addBossDoor(cx + 2475, cy + 1650, 450, 250); // горизонтальный boss door в восточном проходе
 
     } else if (galaxy.current === 'R-1-boss') {
-      // Вертикальная 5-конечная звезда: тонкие сегментированные стены коридоров + кольцо арены
+      // Вертикальная 5-конечная звезда: толстые стены коридоров (150px) + кольцо арены
       const arenaR = 1600, corrLen = 3200, wallT = 60, ringT = 90;
+      const WALL_VIS = 150;  // ширина видимой полосы стены коридора
       const CORR_HW = [310, 440, 440, 440, 440];
       const ANGLES  = [
         -Math.PI / 2,
@@ -4106,23 +4110,24 @@ export default class GameScene extends Phaser.Scene {
         -Math.PI / 2 + 8 * Math.PI / 5,
       ];
 
-      this.arenaWalls    = [];
-      this.arenaWallsVis = [];
-      this.gravTraps     = [];
-      this.mines         = [];
-      this._wallLines    = [];  // для столкновений снарядов: [{x1,y1,x2,y2}|{type:'arc',cx,cy,r,a1,a2}]
+      this.arenaWalls       = [];
+      this.arenaWallsVis    = [];
+      this.gravTraps        = [];
+      this.mines            = [];
+      this._wallLines       = [];  // [{x1,y1,x2,y2}|{type:'arc',...}] для снарядов
+      this._corridorCapWalls   = [[], [], [], [], []];  // тела торцев per-corridor
+      this._corridorCapGfx     = [null, null, null, null, null]; // визуал торца
+      this._corridorButtons    = [];                             // кнопки у торцев
 
-      // ── Тонкие сегментированные физические тела вдоль линии ─────────────────
-      // Центры сдвинуты так, что внутренний край AABB точно на hw (без вторжения в коридор)
+      // ── Сегментированные физические тела вдоль линии ─────────────────────────
       const SEG_LEN = 180;
-      const addWallLine = (x1, y1, x2, y2, removable = false) => {
+      const addWallLine = (x1, y1, x2, y2, capIdx = -1) => {
         const dx = x2 - x1, dy = y2 - y1;
         const dist = Math.sqrt(dx * dx + dy * dy);
         if (dist < 1) return;
         const N = Math.max(1, Math.ceil(dist / SEG_LEN));
         const step = dist / N;
         const nx = dx / dist, ny = dy / dist;
-        // AABB для сегмента под произвольным углом (минимальный описывающий прямоугольник)
         const wW = Math.abs(nx) * (step + 20) + Math.abs(ny) * (wallT + 20);
         const wH = Math.abs(ny) * (step + 20) + Math.abs(nx) * (wallT + 20);
         for (let k = 0; k < N; k++) {
@@ -4131,37 +4136,38 @@ export default class GameScene extends Phaser.Scene {
           const wall = this.add.rectangle(wx, wy, wW, wH, 0, 0);
           this.physics.add.existing(wall, true);
           this.walls.add(wall);
-          if (removable) this.arenaWalls.push(wall);
+          if (capIdx >= 0) this._corridorCapWalls[capIdx].push(wall);
         }
-        // НЕ добавляем в _wallLines здесь — вызывающий код добавляет ВИЗУАЛЬНЫЕ координаты
       };
 
-      // ── Сегменты кольца арены (дуга между двумя углами) ─────────────────────
+      // ── Дуга кольца (физика + визуал) ─────────────────────────────────────────
       const addRingArc = (a1, a2, removable = false) => {
-        // Нормализация: a2 > a1
         if (a2 < a1) a2 += Math.PI * 2;
-        const arcLen = arenaR * (a2 - a1);
-        if (arcLen < 1) return;
-        // Визуал (дуга)
+        if (arenaR * (a2 - a1) < 1) return;
+        // Визуал: толстая тёмная полоса + яркий контур
         const arcGfx = removable ? this.add.graphics().setDepth(2) : g;
-        arcGfx.lineStyle(7, ws.edge, 0.9);
         const VSTEPS = Math.max(2, Math.ceil((a2 - a1) / (Math.PI / 36)));
-        arcGfx.beginPath();
-        for (let i = 0; i <= VSTEPS; i++) {
-          const a = a1 + (a2 - a1) * i / VSTEPS;
-          const px = cx + arenaR * Math.cos(a), py = cy + arenaR * Math.sin(a);
-          if (i === 0) arcGfx.moveTo(px, py); else arcGfx.lineTo(px, py);
-        }
-        arcGfx.strokePath();
+        const drawArc = (r, lw, color, alpha) => {
+          arcGfx.lineStyle(lw, color, alpha);
+          arcGfx.beginPath();
+          for (let i = 0; i <= VSTEPS; i++) {
+            const a = a1 + (a2 - a1) * i / VSTEPS;
+            if (i === 0) arcGfx.moveTo(cx + r * Math.cos(a), cy + r * Math.sin(a));
+            else          arcGfx.lineTo(cx + r * Math.cos(a), cy + r * Math.sin(a));
+          }
+          arcGfx.strokePath();
+        };
+        drawArc(arenaR + ringT / 2, ringT, ws.fill, 0.85);  // тёмная полоса кольца
+        drawArc(arenaR, 4, ws.edge, 1.0);                    // яркий внутренний контур
         if (removable) this.arenaWallsVis.push(arcGfx);
-        // Физические тела: AABB-сегменты вдоль дуги (~каждые 10°)
+        // Физические тела дуги (~10° на сегмент)
         const N = Math.max(1, Math.ceil((a2 - a1) / (Math.PI / 18)));
         for (let k = 0; k < N; k++) {
           const am = a1 + (a2 - a1) * (k + 0.5) / N;
           const aS = a1 + (a2 - a1) * k / N;
           const aE = a1 + (a2 - a1) * (k + 1) / N;
           const chord = 2 * arenaR * Math.sin((aE - aS) / 2);
-          const tx = -Math.sin(am), ty = Math.cos(am); // касательная
+          const tx = -Math.sin(am), ty = Math.cos(am);
           const wW = Math.abs(tx) * (chord + 20) + Math.abs(ty) * (ringT + 20);
           const wH = Math.abs(ty) * (chord + 20) + Math.abs(tx) * (ringT + 20);
           const wall = this.add.rectangle(cx + arenaR * Math.cos(am), cy + arenaR * Math.sin(am), wW, wH, 0, 0);
@@ -4172,63 +4178,80 @@ export default class GameScene extends Phaser.Scene {
         this._wallLines.push({ type: 'arc', cx, cy, r: arenaR, a1, a2, removable });
       };
 
-      // ── Кольцо арены: постоянные дуги между коридорами + съёмные заглушки ──
+      // ── Кольцо арены: постоянные дуги + съёмные заглушки ─────────────────────
       for (let i = 0; i < 5; i++) {
         const hw = CORR_HW[i];
-        const gapHA = Math.asin(Math.min(hw / arenaR, 0.999)) + 0.06; // half-angle of corridor gap
-        // Постоянная дуга — от конца текущего коридора до начала следующего
+        const gapHA = Math.asin(Math.min(hw / arenaR, 0.999)) + 0.06;
         const nextI = (i + 1) % 5;
-        const hwNext = CORR_HW[nextI];
-        const gapHANext = Math.asin(Math.min(hwNext / arenaR, 0.999)) + 0.06;
+        const gapHANext = Math.asin(Math.min(CORR_HW[nextI] / arenaR, 0.999)) + 0.06;
         let arcA1 = ANGLES[i] + gapHA;
         let arcA2 = ANGLES[nextI] - gapHANext;
         if (arcA2 < arcA1) arcA2 += Math.PI * 2;
         if (arcA2 - arcA1 > 0.05) addRingArc(arcA1, arcA2, false);
-        // Съёмная заглушка — запечатывает вход в коридор
         addRingArc(ANGLES[i] - gapHA, ANGLES[i] + gapHA, true);
       }
 
-      // ── Стены коридоров: тонкие линии с правильным смещением ─────────────────
-      g.lineStyle(7, ws.edge, 0.9);
+      // ── Стены коридоров: толстая полоса (150px) + яркий контур (5px) ──────────
       for (let i = 0; i < 5; i++) {
         const a    = ANGLES[i];
         const cosA = Math.cos(a), sinA = Math.sin(a);
         const pX   = -sinA, pY = cosA;
         const hw   = CORR_HW[i];
-
-        // Смещение центра тела наружу, чтобы внутренний край AABB был ровно на hw
-        const sin2A = Math.abs(Math.sin(2 * a));
+        const sin2A   = Math.abs(Math.sin(2 * a));
         const wallOff = hw + wallT / 2 + (SEG_LEN / 2) * sin2A;
 
         for (const side of [-1, 1]) {
-          // Визуальные координаты (на краю коридора hw)
           const vx0 = cx + arenaR * cosA + side * hw * pX;
           const vy0 = cy + arenaR * sinA + side * hw * pY;
           const vx1 = cx + (arenaR + corrLen) * cosA + side * hw * pX;
           const vy1 = cy + (arenaR + corrLen) * sinA + side * hw * pY;
+          // Тёмная широкая полоса (центр на hw + WALL_VIS/2)
+          const bandOff = hw + WALL_VIS / 2;
+          g.lineStyle(WALL_VIS, ws.fill, 0.85);
+          g.lineBetween(
+            cx + arenaR * cosA + side * bandOff * pX, cy + arenaR * sinA + side * bandOff * pY,
+            cx + (arenaR + corrLen) * cosA + side * bandOff * pX, cy + (arenaR + corrLen) * sinA + side * bandOff * pY
+          );
+          // Яркий внутренний контур (на hw)
+          g.lineStyle(5, ws.edge, 1.0);
           g.lineBetween(vx0, vy0, vx1, vy1);
           this._wallLines.push({ x1: vx0, y1: vy0, x2: vx1, y2: vy1 });
-          // Физические тела (сдвинуты наружу — внутренний край AABB на hw)
+          // Физика (сдвинута наружу)
           addWallLine(
             cx + arenaR * cosA + side * wallOff * pX, cy + arenaR * sinA + side * wallOff * pY,
             cx + (arenaR + corrLen) * cosA + side * wallOff * pX, cy + (arenaR + corrLen) * sinA + side * wallOff * pY
           );
         }
-        // Торцевая стена коридора (визуал = физика, нет смещения)
+
+        // ── Торцевая стена (закрыта кнопкой) ─────────────────────────────────
         const capX0 = cx + (arenaR + corrLen) * cosA + hw * pX;
         const capY0 = cy + (arenaR + corrLen) * sinA + hw * pY;
         const capX1 = cx + (arenaR + corrLen) * cosA - hw * pX;
         const capY1 = cy + (arenaR + corrLen) * sinA - hw * pY;
-        g.lineBetween(capX0, capY0, capX1, capY1);
-        this._wallLines.push({ x1: capX0, y1: capY0, x2: capX1, y2: capY1 });
-        addWallLine(capX0, capY0, capX1, capY1);
+        // Визуал торца — сохраняем отдельно, удалим при открытии
+        const capGfx = this.add.graphics().setDepth(2);
+        const capCX = cx + (arenaR + corrLen) * cosA + cosA * WALL_VIS / 2;
+        const capCY = cy + (arenaR + corrLen) * sinA + sinA * WALL_VIS / 2;
+        capGfx.lineStyle(WALL_VIS, ws.fill, 0.85);
+        capGfx.lineBetween(capX0 + cosA * WALL_VIS / 2, capY0 + sinA * WALL_VIS / 2,
+                            capX1 + cosA * WALL_VIS / 2, capY1 + sinA * WALL_VIS / 2);
+        capGfx.lineStyle(5, ws.edge, 1.0);
+        capGfx.lineBetween(capX0, capY0, capX1, capY1);
+        this._corridorCapGfx[i] = capGfx;
+        this._wallLines.push({ x1: capX0, y1: capY0, x2: capX1, y2: capY1, corridorCap: i });
+        // Физика торца (removable: capIdx = i)
+        addWallLine(capX0, capY0, capX1, capY1, i);
 
-        // Гравитационные ловушки
+        // ── Кнопка открытия коридора (снаружи торца) ─────────────────────────
+        const btnX = cx + (arenaR + corrLen + 220) * cosA;
+        const btnY = cy + (arenaR + corrLen + 220) * sinA;
+        this._spawnCorridorButton(i, btnX, btnY);
+
+        // Гравитационные ловушки и мины (внутри коридора)
         [0.28, 0.72].forEach(t => {
           const d2 = arenaR + corrLen * t;
           this._spawnGravTrap(cx + d2 * cosA, cy + d2 * sinA);
         });
-        // Мина в середине коридора
         this._spawnMine(cx + (arenaR + corrLen * 0.50) * cosA, cy + (arenaR + corrLen * 0.50) * sinA);
       }
     }
@@ -4722,6 +4745,98 @@ export default class GameScene extends Phaser.Scene {
         }
       }
     }
+  }
+
+  // ── Кнопки открытия коридоров ──────────────────────────────────────────────
+
+  _spawnCorridorButton(index, x, y) {
+    const gfx = this.add.graphics().setDepth(12);
+    gfx.fillStyle(0xc8a800, 0.25); gfx.fillCircle(x, y, 90);
+    gfx.lineStyle(4, 0xc8a800, 1.0); gfx.strokeCircle(x, y, 90);
+    gfx.lineStyle(3, 0xffd700, 0.8); gfx.strokeCircle(x, y, 60);
+    // крест-маркер
+    gfx.lineStyle(4, 0xffd700, 0.9);
+    gfx.lineBetween(x - 40, y, x + 40, y);
+    gfx.lineBetween(x, y - 40, x, y + 40);
+    const label = this.add.text(x, y + 110, `ВХОД ${index + 1}`,
+      { fontFamily: 'Orbitron', fontSize: '20px', color: '#ffd700', resolution: 2 })
+      .setOrigin(0.5).setDepth(13);
+    const hint = this.add.text(x, y + 138, 'приблизьтесь',
+      { fontFamily: 'Orbitron', fontSize: '14px', color: '#c8a800', resolution: 2 })
+      .setOrigin(0.5).setDepth(13);
+    this.tweens.add({ targets: gfx, alpha: { from: 0.6, to: 1.0 }, duration: 800, yoyo: true, repeat: -1 });
+    this._corridorButtons[index] = { x, y, index, triggered: false, gfx, label, hint };
+  }
+
+  _triggerCorridorButton(index) {
+    const btn = this._corridorButtons[index];
+    if (!btn || btn.triggered) return;
+    btn.triggered = true;
+    btn.gfx.destroy(); btn.label.destroy(); btn.hint.destroy();
+    // Убрать физику торца
+    const caps = this._corridorCapWalls?.[index];
+    if (caps?.length) {
+      this.time.delayedCall(0, () => {
+        for (const w of caps) { if (w?.active) { this.walls.remove(w, true, false); w.destroy(); } }
+      });
+      this._corridorCapWalls[index] = [];
+    }
+    // Убрать визуал торца
+    this._corridorCapGfx?.[index]?.destroy();
+    if (this._corridorCapGfx) this._corridorCapGfx[index] = null;
+    // Убрать _wallLines запись торца
+    if (this._wallLines) this._wallLines = this._wallLines.filter(wl => wl.corridorCap !== index);
+    this.log(`🔓 Коридор ${index + 1} открыт`);
+    // Звуковой эффект открытия двери (если есть)
+    this.cameras.main.flash(180, 200, 180, 0, true);
+  }
+
+  _updateCorridorButtons() {
+    if (!this._corridorButtons?.length) return;
+    const px = this.player.x, py = this.player.y;
+    for (const btn of this._corridorButtons) {
+      if (!btn || btn.triggered) continue;
+      if (Phaser.Math.Distance.Between(px, py, btn.x, btn.y) < 380) {
+        this._triggerCorridorButton(btn.index);
+      }
+    }
+  }
+
+  // ── Определение наличия стены на отрезке между двумя точками ───────────────
+
+  _segmentsIntersect(ax, ay, bx, by, cx, cy, dx, dy) {
+    const d1x = bx - ax, d1y = by - ay;
+    const d2x = dx - cx, d2y = dy - cy;
+    const cross = d1x * d2y - d1y * d2x;
+    if (Math.abs(cross) < 1e-10) return false;
+    const t = ((cx - ax) * d2y - (cy - ay) * d2x) / cross;
+    const u = ((cx - ax) * d1y - (cy - ay) * d1x) / cross;
+    return t >= 0 && t <= 1 && u >= 0 && u <= 1;
+  }
+
+  _hasWallBetween(x1, y1, x2, y2) {
+    if (!this._wallLines?.length) return false;
+    for (const wl of this._wallLines) {
+      if (wl.type === 'arc') {
+        // Пересечение отрезка с окружностью
+        const dx = x2 - x1, dy = y2 - y1;
+        const ex = x1 - wl.cx, ey = y1 - wl.cy;
+        const a = dx * dx + dy * dy;
+        if (a < 1e-10) continue;
+        const b = 2 * (ex * dx + ey * dy);
+        const c = ex * ex + ey * ey - wl.r * wl.r;
+        const disc = b * b - 4 * a * c;
+        if (disc < 0) continue;
+        const sqrtD = Math.sqrt(disc);
+        for (const s of [(-b - sqrtD) / (2 * a), (-b + sqrtD) / (2 * a)]) {
+          if (s < 0 || s > 1) continue;
+          if (this._angleInArc(Math.atan2(y1 + s * dy - wl.cy, x1 + s * dx - wl.cx), wl.a1, wl.a2)) return true;
+        }
+      } else {
+        if (this._segmentsIntersect(x1, y1, x2, y2, wl.x1, wl.y1, wl.x2, wl.y2)) return true;
+      }
+    }
+    return false;
   }
 
   // Минимальное расстояние от точки (px,py) до отрезка (ax,ay)-(bx,by)
@@ -5517,6 +5632,11 @@ export default class GameScene extends Phaser.Scene {
     for (const mine of (this.mines ?? [])) { if (mine.alive) mine.gfx?.destroy(); }
     this.mines = [];
     this._wallLines = [];
+    for (const btn of (this._corridorButtons ?? [])) { if (btn && !btn.triggered) { btn.gfx?.destroy(); btn.label?.destroy(); btn.hint?.destroy(); } }
+    this._corridorButtons = [];
+    for (const gfx of (this._corridorCapGfx ?? [])) gfx?.destroy();
+    this._corridorCapGfx = [];
+    this._corridorCapWalls = [];
     this._adminCh?.postMessage({ type: 'GAME_STATE', alive: false, playerName: this.playerName ?? 'Player' });
     this._adminCh?.close();
     this._adminCh = null;

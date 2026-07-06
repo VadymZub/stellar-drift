@@ -264,7 +264,8 @@ export default class Mob {
       this.state = 'idle';
     } else if (this._returning) {
       this.state = 'idle'; // во время возврата игнорируем агро
-    } else if (dist < this.tpl.aggro * (player.aggroRadiusMod ?? 1)) {
+    } else if (dist < this.tpl.aggro * (player.aggroRadiusMod ?? 1) &&
+               !this.scene._hasWallBetween?.(this.x, this.y, player.x, player.y)) {
       if (!this.neutral) this.state = 'aggro';
     } else if (dist > this.tpl.aggro * (player.aggroRadiusMod ?? 1) * 1.6) {
       this.state = 'idle';
@@ -314,7 +315,8 @@ export default class Mob {
         this._updateBossAoe(dt, dist);
         this._updateScatterShot(dt, player, fireProjectile);
         this.fireCooldown -= dt;
-        if (this.fireCooldown <= 0 && dist <= this.tpl.range) {
+        if (this.fireCooldown <= 0 && dist <= this.tpl.range &&
+            !this.scene._hasWallBetween?.(this.x, this.y, player.x, player.y)) {
           this.fireCooldown = 1 / (this.tpl.fireRate * fireMult * berserkFire);
           fireProjectile(this, player.x, player.y);
         }
@@ -363,9 +365,9 @@ export default class Mob {
 
         // Стрельба
         this.fireCooldown -= dt;
-        if (dist <= this.tpl.range && fromAnchor < this.leash + 80 && this.fireCooldown <= 0) {
+        if (dist <= this.tpl.range && fromAnchor < this.leash + 80 && this.fireCooldown <= 0 &&
+            !this.scene._hasWallBetween?.(this.x, this.y, player.x, player.y)) {
           this.fireCooldown = 1 / (this.tpl.fireRate * fireMult * berserkFire);
-          // gunner: повышенная скорострельность (уже в шаблоне, дополнительно +25% — через меньший cooldown)
           if (this.tpl.aiClass === 'gunner') this.fireCooldown *= 0.8;
           fireProjectile(this, player.x, player.y);
         }
