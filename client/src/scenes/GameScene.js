@@ -183,6 +183,9 @@ export default class GameScene extends Phaser.Scene {
     let startX = data?.startX ?? cx;
     let startY = data?.startY ?? (cy - 40);
     if (galaxy.current === 'shadow_arena') { startX = Math.round(this.worldWidth * 0.2); startY = Math.round(cy); }
+    if (galaxy.current === 'R-1-boss' && !data?.startX) {
+      startX = this.worldWidth - 400; startY = cy;  // near entry gate at right edge
+    }
     if (this._reconnectPvpCorp) {
       const pos = this.homeBasePositions?.[this._reconnectPvpCorp];
       if (pos) { startX = pos.x; startY = pos.y + 80; }
@@ -3416,6 +3419,7 @@ export default class GameScene extends Phaser.Scene {
     this.homeBases.forEach(b => b.update(dt));
     this.projectiles = this.projectiles.filter((p) => !p.dead);
     this.projectiles.forEach((p) => p.update(dt));
+    if (this._wallLines?.length) this._checkProjWallCollision();
     this.updateLoot(dt); this.updateGates(dt);
     this._updateMagnet(dt);
     this._updateAutoCollect(dt);
@@ -4091,86 +4095,141 @@ export default class GameScene extends Phaser.Scene {
       addBossDoor(cx + 2475, cy + 1650, 450, 250); // горизонтальный boss door в восточном проходе
 
     } else if (galaxy.current === 'R-1-boss') {
-      // Вертикальная 5-конечная звезда (вершина вверх): коридоры открыты, только центральный круг закрыт
-      const arenaR = 1600, corrLen = 3200, wT = 480;
-      // Вертикальный луч (i=0) уже, горизонтальные шире
+      // Вертикальная 5-конечная звезда: тонкие сегментированные стены коридоров + кольцо арены
+      const arenaR = 1600, corrLen = 3200, wallT = 60, ringT = 90;
       const CORR_HW = [310, 440, 440, 440, 440];
       const ANGLES  = [
-        -Math.PI / 2,                          // 0: вверх (вертикальный)
-        -Math.PI / 2 + 2 * Math.PI / 5,        // 1: верхне-правый
-        -Math.PI / 2 + 4 * Math.PI / 5,        // 2: нижне-правый
-        -Math.PI / 2 + 6 * Math.PI / 5,        // 3: нижне-левый
-        -Math.PI / 2 + 8 * Math.PI / 5,        // 4: верхне-левый
+        -Math.PI / 2,
+        -Math.PI / 2 + 2 * Math.PI / 5,
+        -Math.PI / 2 + 4 * Math.PI / 5,
+        -Math.PI / 2 + 6 * Math.PI / 5,
+        -Math.PI / 2 + 8 * Math.PI / 5,
       ];
-
-      // Съёмные стены арены (удаляются при открытии центра)
-      const addArenaWall = (x, y, w, h) => {
-        const wall = this.add.rectangle(x, y, w, h, 0x000000, 0);
-        this.physics.add.existing(wall, true);
-        this.walls.add(wall);
-        const vis = this.add.graphics().setDepth(2);
-        vis.fillStyle(ws.fill, ws.fillA);
-        vis.fillRect(x - w / 2, y - h / 2, w, h);
-        vis.lineStyle(3, ws.edge, 0.9); vis.strokeRect(x - w / 2, y - h / 2, w, h);
-        this.arenaWalls.push(wall);
-        this.arenaWallsVis.push(vis);
-      };
 
       this.arenaWalls    = [];
       this.arenaWallsVis = [];
       this.gravTraps     = [];
       this.mines         = [];
+      this._wallLines    = [];  // для столкновений снарядов: [{x1,y1,x2,y2}|{type:'arc',cx,cy,r,a1,a2}]
 
-      // ── Стены центральной арены: перекрытия между коридорами + ворота в каждом коридоре ──
+      // ── Тонкие сегментированные физические тела вдоль линии ─────────────────
+      // Центры сдвинуты так, что внутренний край AABB точно на hw (без вторжения в коридор)
+      const SEG_LEN = 180;
+      const addWallLine = (x1, y1, x2, y2, removable = false) => {
+        const dx = x2 - x1, dy = y2 - y1;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        if (dist < 1) return;
+        const N = Math.max(1, Math.ceil(dist / SEG_LEN));
+        const step = dist / N;
+        const nx = dx / dist, ny = dy / dist;
+        // AABB для сегмента под произвольным углом (минимальный описывающий прямоугольник)
+        const wW = Math.abs(nx) * (step + 20) + Math.abs(ny) * (wallT + 20);
+        const wH = Math.abs(ny) * (step + 20) + Math.abs(nx) * (wallT + 20);
+        for (let k = 0; k < N; k++) {
+          const t = (k + 0.5) / N;
+          const wx = x1 + t * dx, wy = y1 + t * dy;
+          const wall = this.add.rectangle(wx, wy, wW, wH, 0, 0);
+          this.physics.add.existing(wall, true);
+          this.walls.add(wall);
+          if (removable) this.arenaWalls.push(wall);
+        }
+        // НЕ добавляем в _wallLines здесь — вызывающий код добавляет ВИЗУАЛЬНЫЕ координаты
+      };
+
+      // ── Сегменты кольца арены (дуга между двумя углами) ─────────────────────
+      const addRingArc = (a1, a2, removable = false) => {
+        // Нормализация: a2 > a1
+        if (a2 < a1) a2 += Math.PI * 2;
+        const arcLen = arenaR * (a2 - a1);
+        if (arcLen < 1) return;
+        // Визуал (дуга)
+        const arcGfx = removable ? this.add.graphics().setDepth(2) : g;
+        arcGfx.lineStyle(7, ws.edge, 0.9);
+        const VSTEPS = Math.max(2, Math.ceil((a2 - a1) / (Math.PI / 36)));
+        arcGfx.beginPath();
+        for (let i = 0; i <= VSTEPS; i++) {
+          const a = a1 + (a2 - a1) * i / VSTEPS;
+          const px = cx + arenaR * Math.cos(a), py = cy + arenaR * Math.sin(a);
+          if (i === 0) arcGfx.moveTo(px, py); else arcGfx.lineTo(px, py);
+        }
+        arcGfx.strokePath();
+        if (removable) this.arenaWallsVis.push(arcGfx);
+        // Физические тела: AABB-сегменты вдоль дуги (~каждые 10°)
+        const N = Math.max(1, Math.ceil((a2 - a1) / (Math.PI / 18)));
+        for (let k = 0; k < N; k++) {
+          const am = a1 + (a2 - a1) * (k + 0.5) / N;
+          const aS = a1 + (a2 - a1) * k / N;
+          const aE = a1 + (a2 - a1) * (k + 1) / N;
+          const chord = 2 * arenaR * Math.sin((aE - aS) / 2);
+          const tx = -Math.sin(am), ty = Math.cos(am); // касательная
+          const wW = Math.abs(tx) * (chord + 20) + Math.abs(ty) * (ringT + 20);
+          const wH = Math.abs(ty) * (chord + 20) + Math.abs(tx) * (ringT + 20);
+          const wall = this.add.rectangle(cx + arenaR * Math.cos(am), cy + arenaR * Math.sin(am), wW, wH, 0, 0);
+          this.physics.add.existing(wall, true);
+          this.walls.add(wall);
+          if (removable) this.arenaWalls.push(wall);
+        }
+        this._wallLines.push({ type: 'arc', cx, cy, r: arenaR, a1, a2, removable });
+      };
+
+      // ── Кольцо арены: постоянные дуги между коридорами + съёмные заглушки ──
       for (let i = 0; i < 5; i++) {
-        // Квадрат между двумя соседними коридорами — корректная средняя точка с учётом обёртки угла
-        let _a1 = ANGLES[(i + 1) % 5];
-        if (_a1 < ANGLES[i]) _a1 += Math.PI * 2; // фикс wraparound (i=4: 198°→270° а не -90°)
-        const midA = (ANGLES[i] + _a1) / 2;
-        addArenaWall(
-          cx + arenaR * 0.72 * Math.cos(midA),
-          cy + arenaR * 0.72 * Math.sin(midA),
-          wT * 3, wT * 3
-        );
-        // Внутренние ворота: перегородка поперёк коридора у арены (блокирует вход)
-        const a = ANGLES[i], cosA = Math.cos(a), sinA = Math.sin(a);
         const hw = CORR_HW[i];
-        const dW = Math.abs(sinA) * (hw * 2 + 80) + Math.abs(cosA) * wT + 60;
-        const dH = Math.abs(cosA) * (hw * 2 + 80) + Math.abs(sinA) * wT + 60;
-        addArenaWall(cx + arenaR * cosA, cy + arenaR * sinA, dW, dH);
+        const gapHA = Math.asin(Math.min(hw / arenaR, 0.999)) + 0.06; // half-angle of corridor gap
+        // Постоянная дуга — от конца текущего коридора до начала следующего
+        const nextI = (i + 1) % 5;
+        const hwNext = CORR_HW[nextI];
+        const gapHANext = Math.asin(Math.min(hwNext / arenaR, 0.999)) + 0.06;
+        let arcA1 = ANGLES[i] + gapHA;
+        let arcA2 = ANGLES[nextI] - gapHANext;
+        if (arcA2 < arcA1) arcA2 += Math.PI * 2;
+        if (arcA2 - arcA1 > 0.05) addRingArc(arcA1, arcA2, false);
+        // Съёмная заглушка — запечатывает вход в коридор
+        addRingArc(ANGLES[i] - gapHA, ANGLES[i] + gapHA, true);
       }
 
-      // ── Стены коридоров (открытые снаружи — только боковые стены) ────────────
+      // ── Стены коридоров: тонкие линии с правильным смещением ─────────────────
+      g.lineStyle(7, ws.edge, 0.9);
       for (let i = 0; i < 5; i++) {
         const a    = ANGLES[i];
         const cosA = Math.cos(a), sinA = Math.sin(a);
-        const pX   = -sinA, pY = cosA;   // перпендикуляр (лево)
+        const pX   = -sinA, pY = cosA;
         const hw   = CORR_HW[i];
-        const N    = 5;                   // сегментов боковой стены на коридор
 
-        for (let k = 0; k < N; k++) {
-          const d   = arenaR + (k + 0.5) * corrLen / N;
-          const seg = corrLen / N + 120;
-          for (const side of [-1, 1]) {
-            const wx = cx + d * cosA + side * (hw + wT * 0.5) * pX;
-            const wy = cy + d * sinA + side * (hw + wT * 0.5) * pY;
-            // AABB-аппроксимация диагональных стен
-            const wW = Math.abs(cosA) * seg + Math.abs(sinA) * wT + 60;
-            const wH = Math.abs(sinA) * seg + Math.abs(cosA) * wT + 60;
-            addWall(wx, wy, wW, wH, true);
-          }
+        // Смещение центра тела наружу, чтобы внутренний край AABB был ровно на hw
+        const sin2A = Math.abs(Math.sin(2 * a));
+        const wallOff = hw + wallT / 2 + (SEG_LEN / 2) * sin2A;
+
+        for (const side of [-1, 1]) {
+          // Визуальные координаты (на краю коридора hw)
+          const vx0 = cx + arenaR * cosA + side * hw * pX;
+          const vy0 = cy + arenaR * sinA + side * hw * pY;
+          const vx1 = cx + (arenaR + corrLen) * cosA + side * hw * pX;
+          const vy1 = cy + (arenaR + corrLen) * sinA + side * hw * pY;
+          g.lineBetween(vx0, vy0, vx1, vy1);
+          this._wallLines.push({ x1: vx0, y1: vy0, x2: vx1, y2: vy1 });
+          // Физические тела (сдвинуты наружу — внутренний край AABB на hw)
+          addWallLine(
+            cx + arenaR * cosA + side * wallOff * pX, cy + arenaR * sinA + side * wallOff * pY,
+            cx + (arenaR + corrLen) * cosA + side * wallOff * pX, cy + (arenaR + corrLen) * sinA + side * wallOff * pY
+          );
         }
+        // Торцевая стена коридора (визуал = физика, нет смещения)
+        const capX0 = cx + (arenaR + corrLen) * cosA + hw * pX;
+        const capY0 = cy + (arenaR + corrLen) * sinA + hw * pY;
+        const capX1 = cx + (arenaR + corrLen) * cosA - hw * pX;
+        const capY1 = cy + (arenaR + corrLen) * sinA - hw * pY;
+        g.lineBetween(capX0, capY0, capX1, capY1);
+        this._wallLines.push({ x1: capX0, y1: capY0, x2: capX1, y2: capY1 });
+        addWallLine(capX0, capY0, capX1, capY1);
 
-        // Гравитационные ловушки: 2 на коридор
+        // Гравитационные ловушки
         [0.28, 0.72].forEach(t => {
           const d2 = arenaR + corrLen * t;
           this._spawnGravTrap(cx + d2 * cosA, cy + d2 * sinA);
         });
-
         // Мина в середине коридора
-        const mineD = arenaR + corrLen * 0.50;
-        this._spawnMine(cx + mineD * cosA, cy + mineD * sinA);
-
+        this._spawnMine(cx + (arenaR + corrLen * 0.50) * cosA, cy + (arenaR + corrLen * 0.50) * sinA);
       }
     }
 
@@ -4213,6 +4272,8 @@ export default class GameScene extends Phaser.Scene {
     const vis   = [...(this.arenaWallsVis ?? [])];
     this.arenaWalls    = [];
     this.arenaWallsVis = [];
+    // Убираем съёмные дуги из списка collision-проверки для снарядов
+    if (this._wallLines) this._wallLines = this._wallLines.filter(wl => !wl.removable);
     // Defer wall removal to next frame — avoid modifying StaticPhysicsGroup mid-physics-update
     this.time.delayedCall(0, () => {
       for (const w of walls) { if (w?.active) { this.walls.remove(w, true, false); w.destroy(); } }
@@ -4658,6 +4719,44 @@ export default class GameScene extends Phaser.Scene {
             }
           }
           this.mines.splice(i, 1);
+        }
+      }
+    }
+  }
+
+  // Минимальное расстояние от точки (px,py) до отрезка (ax,ay)-(bx,by)
+  _distToSegment(px, py, ax, ay, bx, by) {
+    const dx = bx - ax, dy = by - ay;
+    const lenSq = dx * dx + dy * dy;
+    if (lenSq === 0) return Phaser.Math.Distance.Between(px, py, ax, ay);
+    const t = Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / lenSq));
+    return Phaser.Math.Distance.Between(px, py, ax + t * dx, ay + t * dy);
+  }
+
+  // Снаряд находится внутри дуги [a1,a2] (угол нормализован к [a1, a1+2π])?
+  _angleInArc(angle, a1, a2) {
+    if (a2 < a1) a2 += Math.PI * 2;
+    while (angle < a1) angle += Math.PI * 2;
+    return angle <= a2;
+  }
+
+  // Убиваем снаряды, пересёкшие стены коридоров или кольцо арены
+  _checkProjWallCollision() {
+    const lines = this._wallLines;
+    for (const p of this.projectiles) {
+      if (p.dead) continue;
+      const px = p.sprite.x, py = p.sprite.y;
+      for (const wl of lines) {
+        if (wl.type === 'arc') {
+          const dist = Phaser.Math.Distance.Between(px, py, wl.cx, wl.cy);
+          if (Math.abs(dist - wl.r) < 55 &&
+              this._angleInArc(Math.atan2(py - wl.cy, px - wl.cx), wl.a1, wl.a2)) {
+            p.destroy(); break;
+          }
+        } else {
+          if (this._distToSegment(px, py, wl.x1, wl.y1, wl.x2, wl.y2) < 40) {
+            p.destroy(); break;
+          }
         }
       }
     }
@@ -5417,6 +5516,7 @@ export default class GameScene extends Phaser.Scene {
     this.gravTraps = [];
     for (const mine of (this.mines ?? [])) { if (mine.alive) mine.gfx?.destroy(); }
     this.mines = [];
+    this._wallLines = [];
     this._adminCh?.postMessage({ type: 'GAME_STATE', alive: false, playerName: this.playerName ?? 'Player' });
     this._adminCh?.close();
     this._adminCh = null;
