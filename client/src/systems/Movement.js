@@ -97,6 +97,7 @@ export default class Movement {
       // Долетели — убираем стрелку и сбрасываем состояние
       p.waypoint = null;
       p.boosting = false;
+      p.speed = 0;
       this.showArrow = false;
       this.courseArrow.setVisible(false);
       p.sprite.body.setVelocity(0, 0);
@@ -116,11 +117,13 @@ export default class Movement {
       if (p.boosting) desired *= p.cfg.boostMult;
     }
 
-    // Proximity slowdown — prevents arriving at full speed and oscillating
+    // Proximity slowdown — dynamic stopping distance so high-speed ships actually stop
     if (this.steerMode && dist < 50) {
       desired *= Math.max(0.1, dist / 50);
-    } else if (!this.steerMode && dist < 120) {
-      desired *= Math.max(0.25, dist / 120);
+    } else if (!this.steerMode) {
+      // Physics stopping distance: v²/(2a). Use 1.4× safety margin.
+      const stopDist = Math.max(120, p.speed * p.speed / (2 * HANDLING.accel) * 1.4);
+      if (dist < stopDist) desired *= Math.max(0, dist / stopDist);
     }
 
     if (p.speed < desired) p.speed = Math.min(desired, p.speed + HANDLING.accel * dt);

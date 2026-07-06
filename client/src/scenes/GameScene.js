@@ -194,7 +194,7 @@ export default class GameScene extends Phaser.Scene {
     this.player = new Player(this, startX, startY, this.objScale);
     this.movement = new Movement(this, this.player);
 
-    this.cameras.main.startFollow(this.player.sprite, false, 0.15, 0.15);
+    this.cameras.main.startFollow(this.player.sprite, false, 0.35, 0.35);
     this.cameras.main.setZoom(DPR);
     this.cameras.main.roundPixels = true;
     // Snap camera to spawn position immediately (prevents visible drift on restart)
@@ -1745,6 +1745,18 @@ export default class GameScene extends Phaser.Scene {
       const wx = wpt.x, wy = wpt.y;
 
       if (this.movement.isOverBoostChevron(wx, wy)) { this.movement.toggleBoost(); return; }
+
+      // Corridor button click
+      if (this._corridorButtons?.length) {
+        for (const btn of this._corridorButtons) {
+          if (!btn || btn.triggered) continue;
+          if (Phaser.Math.Distance.Between(wx, wy, btn.x, btn.y) < 120) {
+            if (btn.ready) { this._triggerCorridorButton(btn.index); }
+            else { this.log('Приблизьтесь к воротам'); }
+            return;
+          }
+        }
+      }
 
       const gate = this.gateAt(wx, wy);
       if (gate) {
@@ -4765,7 +4777,7 @@ export default class GameScene extends Phaser.Scene {
       { fontFamily: 'Orbitron', fontSize: '14px', color: '#c8a800', resolution: 2 })
       .setOrigin(0.5).setDepth(13);
     this.tweens.add({ targets: gfx, alpha: { from: 0.6, to: 1.0 }, duration: 800, yoyo: true, repeat: -1 });
-    this._corridorButtons[index] = { x, y, index, triggered: false, gfx, label, hint };
+    this._corridorButtons[index] = { x, y, index, triggered: false, ready: false, gfx, label, hint };
   }
 
   _triggerCorridorButton(index) {
@@ -4796,8 +4808,11 @@ export default class GameScene extends Phaser.Scene {
     const px = this.player.x, py = this.player.y;
     for (const btn of this._corridorButtons) {
       if (!btn || btn.triggered) continue;
-      if (Phaser.Math.Distance.Between(px, py, btn.x, btn.y) < 380) {
-        this._triggerCorridorButton(btn.index);
+      const near = Phaser.Math.Distance.Between(px, py, btn.x, btn.y) < 420;
+      if (near !== btn.ready) {
+        btn.ready = near;
+        btn.hint.setText(near ? 'нажмите для входа' : 'приблизьтесь');
+        btn.hint.setColor(near ? '#ffd700' : '#c8a800');
       }
     }
   }
