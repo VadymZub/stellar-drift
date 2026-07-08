@@ -8,7 +8,11 @@ export default class Mob {
   // opts: { behavior:'patrol'|'guard'|'roam', patrolRadius, leash, passive, bossRef, orbitLeader, pathDeviation, targets }
   constructor(scene, template, level, x, y, opts = {}) {
     this.scene = scene;
-    this.tpl = template;
+    // opts.aiClass — переопределение AI-класса из данных данжа (микс классов в пулах);
+    // 'minelayer' — не aiClass, а флаг шаблона
+    this.tpl = opts.aiClass
+      ? (opts.aiClass === 'minelayer' ? { ...template, minelayer: true } : { ...template, aiClass: opts.aiClass })
+      : template;
     this.level = level;
     this.spawnX = x;
     this.spawnY = y;
@@ -39,6 +43,9 @@ export default class Mob {
       ? scene.add.sprite(x, y, template.sheetKey).setDepth(40)
       : scene.add.image(x, y, mobTexKey).setDepth(40);
     scene.physics.add.existing(this.sprite);
+    // Стены данжа: коллайдер здесь покрывает и поздние спавны (охрана депозитов,
+    // подкрепления сложности, адды фаз босса, портальные мобы)
+    if (scene.walls) scene.physics.add.collider(this.sprite, scene.walls);
     if (template.anim) this.sprite.play(template.anim);
     const src = template.anim ? null : scene.textures.get(mobTexKey).getSourceImage();
     const natW = template.anim ? template.frameW : (src.naturalWidth ?? src.width);
@@ -334,8 +341,46 @@ export default class Mob {
         }
         this.heading = Math.atan2(targetY - this.y, targetX - this.x);
 
-        if (dist > this.tpl.range && fromAnchor < this.leash) {
+        // Стена между мобом и целью: 3с пытаемся обойти стирингом, потом бросаем
+        // погоню и возвращаемся на точку (иначе мобы вечно «трутся» о стену)
+        const losBlocked = this.scene._hasWallBetween?.(this.x, this.y, player.x, player.y) ?? false;
+        if (losBlocked) {
+          this._noLosT = (this._noLosT ?? 0) + dt;
+          if (this._noLosT > 3) {
+            this._noLosT   = 0;
+            this._returning = true;
+            this.state      = 'idle';
+          }
+        } else {
+          this._noLosT = 0;
+        }
+
+        // losBlocked → двигаемся даже в пределах range, чтобы вернуть линию огня
+        if ((dist > this.tpl.range || losBlocked) && fromAnchor < this.leash) {
           moveSpeed = this.tpl.speed * speedMult * berserkSpeed;
+          if (!this._steerAroundWalls(dt)) moveSpeed = 0;
+        }
+
+        // Физическое застревание (клин корпуса на сегментах стены): хотим двигаться,
+        // а позиция стоит — меняем сторону обхода; после ~2.5с сдаёмся и возвращаемся
+        if (moveSpeed > 0) {
+          this._stuckCheckT = (this._stuckCheckT ?? 0) + dt;
+          if (this._stuckCheckT >= 0.5) {
+            this._stuckCheckT = 0;
+            const moved = this._stuckX === undefined ? 1e9
+              : Phaser.Math.Distance.Between(this.x, this.y, this._stuckX, this._stuckY);
+            if (moved < 12) {
+              this._stuckN = (this._stuckN ?? 0) + 1;
+              this._steerSide = -(this._steerSide ?? 1);
+              this._steerT = 0; // немедленная перепроба курса
+              if (this._stuckN >= 5) { this._stuckN = 0; this._returning = true; this.state = 'idle'; }
+            } else {
+              this._stuckN = 0;
+            }
+            this._stuckX = this.x; this._stuckY = this.y;
+          }
+        } else {
+          this._stuckN = 0; this._stuckCheckT = 0; this._stuckX = undefined;
         }
 
         // AI-класс: bomb
@@ -362,6 +407,16 @@ export default class Mob {
         }
         // Минный установщик
         if (this.tpl.minelayer) this._updateMinelayer(dt);
+
+        // Кит данж-босса (D1–D5/prem): фазы-саммоны, скеттер, мины, блинк, дэш
+        if (this._bossKit) {
+          this._updateBossKit(dt, player, fireProjectile);
+          if (this._dashTimer > 0) {
+            this._dashTimer -= dt;
+            this.heading = this._dashAng;
+            moveSpeed = this.tpl.speed * 2.5;
+          }
+        }
 
         // Стрельба
         this.fireCooldown -= dt;
@@ -392,6 +447,36 @@ export default class Mob {
 
     this._applyVelocity(moveSpeed);
     this._updateVisuals();
+  }
+
+  // Дешёвый обход стен без A*: раз в 0.25с проба курса на 220px вперёд; при блоке
+  // перебор отклонений (сначала кэшированная сторона), свободного нет → false (стоим)
+  _steerAroundWalls(dt) {
+    if (!this.scene._wallLines?.length) return true;
+    this._steerT = (this._steerT ?? 0) - dt;
+    if (this._steerT <= 0) {
+      this._steerT = 0.25;
+      const probe = (h) =>
+        !this.scene._hasWallBetween(this.x, this.y, this.x + Math.cos(h) * 220, this.y + Math.sin(h) * 220);
+      if (probe(this.heading)) {
+        this._steerOffset = 0;
+      } else {
+        const side = this._steerSide ?? 1;
+        this._steerOffset = null;
+        // веер до разворота (±2.6, π) — из тупика/угла моб выбирается назад
+        for (const off of [0.6 * side, -0.6 * side, 1.2 * side, -1.2 * side,
+                           1.9 * side, -1.9 * side, 2.6 * side, -2.6 * side, Math.PI]) {
+          if (probe(this.heading + off)) {
+            this._steerOffset = off;
+            this._steerSide = Math.sign(Math.sin(off)) || 1;
+            break;
+          }
+        }
+      }
+    }
+    if (this._steerOffset === null) return false;
+    if (this._steerOffset) this.heading += this._steerOffset;
+    return true;
   }
 
   // ── Движение и отрисовка ──────────────────────────────────────────────────
@@ -481,10 +566,47 @@ export default class Mob {
       }
       return { x: best[0] + Phaser.Math.Between(-180, 180), y: best[1] + Phaser.Math.Between(-180, 180) };
     }
-    // patrol/guard: точка на периметре patrolRadius (0.6–1.0 от радиуса) с угловым смещением
-    const ang = Phaser.Math.FloatBetween(-Math.PI, Math.PI);
-    const r   = Phaser.Math.FloatBetween(this.patrolRadius * 0.6, this.patrolRadius);
-    return { x: this.spawnX + Math.cos(ang) * r, y: this.spawnY + Math.sin(ang) * r };
+    // patrol/guard: точка на периметре patrolRadius (0.6–1.0 от радиуса).
+    // Цель за стеной → моб вечно давит в стену, поэтому до 6 попыток ищем
+    // точку с чистой линией; не нашли — стоим на месте (точка спавна)
+    for (let i = 0; i < 6; i++) {
+      const ang = Phaser.Math.FloatBetween(-Math.PI, Math.PI);
+      const r   = Phaser.Math.FloatBetween(this.patrolRadius * 0.6, this.patrolRadius);
+      const tx  = this.spawnX + Math.cos(ang) * r;
+      const ty  = this.spawnY + Math.sin(ang) * r;
+      if (!this.scene._hasWallBetween?.(this.x, this.y, tx, ty) &&
+          !this.scene._isPointNearWall?.(tx, ty, 60)) return { x: tx, y: ty };
+    }
+    return { x: this.spawnX, y: this.spawnY };
+  }
+
+  // ── Кит данж-босса (D1–D5/prem): собран из готовых механик. Путь Апофиса
+  //    (bossType 'dungeon') сюда не заходит — R-1-boss не затронут. ──────────
+  _updateBossKit(dt, player, fireProjectile) {
+    const kit = this._bossKit;
+    if (kit.phases) {
+      const frac = this.hull / this.maxHull;
+      this._kitPhasesDone = this._kitPhasesDone ?? new Set();
+      for (const ph of kit.phases) {
+        if (frac <= ph.at && !this._kitPhasesDone.has(ph.at)) {
+          this._kitPhasesDone.add(ph.at);
+          this.scene.onDungeonBossPhase?.(this, ph);
+        }
+      }
+    }
+    if (kit.scatter) this._updateScatterShot(dt, player, fireProjectile);
+    if (kit.minelayer) this._updateMinelayer(dt);
+    if (kit.blink) this._updateCloaker(dt, player);
+    const dashCd = kit.dash ?? this._kitDashCd; // dashOn-фаза включает дэш позже
+    if (dashCd) {
+      // первый дэш через полкулдауна — ранний телеграф механики
+      this._kitDashTimer = (this._kitDashTimer ?? dashCd * 0.5) - dt;
+      if (this._kitDashTimer <= 0) {
+        this._kitDashTimer = dashCd;
+        this._dashAng   = Math.atan2(player.y - this.y, player.x - this.x);
+        this._dashTimer = 1.2;
+      }
+    }
   }
 
   // ── Босс AoE ─────────────────────────────────────────────────────────────
@@ -528,6 +650,9 @@ export default class Mob {
       const ny = Phaser.Math.Clamp(this.y + Math.sin(perpAng) * tdist, margin, this.scene.worldHeight - margin);
       // Skip if outside leash radius from spawn point
       if (Phaser.Math.Distance.Between(nx, ny, this.spawnX, this.spawnY) > (this.leash ?? 640)) return;
+      // Не блинкуемся в стену или сквозь стену
+      if (this.scene._isPointNearWall?.(nx, ny, 70) ||
+          this.scene._hasWallBetween?.(this.x, this.y, nx, ny)) return;
       this.scene.tweens.add({
         targets: this.sprite, alpha: 0, duration: 150, ease: 'Quad.easeIn',
         onComplete: () => {

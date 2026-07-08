@@ -238,6 +238,7 @@
   "mob.ancient_miniboss": "Хранитель Коридора",
   "mob.ancient_shield": "Кристальный щит",
   "log.corridor_open": "Коридор {n} открыт",
+  "log.dungeon_boss_phase": "☠ Босс переходит в новую фазу!",
   "log.apophis_awakened": "АПОФИС ПРОБУЖДЁН",
   "log.apophis_phase2": "☠ Апофис — фаза 2: Жнецы!",
   "log.apophis_phase3": "☠ Апофис — фаза 3: Левиафаны!",

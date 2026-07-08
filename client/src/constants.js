@@ -53,6 +53,21 @@ export const DUNGEON_DIFF = {
   elite:  { mobCount: 2.5, mobHP: 2.8, mobDamage: 2.0, deposits: 2.0, goldMult: 2.5, xpMult: 1.5, dropRate: 0.35 },
 };
 
+// Рост числа обычных мобов в данже относительно старых карт (нормальная сложность).
+// Через dungeonLootNorm() пропорционально режет пер-мобовый лут, чтобы суммарный фарм
+// данжа вырос не более чем на LOOT_BUDGET_CAP. R-1-boss не участвует (всегда 1).
+// Старые карты: D1 22, D2 24, D3 10, D4 11, D5 10, prem 12 обычных мобов.
+// Новые варианты (dungeonLayouts.js): 33 / 36 / 15 / 16 / 15 / 18.
+export const DUNGEON_MOB_GROWTH = {
+  dungeon_1: 1.5, dungeon_2: 1.5, dungeon_3: 1.5,
+  dungeon_4: 1.45, dungeon_5: 1.5, dungeon_prem: 1.5,
+};
+export const LOOT_BUDGET_CAP = 1.10;
+export function dungeonLootNorm(sectorKey) {
+  const g = DUNGEON_MOB_GROWTH[sectorKey] ?? 1;
+  return Math.min(1, LOOT_BUDGET_CAP / g);
+}
+
 // Звёздное золото с главного босса данжа — переопределяет шаблон моба (один boss-моб на несколько данжей).
 // mobMult применяется к starGold обычных/elite мобов в данже (для D-PREM, где те же мобы что в D5).
 export const DUNGEON_STAR_GOLD = {

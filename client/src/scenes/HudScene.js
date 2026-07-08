@@ -854,8 +854,8 @@ export default class HudScene extends Phaser.Scene {
       g.lineStyle(0.5, wc, 0.7);
       for (const wall of gs.walls.getChildren()) {
         const wp = worldToMinimap(wall.x, wall.y, r, ww, wh);
-        const sw = wall.width * mmScale;
-        const sh = wall.height * mmScale;
+        const sw = Math.max(1, wall.width * mmScale);
+        const sh = Math.max(1, wall.height * mmScale);
         g.fillRect(wp.x - sw / 2, wp.y - sh / 2, sw, sh);
         g.strokeRect(wp.x - sw / 2, wp.y - sh / 2, sw, sh);
       }

@@ -1,5 +1,5 @@
 import * as Phaser from 'https://cdn.jsdelivr.net/npm/phaser@4.1.0/dist/phaser.esm.js';
-import { COLORS, BASE_WORLD, PVP_WORLD_SCALE, PLAYER, MOBS, PROJECTILE, PROJ_TYPES, RESPAWN_MS, UI_RES, BOSS, DPR, HANDLING, ART_ANGLE_OFFSET, RANKS, BASE_SCAN_RADIUS, HONOR, DUNGEON_DIFF, DUNGEON_BOSS_DROPS, DUNGEON_STAR_GOLD } from '../constants.js';
+import { COLORS, BASE_WORLD, PVP_WORLD_SCALE, PLAYER, MOBS, PROJECTILE, PROJ_TYPES, RESPAWN_MS, UI_RES, BOSS, DPR, HANDLING, ART_ANGLE_OFFSET, RANKS, BASE_SCAN_RADIUS, HONOR, DUNGEON_DIFF, DUNGEON_BOSS_DROPS, DUNGEON_STAR_GOLD, dungeonLootNorm } from '../constants.js';
 import { minimapRect, minimapToWorld } from '../systems/minimap.js';
 import { i18n } from '../i18n.js';
 import Player from '../entities/Player.js';
@@ -24,6 +24,7 @@ import ConfedGuardSystem, { getLastResetTime } from '../systems/ConfedGuardSyste
 import { getUsername, getToken, apiPut, apiGet } from '../api.js';
 import { prepShipTex, removeWhiteBg } from '../utils/prepShipTex.js';
 import { MISSIONS, getMissionSectorTarget } from '../data/missions.js';
+import { DUNGEON_LAYOUTS, DUNGEON_BOSS_KIT } from '../data/dungeonLayouts.js';
 import EscortTransport, { ESCORT_SPEED, ESCORT_WAVE_AT } from '../entities/EscortTransport.js';
 import { loadSettings, getMinimapDims } from '../settings.js';
 import SettingsScene from './SettingsScene.js';
@@ -447,6 +448,10 @@ export default class GameScene extends Phaser.Scene {
     this.trailRed = this.add.particles(0, 0, 'glow', { ...trail, tint: 0xff8a7a }).setDepth(59);
 
     this.createBoostFx();
+    // Стены создаются до мобов: конструктор Mob вешает коллайдер на this.walls,
+    // а точки спавна валидируются против this._wallSolids
+    this.createJumpgates();
+    this.createDungeonWalls();
     this.spawnMobs();
 
     // Restore floor loot for current sector
@@ -460,8 +465,6 @@ export default class GameScene extends Phaser.Scene {
     const floorLoot = this._lootBySector[galaxy.current] || [];
     floorLoot.forEach(l => this.loot.push(new Loot(this, l.x, l.y, l.item)));
 
-    this.createJumpgates();
-    this.createDungeonWalls();
     this.spawnPlasmateDeposits();
     this.spawnDungeonDeposits();
     this.setupInput();
@@ -758,7 +761,12 @@ export default class GameScene extends Phaser.Scene {
     const _diff = sec.isDungeon ? this._dungeonDiff() : null;
     const add = (k, lvl, ox, oy, opts) => {
       const finalOpts = _diff ? { hpMult: _diff.mobHP, dmgMult: _diff.mobDamage, ...opts } : opts;
-      const m = new Mob(this, M[k], lvl, cx + ox, cy + oy, finalOpts);
+      let px = cx + ox, py = cy + oy;
+      // R-1-boss: авторские позиции внутри коридоров, не двигаем.
+      // pad 100 — у крупных мобов (Левиафан и пр.) корпус ~170px, при меньшем
+      // отступе тело клинит на сегментах стены с самого спавна
+      if (sec.isDungeon && galaxy.current !== 'R-1-boss') ({ x: px, y: py } = this._findFreeSpawn(px, py, 100));
+      const m = new Mob(this, M[k], lvl, px, py, finalOpts);
       this.mobs.push(m);
       return m;
     };
@@ -937,149 +945,38 @@ export default class GameScene extends Phaser.Scene {
       pool = ['ancient_07', 'ancient_08', 'ancient_09', 'ancient_10', 'ancient_11']; boss = 'ancient_06';
     }
     
-    if (galaxy.current === 'dungeon_1') {
-      // D1: Рой в крестообразных коридорах; мини-боссы на E/W; босс + охрана за северной дверью
-      add('swarm_01', rnd(Lmin, Lmax), 0, -900, { patrolRadius: 350 });
-      add('swarm_02', rnd(Lmin, Lmax), 1500, 0, {});
-      add('swarm_03', rnd(Lmin, Lmax), -1500, 0, {});
-      add('swarm_02', rnd(Lmin, Lmax), 0, 1200, { patrolRadius: 400 });
-      add('swarm_04', rnd(Lmin, Lmax), 2000, 0, {});
-      add('swarm_01', rnd(Lmin, Lmax), -2000, 0, {});
-      add('swarm_03', rnd(Lmin, Lmax), 0, -500, { patrolRadius: 300 });
-      add('swarm_05', rnd(Lmin, Lmax), 100, 700, {});    // S-рукав (был внутри SE-блока)
-      add('swarm_04', rnd(Lmin, Lmax), -100, 700, {});   // S-рукав (был внутри SW-блока)
-      // левый борт (x≈958, за NW/SW блоком)
-      add('swarm_02', rnd(Lmin, Lmax), -3200, -600, { patrolRadius: 400 });
-      add('swarm_04', rnd(Lmin, Lmax), -3200, 800, {});
-      // правый борт (x≈7358, за NE/SE блоком)
-      add('swarm_01', rnd(Lmin, Lmax), 3200, -600, { patrolRadius: 400 });
-      add('swarm_03', rnd(Lmin, Lmax), 3200, 800, {});
-      add('swarm_07', Lmax, 2200, 0, { behavior: 'guard', patrolRadius: 250, leash: 600 });
-      add('swarm_07', Lmax, -2200, 0, { behavior: 'guard', patrolRadius: 250, leash: 600 });
-      const d1boss = add('swarm_09', Lmax, 0, -2200, { behavior: 'guard', patrolRadius: 180, leash: 450 });
-      d1boss.isDungeonBoss = true;
-      // охрана босса ×4 (в боссовой комнате — не открывают дверь)
-      const d1e1 = add('swarm_07', Lmax, -250, -2000, { behavior: 'guard', patrolRadius: 150, leash: 500 });
-      d1e1.isBossEscort = true;
-      const d1e2 = add('swarm_07', Lmax,  250, -2000, { behavior: 'guard', patrolRadius: 150, leash: 500 });
-      d1e2.isBossEscort = true;
-      const d1e3 = add('swarm_07', Lmax, -250, -2150, { behavior: 'guard', patrolRadius: 150, leash: 500 });
-      d1e3.isBossEscort = true;
-      const d1e4 = add('swarm_07', Lmax,  250, -2150, { behavior: 'guard', patrolRadius: 150, leash: 500 });
-      d1e4.isBossEscort = true;
-      // разведчики (одиночки) и патрули (пары) в незанятых коридорах
-      add('swarm_01', rnd(Lmin, Lmax),    0, 1900, { patrolRadius: 250 });     // S-рукав: разведчик (глубокий юг)
-      add('swarm_03', rnd(Lmin, Lmax),  150, 1500, { patrolRadius: 200 });     // S-рукав: патруль (пара)
-      add('swarm_02', rnd(Lmin, Lmax), -150, 1500, { patrolRadius: 200 });
-      add('swarm_04', rnd(Lmin, Lmax), 1800,  250, { patrolRadius: 250 });     // E-рукав: патруль (пара)
-      add('swarm_02', rnd(Lmin, Lmax), 1800, -250, { patrolRadius: 250 });
-      add('swarm_01', rnd(Lmin, Lmax), -1800,  250, { patrolRadius: 250 });    // W-рукав: патруль (пара)
-      add('swarm_03', rnd(Lmin, Lmax), -1800, -250, { patrolRadius: 250 });
-
-    } else if (galaxy.current === 'dungeon_2') {
-      // D2: Корсары по Z-маршруту; ресурсы в тупиках; охрана босса в сев-вост комнате
-      add('corsair_01', rnd(Lmin, Lmax), -1800, 1000, {});
-      add('corsair_03', rnd(Lmin, Lmax), 0, 1200, {});
-      add('corsair_02', rnd(Lmin, Lmax), 0, 0, {});
-      add('corsair_05', rnd(Lmin, Lmax), -800, -300, {});
-      add('corsair_04', rnd(Lmin, Lmax), 1500, 0, {});
-      add('corsair_03', rnd(Lmin, Lmax), -1200, 1400, {});
-      add('corsair_01', rnd(Lmin, Lmax), 1800, 800, {});
-      add('corsair_04', rnd(Lmin, Lmax), -700, -1300, {});
-      add('corsair_02', rnd(Lmin, Lmax), 800, -1200, {});
-      add('corsair_08', Lmax, 1900, 1100, { behavior: 'guard', patrolRadius: 200, leash: 550 });
-      add('corsair_08', Lmax, -1900, -450, { behavior: 'guard', patrolRadius: 200, leash: 550 });
-      add('corsair_05', Lmax,  2200,  1000, { behavior: 'guard', patrolRadius: 200, leash: 500 }); // охрана SE-депо
-      // правый тупик (x≈7747, y≈3564): депо + патруль + охрана
-      add('corsair_06', rnd(Lmin, Lmax), 3589, -1000, { patrolRadius: 300 }); // патруль
-      add('corsair_04', rnd(Lmin, Lmax), 3589, -1400, { patrolRadius: 300 });
-      add('corsair_08', Lmax, 3400, -1224, { behavior: 'guard', patrolRadius: 180, leash: 500 }); // охрана депо
-      // левый тупик (x≈707, y≈3327): депо + патруль + охрана
-      add('corsair_03', rnd(Lmin, Lmax), -3451, -700,  { patrolRadius: 300 }); // патруль
-      add('corsair_01', rnd(Lmin, Lmax), -3451, -1100, { patrolRadius: 300 });
-      add('corsair_07', Lmax, -3200, -987, { behavior: 'guard', patrolRadius: 180, leash: 500 }); // охрана депо
-      const d2boss = add('corsair_09', Lmax, 1800, -1800, { behavior: 'guard', patrolRadius: 180, leash: 480 });
-      d2boss.isDungeonBoss = true;
-      // охрана босса ×4
-      const d2e1 = add('corsair_08', Lmax, 1500, -1800, { behavior: 'guard', patrolRadius: 150, leash: 500 });
-      d2e1.isBossEscort = true;
-      const d2e2 = add('corsair_08', Lmax, 2100, -1800, { behavior: 'guard', patrolRadius: 150, leash: 500 });
-      d2e2.isBossEscort = true;
-      const d2e3 = add('corsair_08', Lmax, 1500, -1600, { behavior: 'guard', patrolRadius: 150, leash: 500 });
-      d2e3.isBossEscort = true;
-      const d2e4 = add('corsair_08', Lmax, 2100, -1600, { behavior: 'guard', patrolRadius: 150, leash: 500 });
-      d2e4.isBossEscort = true;
-      // разведчики и патрули в основных зонах
-      add('corsair_02', rnd(Lmin, Lmax), -2100, 1800, { patrolRadius: 350 });
-      add('corsair_04', rnd(Lmin, Lmax),  2100, 1800, { patrolRadius: 350 });
-      add('corsair_01', rnd(Lmin, Lmax),  2100, -500, { patrolRadius: 300 });
-      add('corsair_03', rnd(Lmin, Lmax),  2100, -200, { patrolRadius: 300 });
-      add('corsair_02', rnd(Lmin, Lmax), -1800, -900,  { patrolRadius: 250 });
-      add('corsair_04', rnd(Lmin, Lmax), -1800, -1100, { patrolRadius: 250 });
-
-    } else if (galaxy.current === 'dungeon_3') {
-      // D3: Синдикат в военной сетке; мини-боссы на постах; охрана босса в верхне-правой комнате
-      add('syndicate_01', rnd(Lmin, Lmax), -1650, -1000, {});
-      add('syndicate_02', rnd(Lmin, Lmax), 0, -1000, {});
-      add('syndicate_03', rnd(Lmin, Lmax), -1650, 900, {});
-      add('syndicate_04', rnd(Lmin, Lmax), 0, 900, {});
-      add('syndicate_05', rnd(Lmin, Lmax), 1200, 500, {});
-      add('syndicate_01', rnd(Lmin, Lmax), 1650, 500, {});
-      add('syndicate_02', rnd(Lmin, Lmax), -1650, 0, {});
-      add('syndicate_04', rnd(Lmin, Lmax), 0, 0, {});
-      add('syndicate_07', Lmax, -1650, -300, { behavior: 'guard', patrolRadius: 200, leash: 500 });
-      add('syndicate_07', Lmax, 0, -300, { behavior: 'guard', patrolRadius: 200, leash: 500 });
-      const d3boss = add('syndicate_11', Lmax, 1650, -1600, { behavior: 'guard', patrolRadius: 180, leash: 420 });
-      d3boss.isDungeonBoss = true;
-      // охрана босса
-      const d3e1 = add('syndicate_07', Lmax, 1200, -1600, { behavior: 'guard', patrolRadius: 150, leash: 480 });
-      d3e1.isBossEscort = true;
-      const d3e2 = add('syndicate_07', Lmax, 2100, -1600, { behavior: 'guard', patrolRadius: 150, leash: 480 });
-      d3e2.isBossEscort = true;
-
-    } else if (galaxy.current === 'dungeon_4') {
-      // D4: Древние среди обломков; мини-боссы у кластеров; охрана босса в юго-вост углу
-      const d4pts = [[500,-900], [-700,-600], [1200,200], [-900,600], [400,1000], [-500,-1200], [700,-1500], [-1200,900]];
-      d4pts.forEach(([ox, oy], i) => add(pool[i % pool.length], rnd(Lmin, Lmax), ox, oy, {}));
-      add('ancient_05', Lmax, 1200, -1200, { behavior: 'guard', patrolRadius: 280, leash: 650 });
-      add('ancient_05', Lmax, -900, 900, { behavior: 'guard', patrolRadius: 280, leash: 650 });
-      add('ancient_03', Lmax, 1400, 900, { behavior: 'guard', patrolRadius: 250, leash: 600 });
-      const d4boss = add('ancient_06', Lmax, 2200, 1600, { behavior: 'guard', patrolRadius: 180, leash: 420 });
-      d4boss.isDungeonBoss = true;
-      // охрана босса
-      const d4e1 = add('ancient_03', Lmax, 1900, 1600, { behavior: 'guard', patrolRadius: 150, leash: 480 });
-      d4e1.isBossEscort = true;
-      const d4e2 = add('ancient_05', Lmax, 2200, 1300, { behavior: 'guard', patrolRadius: 150, leash: 480 });
-      d4e2.isBossEscort = true;
-
-    } else if (galaxy.current === 'dungeon_5') {
-      // D5: три кольца обороны; босс в центральной арене (за северной дверью); охрана в арене
-      const pts = [[960,960], [-960,960], [960,-960], [-960,-960], [0,1800], [0,-1800], [2160,0], [-2160,0], [1500,1500], [-1500,-1500]];
-      pts.forEach((o, i) => add(pool[i % pool.length], rnd(Lmin, Lmax), o[0], o[1], { patrolRadius: 400 }));
-      const dungeon5boss = add(boss, Lmax, 0, 0, { behavior: 'guard', patrolRadius: 300, leash: 900 });
-      dungeon5boss.isDungeonBoss = true;
-      // охрана в арене (не считаются для открытия двери)
-      const d5e1 = add('ancient_09', Lmax, -300, 200, { behavior: 'guard', patrolRadius: 150, leash: 600 });
-      d5e1.isBossEscort = true;
-      const d5e2 = add('ancient_11', Lmax, 300, 200, { behavior: 'guard', patrolRadius: 150, leash: 600 });
-      d5e2.isBossEscort = true;
-
-    } else if (galaxy.current === 'dungeon_prem') {
-      // Лабиринт Тьмы — только Древние; мини-боссы в тупиках; охрана босса за юго-вост дверью
-      const tdpts = [[-1800,-1300], [600,-1200], [-400,-500], [1200,-500], [-800,300], [1600,900], [-2000,100], [400,200]];
-      tdpts.forEach(([ox, oy], i) => add(pool[i % pool.length], rnd(Lmin, Lmax), ox, oy, {}));
-      add('ancient_05', Lmax, 0, -1800, { behavior: 'guard', patrolRadius: 250, leash: 580 });
-      add('ancient_05', Lmax, -1800, 200, { behavior: 'guard', patrolRadius: 250, leash: 580 });
-      add('ancient_03', Lmax, 800, 1400, { behavior: 'guard', patrolRadius: 250, leash: 580 });
-      add('ancient_05', Lmax, -800, 1600, { behavior: 'guard', patrolRadius: 250, leash: 580 });
-      const tdboss = add('ancient_06', Lmax, 2300, 1900, { behavior: 'guard', patrolRadius: 180, leash: 420 });
-      tdboss.isDungeonBoss = true;
-      // охрана босса
-      const tde1 = add('ancient_08', Lmax, 2000, 1900, { behavior: 'guard', patrolRadius: 150, leash: 480 });
-      tde1.isBossEscort = true;
-      const tde2 = add('ancient_10', Lmax, 2300, 1600, { behavior: 'guard', patrolRadius: 150, leash: 480 });
-      tde2.isBossEscort = true;
-
+    // Data-driven данжи (D1–D5, prem): вариант размещения дня из DUNGEON_LAYOUTS
+    this._dungeonVariant = null;
+    const _layout = DUNGEON_LAYOUTS[galaxy.current];
+    if (_layout) {
+      const v = _layout.variants[this._dungeonVariantIndex(_layout.variants.length)];
+      this._dungeonVariant = v;
+      // обычные мобы пула; каждому N-му — AI-класс из aiMix данжа
+      const mix = _layout.aiMix;
+      v.spots.forEach(([ox, oy], i) => {
+        const sOpts = { patrolRadius: 300 };
+        if (mix && (i + 1) % mix.every === 0) {
+          sOpts.aiClass = mix.classes[Math.floor(i / mix.every) % mix.classes.length];
+        }
+        add(pool[i % pool.length], rnd(Lmin, Lmax), ox, oy, sOpts);
+      });
+      // элитные охранники чоук-пойнтов
+      v.guards.forEach(([gk, ox, oy]) => add(gk, Lmax, ox, oy, { behavior: 'guard', patrolRadius: 220, leash: 550 }));
+      const dBoss = add(boss, Lmax, v.boss[0], v.boss[1], { behavior: 'guard', patrolRadius: 200, leash: 480 });
+      dBoss.isDungeonBoss = true;
+      const kit = DUNGEON_BOSS_KIT[galaxy.current];
+      if (kit) {
+        dBoss._bossKit = kit;
+        // Кит работает в стандартном aggro-пути: снимаем bossType 'roaming' у боссов
+        // D1–D3 (иначе они уйдут в _updateRoaming и кит не сработает). Скеттер,
+        // который давал roaming-путь, возвращён этим боссам через kit.scatter.
+        dBoss.tpl = { ...dBoss.tpl, bossType: null, ...(kit.shielder ? { aiClass: 'shielder' } : {}) };
+      }
+      // охрана босса (не открывает дверь)
+      for (const [ek, ox, oy] of v.escorts) {
+        const e = add(ek, Lmax, ox, oy, { behavior: 'guard', patrolRadius: 150, leash: 500 });
+        e.isBossEscort = true;
+      }
     }
 
     if (sec.isDungeon) this._spawnDifficultyReinforcements(pool, cx, cy, Lmin, Lmax);
@@ -1160,15 +1057,32 @@ export default class GameScene extends Phaser.Scene {
     return DUNGEON_DIFF[this.dungeonDifficulty ?? 'normal'];
   }
 
+  // Вариант размещения контента данжа на сегодня: детерминирован по UTC-дате
+  // (сдвиг −1ч ≈ суточный сброс 01:00) и ключу сектора — одинаков у всех
+  // клиентов независимо от локальной таймзоны (важно для групп)
+  _dungeonVariantIndex(nVariants) {
+    const d = new Date(Date.now() - 3600e3);
+    const key = `${d.getUTCFullYear()}-${d.getUTCMonth() + 1}-${d.getUTCDate()}|${galaxy.current}`;
+    return new Phaser.Math.RandomDataGenerator([key]).between(0, nVariants - 1);
+  }
+
   _randomRespawnPoint() {
     const cx = this.worldWidth / 2, cy = this.worldHeight / 2;
+    // В лабиринтных данжах случайная точка может попасть в отгороженный стенами
+    // карман — респавним у южного гейта (R-1-boss сохраняет старое поведение)
+    if (SECTORS[galaxy.current]?.isDungeon && galaxy.current !== 'R-1-boss') {
+      return {
+        x: cx + Phaser.Math.Between(-250, 250),
+        y: this.worldHeight - 320 - Phaser.Math.Between(80, 350),
+      };
+    }
     const margin = 500;
     let x, y, tries = 0;
     do {
       x = Phaser.Math.Between(margin, this.worldWidth - margin);
       y = Phaser.Math.Between(margin, this.worldHeight - margin);
       tries++;
-    } while (Phaser.Math.Distance.Between(x, y, cx, cy) < 900 && tries < 20);
+    } while ((Phaser.Math.Distance.Between(x, y, cx, cy) < 900 || this._isPointNearWall(x, y, 120)) && tries < 20);
     return { x, y };
   }
 
@@ -1176,17 +1090,8 @@ export default class GameScene extends Phaser.Scene {
     const diff = this._dungeonDiff();
     if (diff.mobCount <= 1.0) return;
 
-    // Предопределённые патрульные зоны для каждого данжа (offset от центра мира)
-    const ZONES = {
-      dungeon_1: [[0,-500],[1800,0],[-1800,0],[0,1500],[2800,400],[-2800,-400],[0,-1200],[1200,-800],[-1200,800]],
-      dungeon_2: [[0,800],[-1000,200],[1000,-500],[-2200,600],[2200,400],[-600,-1300],[600,800],[-1500,500],[500,-1300]],
-      dungeon_3: [[1650,-500],[-1650,-500],[0,-500],[1650,400],[-1650,400],[0,400],[800,-1000],[-800,1000],[0,0]],
-      dungeon_4: [[0,-600],[0,600],[-1400,0],[1400,0],[-700,-900],[700,900],[-700,900],[700,-900],[0,0]],
-      dungeon_5: [[0,-1050],[800,0],[-800,0],[0,800],[800,-1200],[-1200,600],[0,-1500],[1500,0],[-1500,0]],
-      dungeon_prem: [[-2000,-1200],[0,-900],[2000,-600],[-2000,300],[0,600],[2000,900],[-1000,-300],[1000,300],[0,0]],
-    };
-
-    const zones = ZONES[galaxy.current];
+    // Зоны подкреплений — из раскладки данжа (общие для суточных вариантов)
+    const zones = DUNGEON_LAYOUTS[galaxy.current]?.reinforceZones;
     if (!zones) return;
 
     const baseCount = this.mobs.filter(m => !m.isDungeonBoss && !m.isBossEscort && !m.isDepositGuard).length;
@@ -1200,7 +1105,8 @@ export default class GameScene extends Phaser.Scene {
       const jy = oz2 + rnd(-180, 180);
       const k  = pool[rnd(0, pool.length - 1)];
       const lvl = rnd(Lmin, Lmax);
-      const m = new Mob(this, M[k], lvl, cx + jx, cy + jy,
+      const spot = this._findFreeSpawn(cx + jx, cy + jy, 100);
+      const m = new Mob(this, M[k], lvl, spot.x, spot.y,
         { behavior: 'patrol', patrolRadius: 280, hpMult: diff.mobHP, dmgMult: diff.mobDamage });
       this.mobs.push(m);
     }
@@ -1306,7 +1212,6 @@ export default class GameScene extends Phaser.Scene {
         const grp = this.groupSystem;
         if (grp?.inGroup && !grp.isLeader) m.ghostBoss = true;
         this.mobs.push(m);
-        this.physics.add.collider(m.sprite, this.walls);
       }
     };
     if (phase === 2) spawnRing('ancient_10', 6, 800);             // 6 Жнецов
@@ -1320,6 +1225,31 @@ export default class GameScene extends Phaser.Scene {
       spawnRing('ancient_11', 4, 1200);                                          // 4 Звёздных бойца
       spawnRing('ancient_13', 2, 500, { behavior: 'guard', patrolRadius: 380 }); // ещё 2 Реаниматора
       spawnRing('ancient_shield', 3, 380, { behavior: 'guard', patrolRadius: 200 }); // ещё Кристальные щиты
+    }
+  }
+
+  // Фаза кита данж-босса (D1–D5/prem, см. DUNGEON_BOSS_KIT): тинт-телеграф,
+  // призыв аддов кольцом. Саммоны помечены isSummon — выпадают по обычному
+  // dropRate, а не по 100%-каналу эскортов (лут-бюджет данжа не раздувается).
+  onDungeonBossPhase(boss, ph) {
+    if (!boss?.alive) return;
+    this.log(i18n.t('log.dungeon_boss_phase'));
+    if (ph.tint) boss.sprite.setTint(ph.tint);
+    if (ph.acid) boss.tpl = { ...boss.tpl, projectileType: 'acid' };
+    if (ph.dashOn) boss._kitDashCd = ph.dashOn;
+    const s = ph.summon;
+    if (!s) return;
+    for (let i = 0; i < s.n; i++) {
+      const a = (i / s.n) * Math.PI * 2;
+      const pos = this._findFreeSpawn(boss.x + Math.cos(a) * s.r, boss.y + Math.sin(a) * s.r);
+      const m = new Mob(this, MOBS[s.k], boss.level, pos.x, pos.y,
+        { patrolRadius: 400, bossRef: boss, ...(s.opts ?? {}) });
+      m.isBossEscort = true;
+      m.isSummon = true;
+      m._groupMobId = this._nextGroupMobId++;
+      const grp = this.groupSystem;
+      if (grp?.inGroup && !grp.isLeader) m.ghostBoss = true;
+      this.mobs.push(m);
     }
   }
 
@@ -2707,11 +2637,16 @@ export default class GameScene extends Phaser.Scene {
     const name = i18n.t(mob.tpl.nameKey); const lvl = `${i18n.t('mob.level')}${mob.level}`;
     const lvlScale = 1 + 0.5 * (mob.level - 1);
     const _credMult = this.player?.creditBonusMod ?? 1;
-    const credits = Math.round(mob.tpl.credits * lvlScale * _credMult / 5);
     const sec = SECTORS[galaxy.current];
     const isDung = sec?.isDungeon === true;
     const diff = isDung ? this._dungeonDiff() : null;
-    const xp = Math.round(mob.tpl.xp * lvlScale * (diff?.xpMult ?? 1) / 60);
+    // Лут-бюджет данжа: мобов стало больше (DUNGEON_MOB_GROWTH), награда с каждого
+    // обычного моба режется так, чтобы суммарный фарм вырос ≤ LOOT_BUDGET_CAP.
+    // Боссы и R-1-boss не нормализуются.
+    const lootNorm = (isDung && galaxy.current !== 'R-1-boss' && !mob.isDungeonBoss)
+      ? dungeonLootNorm(galaxy.current) : 1;
+    const credits = Math.round(mob.tpl.credits * lvlScale * _credMult * lootNorm / 5);
+    const xp = Math.round(mob.tpl.xp * lvlScale * (diff?.xpMult ?? 1) * lootNorm / 60);
     this.log(i18n.t('log.killed', { name, lvl })); this.log(i18n.t('log.reward', { credits, xp }));
     this.credits = (this.credits || 0) + credits; this.gainXp(xp);
     if (this.target === mob) {
@@ -2731,7 +2666,7 @@ export default class GameScene extends Phaser.Scene {
       } else {
         const rawSg = rollStarGold(mob);
         const dsg = DUNGEON_STAR_GOLD[galaxy.current];
-        sg = rawSg > 0 ? Math.round(rawSg * (dsg?.mobMult ?? 1)) : 0;
+        sg = rawSg > 0 ? Math.round(rawSg * (dsg?.mobMult ?? 1) * lootNorm) : 0;
       }
     } else {
       if (mob.isConfedBoss) {
@@ -2759,9 +2694,9 @@ export default class GameScene extends Phaser.Scene {
     if (sg > 0) { this.starGold = (this.starGold || 0) + sg; this.log(i18n.t('log.stargold', { amount: sg })); }
 
     // Модульный дроп — solo: всегда игроку. Группа (будущее): владелец = последний наносивший урон 30с без перерыва.
-    const mobDropRate = isDung ? (diff?.dropRate ?? 0.10) : dropChance(mob) * (this.player?.dropChanceMult ?? 1);
-    if (isDung && !mob.isBoss && !mob.tpl.elite && !mob.isBossEscort) {
-      // Обычный данж-моб: шанс дропа по сложности (10%/20%/35%)
+    const mobDropRate = isDung ? (diff?.dropRate ?? 0.10) * lootNorm : dropChance(mob) * (this.player?.dropChanceMult ?? 1);
+    if (isDung && (mob.isSummon || (!mob.isBoss && !mob.tpl.elite && !mob.isBossEscort))) {
+      // Обычный данж-моб (и саммоны боссовых фаз): шанс дропа по сложности ×norm
       if (Phaser.Math.FloatBetween(0, 1) < mobDropRate) {
         const lootItem = rollLootForMob(mob);
         this.loot.push(new Loot(this, mob.x, mob.y, lootItem, 'common'));
@@ -2799,11 +2734,12 @@ export default class GameScene extends Phaser.Scene {
     }
 
     const consDrop = rollConsumableDrop(mob);
-    if (consDrop) {
+    if (consDrop && (lootNorm === 1 || Math.random() < lootNorm)) {
       const ox = Phaser.Math.Between(-24, 24), oy = Phaser.Math.Between(-24, 24);
       this.loot.push(new Loot(this, mob.x + ox, mob.y + oy, consDrop, 'common'));
     }
 
+    // Патроны намеренно НЕ нормализуются: больше мобов = больше расход боезапаса (сустейн, не фарм)
     const ammoDrop = rollAmmoDrop(mob, isDung, this.dungeonDifficulty);
     if (ammoDrop) {
       const ox = Phaser.Math.Between(-24, 24), oy = Phaser.Math.Between(-24, 24);
@@ -3502,7 +3438,7 @@ export default class GameScene extends Phaser.Scene {
         if (!nb.alive || nb.state === 'aggro' || nb.passive || nb.depositGuardSleeping) continue;
         if (!nb.tpl.key?.startsWith('swarm_')) continue;
         const d = Phaser.Math.Distance.Between(aggr.x, aggr.y, nb.x, nb.y);
-        if (d < PACK_R) { nb.state = 'aggro'; nb.neutral = false; }
+        if (d < PACK_R && !this._hasWallBetween(aggr.x, aggr.y, nb.x, nb.y)) { nb.state = 'aggro'; nb.neutral = false; }
       }
     }
   }
@@ -3516,7 +3452,7 @@ export default class GameScene extends Phaser.Scene {
       mob._empCd = (mob._empCd ?? EMP_CD) - dt;
       if (mob._empCd > 0) continue;
       const d = Phaser.Math.Distance.Between(mob.x, mob.y, this.player.x, this.player.y);
-      if (d > EMP_RANGE) { mob._empCd = 5; continue; }
+      if (d > EMP_RANGE || this._hasWallBetween(mob.x, mob.y, this.player.x, this.player.y)) { mob._empCd = 5; continue; }
       mob._empCd = EMP_CD;
       this._spawnEMPPulse(mob.x, mob.y);
     }
@@ -3860,6 +3796,20 @@ export default class GameScene extends Phaser.Scene {
 
   createDungeonWalls() {
     const sec = SECTORS[galaxy.current];
+    // Сброс до раннего return: иначе _wallLines/walls из прошлого данжа переживают
+    // scene.restart и продолжают резать снаряды/LOS в обычном космосе
+    this._wallLines  = [];
+    this._wallSolids = [];
+    this.walls = null;
+    // R-1-boss-поля тоже переживают restart с уничтоженными display-объектами:
+    // стейл _corridorButtons крашили setText в других данжах, стейл gravTraps/mines
+    // невидимо тянули/взрывали игрока. Ветка R-1-boss переинициализирует их сама.
+    this._corridorButtons  = [];
+    this._corridorCapWalls = [];
+    this._corridorCapGfx   = [];
+    this._corridorChests   = [];
+    this.gravTraps         = [];
+    this.mines             = [];
     if (!sec.isDungeon) return;
 
     this.dungeonBossDoor    = null;
@@ -3879,115 +3829,60 @@ export default class GameScene extends Phaser.Scene {
     };
     const ws = WALL_STYLES[galaxy.current] ?? WALL_STYLES['dungeon_5'];
 
-    const drawWallVisual = (x0, y0, w, h) => {
-      g.fillStyle(ws.fill, ws.fillA);
-      g.fillRect(x0, y0, w, h);
-
-      if (ws.type === 'asteroid') {
-        const rng = new Phaser.Math.RandomDataGenerator([`${x0}|${y0}`]);
-        g.lineStyle(1, 0x6b2e0e, 0.45);
-        for (let k = 0; k < 3; k++) {
-          const ax = x0 + rng.between(12, w - 12), ay = y0 + rng.between(12, h - 12);
-          const bx = Phaser.Math.Clamp(ax + rng.between(-90, 90), x0, x0 + w);
-          const by = Phaser.Math.Clamp(ay + rng.between(-90, 90), y0, y0 + h);
-          g.lineBetween(ax, ay, bx, by);
+    // ── Линейные стены (стиль босс-карты): физика 60px сегментами, видимая полоса
+    //    150px, записи в _wallLines (LOS/снаряды) и _wallSolids (валидация спавна) ──
+    const LINE_T = 60, LINE_VIS = 150;
+    // Клип отрезка кругами клиренса (650px: центр мира + гейты). Физика, LOS и визуал
+    // режутся синхронно — иначе получится «пролететь можно, а прострелить нельзя».
+    const clipLine = (x1, y1, x2, y2) => {
+      let parts = [[x1, y1, x2, y2]];
+      const circles = [[cx, cy], ...(this.gates ?? []).map(gt => [gt.x, gt.y])];
+      for (const [ccx, ccy] of circles) {
+        const R = 650;
+        const next = [];
+        for (const [ax, ay, bx, by] of parts) {
+          const dx = bx - ax, dy = by - ay;
+          const a = dx * dx + dy * dy;
+          if (a < 1) continue;
+          const b = 2 * ((ax - ccx) * dx + (ay - ccy) * dy);
+          const c = (ax - ccx) ** 2 + (ay - ccy) ** 2 - R * R;
+          const disc = b * b - 4 * a * c;
+          if (disc <= 0) { next.push([ax, ay, bx, by]); continue; }
+          const sq = Math.sqrt(disc);
+          const t1 = (-b - sq) / (2 * a), t2 = (-b + sq) / (2 * a);
+          if (t2 <= 0 || t1 >= 1) { next.push([ax, ay, bx, by]); continue; }
+          if (t1 > 0.02) next.push([ax, ay, ax + dx * t1, ay + dy * t1]);
+          if (t2 < 0.98) next.push([ax + dx * t2, ay + dy * t2, bx, by]);
         }
-        g.lineStyle(2, ws.edge, 0.85); g.strokeRect(x0, y0, w, h);
-        g.lineStyle(1, ws.edge, 0.22); g.strokeRect(x0 + 4, y0 + 4, w - 8, h - 8);
-
-      } else if (ws.type === 'metal') {
-        const seams = Math.max(1, Math.floor(h / 120));
-        g.lineStyle(1, 0x2a5a2a, 0.38);
-        for (let k = 1; k <= seams; k++) {
-          const sy = y0 + k * h / (seams + 1);
-          g.lineBetween(x0 + 6, sy, x0 + w - 6, sy);
-          g.fillStyle(0x3a6a3a, 0.55);
-          g.fillRect(x0 + 10, sy - 2, 4, 4);
-          g.fillRect(x0 + w - 14, sy - 2, 4, 4);
-        }
-        g.lineStyle(2, ws.edge, 0.82); g.strokeRect(x0, y0, w, h);
-        g.lineStyle(1, ws.edge, 0.18); g.strokeRect(x0 + 2, y0 + 2, w - 4, h - 4);
-
-      } else if (ws.type === 'stone') {
-        const rowH = 90, colW = 160;
-        g.lineStyle(1, 0x404068, 0.32);
-        let row = 0;
-        for (let gy2 = y0 + rowH; gy2 < y0 + h; gy2 += rowH, row++) g.lineBetween(x0, gy2, x0 + w, gy2);
-        row = 0;
-        for (let gy2 = y0; gy2 < y0 + h; gy2 += rowH, row++) {
-          const off = (row % 2) * (colW / 2);
-          for (let gx2 = x0 + colW - off; gx2 < x0 + w; gx2 += colW)
-            g.lineBetween(gx2, gy2, gx2, Math.min(y0 + h, gy2 + rowH));
-        }
-        g.lineStyle(2, ws.edge, 0.78); g.strokeRect(x0, y0, w, h);
-
-      } else if (ws.type === 'debris') {
-        const rng3 = new Phaser.Math.RandomDataGenerator([`${x0}|${y0}`]);
-        g.lineStyle(1, 0x2a4a2a, 0.38);
-        for (let k = 0; k < 3; k++) {
-          const ax = x0 + rng3.between(0, w);
-          g.lineBetween(ax, y0, ax - rng3.between(20, 60), y0 + h);
-        }
-        g.lineStyle(2, ws.edge, 0.75); g.strokeRect(x0, y0, w, h);
-        g.lineStyle(1, ws.edge, 0.18); g.strokeRect(x0 + 3, y0 + 3, w - 6, h - 6);
-
-      } else if (ws.type === 'energy') {
-        g.lineStyle(8, ws.edge, 0.04); g.strokeRect(x0 - 4, y0 - 4, w + 8, h + 8);
-        g.lineStyle(4, ws.edge, 0.13); g.strokeRect(x0 - 2, y0 - 2, w + 4, h + 4);
-        g.lineStyle(2, ws.edge, 0.88); g.strokeRect(x0, y0, w, h);
-        g.lineStyle(1, ws.edge, 0.05);
-        for (let i = 80; i < w; i += 80) g.lineBetween(x0 + i, y0, x0 + i, y0 + h);
-        for (let j = 80; j < h; j += 80) g.lineBetween(x0, y0 + j, x0 + w, y0 + j);
-
-      } else if (ws.type === 'ancient') {
-        // Биоорганические стены зелёного храма — прожилки и кристальное свечение
-        g.lineStyle(12, ws.edge, 0.03); g.strokeRect(x0 - 6, y0 - 6, w + 12, h + 12);
-        g.lineStyle(5,  ws.edge, 0.10); g.strokeRect(x0 - 2, y0 - 2, w + 4,  h + 4);
-        g.lineStyle(2,  ws.edge, 0.90); g.strokeRect(x0, y0, w, h);
-        const rngA = new Phaser.Math.RandomDataGenerator([`a${x0}|${y0}`]);
-        g.lineStyle(1, ws.edge, 0.12);
-        for (let k = 0; k < 4; k++) {
-          const sx2 = x0 + rngA.between(10, w - 10), sy2 = y0 + rngA.between(10, h - 10);
-          const len = rngA.between(40, 100), ang = rngA.between(0, 360) * Math.PI / 180;
-          g.lineBetween(sx2, sy2,
-            Phaser.Math.Clamp(sx2 + Math.cos(ang) * len, x0, x0 + w),
-            Phaser.Math.Clamp(sy2 + Math.sin(ang) * len, y0, y0 + h));
-        }
-
-      } else if (ws.type === 'void') {
-        g.lineStyle(10, ws.edge, 0.03); g.strokeRect(x0 - 5, y0 - 5, w + 10, h + 10);
-        g.lineStyle(5,  ws.edge, 0.09); g.strokeRect(x0 - 2, y0 - 2, w + 4,  h + 4);
-        g.lineStyle(2,  ws.edge, 0.82); g.strokeRect(x0, y0, w, h);
-        g.lineStyle(1, ws.edge, 0.06);
-        for (let d = -(h + 10); d < w + h; d += 120) {
-          const ax = x0 + d, bx = x0 + d + h;
-          g.lineBetween(
-            Phaser.Math.Clamp(ax, x0, x0 + w), ax < x0 ? y0 + (x0 - ax) : y0,
-            Phaser.Math.Clamp(bx, x0, x0 + w), bx > x0 + w ? y0 + h - (bx - x0 - w) : y0 + h,
-          );
-        }
-
-      } else {
-        g.lineStyle(8, ws.edge, 0.05); g.strokeRect(x0 - 4, y0 - 4, w + 8, h + 8);
-        g.lineStyle(3, ws.edge, 0.20); g.strokeRect(x0 - 1, y0 - 1, w + 2, h + 2);
-        g.lineStyle(2, ws.edge, 0.88); g.strokeRect(x0, y0, w, h);
-        g.lineStyle(1, ws.edge, 0.10);
-        g.lineBetween(x0, y0, x0 + w, y0 + h);
-        g.lineBetween(x0 + w, y0, x0, y0 + h);
+        parts = next;
       }
+      return parts;
     };
-
-    const addWall = (x, y, w, h, force = false) => {
-      if (!force && Phaser.Math.Distance.Between(x, y, cx, cy) < 650) return;
-      if (!force && this.gates) {
-        for (const gate of this.gates) {
-          if (Phaser.Math.Distance.Between(x, y, gate.x, gate.y) < 650) return;
+    const addLineWall = (x1, y1, x2, y2) => {
+      for (const [ax, ay, bx, by] of clipLine(x1, y1, x2, y2)) {
+        const dx = bx - ax, dy = by - ay;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        if (dist < 1) continue;
+        const nx = dx / dist, ny = dy / dist;
+        // Диагонали — сегменты короче, чтобы AABB-тела не выпирали за видимую полосу
+        const segLen = (Math.abs(nx) < 0.05 || Math.abs(ny) < 0.05) ? 180 : 90;
+        const N = Math.max(1, Math.ceil(dist / segLen));
+        const step = dist / N;
+        const wW = Math.abs(nx) * (step + 20) + Math.abs(ny) * (LINE_T + 20);
+        const wH = Math.abs(ny) * (step + 20) + Math.abs(nx) * (LINE_T + 20);
+        for (let k = 0; k < N; k++) {
+          const t = (k + 0.5) / N;
+          const wall = this.add.rectangle(ax + t * dx, ay + t * dy, wW, wH, 0, 0);
+          this.physics.add.existing(wall, true);
+          this.walls.add(wall);
         }
+        g.lineStyle(LINE_VIS, ws.fill, 0.85);
+        g.lineBetween(ax, ay, bx, by);
+        g.lineStyle(4, ws.edge, 1.0);
+        g.lineBetween(ax, ay, bx, by);
+        this._wallLines.push({ x1: ax, y1: ay, x2: bx, y2: by });
+        this._wallSolids.push({ x1: ax, y1: ay, x2: bx, y2: by, halfT: LINE_T / 2 });
       }
-      const wall = this.add.rectangle(x, y, w, h, 0x000000, 0);
-      this.physics.add.existing(wall, true);
-      this.walls.add(wall);
-      drawWallVisual(x - w / 2, y - h / 2, w, h);
     };
 
     const addBossDoor = (x, y, w, h) => {
@@ -4007,107 +3902,22 @@ export default class GameScene extends Phaser.Scene {
       }).setOrigin(0.5, 1).setDepth(4);
       this.dungeonBossDoor    = door;
       this.dungeonBossDoorVis = [dg, dtxt];
+      const dx1 = x0 + w, dy1 = y0 + h;
+      this._wallLines.push(
+        { x1: x0,  y1: y0,  x2: dx1, y2: y0,  bossDoor: true },
+        { x1: dx1, y1: y0,  x2: dx1, y2: dy1, bossDoor: true },
+        { x1: dx1, y1: dy1, x2: x0,  y2: dy1, bossDoor: true },
+        { x1: x0,  y1: dy1, x2: x0,  y2: y0,  bossDoor: true },
+      );
+      this._wallSolids.push({ type: 'rect', x0, y0, x1: dx1, y1: dy1, bossDoor: true });
     };
 
-    // ── Wall layout per dungeon ───────────────────────────────────────────────
-    if (galaxy.current === 'dungeon_1') {
-      // Хаб + крест: 4 угловых блока → коридоры 600px N/S/E/W; бутылочное горлышко в N-рукаве → узкая дверь
-      // NW/NE вытянуты вверх до y=-2250 чтобы закрыть боковые обходы к боссу
-      addWall(cx - 1400, cy - 1320, 2200, 2040);   // NW: x cx-2500..cx-300, y 0..cy-300 (до границы мира)
-      addWall(cx + 1400, cy - 1320, 2200, 2040);   // NE: x cx+300..cx+2500, y 0..cy-300
-      addWall(cx - 1400, cy + 1000, 2200, 1400);   // SW
-      addWall(cx + 1400, cy + 1000, 2200, 1400);   // SE
-      // горлышко: 200px проход у верха N-рукава
-      addWall(cx - 200, cy - 1450, 200, 500);       // лев. стена горлышка
-      addWall(cx + 200, cy - 1450, 200, 500);       // прав. стена горлышка
-      addBossDoor(cx, cy - 1750, 200, 300);
-
-    } else if (galaxy.current === 'dungeon_2') {
-      // Z-маршрут: юг→полоса1→(поворот E)→полоса2→(поворот W)→полоса3→сев-вост комната
-      addWall(cx - 2700, cy - 350, 300, 3700);     // левая граница
-      addWall(cx + 2700, cy - 350, 300, 3700);     // правая граница
-      addWall(cx, cy - 2100, 5700, 300);            // верхняя граница
-      addWall(cx - 750, cy + 700, 3900, 300);       // делитель A — проход справа
-      addWall(cx + 1950, cy + 1350, 1500, 300);    // тупик с лутом (юго-восток)
-      addWall(cx + 750, cy - 700, 3900, 300);       // делитель B — проход слева
-      addWall(cx - 1950, cy - 100, 1500, 300);     // тупик с лутом (запад)
-      addBossDoor(cx + 1000, cy - 1450, 300, 1300);
-
-    } else if (galaxy.current === 'dungeon_3') {
-      // Военная сетка: 3×2 комнаты с коридорными проходами
-      addWall(cx, cy - 2000, 5400, 300);                      // верх
-      addWall(cx - 2700, cy - 250, 300, 3500);                // лево
-      addWall(cx + 2700, cy - 250, 300, 3500);                // право
-      addWall(cx - 800, cy - 1075, 300, 1850);                // лев колонна, верх
-      addWall(cx - 800, cy + 1050, 300, 1800);                // лев колонна, низ
-      addWall(cx + 800, cy - 1075, 300, 1850);                // прав колонна, верх
-      addWall(cx + 800, cy + 1050, 300, 1800);                // прав колонна, низ
-      addWall(cx - 1875, cy + 100, 1650, 300);                // горизонт. ряд, лево
-      addWall(cx, cy + 100, 1100, 300);                       // горизонт. ряд, центр
-      addWall(cx + 1875, cy + 100, 1650, 300);                // горизонт. ряд, право
-      addBossDoor(cx + 1750, cy - 1300, 1600, 300);           // верхне-правая комната: x cx+950..cx+2550, y cy-1450..cy-1150
-
-    } else if (galaxy.current === 'dungeon_4') {
-      // Поле обломков: фиксированные осколки с небольшим jitter
-      const rnd4 = new Phaser.Math.RandomDataGenerator([galaxy.current]);
-      const CHUNKS = [
-        [ 500, -1300, 480, 260], [-900, -900, 380, 240], [1500, -700, 320, 200],
-        [-1600, -500, 420, 180], [ 900,  300, 360, 220], [-300,  900, 500, 200],
-        [-1200, 1100, 280, 260], [ 400, -500, 260, 300],
-        [-500, -1500, 300, 200], [1900,  100, 260, 340], [-1900, 700, 300, 280],
-        [-400, 1400, 440, 200], [ 800, -1700, 280, 240],
-        [-1100,  300, 200, 380], [ 200, 1700, 300, 200], [-1600, -1300, 260, 200],
-      ];
-      CHUNKS.forEach(([ox, oy, w, h]) => {
-        const jx = rnd4.between(-40, 40), jy = rnd4.between(-30, 30);
-        addWall(cx + ox + jx, cy + oy + jy, w, h);
-      });
-      // Боссовая комната (SE): интерьер cx+1400..cx+3000, cy+1250..cy+1950; вход с севера
-      addWall(cx + 1250, cy + 1600, 300, 700);           // левая стена
-      addWall(cx + 3150, cy + 1600, 300, 700);           // правая стена
-      addWall(cx + 2200, cy + 2100, 1600, 300);          // южная стена
-      addBossDoor(cx + 2200, cy + 1100, 1600, 300);      // северная стена (вход, boss door)
-
-    } else if (galaxy.current === 'dungeon_5') {
-      // Три кольца обороны: внешнее (N/S/E/W проходы), среднее (крест-бары), внутреннее (арена)
-      addWall(cx - 1700, cy - 1200, 2200, 1400);
-      addWall(cx + 1700, cy - 1200, 2200, 1400);
-      addWall(cx - 1700, cy + 1200, 2200, 1400);
-      addWall(cx + 1700, cy + 1200, 2200, 1400);
-      addWall(cx, cy - 1500, 800, 300);
-      addWall(cx, cy + 1500, 800, 300);
-      addWall(cx - 1500, cy, 300, 800);
-      addWall(cx + 1500, cy, 300, 800);
-      addWall(cx, cy + 600, 1400, 250, true);      // юж. стена арены (force — близко к центру)
-      addWall(cx - 700, cy, 250, 1200, true);      // зап. стена арены
-      addWall(cx + 700, cy, 250, 1200, true);      // вост. стена арены
-      addBossDoor(cx, cy - 600, 1400, 250);         // сев. стена арены = boss door
-
-    } else if (galaxy.current === 'dungeon_prem') {
-      // Лабиринт Тьмы: плотная Z-сеть из тёмной материи (вход с севера)
-      addWall(cx - 2700, cy + 300, 300, 4200);     // левая граница
-      addWall(cx + 2700, cy + 300, 300, 4200);     // правая граница
-      addWall(cx, cy + 2100, 5700, 300);            // нижняя граница
-      addWall(cx - 1300, cy - 1600, 2900, 250);    // L1: проход cx+200..cx+700
-      addWall(cx + 1450, cy - 1600, 2500, 250);
-      addWall(cx + 450, cy - 1900, 500, 250);      // тупик с лутом у входа
-      addWall(cx + 400, cy - 900, 4900, 250);      // L2: проход cx-2700..cx-2100
-      addWall(cx + 1600, cy - 1250, 250, 450);     // перегородки L1-L2
-      addWall(cx + 700,  cy - 1250, 250, 450);
-      addWall(cx - 400, cy - 200, 4900, 250);      // L3: проход cx+2100..cx+2700
-      addWall(cx - 1600, cy - 600, 250, 450);      // перегородки L2-L3
-      addWall(cx - 700,  cy - 600, 250, 450);
-      addWall(cx + 1200, cy - 550, 1100, 250);
-      addWall(cx + 400, cy + 600, 4900, 250);      // L4: проход cx-2700..cx-2100
-      addWall(cx + 1600, cy + 200, 250, 450);      // перегородки L3-L4
-      addWall(cx - 300,  cy + 200, 250, 600);
-      addWall(cx - 1800, cy + 200, 1100, 250);
-      addWall(cx - 400, cy + 1300, 4900, 250);     // L5: проход cx+2100..cx+2700
-      addWall(cx - 1600, cy + 900, 250, 450);      // перегородки L4-L5
-      addWall(cx + 800,  cy + 950, 250, 450);
-      // Дно лабиринта: барьер с боссовой дверью в правой части (вход в боссовую комнату)
-      addWall(cx - 225, cy + 1650, 4950, 250);     // cx-2700..cx+2250 (проход cx+2250..cx+2700)
-      addBossDoor(cx + 2475, cy + 1650, 450, 250); // горизонтальный boss door в восточном проходе
+    // ── Раскладка стен: данные (D1–D5, prem) или литеральная ветка (R-1-boss) ──
+    const layout = DUNGEON_LAYOUTS[galaxy.current];
+    if (layout) {
+      for (const [x1, y1, x2, y2] of layout.walls) addLineWall(cx + x1, cy + y1, cx + x2, cy + y2);
+      const [bx, by, bw, bh] = layout.bossDoor;
+      addBossDoor(cx + bx, cy + by, bw, bh);
 
     } else if (galaxy.current === 'R-1-boss') {
       // Вертикальная 5-конечная звезда: толстые стены коридоров (150px) + кольцо арены
@@ -4269,7 +4079,6 @@ export default class GameScene extends Phaser.Scene {
     }
 
     this.physics.add.collider(this.player.sprite, this.walls);
-    this.mobs.forEach(m => this.physics.add.collider(m.sprite, this.walls));
   }
 
   _checkDungeonBossDoor() {
@@ -4285,6 +4094,8 @@ export default class GameScene extends Phaser.Scene {
     const vis = this.dungeonBossDoorVis;
     this.dungeonBossDoorVis = null;
     this.log(i18n.t('log.boss_door_open'));
+    if (this._wallLines)  this._wallLines  = this._wallLines.filter(l => !l.bossDoor);
+    if (this._wallSolids) this._wallSolids = this._wallSolids.filter(l => !l.bossDoor);
     // Defer wall removal to next frame — avoid modifying StaticPhysicsGroup mid-physics-update
     this.time.delayedCall(0, () => {
       if (door?.active) { this.walls.remove(door, true, false); door.destroy(); }
@@ -4419,7 +4230,6 @@ export default class GameScene extends Phaser.Scene {
           mob.isBossEscort = true;
           mob._groupMobId = this._nextGroupMobId++;
           this.mobs.push(mob);
-          this.physics.add.collider(mob.sprite, this.walls);
         }
         // Схлопывание: 2с после 0.5с паузы
         const proxy2 = { t: 1 };
@@ -4642,8 +4452,8 @@ export default class GameScene extends Phaser.Scene {
       });
       mine.corridorIndex = layer.corridorIndex; // наследует принадлежность к коридору
       mine.isBossEscort  = layer.isBossEscort;
+      mine.isSummon      = true; // мины не участвуют в 100%-канале дропа эскортов
       this.mobs.push(mine);
-      this.physics.add.collider(mine.sprite, this.walls);
     }
   }
 
@@ -4831,7 +4641,12 @@ export default class GameScene extends Phaser.Scene {
 
   _hasWallBetween(x1, y1, x2, y2) {
     if (!this._wallLines?.length) return false;
+    const qMinX = Math.min(x1, x2), qMaxX = Math.max(x1, x2);
+    const qMinY = Math.min(y1, y2), qMaxY = Math.max(y1, y2);
     for (const wl of this._wallLines) {
+      if (wl.type !== 'arc' &&
+          ((wl.x1 < qMinX && wl.x2 < qMinX) || (wl.x1 > qMaxX && wl.x2 > qMaxX) ||
+           (wl.y1 < qMinY && wl.y2 < qMinY) || (wl.y1 > qMaxY && wl.y2 > qMaxY))) continue;
       if (wl.type === 'arc') {
         // Пересечение отрезка с окружностью
         const dx = x2 - x1, dy = y2 - y1;
@@ -4852,6 +4667,35 @@ export default class GameScene extends Phaser.Scene {
       }
     }
     return false;
+  }
+
+  // Точка ближе pad к любой стене (rect-тела старых данжей или линии с halfT)?
+  _isPointNearWall(x, y, pad = 60) {
+    if (!this._wallSolids?.length) return false;
+    for (const s of this._wallSolids) {
+      if (s.type === 'rect') {
+        const dx = Math.max(s.x0 - x, 0, x - s.x1);
+        const dy = Math.max(s.y0 - y, 0, y - s.y1);
+        if (dx * dx + dy * dy < pad * pad) return true;
+      } else if (this._distToSegment(x, y, s.x1, s.y1, s.x2, s.y2) < (s.halfT ?? 30) + pad) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  // Ближайшая свободная от стен точка: спиральная проба 8 направлений × шаги 80..480
+  _findFreeSpawn(x, y, pad = 60) {
+    if (!this._isPointNearWall(x, y, pad)) return { x, y };
+    for (let r = 80; r <= 480; r += 80) {
+      for (let k = 0; k < 8; k++) {
+        const a = k * Math.PI / 4;
+        const nx = x + Math.cos(a) * r, ny = y + Math.sin(a) * r;
+        if (!this._isPointNearWall(nx, ny, pad)) return { x: nx, y: ny };
+      }
+    }
+    console.warn(`[dungeon] нет свободной точки спавна рядом с ${Math.round(x)},${Math.round(y)}`);
+    return { x, y };
   }
 
   // Минимальное расстояние от точки (px,py) до отрезка (ax,ay)-(bx,by)
@@ -4944,7 +4788,9 @@ export default class GameScene extends Phaser.Scene {
 
     const CLUSTER_R = 100; // радиус россыпи кристаллов вокруг центра точки
 
-    dcfg.spots.forEach((spot, i) => {
+    // Для data-driven данжей споты берутся из суточного варианта размещения
+    const spots = this._dungeonVariant?.deposits ?? dcfg.spots;
+    spots.forEach((spot, i) => {
       const [ox, oy] = spot;
       const x = cx + ox, y = cy + oy;
       const resType = typeList[i % typeList.length];
@@ -4960,7 +4806,10 @@ export default class GameScene extends Phaser.Scene {
         this.plasmateDeposits.push(new PlasmateDeposit(this, kx, ky, yield_, zone, RESPAWN_MS, resType));
       }
 
-      const guard = new Mob(this, MOBS[dcfg.guard], guardLvl, x + 130, y + 90,
+      const gp = galaxy.current === 'R-1-boss'
+        ? { x: x + 130, y: y + 90 }
+        : this._findFreeSpawn(x + 130, y + 90, 100);
+      const guard = new Mob(this, MOBS[dcfg.guard], guardLvl, gp.x, gp.y,
         { behavior: 'guard', patrolRadius: 150, leash: 400, ...(galaxy.current === 'R-1-boss' ? { dmgMult: 2 } : {}) });
       guard.isDepositGuard = true;
       this.mobs.push(guard);
