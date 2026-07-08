@@ -51,3 +51,42 @@ class Friendship(Base):
     user_b     = Column(String(50), nullable=False, index=True)   # recipient
     status     = Column(String(10), nullable=False, default='pending')  # 'pending' | 'accepted'
     created_at = Column(DateTime, default=datetime.utcnow)
+
+
+# ── Данж-инстансы ────────────────────────────────────────────────────────
+# Клиент-доверенная модель (как и весь остальной прогресс игрока в этом
+# проекте — см. PlayerState.state): сервер хранит то, что репортит клиент,
+# без независимой валидации симуляции. day_key вычисляется клиентом по той
+# же границе 01:00 по местному времени, что и остальные суточные сбросы
+# (missionDailyReset/plasmateDayReset), и передаётся явным параметром —
+# сервер не завязан на часовой пояс клиента.
+
+class DungeonRun(Base):
+    __tablename__ = "dungeon_runs"
+
+    id             = Column(Integer, primary_key=True)
+    dungeon_key    = Column(String(30), nullable=False, index=True)   # 'dungeon_1'..'dungeon_5','dungeon_prem','R-1-boss'
+    difficulty     = Column(String(10), nullable=False, default='normal')
+    day_key        = Column(String(10), nullable=False, index=True)   # 'YYYY-MM-DD' (локальная дата клиента)
+    owner_kind     = Column(String(10), nullable=False)                # 'solo' | 'group'
+    owner_key      = Column(String(80), nullable=False, index=True)    # 'user:<id>' (solo) | groupInstanceId (group)
+    variant_index  = Column(Integer, nullable=False, default=0)
+    killed_mob_ids = Column(JSON, nullable=False, default=list)
+    floor_loot     = Column(JSON, nullable=False, default=list)        # [{id,x,y,item}]
+    corridor_state = Column(JSON, nullable=True)                       # R-1-boss: {clearedCorridors:[...], bossArenaOpen:bool}
+    boss_alive     = Column(Integer, nullable=False, default=1)        # bool as int (SQLite-friendly)
+    completed      = Column(Integer, nullable=False, default=0)
+    created_at     = Column(DateTime, default=datetime.utcnow)
+    updated_at     = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class DungeonLives(Base):
+    __tablename__ = "dungeon_lives"
+
+    id          = Column(Integer, primary_key=True)
+    user_id     = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    dungeon_key = Column(String(30), nullable=False, index=True)
+    day_key     = Column(String(10), nullable=False, index=True)
+    lives_used  = Column(Integer, nullable=False, default=0)   # 0..7
+    locked_out  = Column(Integer, nullable=False, default=0)   # bool as int — 7 жизней исчерпаны ИЛИ данж уже пройден сегодня
+    updated_at  = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

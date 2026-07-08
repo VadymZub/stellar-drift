@@ -284,8 +284,17 @@ export default class Mob {
       this._returning = true;
       this.state      = 'idle';
     }
-    if (this._returning && fromAnchor < this.leash * 0.75) {
-      this._returning = false;
+    if (this._returning) {
+      // Защита от вечного «возврата»: если стены не пускают домой дольше 8с
+      // (спавн отрезан после случайных изменений раскладки), сдаёмся на месте —
+      // лучше моб останется тут, чем навсегда перестанет агриться
+      this._returningT = (this._returningT ?? 0) + dt;
+      if (fromAnchor < this.leash * 0.75 || this._returningT > 8) {
+        this._returning  = false;
+        this._returningT = 0;
+      }
+    } else {
+      this._returningT = 0;
     }
 
     let moveSpeed = 0;
@@ -294,6 +303,11 @@ export default class Mob {
     if (this._returning) {
       this.heading = Math.atan2(this.spawnY - this.y, this.spawnX - this.x);
       moveSpeed    = this.tpl.speed * 0.85;
+      // Без обхода стен моб, разорвавший погоню за стеной, физически не может
+      // дойти по прямой до точки спавна за такой же стеной — fromAnchor никогда
+      // не опустится ниже leash*0.75, и _returning останется true навсегда,
+      // отключая агро к этому мобу до конца сессии
+      if (!this._steerAroundWalls(dt)) moveSpeed = 0;
       this._applyVelocity(moveSpeed);
       this._updateVisuals();
       return;
@@ -392,6 +406,23 @@ export default class Mob {
           this._updateVisuals();
           return;
         }
+        // Направленная мина Синдиката: статична (speed 0), при срабатывании — сфокусированный
+        // бронебойный импульс в одном направлении (эффективен по корпусу, не по щиту)
+        if (this.tpl.aiClass === 'directedMine') {
+          this._updateDirectedMine(dt, player);
+          if (!this.alive) return;
+          this._applyVelocity(0);
+          this._updateVisuals();
+          return;
+        }
+        // Импульсная мина Синдиката: статична, ЭМИ в радиусе — глушит двигатели/оружие, без урона по корпусу
+        if (this.tpl.aiClass === 'stunMine') {
+          this._updateStunMine(dt, player);
+          if (!this.alive) return;
+          this._applyVelocity(0);
+          this._updateVisuals();
+          return;
+        }
         // AI-класс: dasher
         if (this.tpl.aiClass === 'dasher') {
           this._updateDasher(dt, dist, speedMult);
@@ -441,7 +472,7 @@ export default class Mob {
         // Охранник: орбита вокруг босса
         moveSpeed = this._orbitAround(dt, this.bossRef.x, this.bossRef.y, this.bossRef.tpl.displaySize * 2.5);
       } else {
-        moveSpeed = this.patrol(now);
+        moveSpeed = this.patrol(now, dt);
       }
     }
 
@@ -528,7 +559,7 @@ export default class Mob {
   }
 
   // ── Патруль ───────────────────────────────────────────────────────────────
-  patrol(now) {
+  patrol(now, dt) {
     if (now < this.patrolWaitUntil) return 0;
     const reached = this.patrolTarget &&
       Phaser.Math.Distance.Between(this.x, this.y, this.patrolTarget.x, this.patrolTarget.y) < 26;
@@ -540,6 +571,9 @@ export default class Mob {
       }
     }
     this.heading = Math.atan2(this.patrolTarget.y - this.y, this.patrolTarget.x - this.x);
+    // В лабиринтах цель патруля может лежать за углом — обходим стену тем же
+    // стирингом, что и в погоне, иначе моб просто утыкается в стену и стоит
+    if (!this._steerAroundWalls(dt ?? 0.05)) return 0;
     return this.tpl.speed * (this.behavior === 'roam' ? 0.6 : 0.4);
   }
 
@@ -566,18 +600,24 @@ export default class Mob {
       }
       return { x: best[0] + Phaser.Math.Between(-180, 180), y: best[1] + Phaser.Math.Between(-180, 180) };
     }
-    // patrol/guard: точка на периметре patrolRadius (0.6–1.0 от радиуса).
-    // Цель за стеной → моб вечно давит в стену, поэтому до 6 попыток ищем
-    // точку с чистой линией; не нашли — стоим на месте (точка спавна)
-    for (let i = 0; i < 6; i++) {
-      const ang = Phaser.Math.FloatBetween(-Math.PI, Math.PI);
-      const r   = Phaser.Math.FloatBetween(this.patrolRadius * 0.6, this.patrolRadius);
-      const tx  = this.spawnX + Math.cos(ang) * r;
-      const ty  = this.spawnY + Math.sin(ang) * r;
-      if (!this.scene._hasWallBetween?.(this.x, this.y, tx, ty) &&
-          !this.scene._isPointNearWall?.(tx, ty, 60)) return { x: tx, y: ty };
+    // patrol/guard: точка на периметре patrolRadius. Полная видимость от текущей
+    // позиции больше не требуется — patrol() обходит препятствия по пути тем же
+    // стирингом, что и погоня; здесь важно лишь не целиться внутрь стены. Пробуем
+    // несколько радиусов (уже — для тесных ячеек лабиринта, где polный patrolRadius
+    // всегда упирается в соседнюю стену).
+    for (const rFrac of [1.0, 0.7, 0.45, 0.25]) {
+      for (let i = 0; i < 8; i++) {
+        const ang = Phaser.Math.FloatBetween(-Math.PI, Math.PI);
+        const r   = this.patrolRadius * rFrac * Phaser.Math.FloatBetween(0.6, 1.0);
+        const tx  = this.spawnX + Math.cos(ang) * r;
+        const ty  = this.spawnY + Math.sin(ang) * r;
+        if (!this.scene._isPointNearWall?.(tx, ty, 50)) return { x: tx, y: ty };
+      }
     }
-    return { x: this.spawnX, y: this.spawnY };
+    // Совсем зажат (не должно случаться при patrolRadius ≥ ~120) — короткий шаг
+    // от текущей позиции, лишь бы не застыть статуей на месте
+    const ang = Phaser.Math.FloatBetween(-Math.PI, Math.PI);
+    return { x: this.x + Math.cos(ang) * 60, y: this.y + Math.sin(ang) * 60 };
   }
 
   // ── Кит данж-босса (D1–D5/prem): собран из готовых механик. Путь Апофиса
@@ -676,14 +716,63 @@ export default class Mob {
     }
     // Approach player
     if (player?.alive) {
-      const toAng = Math.atan2(player.y - this.y, player.x - this.x);
-      this.heading = toAng;
+      this.heading = Math.atan2(player.y - this.y, player.x - this.x);
+      // Обход стен на подходе — иначе камикадзе прёт по прямой сквозь геометрию
+      // коридора и намертво упирается в стену, так и не долетев до цели
+      this._steerAroundWalls(dt);
       const dist = Phaser.Math.Distance.Between(this.x, this.y, player.x, player.y);
       if (dist < (this.tpl.bombTriggerRange ?? 110)) {
         this._bombTriggered = true;
         this._bombFuseTimer = this.tpl.bombFuse ?? 1.0;
         this.sprite.setTint(0xff4444);
         this.scene.tweens.add({ targets: this.sprite, alpha: { from: 1, to: 0.3 }, duration: 200, yoyo: true, repeat: -1 });
+      }
+    }
+  }
+
+  // ── Мины Синдиката: статичные ловушки (speed 0), взводятся при подходе игрока,
+  //    детонируют по фитилю. Общая часть с _updateBomb, но без сближения. ────────
+  _updateDirectedMine(dt, player) {
+    if (!this._bombArmed) { this._bombArmed = true; this._bombFuseTimer = 0; this._bombTriggered = false; }
+    if (this._bombTriggered) {
+      this._bombFuseTimer -= dt;
+      if (this._bombFuseTimer <= 0) {
+        this.scene.onDirectedMineDetonate?.(this);
+        this.alive = false;
+      }
+      return;
+    }
+    if (player?.alive) {
+      this.heading = Math.atan2(player.y - this.y, player.x - this.x);
+      const dist = Phaser.Math.Distance.Between(this.x, this.y, player.x, player.y);
+      if (dist < (this.tpl.bombTriggerRange ?? 260)) {
+        this._bombTriggered = true;
+        this._bombFuseTimer = this.tpl.bombFuse ?? 0.6;
+        // Направление фиксируется в момент взвода — импульс уйдёт туда, даже если цель сместится
+        this._mineFireAngle = this.heading;
+        this.sprite.setTint(0xff8844);
+        this.scene.tweens.add({ targets: this.sprite, alpha: { from: 1, to: 0.3 }, duration: 150, yoyo: true, repeat: -1 });
+      }
+    }
+  }
+
+  _updateStunMine(dt, player) {
+    if (!this._bombArmed) { this._bombArmed = true; this._bombFuseTimer = 0; this._bombTriggered = false; }
+    if (this._bombTriggered) {
+      this._bombFuseTimer -= dt;
+      if (this._bombFuseTimer <= 0) {
+        this.scene.onStunMineDetonate?.(this);
+        this.alive = false;
+      }
+      return;
+    }
+    if (player?.alive) {
+      const dist = Phaser.Math.Distance.Between(this.x, this.y, player.x, player.y);
+      if (dist < (this.tpl.bombTriggerRange ?? 260)) {
+        this._bombTriggered = true;
+        this._bombFuseTimer = this.tpl.bombFuse ?? 0.6;
+        this.sprite.setTint(0x4dd0e1);
+        this.scene.tweens.add({ targets: this.sprite, alpha: { from: 1, to: 0.3 }, duration: 150, yoyo: true, repeat: -1 });
       }
     }
   }

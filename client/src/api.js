@@ -47,3 +47,17 @@ async function apiFetch(path, opts = {}) {
 export function apiPost(path, data)  { return apiFetch(path, { method: 'POST',  body: JSON.stringify(data) }); }
 export function apiGet(path)         { return apiFetch(path, { method: 'GET' }); }
 export function apiPut(path, data)   { return apiFetch(path, { method: 'PUT',   body: JSON.stringify(data) }); }
+
+// ── Данж-инстансы (жизни, прогресс) ─────────────────────────────────────
+export function dungeonStatus(key, dayKey) {
+  return apiGet(`/dungeon/status?key=${encodeURIComponent(key)}&dayKey=${encodeURIComponent(dayKey)}`);
+}
+export function dungeonEnter(body)              { return apiPost('/dungeon/enter', body); }
+export function dungeonMobKilled(runId, mobId)  { return apiPost('/dungeon/mob_killed', { runId, mobId }); }
+export function dungeonLootDrop(runId, loot)    { return apiPost('/dungeon/loot_drop', { runId, loot }); }
+export function dungeonLootCollected(runId, lootId) { return apiPost('/dungeon/loot_collected', { runId, lootId }); }
+export function dungeonCorridorState(runId, state)  { return apiPost('/dungeon/corridor_state', { runId, state }); }
+export function dungeonDeath(key, dayKey)       { return apiPost('/dungeon/death', { key, dayKey }); }
+export function dungeonComplete(runId, key, dayKey, memberUsernames) {
+  return apiPost('/dungeon/complete', { runId, key, dayKey, memberUsernames });
+}

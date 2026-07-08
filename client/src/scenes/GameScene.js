@@ -21,7 +21,7 @@ import MiningBase from '../entities/MiningBase.js';
 import HomeBase from '../entities/HomeBase.js';
 import ArgusController from '../systems/ArgusController.js';
 import ConfedGuardSystem, { getLastResetTime } from '../systems/ConfedGuardSystem.js';
-import { getUsername, getToken, apiPut, apiGet } from '../api.js';
+import { getUsername, getToken, apiPut, apiGet, dungeonEnter, dungeonMobKilled, dungeonLootDrop, dungeonLootCollected, dungeonCorridorState, dungeonDeath, dungeonComplete } from '../api.js';
 import { prepShipTex, removeWhiteBg } from '../utils/prepShipTex.js';
 import { MISSIONS, getMissionSectorTarget } from '../data/missions.js';
 import { DUNGEON_LAYOUTS, DUNGEON_BOSS_KIT } from '../data/dungeonLayouts.js';
@@ -448,6 +448,17 @@ export default class GameScene extends Phaser.Scene {
     this.trailRed = this.add.particles(0, 0, 'glow', { ...trail, tint: 0xff8a7a }).setDepth(59);
 
     this.createBoostFx();
+
+    // Прогресс данж-инстанса на сегодня (жизни/убитые мобы/лут/коридоры) —
+    // получен асинхронно в _tryJump перед стартом прыжка (dungeonEnter).
+    // R-1-boss-специфика (clearedCorridors/bossArenaOpen) читается в
+    // createDungeonWalls()/_checkCorridorClear через this._dungeonRun.
+    const _pending = sec.isDungeon ? this._pendingDungeonRun : null;
+    this._pendingDungeonRun = null;
+    this._dungeonRun       = _pending || null;
+    this._dungeonRunId     = _pending?.runId ?? null;
+    this._dungeonKilledIds = new Set(_pending?.killedMobIds ?? []);
+
     // Стены создаются до мобов: конструктор Mob вешает коллайдер на this.walls,
     // а точки спавна валидируются против this._wallSolids
     this.createJumpgates();
@@ -456,14 +467,18 @@ export default class GameScene extends Phaser.Scene {
 
     // Restore floor loot for current sector
     if (!this._lootBySector) this._lootBySector = {};
-    const _prevSec = this._prevSector;
-    const _prevDef = _prevSec ? SECTORS[_prevSec] : null;
-    // Leaving a dungeon — clear its loot (it's a one-time instance)
-    if (_prevDef?.isDungeon && _prevSec !== galaxy.current) {
-      delete this._lootBySector[_prevSec];
+    if (sec.isDungeon) {
+      // Данж: лут инстанса хранится на сервере (DungeonRun.floor_loot), а не в
+      // локальной _lootBySector — переживает выход/вход, пока живы жизни/инстанс
+      for (const l of (_pending?.floorLoot ?? [])) {
+        const loot = new Loot(this, l.x, l.y, l.item);
+        loot.dungeonLootId = l.id;
+        this.loot.push(loot);
+      }
+    } else {
+      const floorLoot = this._lootBySector[galaxy.current] || [];
+      floorLoot.forEach(l => this.loot.push(new Loot(this, l.x, l.y, l.item)));
     }
-    const floorLoot = this._lootBySector[galaxy.current] || [];
-    floorLoot.forEach(l => this.loot.push(new Loot(this, l.x, l.y, l.item)));
 
     this.spawnPlasmateDeposits();
     this.spawnDungeonDeposits();
@@ -759,7 +774,11 @@ export default class GameScene extends Phaser.Scene {
     const rnd = (a, b) => Phaser.Math.Between(a, b);
     let pool, boss;
     const _diff = sec.isDungeon ? this._dungeonDiff() : null;
-    const add = (k, lvl, ox, oy, opts) => {
+    // dungeonId — стабильный id слота спавна (напр. 'spot:3', 'corridor:2:bomb:5'),
+    // сохраняющийся в БД-прогрессе инстанса на сутки. Если этот слот уже отмечен
+    // убитым (игрок вышел и вернулся тем же днём) — не спавним его повторно.
+    const add = (k, lvl, ox, oy, opts, dungeonId) => {
+      if (dungeonId && this._dungeonKilledIds?.has(dungeonId)) return null;
       const finalOpts = _diff ? { hpMult: _diff.mobHP, dmgMult: _diff.mobDamage, ...opts } : opts;
       let px = cx + ox, py = cy + oy;
       // R-1-boss: авторские позиции внутри коридоров, не двигаем.
@@ -767,6 +786,7 @@ export default class GameScene extends Phaser.Scene {
       // отступе тело клинит на сегментах стены с самого спавна
       if (sec.isDungeon && galaxy.current !== 'R-1-boss') ({ x: px, y: py } = this._findFreeSpawn(px, py, 100));
       const m = new Mob(this, M[k], lvl, px, py, finalOpts);
+      if (dungeonId) m.dungeonId = dungeonId;
       this.mobs.push(m);
       return m;
     };
@@ -868,41 +888,59 @@ export default class GameScene extends Phaser.Scene {
           const d = arenaR + corrLen * t;
           const pOff = hw * GUARD_PERPS[gi];
           const g = add('ancient_05', 50, d * cosA + pOff * pX, d * sinA + pOff * pY,
-            { behavior: 'guard', patrolRadius: 380, leash: 3000 });
-          g.corridorIndex = ci;
+            { behavior: 'guard', patrolRadius: 380, leash: 3000 }, `c${ci}:guard:${gi}`);
+          if (g) g.corridorIndex = ci;
         });
         // Гравитационная ловушка-моб + отражатель в коридоре
         const ga07 = add('ancient_07', 50,
           (arenaR + corrLen * 0.40) * cosA + hw * 0.5 * pX,
           (arenaR + corrLen * 0.40) * sinA + hw * 0.5 * pY,
-          { behavior: 'guard', patrolRadius: 200, leash: 1500 });
-        ga07.corridorIndex = ci;
+          { behavior: 'guard', patrolRadius: 200, leash: 1500 }, `c${ci}:trap1`);
+        if (ga07) ga07.corridorIndex = ci;
         const ga07r = add('ancient_07_1', 50,
           (arenaR + corrLen * 0.62) * cosA - hw * 0.5 * pX,
           (arenaR + corrLen * 0.62) * sinA - hw * 0.5 * pY,
-          { behavior: 'guard', patrolRadius: 200, leash: 1500 });
-        ga07r.corridorIndex = ci;
+          { behavior: 'guard', patrolRadius: 200, leash: 1500 }, `c${ci}:trap2`);
+        if (ga07r) ga07r.corridorIndex = ci;
         // 2 кластера по 3 бомбы (ancient_04b) в коридоре
-        [0.35, 0.65].forEach(bt => {
+        [0.35, 0.65].forEach((bt, ci2) => {
           const bd = arenaR + corrLen * bt;
           [0, 1, 2].forEach(bi => {
             const bAng = bi * (Math.PI * 2 / 3);
             const bomb = add('ancient_04b', 50,
               bd * cosA + Math.cos(bAng) * 90,
               bd * sinA + Math.sin(bAng) * 90,
-              { behavior: 'guard', patrolRadius: 80, leash: 700 });
-            bomb.corridorIndex = ci;
+              { behavior: 'guard', patrolRadius: 80, leash: 700 }, `c${ci}:bomb:${ci2}:${bi}`);
+            if (bomb) bomb.corridorIndex = ci;
           });
         });
         // Уникальный мини-босс в конце коридора (после всех стражников, перед сундуком)
         const mb = add('ancient_miniboss', 50,
           (arenaR + corrLen * 0.86) * cosA,
           (arenaR + corrLen * 0.86) * sinA,
-          { behavior: 'guard', patrolRadius: 320, leash: 3000, hpMult: 3, dmgMult: 2 });
-        mb.corridorIndex = ci;
-        mb._isMiniBoss = true;
+          { behavior: 'guard', patrolRadius: 320, leash: 3000, hpMult: 3, dmgMult: 2 }, `c${ci}:miniboss`);
+        if (mb) { mb.corridorIndex = ci; mb._isMiniBoss = true; }
       }
-      // 5 начальных эскортов вокруг Апофиса (до первой фазы)
+      // Восстановление прогресса при возврате в тот же дневной инстанс: если все
+      // мобы коридора уже отмечены убитыми (killedMobIds) — коридор считается
+      // зачищенным без повторного боя. Известное ограничение: награда-сундук за
+      // зачистку не переспавнивается здесь (факт его сбора отдельно не хранится) —
+      // если чек-точку не пропустили, но не забрали сундук, он теряется при выходе.
+      const _restoredCleared = new Set(this._dungeonRun?.corridorState?.clearedCorridors ?? []);
+      for (let ci = 0; ci < 5; ci++) {
+        if (_restoredCleared.has(ci)) { this._clearedCorridors.add(ci); continue; }
+        const ids = [];
+        for (let gi = 0; gi < 6; gi++) ids.push(`c${ci}:guard:${gi}`);
+        ids.push(`c${ci}:trap1`, `c${ci}:trap2`);
+        for (let bc = 0; bc < 2; bc++) for (let bi = 0; bi < 3; bi++) ids.push(`c${ci}:bomb:${bc}:${bi}`);
+        ids.push(`c${ci}:miniboss`);
+        if (ids.every(id => this._dungeonKilledIds.has(id))) this._clearedCorridors.add(ci);
+      }
+      if (this._dungeonRun?.corridorState?.bossArenaOpen || this._clearedCorridors.size === 5) {
+        this._openBossArena();
+      }
+      // 5 начальных эскортов вокруг Апофиса (до первой фазы) — не отслеживаются
+      // по id: при выходе-входе до убийства Апофиса бой начинается заново
       for (let i = 0; i < 5; i++) {
         const a = (i / 5) * Math.PI * 2;
         const esc = add('ancient_06', 50, Math.cos(a) * 700, Math.sin(a) * 700,
@@ -951,17 +989,21 @@ export default class GameScene extends Phaser.Scene {
     if (_layout) {
       const v = _layout.variants[this._dungeonVariantIndex(_layout.variants.length)];
       this._dungeonVariant = v;
-      // обычные мобы пула; каждому N-му — AI-класс из aiMix данжа
+      // обычные мобы пула; каждому N-му — AI-класс из aiMix данжа (строка) либо
+      // полная замена шаблона (объект {key}, напр. статичные мины Синдиката)
       const mix = _layout.aiMix;
       v.spots.forEach(([ox, oy], i) => {
         const sOpts = { patrolRadius: 300 };
+        let mobKey = pool[i % pool.length];
         if (mix && (i + 1) % mix.every === 0) {
-          sOpts.aiClass = mix.classes[Math.floor(i / mix.every) % mix.classes.length];
+          const m = mix.classes[Math.floor(i / mix.every) % mix.classes.length];
+          if (typeof m === 'object') { mobKey = m.key; sOpts.patrolRadius = 0; }
+          else sOpts.aiClass = m;
         }
-        add(pool[i % pool.length], rnd(Lmin, Lmax), ox, oy, sOpts);
+        add(mobKey, rnd(Lmin, Lmax), ox, oy, sOpts, `spot:${i}`);
       });
       // элитные охранники чоук-пойнтов
-      v.guards.forEach(([gk, ox, oy]) => add(gk, Lmax, ox, oy, { behavior: 'guard', patrolRadius: 220, leash: 550 }));
+      v.guards.forEach(([gk, ox, oy], i) => add(gk, Lmax, ox, oy, { behavior: 'guard', patrolRadius: 220, leash: 550 }, `guard:${i}`));
       const dBoss = add(boss, Lmax, v.boss[0], v.boss[1], { behavior: 'guard', patrolRadius: 200, leash: 480 });
       dBoss.isDungeonBoss = true;
       const kit = DUNGEON_BOSS_KIT[galaxy.current];
@@ -1174,26 +1216,23 @@ export default class GameScene extends Phaser.Scene {
     }
   }
 
-  // ── Суточный лимит данжей (1 раз в сутки, сброс в 01:00) ─────────────────
-  // TODO: перенести cooldown в БД → player_state.state.dungeonCooldowns (таблица player_state уже есть)
-  _canEnterDungeon(key) {
-    try {
-      const stored = JSON.parse(localStorage.getItem('sd_dungeon_cd') || '{}');
-      const resetTs = stored[key];
-      if (!resetTs) return true;
-      return Date.now() >= resetTs;
-    } catch { return true; }
+  // ── Суточный ключ данжей: сутки начинаются в 01:00 по местному времени ───
+  // (сдвиг на -1ч перед взятием даты — тот же порог, что был у старого
+  // localStorage-лока). Жизни/лок/прогресс данжа теперь хранятся в БД
+  // (DungeonLives/DungeonRun на сервере) — см. dungeonEnter/dungeonDeath/dungeonComplete.
+  _dungeonDayKey() {
+    const d = new Date(Date.now() - 3600e3);
+    const pad = n => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
   }
 
-  _recordDungeonClearance(key) {
-    try {
-      const stored = JSON.parse(localStorage.getItem('sd_dungeon_cd') || '{}');
-      const reset = new Date();
-      reset.setHours(1, 0, 0, 0);
-      if (reset <= new Date()) reset.setDate(reset.getDate() + 1);
-      stored[key] = reset.getTime();
-      localStorage.setItem('sd_dungeon_cd', JSON.stringify(stored));
-    } catch {}
+  // Босс данжа убит: суточная попытка засчитывается ВСЕМ участникам группы
+  // (не только тому, чей клиент прислал это событие), соло — только себе.
+  _completeDungeonRun() {
+    if (!this._dungeonRunId) return;
+    const grp = this.groupSystem;
+    const members = grp?.inGroup ? (grp.members ?? []) : [];
+    dungeonComplete(this._dungeonRunId, galaxy.current, this._dungeonDayKey(), members).catch(() => {});
   }
 
   onApophisPhase(phase) {
@@ -1412,12 +1451,6 @@ export default class GameScene extends Phaser.Scene {
     }
     const sec = SECTORS[gate.target];
 
-    // Суточный лимит: 1 прохождение в сутки (кулдаун записывается после гибели босса)
-    if (sec?.isDungeon && !this._canEnterDungeon(gate.target)) {
-      this.log('Данж уже пройден сегодня. Доступ откроется в 01:00.');
-      return;
-    }
-
     // R-1-boss: требуется группа ≥ 4 (в DEV_MODE разрешаем соло)
     if (gate.target === 'R-1-boss' && !DEV_MODE) {
       const hud = this.scene.get('HudScene');
@@ -1428,7 +1461,36 @@ export default class GameScene extends Phaser.Scene {
       }
     }
 
-    const proceed = () => {
+    const proceed = async (difficulty) => {
+      if (sec?.isDungeon) {
+        // Выделенный инстанс на (данж, сутки, соло-юзер/группа) + жизни — на сервере.
+        // Соло — ключ по имени игрока; группа — instanceId существующей группы.
+        const grp = this.groupSystem;
+        const ownerKind = grp?.inGroup ? 'group' : 'solo';
+        const ownerKey  = ownerKind === 'group' ? grp.instanceId : `user:${getUsername()}`;
+        const variantIndex = DUNGEON_LAYOUTS[gate.target]
+          ? this._dungeonVariantIndex(DUNGEON_LAYOUTS[gate.target].variants.length)
+          : 0;
+        let res;
+        try {
+          res = await dungeonEnter({
+            key: gate.target, difficulty: difficulty ?? 'normal', dayKey: this._dungeonDayKey(),
+            ownerKind, ownerKey, variantIndex,
+          });
+        } catch (e) {
+          this.log('Сервер недоступен — вход в данж невозможен.');
+          return;
+        }
+        if (!res.ok) { this.log(res.reason || 'Данж недоступен.'); return; }
+        // Инстанс уже существует (начат ранее сегодня) — сложность зафиксирована первым
+        // входом, модалка могла предложить другую: держимся исходного выбора.
+        if (difficulty && res.difficulty !== difficulty) {
+          this.log(`Продолжается ранее начатое прохождение — сложность ${res.difficulty.toUpperCase()}.`);
+        }
+        this.dungeonDifficulty = res.difficulty;
+        galaxy.dungeonDiff = res.difficulty;
+        this._pendingDungeonRun = res;
+      }
       if (sec?.lvlMin && sec.lvlMin > this.pilotLevel + 5) {
         this._showJumpDangerWarning(gate.target, sec.lvlMin, () => this.startJumpSequence(gate));
         return;
@@ -1440,7 +1502,7 @@ export default class GameScene extends Phaser.Scene {
     if (sec?.isDungeon && gate.target !== 'R-1-boss') {
       this._showDungeonDifficultyModal(gate, proceed);
     } else {
-      proceed();
+      proceed('normal');
     }
   }
 
@@ -1471,10 +1533,10 @@ export default class GameScene extends Phaser.Scene {
       btn.on('pointerover', () => btn.setAlpha(0.85));
       btn.on('pointerout',  () => btn.setAlpha(1));
       btn.on('pointerdown', () => {
-        this.dungeonDifficulty = m.key;
-        galaxy.dungeonDiff = m.key;
+        // Итоговая сложность приходит от сервера в onConfirm (может отличаться,
+        // если сегодня уже начат инстанс данжа на другой сложности)
         destroy();
-        onConfirm();
+        onConfirm(m.key);
       });
       objs.push(btn);
       objs.push(this.add.text(ox + 35, by + 12, m.label, {
@@ -1589,6 +1651,14 @@ export default class GameScene extends Phaser.Scene {
   }
 
   inSafeZone(x, y) {
+    // Нет безопасной зоны в данжах/PvP/личных секторах — там нет домашней базы в
+    // центре карты (см. createBaseAndSafeZone). Без этой проверки геометрический
+    // круг 320px вокруг центра мира всё равно «работал» в данжах, просто без
+    // визуала: любой моб или бой рядом с центром карты (например, арена босса
+    // D5 буквально в (0,0)) молча гасил агро всех мобов сцены — игрок подходит
+    // вплотную, а никто не реагирует.
+    const sec = SECTORS[galaxy.current];
+    if (sec?.isDungeon || sec?.pvp || sec?.personal) return false;
     return Phaser.Math.Distance.Between(x, y, this.worldWidth / 2, this.worldHeight / 2) < this.safeZoneRadius;
   }
 
@@ -2341,6 +2411,8 @@ export default class GameScene extends Phaser.Scene {
     const idx = alive.indexOf(this.target); this.target = alive[(idx + 1) % alive.length];
   }
   firePlayerWeapon() {
+    // Импульсная мина Синдиката: оружие полностью глушится на 3с (движки — см. основной update)
+    if ((this._playerStunUntil || 0) > this.time.now) return;
     const p = this.player;
     const isOC = this._overchargeActive;
     if (isOC) this._overchargeActive = false;
@@ -2639,6 +2711,22 @@ export default class GameScene extends Phaser.Scene {
     const _credMult = this.player?.creditBonusMod ?? 1;
     const sec = SECTORS[galaxy.current];
     const isDung = sec?.isDungeon === true;
+    // Прогресс инстанса на сутки: отмечаем убитого моба на сервере, чтобы при
+    // выходе-входе (пока есть жизни) он не заспавнился заново
+    if (isDung && this._dungeonRunId && mob.dungeonId) {
+      dungeonMobKilled(this._dungeonRunId, mob.dungeonId).catch(() => {});
+    }
+    // Лут данж-инстанса тоже персистится на сервере (DungeonRun.floor_loot),
+    // чтобы не подобранные предметы оставались на полу при возврате тем же днём
+    const pushLoot = (x, y, item, tier) => {
+      const l = new Loot(this, x, y, item, tier);
+      if (isDung && this._dungeonRunId) {
+        l.dungeonLootId = `l${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+        dungeonLootDrop(this._dungeonRunId, { id: l.dungeonLootId, x: Math.round(x), y: Math.round(y), item }).catch(() => {});
+      }
+      this.loot.push(l);
+      return l;
+    };
     const diff = isDung ? this._dungeonDiff() : null;
     // Лут-бюджет данжа: мобов стало больше (DUNGEON_MOB_GROWTH), награда с каждого
     // обычного моба режется так, чтобы суммарный фарм вырос ≤ LOOT_BUDGET_CAP.
@@ -2699,7 +2787,7 @@ export default class GameScene extends Phaser.Scene {
       // Обычный данж-моб (и саммоны боссовых фаз): шанс дропа по сложности ×norm
       if (Phaser.Math.FloatBetween(0, 1) < mobDropRate) {
         const lootItem = rollLootForMob(mob);
-        this.loot.push(new Loot(this, mob.x, mob.y, lootItem, 'common'));
+        pushLoot(mob.x, mob.y, lootItem, 'common');
       }
     } else if (isDung && (mob.isBoss || mob.tpl.elite || mob.isBossEscort)) {
       // Босс/элита/минибосс: 100% дроп
@@ -2708,7 +2796,7 @@ export default class GameScene extends Phaser.Scene {
         const isLegendary = mob.tpl.key === 'ancient_12' || mob.tpl.key === 'argus_boss' || mob.isBoss;
         const lootTier = isLegendary ? 'legendary' : 'boss';
         const isPremium = lootItem.tier === 4 || lootItem.perk?.rarity === 'jackpot';
-        this.loot.push(new Loot(this, mob.x, mob.y, lootItem, isPremium ? 'jackpot' : lootTier));
+        pushLoot(mob.x, mob.y, lootItem, isPremium ? 'jackpot' : lootTier);
       }
     } else {
       // Обычный сектор (не данж): домашние карты — таблица по тиру/сектору; PvP — прежняя логика.
@@ -2736,14 +2824,14 @@ export default class GameScene extends Phaser.Scene {
     const consDrop = rollConsumableDrop(mob);
     if (consDrop && (lootNorm === 1 || Math.random() < lootNorm)) {
       const ox = Phaser.Math.Between(-24, 24), oy = Phaser.Math.Between(-24, 24);
-      this.loot.push(new Loot(this, mob.x + ox, mob.y + oy, consDrop, 'common'));
+      pushLoot(mob.x + ox, mob.y + oy, consDrop, 'common');
     }
 
     // Патроны намеренно НЕ нормализуются: больше мобов = больше расход боезапаса (сустейн, не фарм)
     const ammoDrop = rollAmmoDrop(mob, isDung, this.dungeonDifficulty);
     if (ammoDrop) {
       const ox = Phaser.Math.Between(-24, 24), oy = Phaser.Math.Between(-24, 24);
-      this.loot.push(new Loot(this, mob.x + ox, mob.y + oy, ammoDrop, 'common'));
+      pushLoot(mob.x + ox, mob.y + oy, ammoDrop, 'common');
     }
 
     // Платы и коннекторы с ГЛАВНОГО босса данжа — по таблице сложности
@@ -2828,10 +2916,10 @@ export default class GameScene extends Phaser.Scene {
     if (mob.isDungeonBoss && galaxy.current === 'R-1-boss') {
       this.advanceMission('story_signal', 1);
       this.advanceMission('story_signal', 2);
-      this._recordDungeonClearance('R-1-boss');
+      this._completeDungeonRun();
     }
     if (mob.isDungeonBoss && isDung && galaxy.current !== 'R-1-boss') {
-      this._recordDungeonClearance(galaxy.current);
+      this._completeDungeonRun();
     }
     // Honor hooks
     if (mob.tpl.key === 'ancient_12') {
@@ -3029,7 +3117,7 @@ export default class GameScene extends Phaser.Scene {
     this.target = null;
     this.time.delayedCall(2000, () => this._showRepairDialog(deathX, deathY));
   }
-  _showRepairDialog(deathX, deathY) {
+  async _showRepairDialog(deathX, deathY) {
     const REPAIR_COST = {
       wisp:     { credits: 0,      stars: 0 },
       stiletto: { credits: 3500,   stars: 0 },
@@ -3056,6 +3144,26 @@ export default class GameScene extends Phaser.Scene {
     const sec          = SECTORS[galaxy.current];
     const isPvp        = sec?.pvp === true;
     const isDungOrBoss = !!(sec?.isDungeon || sec?.personal);
+
+    // 7 жизней на данж/сутки (не важно, ремонт «на месте» или «к базе» — считается
+    // сам факт смерти). Аргус (админский слив) — исключение, ограничений нет.
+    let livesInfo = null;
+    const argusActive = !!this.argusCtrl?.mob?.alive;
+    if (sec?.isDungeon && !argusActive) {
+      try {
+        livesInfo = await dungeonDeath(galaxy.current, this._dungeonDayKey());
+        if (livesInfo.lockedOut) {
+          this.log('☠ Жизни исчерпаны — данж будет доступен снова после 01:00.');
+        } else if (livesInfo.livesRemaining === 2) {
+          this.log('⚠ Осталось 2 попытки в этом данже сегодня!');
+        } else if (livesInfo.livesRemaining === 1) {
+          this.log('⚠ Осталась последняя попытка в этом данже сегодня!');
+        }
+      } catch (e) { /* сервер недоступен — не блокируем респавн игрока */ }
+    }
+    // На 7-й жизни выбор ограничен: только выброс на базу (нет смысла держать
+    // игрока в данже, куда он всё равно больше не сможет войти сегодня)
+    const forcedEject = !!livesInfo?.lockedOut;
 
     // Dungeon / boss-map deaths → eject to the parent sector (the one with the jumpgate to here).
     // personal sectors (shadow_arena) have no edges → fall back to corp home sector.
@@ -3117,6 +3225,13 @@ export default class GameScene extends Phaser.Scene {
       .setOrigin(0.5).setDepth(302).setScrollFactor(0);
 
     const allObjs = [overlay, panel, txtTitle];
+    if (livesInfo) {
+      const livesColor = livesInfo.livesRemaining <= 1 ? '#ef5350' : livesInfo.livesRemaining <= 2 ? '#ffb74d' : '#88bbaa';
+      allObjs.push(this.add.text(W / 2, H / 2 - 90,
+        forcedEject ? 'ЖИЗНИ ИСЧЕРПАНЫ — ВЫБРОС НА БАЗУ' : `Жизни в этом данже: ${livesInfo.livesRemaining}/7`,
+        { fontFamily: 'Inter,sans-serif', fontSize: '12px', color: livesColor, resolution: UI_RES })
+        .setOrigin(0.5).setDepth(302).setScrollFactor(0));
+    }
     const destroyAll = () => allObjs.forEach(o => o?.destroy());
 
     const makeCard = (cx, title, hpLabel, cStr, affordable, onConfirm) => {
@@ -3175,12 +3290,19 @@ export default class GameScene extends Phaser.Scene {
       }
     };
 
-    makeCard(W / 2 - 130, 'К БАЗЕ',
-      isDungOrBoss ? '100% HP · родная база' : '100% прочности',
-      costStr(baseCr, baseSt), canBase,
-      () => finishRespawn(baseX, baseY, true, baseCr, baseSt, parentSecKey));
-    makeCard(W / 2 + 130, 'НА МЕСТЕ', '50% прочности', costStr(spotCr, spotSt), canSpot,
-      () => finishRespawn(deathX, deathY, false, spotCr, spotSt));
+    if (forcedEject) {
+      // 7-я жизнь потрачена: сегодня в этот данж больше не попасть — оставаться
+      // здесь незачем, единственный вариант — выброс на родную базу
+      makeCard(W / 2, 'К БАЗЕ', '100% HP · родная база', costStr(baseCr, baseSt), canBase,
+        () => finishRespawn(baseX, baseY, true, baseCr, baseSt, parentSecKey));
+    } else {
+      makeCard(W / 2 - 130, 'К БАЗЕ',
+        isDungOrBoss ? '100% HP · родная база' : '100% прочности',
+        costStr(baseCr, baseSt), canBase,
+        () => finishRespawn(baseX, baseY, true, baseCr, baseSt, parentSecKey));
+      makeCard(W / 2 + 130, 'НА МЕСТЕ', '50% прочности', costStr(spotCr, spotSt), canSpot,
+        () => finishRespawn(deathX, deathY, false, spotCr, spotSt));
+    }
   }
   showDamage(x, y, res) {
     const total = Math.round((res.shieldHit || 0) + (res.hullHit || 0)); if (total <= 0) return;
@@ -3348,8 +3470,11 @@ export default class GameScene extends Phaser.Scene {
       this.movement.setWaypoint(wpt.x, wpt.y, false);
     }
     if (!this.jumping && this.player.alive) this.movement.update(dt, inSafe);
-    // EMP slow: применяем после movement, до обновления мобов
-    if (this.player.alive && (this._empSlowUntil || 0) > this.time.now) {
+    // Импульсная мина Синдиката: полная остановка двигателей (сильнее обычного EMP-замедления)
+    if (this.player.alive && (this._playerStunUntil || 0) > this.time.now) {
+      this.player.sprite.body.setVelocity(0, 0);
+    } else if (this.player.alive && (this._empSlowUntil || 0) > this.time.now) {
+      // EMP slow: применяем после movement, до обновления мобов
       const b = this.player.sprite.body;
       b.setVelocity(b.velocity.x * 0.45, b.velocity.y * 0.45);
     }
@@ -3625,6 +3750,10 @@ export default class GameScene extends Phaser.Scene {
 
       if (!loot._magnetPull) {
         if (dist >= radius) continue;
+        // Не начинаем тянуть непополняемый предмет (модуль/плата/коннектор),
+        // если трюм уже полон — расходники/пласмит всё равно могут доложиться
+        // в существующие стопки, поэтому им разрешаем попытку в любом случае
+        if (!CONSUMABLES[loot.item?.type] && this.inventory.length >= this._cargoMax()) continue;
         loot._magnetPull = true;
         loot._origDisplayW = loot.sprite.displayWidth;
         loot._origDisplayH = loot.sprite.displayHeight;
@@ -3642,8 +3771,14 @@ export default class GameScene extends Phaser.Scene {
           const ammoAdded = this._tryAddToAmmoSlots(mi.type, mi.amount);
           const remaining = mi.amount - ammoAdded;
           if (remaining > 0) addConsumableToInventory(this.inventory, mi.type, remaining, this._cargoMax());
-        } else {
+        } else if (this.inventory.length < this._cargoMax()) {
           this.inventory.push(mi);
+        } else {
+          // Трюм заполнился уже во время притяжения (другой предмет забрал
+          // последний слот в этом же кадре) — отпускаем магнит, лут остаётся на месте
+          loot._magnetPull = false;
+          loot.sprite.setDisplaySize(loot._origDisplayW ?? loot.sprite.displayWidth, loot._origDisplayH ?? loot.sprite.displayHeight);
+          continue;
         }
         this.log(i18n.t('log.loot_pickup', { item: itemName(mi) }));
         loot.collect();
@@ -4110,7 +4245,18 @@ export default class GameScene extends Phaser.Scene {
     this._clearedCorridors.add(corridorIndex);
     this.log(i18n.t('log.corridor_open', { n: corridorIndex + 1 }));
     this._spawnCorridorChest(corridorIndex);
+    this._saveDungeonCorridorState();
     if (this._clearedCorridors.size === 5) this._openBossArena();
+  }
+
+  // Персистит прогресс коридоров/арены R-1-boss в DungeonRun.corridor_state,
+  // чтобы при выходе-входе (пока живы жизни) не проходить зачищенные коридоры заново
+  _saveDungeonCorridorState() {
+    if (!this._dungeonRunId) return;
+    dungeonCorridorState(this._dungeonRunId, {
+      clearedCorridors: [...(this._clearedCorridors ?? [])],
+      bossArenaOpen: !!this._bossArenaOpenedAt,
+    }).catch(() => {});
   }
 
   _openBossArena() {
@@ -4133,6 +4279,7 @@ export default class GameScene extends Phaser.Scene {
     this._bossArenaOpenedAt = this.time.now;
     this._bossEnrageActive  = false;
     this._bossRageCycle     = 0;   // первый раз: ярость включится сразу по истечении 10 мин
+    this._saveDungeonCorridorState();
     this._portalTimer       = 90;
   }
 
@@ -4445,8 +4592,9 @@ export default class GameScene extends Phaser.Scene {
     for (let i = 0; i < count; i++) {
       const ang = Math.random() * Math.PI * 2;
       const r   = 60 + i * 55;
-      const mx  = layer.x + Math.cos(ang) * r;
-      const my  = layer.y + Math.sin(ang) * r;
+      // Минёр может заложить мину у самой стены коридора — без проверки мина
+      // спавнится внутри физического тела стены и намертво в нём застревает
+      const { x: mx, y: my } = this._findFreeSpawn(layer.x + Math.cos(ang) * r, layer.y + Math.sin(ang) * r, 70);
       const mine = new Mob(this, MOBS.ancient_04b, layer.level, mx, my, {
         patrolRadius: 80, leash: 700,
       });
@@ -4491,6 +4639,58 @@ export default class GameScene extends Phaser.Scene {
     bomb.label?.setVisible(false);
     bomb.bar?.clear();
     if (bomb.corridorIndex !== undefined) this._checkCorridorClear(bomb.corridorIndex);
+  }
+
+  // Направленная мина Синдиката: конус бронебойного импульса вдоль зафиксированного
+  // направления. Высокая penetration — бьёт в основном по корпусу, минуя щит; игрок
+  // может увернуться, сместившись в сторону от линии до истечения фитиля.
+  onDirectedMineDetonate(mine) {
+    const mx = mine.x, my = mine.y;
+    const ang = mine._mineFireAngle ?? mine.sprite.rotation;
+    const RANGE = 900, HALF_ANGLE = 0.17; // ~±10°
+    this._laserBeam(mx, my, mx + Math.cos(ang) * RANGE, my + Math.sin(ang) * RANGE, 0xff6644, 1.0, 7, 260);
+    if (this.player?.alive) {
+      const toP = Math.atan2(this.player.y - my, this.player.x - mx);
+      const dAng = Math.abs(Phaser.Math.Angle.Wrap(toP - ang));
+      const pdist = Phaser.Math.Distance.Between(mx, my, this.player.x, this.player.y);
+      if (dAng <= HALF_ANGLE && pdist <= RANGE && !this._hasWallBetween(mx, my, this.player.x, this.player.y)) {
+        const totalHp = (this.player.hull ?? 0) + (this.player.shield ?? 0);
+        const dmg = Math.max(totalHp * 0.16, 100);
+        const res = this.player.takeDamage(dmg, 0.9); // высокая пробивная способность — почти весь урон в корпус
+        this.showDamage(this.player.x, this.player.y, res);
+        if (!this.player.alive) this.onPlayerKilled();
+      }
+    }
+    mine.alive = false;
+    mine.sprite?.setVisible(false);
+    mine.label?.setVisible(false);
+    mine.bar?.clear();
+    if (mine.corridorIndex !== undefined) this._checkCorridorClear(mine.corridorIndex);
+  }
+
+  // Импульсная мина Синдиката: радиальный ЭМИ — глушит двигатели и оружие игрока
+  // на 3с, урона по корпусу/щиту не наносит.
+  onStunMineDetonate(mine) {
+    const mx = mine.x, my = mine.y;
+    const R = mine.tpl.bombBlastRadius ?? 420;
+    this._spawnEMPPulse(mx, my);
+    if (this.player?.alive) {
+      const pdist = Phaser.Math.Distance.Between(mx, my, this.player.x, this.player.y);
+      if (pdist <= R) this._applyPlayerStun(3000);
+    }
+    mine.alive = false;
+    mine.sprite?.setVisible(false);
+    mine.label?.setVisible(false);
+    mine.bar?.clear();
+    if (mine.corridorIndex !== undefined) this._checkCorridorClear(mine.corridorIndex);
+  }
+
+  // Полное глушение двигателей и оружия (в отличие от _applyEMPSlow — только замедление)
+  _applyPlayerStun(ms) {
+    const end = this.time.now + ms;
+    if ((this._playerStunUntil || 0) >= end) return;
+    this._playerStunUntil = end;
+    this.log('⚡ Двигатели и оружие отключены на 3с!');
   }
 
   _updateRingDamage(dt) {
@@ -4671,14 +4871,30 @@ export default class GameScene extends Phaser.Scene {
 
   // Точка ближе pad к любой стене (rect-тела старых данжей или линии с halfT)?
   _isPointNearWall(x, y, pad = 60) {
-    if (!this._wallSolids?.length) return false;
-    for (const s of this._wallSolids) {
-      if (s.type === 'rect') {
-        const dx = Math.max(s.x0 - x, 0, x - s.x1);
-        const dy = Math.max(s.y0 - y, 0, y - s.y1);
-        if (dx * dx + dy * dy < pad * pad) return true;
-      } else if (this._distToSegment(x, y, s.x1, s.y1, s.x2, s.y2) < (s.halfT ?? 30) + pad) {
-        return true;
+    if (this._wallSolids?.length) {
+      for (const s of this._wallSolids) {
+        if (s.type === 'rect') {
+          const dx = Math.max(s.x0 - x, 0, x - s.x1);
+          const dy = Math.max(s.y0 - y, 0, y - s.y1);
+          if (dx * dx + dy * dy < pad * pad) return true;
+        } else if (this._distToSegment(x, y, s.x1, s.y1, s.x2, s.y2) < (s.halfT ?? 30) + pad) {
+          return true;
+        }
+      }
+    }
+    // R-1-boss не пишет в _wallSolids (там свой литеральный addWallLine/addRingArc),
+    // но всегда пишет в _wallLines — проверяем и его, иначе точка внутри стены
+    // коридора/кольца арены будет ложно считаться свободной (например, при
+    // случайной раскладке мин минёра рядом со стеной)
+    if (this._wallLines?.length) {
+      for (const wl of this._wallLines) {
+        if (wl.type === 'arc') {
+          const dist = Phaser.Math.Distance.Between(x, y, wl.cx, wl.cy);
+          if (Math.abs(dist - wl.r) < 55 + pad &&
+              this._angleInArc(Math.atan2(y - wl.cy, x - wl.cx), wl.a1, wl.a2)) return true;
+        } else if (this._distToSegment(x, y, wl.x1, wl.y1, wl.x2, wl.y2) < 40 + pad) {
+          return true;
+        }
       }
     }
     return false;
@@ -5597,8 +5813,10 @@ export default class GameScene extends Phaser.Scene {
 
   _serializeLoot() {
     const sec = SECTORS[galaxy.current];
-    // PvP-арены: лут не сохраняем (дропа нет по геймдизайну)
-    if (sec?.pvp) return this._lootBySector || {};
+    // PvP-арены: лут не сохраняем (дропа нет по геймдизайну).
+    // Данжи: лут инстанса хранится на сервере в DungeonRun.floor_loot (см.
+    // dungeonLootDrop/dungeonLootCollected), а не в этой суточно-независимой карте.
+    if (sec?.pvp || sec?.isDungeon) return this._lootBySector || {};
 
     const currentLoot = (this.loot || [])
       .filter(l => l.alive)

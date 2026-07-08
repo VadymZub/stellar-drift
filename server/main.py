@@ -7,10 +7,14 @@ from sqlalchemy import or_, and_
 from sqlalchemy.orm import Session
 
 from database import engine, get_db, Base
-from models import User, PlayerState, AuditLog, ChatMessage, Friendship
+from models import User, PlayerState, AuditLog, ChatMessage, Friendship, DungeonRun, DungeonLives
 from schemas import (
     RegisterRequest, LoginRequest, TokenResponse, UserResponse,
     PlayerStateResponse, AuditEntryCreate, AuditEntryResponse,
+    DungeonStatusResponse, DungeonEnterRequest, DungeonEnterResponse,
+    DungeonMobKilledRequest, DungeonLootDropRequest, DungeonLootCollectedRequest,
+    DungeonCorridorStateRequest, DungeonDeathRequest, DungeonDeathResponse,
+    DungeonCompleteRequest,
 )
 from auth import hash_password, verify_password, create_token, decode_token
 
@@ -339,6 +343,192 @@ def add_audit(
 @app.get("/")
 def root():
     return {"status": "ok", "service": "Stellar Drift API"}
+
+
+# ── Данж-инстансы ─────────────────────────────────────────────────────
+# Клиент-доверенная модель, как и PlayerState: сервер хранит то, что репортит
+# клиент (какие мобы убиты, какой лут на полу), без независимой валидации
+# симуляции — согласуется с остальной архитектурой игры (кредиты/опыт/лут
+# тоже целиком считаются клиентом). day_key — локальная дата клиента
+# (сутки данжа начинаются в 01:00), передаётся явным параметром.
+
+DUNGEON_LIVES_MAX = 7
+
+
+def _get_or_create_lives(db: Session, user_id: int, dungeon_key: str, day_key: str) -> DungeonLives:
+    row = db.query(DungeonLives).filter(
+        DungeonLives.user_id == user_id,
+        DungeonLives.dungeon_key == dungeon_key,
+        DungeonLives.day_key == day_key,
+    ).first()
+    if not row:
+        row = DungeonLives(user_id=user_id, dungeon_key=dungeon_key, day_key=day_key, lives_used=0, locked_out=0)
+        db.add(row)
+        db.commit()
+        db.refresh(row)
+    return row
+
+
+@app.get("/dungeon/status", response_model=DungeonStatusResponse)
+def dungeon_status(
+    key: str,
+    dayKey: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    lives = _get_or_create_lives(db, user.id, key, dayKey)
+    remaining = max(0, DUNGEON_LIVES_MAX - lives.lives_used)
+    locked = bool(lives.locked_out)
+    reason = "Данж уже пройден сегодня или жизни исчерпаны — доступ откроется в 01:00." if locked else None
+    return DungeonStatusResponse(
+        canEnter=not locked, livesUsed=lives.lives_used,
+        livesRemaining=remaining, lockedOut=locked, reason=reason,
+    )
+
+
+@app.post("/dungeon/enter", response_model=DungeonEnterResponse)
+def dungeon_enter(
+    body: DungeonEnterRequest,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    lives = _get_or_create_lives(db, user.id, body.key, body.dayKey)
+    if lives.locked_out:
+        return DungeonEnterResponse(ok=False, reason="Данж уже пройден сегодня или жизни исчерпаны.")
+
+    # Ключ инстанса НЕ включает сложность: один выделенный инстанс на
+    # (данж, сутки, соло-юзер/группа) — сложность фиксируется первым входом
+    # и возвращается клиенту, чтобы модалка выбора не создавала второй инстанс.
+    run = db.query(DungeonRun).filter(
+        DungeonRun.dungeon_key == body.key,
+        DungeonRun.day_key == body.dayKey,
+        DungeonRun.owner_kind == body.ownerKind,
+        DungeonRun.owner_key == body.ownerKey,
+    ).first()
+    if not run:
+        run = DungeonRun(
+            dungeon_key=body.key, difficulty=body.difficulty, day_key=body.dayKey,
+            owner_kind=body.ownerKind, owner_key=body.ownerKey,
+            variant_index=body.variantIndex, killed_mob_ids=[], floor_loot=[],
+            corridor_state=None, boss_alive=1, completed=0,
+        )
+        db.add(run)
+        db.commit()
+        db.refresh(run)
+
+    remaining = max(0, DUNGEON_LIVES_MAX - lives.lives_used)
+    return DungeonEnterResponse(
+        ok=True, runId=run.id, difficulty=run.difficulty, variantIndex=run.variant_index,
+        killedMobIds=run.killed_mob_ids or [], floorLoot=run.floor_loot or [],
+        corridorState=run.corridor_state, bossAlive=bool(run.boss_alive),
+        completed=bool(run.completed), livesUsed=lives.lives_used, livesRemaining=remaining,
+    )
+
+
+@app.post("/dungeon/mob_killed")
+def dungeon_mob_killed(
+    body: DungeonMobKilledRequest,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    run = db.get(DungeonRun, body.runId)
+    if not run:
+        raise HTTPException(status_code=404, detail="Run not found")
+    ids = list(run.killed_mob_ids or [])
+    if body.mobId not in ids:
+        ids.append(body.mobId)
+        run.killed_mob_ids = ids
+        db.commit()
+    return {"ok": True}
+
+
+@app.post("/dungeon/loot_drop")
+def dungeon_loot_drop(
+    body: DungeonLootDropRequest,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    run = db.get(DungeonRun, body.runId)
+    if not run:
+        raise HTTPException(status_code=404, detail="Run not found")
+    loot = list(run.floor_loot or [])
+    loot.append(body.loot)
+    run.floor_loot = loot
+    db.commit()
+    return {"ok": True}
+
+
+@app.post("/dungeon/loot_collected")
+def dungeon_loot_collected(
+    body: DungeonLootCollectedRequest,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    run = db.get(DungeonRun, body.runId)
+    if not run:
+        raise HTTPException(status_code=404, detail="Run not found")
+    run.floor_loot = [l for l in (run.floor_loot or []) if l.get('id') != body.lootId]
+    db.commit()
+    return {"ok": True}
+
+
+@app.post("/dungeon/corridor_state")
+def dungeon_corridor_state(
+    body: DungeonCorridorStateRequest,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    run = db.get(DungeonRun, body.runId)
+    if not run:
+        raise HTTPException(status_code=404, detail="Run not found")
+    run.corridor_state = body.state
+    db.commit()
+    return {"ok": True}
+
+
+@app.post("/dungeon/death", response_model=DungeonDeathResponse)
+def dungeon_death(
+    body: DungeonDeathRequest,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    lives = _get_or_create_lives(db, user.id, body.key, body.dayKey)
+    # Аргус (админский слив) репортится с другим key, не относящимся к данжам —
+    # клиент просто не вызывает этот эндпоинт для смертей вне sec.isDungeon.
+    if not lives.locked_out:
+        lives.lives_used = min(DUNGEON_LIVES_MAX, lives.lives_used + 1)
+        if lives.lives_used >= DUNGEON_LIVES_MAX:
+            lives.locked_out = 1
+        db.commit()
+    remaining = max(0, DUNGEON_LIVES_MAX - lives.lives_used)
+    return DungeonDeathResponse(
+        livesUsed=lives.lives_used, livesRemaining=remaining, lockedOut=bool(lives.locked_out),
+    )
+
+
+@app.post("/dungeon/complete")
+def dungeon_complete(
+    body: DungeonCompleteRequest,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    run = db.get(DungeonRun, body.runId)
+    if run:
+        run.completed = 1
+        run.boss_alive = 0
+        db.commit()
+    # Прохождение засчитывается всем участникам группы (или только себе, соло) —
+    # суточная попытка расходуется за коллективный клир, не только у того,
+    # чей клиент отправил событие.
+    names = set(body.memberUsernames) | {user.username}
+    for name in names:
+        member = db.query(User).filter(User.username == name).first()
+        if not member:
+            continue
+        lives = _get_or_create_lives(db, member.id, body.key, body.dayKey)
+        lives.locked_out = 1
+        db.commit()
+    return {"ok": True}
 
 
 # ── Chat REST ─────────────────────────────────────────────────────────

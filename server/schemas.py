@@ -61,3 +61,75 @@ class AuditEntryResponse(BaseModel):
     username: Optional[str] = None
 
     model_config = {"from_attributes": True}
+
+
+# ── Данж-инстансы ────────────────────────────────────────────────────────
+
+class DungeonStatusResponse(BaseModel):
+    canEnter: bool
+    livesUsed: int
+    livesRemaining: int
+    lockedOut: bool
+    reason: Optional[str] = None
+
+
+class DungeonEnterRequest(BaseModel):
+    key: str
+    difficulty: str = "normal"
+    dayKey: str
+    ownerKind: str          # 'solo' | 'group'
+    ownerKey: str           # 'user:<id>' | groupInstanceId
+    variantIndex: int = 0
+
+
+class DungeonEnterResponse(BaseModel):
+    ok: bool
+    reason: Optional[str] = None
+    runId: Optional[int] = None
+    difficulty: str = "normal"
+    variantIndex: int = 0
+    killedMobIds: list[str] = []
+    floorLoot: list[dict[str, Any]] = []
+    corridorState: Optional[dict[str, Any]] = None
+    bossAlive: bool = True
+    completed: bool = False
+    livesUsed: int = 0
+    livesRemaining: int = 7
+
+
+class DungeonMobKilledRequest(BaseModel):
+    runId: int
+    mobId: str
+
+
+class DungeonLootDropRequest(BaseModel):
+    runId: int
+    loot: dict[str, Any]     # {id, x, y, item}
+
+
+class DungeonLootCollectedRequest(BaseModel):
+    runId: int
+    lootId: str
+
+
+class DungeonCorridorStateRequest(BaseModel):
+    runId: int
+    state: dict[str, Any]
+
+
+class DungeonDeathRequest(BaseModel):
+    key: str
+    dayKey: str
+
+
+class DungeonDeathResponse(BaseModel):
+    livesUsed: int
+    livesRemaining: int
+    lockedOut: bool
+
+
+class DungeonCompleteRequest(BaseModel):
+    runId: int
+    key: str
+    dayKey: str
+    memberUsernames: list[str] = []

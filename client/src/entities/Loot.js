@@ -1,5 +1,7 @@
 // Коробка лута на месте смерти моба.
 // tier: 'common' | 'boss' | 'legendary' | 'jackpot'
+import { dungeonLootCollected } from '../api.js';
+
 export default class Loot {
   constructor(scene, x, y, item, tier = 'common') {
     this.scene  = scene;
@@ -89,5 +91,10 @@ export default class Loot {
     this.alive = false;
     this._ring?.destroy();
     this.sprite.destroy();
+    // Лут данж-инстанса — сообщаем серверу, что подобрано (иначе при следующем
+    // входе тем же днём этот же предмет снова окажется на полу)
+    if (this.dungeonLootId && this.scene?._dungeonRunId) {
+      dungeonLootCollected(this.scene._dungeonRunId, this.dungeonLootId).catch(() => {});
+    }
   }
 }
