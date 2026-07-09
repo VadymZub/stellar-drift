@@ -1,3 +1,4 @@
+import asyncio
 import math
 import random
 import time
@@ -41,6 +42,18 @@ class ChatManager:
         self.active: dict = {}
 
     async def connect(self, ws: WebSocket, uid: int, name: str, corp_ch: str, clan_ch):
+        # Один пользователь — одно активное соединение. Без этого повторный коннект
+        # (reload вкладки, реконнект-таймер в HudScene) оставлял старое соединение
+        # висеть в self.active — send_to_uid находит ПЕРВОЕ совпадение по uid, которое
+        # могло оказаться как раз мёртвым/зависшим, и активная вкладка переставала
+        # получать вообще какие-либо ответы (только исходящие pvp_pos, без ответов).
+        stale = [w for w, m in self.active.items() if m.get('uid') == uid]
+        for w in stale:
+            self.active.pop(w, None)
+            try:
+                await w.close(code=4000)
+            except Exception:
+                pass
         await ws.accept()
         self.active[ws] = {'uid': uid, 'name': name, 'corp_ch': corp_ch, 'clan_ch': clan_ch, 'sector': ''}
 
@@ -49,7 +62,11 @@ class ChatManager:
 
     async def _send(self, ws: WebSocket, data: dict) -> bool:
         try:
-            await ws.send_json(data)
+            # Таймаут — иначе зависшая/мёртвая (но формально не разорванная) сторона
+            # стопорит этот await навсегда, а с ним и весь однопоточный event loop:
+            # ни другие сообщения, ни новые подключения не обработаются, пока сервер
+            # ждёт ответа от давно неживого сокета.
+            await asyncio.wait_for(ws.send_json(data), timeout=5.0)
             return True
         except Exception:
             return False
@@ -1020,6 +1037,12 @@ async def chat_ws(
                 target_id = data.get('targetUserId')
                 if not sector or target_id is None:
                     continue
+                # Игрок-игрок бой — только в реальных PvP-секторах (room key начинается с
+                # "pvp_"). Комнаты для дома/PvE/групповых данжей (room key = имя сектора
+                # или "group:<instanceId>") тоже используют pvp_enter/pvp_pos для видимости
+                # союзников, но там драться друг с другом нельзя — молча игнорируем попытку.
+                if not sector.startswith('pvp_'):
+                    continue
                 attacker = pvp_room_manager.get(sector, user.id)
                 victim = pvp_room_manager.get(sector, int(target_id))
                 if not attacker or not victim or victim.user_id == attacker.user_id:
@@ -1215,7 +1238,15 @@ async def chat_ws(
                     fl = _get_friend_list(user.username, db)
                     await ws.send_json({'type': 'friend_list', 'friends': fl})
 
-    except WebSocketDisconnect:
+    except Exception as e:
+        # Раньше тут стоял except WebSocketDisconnect — любое ДРУГОЕ исключение внутри
+        # обработки сообщения (баг в новом PvP-коде, невалидный payload и т.п.) пробивало
+        # cleanup насквозь: pvp_room_manager/group_manager/chat_manager не чистились,
+        # игрок оставался "призраком" в комнатах. Плюс трейсбек — иначе его не видно
+        # в свёрнутом окне сервера (client/run.ps1 запускает backend в minimized-окне).
+        if not isinstance(e, WebSocketDisconnect):
+            import traceback
+            traceback.print_exc()
         # Notify online friends that this user went offline
         try:
             fl = _get_friend_list(user.username, db)

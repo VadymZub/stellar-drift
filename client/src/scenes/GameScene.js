@@ -145,6 +145,13 @@ export default class GameScene extends Phaser.Scene {
     // PvE-секторы (не данж, не PvP, не персональный) — +20% по каждой стороне
     const scale = isPvp ? PVP_WORLD_SCALE : (isDungeon || isPersonal) ? 1.0 : 1.2;
 
+    // Realtime-комната для этого захода — считаем РАНО: нужна уже в spawnMobs() ниже
+    // (мобы получают pvpMobId по этому ключу, чтобы шариться между игроками одной
+    // комнаты). null — соло-данж (никого больше там физически быть не может) и
+    // Shadow Arena (бой с ботом) — см. _currentRealtimeRoomKey().
+    this._isPvpSector    = isPvp;
+    this._realtimeRoomKey = this._currentRealtimeRoomKey();
+
     const worldScale = galaxy.current === 'shadow_arena' ? 0.5 : galaxy.current === 'R-1-boss' ? 2.5 : scale;
     this.worldWidth = BASE_WORLD.width * worldScale;
     this.worldHeight = BASE_WORLD.height * worldScale;
@@ -196,10 +203,11 @@ export default class GameScene extends Phaser.Scene {
     this.player = new Player(this, startX, startY, this.objScale);
     this.movement = new Movement(this, this.player);
 
-    // PvP-присутствие: сервер авторитетен только для игрок-игрок в этих секторах,
-    // мобы/PvE тут не трогаем — PvpClient просто держит live-позиции синхронными.
-    if (isPvp) {
-      this.pvpClient?.enterSector(galaxy.current, this.player.x, this.player.y, this._pvpLoadoutSnapshot());
+    // Realtime-присутствие (позиции живых игроков) — везде, кроме соло-данжа/босс-карты
+    // (там больше некому быть) и Shadow Arena (бой с ботом). Бой между игроками
+    // (fire_claim) — только в реальных PvP-секторах, см. _isPvpSector.
+    if (this._realtimeRoomKey) {
+      this.pvpClient?.enterSector(this._realtimeRoomKey, this.player.x, this.player.y, this._pvpLoadoutSnapshot());
     } else {
       this.pvpClient?.leaveSector();
     }
@@ -793,10 +801,14 @@ export default class GameScene extends Phaser.Scene {
     // dungeonId — стабильный id слота спавна (напр. 'spot:3', 'corridor:2:bomb:5'),
     // сохраняющийся в БД-прогрессе инстанса на сутки. Если этот слот уже отмечен
     // убитым (игрок вышел и вернулся тем же днём) — не спавним его повторно.
-    // PvP: состав мобов детерминирован (фиксированные шаблоны/уровни/количество на
-    // каждый pvp_N, только офсеты позиций случайны) — значит id по порядку создания
-    // совпадёт у всех клиентов без обмена ростером через сервер. См. pvpMobId ниже.
-    let _pvpMobIdx = 0;
+    // Состав мобов в каждой ветке ниже детерминирован (фиксированные шаблоны/офсеты/
+    // порядок; rnd() трогает только уровень, не позицию/количество) — значит id по
+    // порядку создания совпадёт у всех клиентов ОДНОЙ комнаты без обмена ростером
+    // через сервер (данжи детерминированы по дню — см. _dungeonVariantIndex). Тэг
+    // ставим только если для этого захода вообще есть realtime-комната
+    // (this._realtimeRoomKey, см. _currentRealtimeRoomKey) — соло-данж/Shadow Arena
+    // её не имеют, там делиться HP не с кем.
+    let _roomMobIdx = 0;
     const add = (k, lvl, ox, oy, opts, dungeonId) => {
       if (dungeonId && this._dungeonKilledIds?.has(dungeonId)) return null;
       const finalOpts = _diff ? { hpMult: _diff.mobHP, dmgMult: _diff.mobDamage, ...opts } : opts;
@@ -807,7 +819,7 @@ export default class GameScene extends Phaser.Scene {
       if (sec.isDungeon && galaxy.current !== 'R-1-boss') ({ x: px, y: py } = this._findFreeSpawn(px, py, 100));
       const m = new Mob(this, M[k], lvl, px, py, finalOpts);
       if (dungeonId) m.dungeonId = dungeonId;
-      if (sec.pvp) m.pvpMobId = `${galaxy.current}:${_pvpMobIdx++}`;
+      if (this._realtimeRoomKey) m.pvpMobId = `${this._realtimeRoomKey}:${_roomMobIdx++}`;
       this.mobs.push(m);
       return m;
     };
@@ -1116,6 +1128,22 @@ export default class GameScene extends Phaser.Scene {
 
   get groupSystem() { return this.scene.get('HudScene')?.groupSystem ?? null; }
   get pvpClient()   { return this.scene.get('HudScene')?.pvpClient ?? null; }
+
+  // Комната realtime-присутствия (позиции игроков + общий HP мобов) для текущего
+  // захода. null — синхронизация не нужна: соло-данж/босс-карта (там физически
+  // не может быть больше одного игрока) и Shadow Arena (бой с ботом). Данжи/босс-
+  // карта ключуются по ИНСТАНСУ ГРУППЫ, не по имени сектора — иначе две разные
+  // группы, проходящие один и тот же данж в один день, увидели бы друг друга.
+  // Всё остальное (домашние/PvE/PvP-секторы) — по имени сектора, как раньше.
+  _currentRealtimeRoomKey() {
+    const sec = SECTORS[galaxy.current];
+    if (!sec || sec.personal) return null;
+    if (sec.isDungeon) {
+      const grp = this.groupSystem;
+      return grp?.inGroup ? `group:${grp.instanceId}` : null;
+    }
+    return galaxy.current;
+  }
 
   // Снапшот эффективного лоадаута для серверной валидации PvP-попаданий (см. PvpClient/
   // server PvpRoomManager) — сервер трактует эти числа как потолок, не пересчитывает
@@ -1818,11 +1846,13 @@ export default class GameScene extends Phaser.Scene {
         }
       }
 
-      // PvP: другой живой игрок — та же логика клика, что и Shadow Arena бот выше
+      // Другой живой игрок — та же логика клика, что и Shadow Arena бот выше. Вне
+      // реальных PvP-секторов это союзник — можно выбрать (посмотреть неймплейт),
+      // но авто-огонь по двойному клику не включаем, атаковать всё равно нельзя.
       const rp = this.remotePlayerAt(wx, wy);
       if (rp) {
         this.selectTarget(rp);
-        if (isDouble) this.isFiring = true;
+        if (isDouble && this._isPvpSector) this.isFiring = true;
         return;
       }
 
@@ -2526,7 +2556,9 @@ export default class GameScene extends Phaser.Scene {
 
     // PvP: сервер решает урон/крит (см. server main.py:_resolve_pvp_hit) — клиент
     // только заявляет выстрел и рисует визуал, никакого локального takeDamage.
+    // Вне реальных PvP-секторов другие игроки — союзники (см. _isPvpSector), не цель.
     if (t.isRemotePlayer) {
+      if (!this._isPvpSector) { this._warnThrottle('ally_fire', 'Нельзя атаковать союзника'); return; }
       this._consumeAmmo('cannon', cannonCount);
       this._fireVisualBolt(p.x, p.y, t.x, t.y, isOC ? 0xff8800 : PROJECTILE.playerColor);
       this.muzzleFlash(p.x, p.y, isOC ? 0xff8800 : 0x8fe6ff, p);
@@ -2729,7 +2761,9 @@ export default class GameScene extends Phaser.Scene {
     if (!t?.alive || !p.alive) return;
 
     // PvP: как в _fireCannon — сервер решает исход, клиент только рисует луч и заявляет выстрел.
+    // Вне реальных PvP-секторов другие игроки — союзники (см. _isPvpSector), не цель.
     if (t.isRemotePlayer) {
+      if (!this._isPvpSector) { this._warnThrottle('ally_fire', 'Нельзя атаковать союзника'); return; }
       const beamColor = isOC ? 0xffcc00 : p.allLasers ? 0xce93d8 : 0xffaa00;
       this._laserBeam(p.x, p.y, t.x, t.y, beamColor, 1.0, isOC ? 12 : 3, 200, p, t);
       this.muzzleFlash(p.x, p.y, beamColor, p);
@@ -3465,7 +3499,7 @@ export default class GameScene extends Phaser.Scene {
     this.target = null;
     this.time.delayedCall(2000, () => this._showRepairDialog(deathX, deathY));
   }
-  async _showRepairDialog(deathX, deathY) {
+  _showRepairDialog(deathX, deathY) {
     const REPAIR_COST = {
       wisp:     { credits: 0,      stars: 0 },
       stiletto: { credits: 3500,   stars: 0 },
@@ -3495,22 +3529,34 @@ export default class GameScene extends Phaser.Scene {
 
     // 7 жизней на данж/сутки (не важно, ремонт «на месте» или «к базе» — считается
     // сам факт смерти). Аргус (админский слив) — исключение, ограничений нет.
+    // Раньше здесь стоял await — диалог не появлялся, пока не придёт ответ сервера
+    // (+200-500мс сверху на уже намеренную 2с задержку взрыва, заметно на глаз).
+    // Теперь строим диалог сразу с оптимистичным набором кнопок (верно в 6 из 7
+    // случаев), а lockedOut применяем к СЛЕДУЮЩЕЙ попытке — сервер всё равно останется
+    // источником правды при следующем dungeonEnter, тут только UX.
     let livesInfo = null;
+    let dialogOpen = true;
     const argusActive = !!this.argusCtrl?.mob?.alive;
     if (sec?.isDungeon && !argusActive) {
-      try {
-        livesInfo = await dungeonDeath(galaxy.current, this._dungeonDayKey());
-        if (livesInfo.lockedOut) {
-          this.log('☠ Жизни исчерпаны — данж будет доступен снова после 01:00.');
-        } else if (livesInfo.livesRemaining === 2) {
+      dungeonDeath(galaxy.current, this._dungeonDayKey()).then(info => {
+        livesInfo = info;
+        if (info.lockedOut) {
+          this.log(dialogOpen
+            ? '☠ Это была последняя попытка на сегодня (сервер подтвердил после открытия диалога) — данж будет доступен снова после 01:00.'
+            : '☠ Жизни исчерпаны — данж будет доступен снова после 01:00.');
+        } else if (info.livesRemaining === 2) {
           this.log('⚠ Осталось 2 попытки в этом данже сегодня!');
-        } else if (livesInfo.livesRemaining === 1) {
+        } else if (info.livesRemaining === 1) {
           this.log('⚠ Осталась последняя попытка в этом данже сегодня!');
         }
-      } catch (e) { /* сервер недоступен — не блокируем респавн игрока */ }
+      }).catch(() => { /* сервер недоступен — не блокируем респавн игрока */ });
     }
     // На 7-й жизни выбор ограничен: только выброс на базу (нет смысла держать
-    // игрока в данже, куда он всё равно больше не сможет войти сегодня)
+    // игрока в данже, куда он всё равно больше не сможет войти сегодня). livesInfo
+    // всегда null в этой строке — .then() выше — микротаск, гарантированно выполнится
+    // позже синхронного кода — поэтому forcedEject всегда false при первой отрисовке;
+    // это и есть суть фикса (диалог не ждёт сервер), реальный lockedOut учтётся сервером
+    // при следующем dungeonEnter, если игрок попробует зайти в данж повторно сегодня.
     const forcedEject = !!livesInfo?.lockedOut;
 
     // Dungeon / boss-map deaths → eject to the parent sector (the one with the jumpgate to here).
@@ -3620,6 +3666,7 @@ export default class GameScene extends Phaser.Scene {
     };
 
     const finishRespawn = (rx, ry, fullHull, cr, st, jumpToSector) => {
+      dialogOpen = false;
       if (st > 0)      this.starGold = (this.starGold || 0) - st;
       else if (cr > 0) this.credits  = (this.credits  || 0) - cr;
       destroyAll();
@@ -6192,7 +6239,10 @@ export default class GameScene extends Phaser.Scene {
 
   shutdown() {
     this._prevSector = galaxy.current;
-    this._saveState();
+    // Тут — сразу, не через debounce: сцена сейчас уничтожается (смена сектора и т.п.),
+    // откладывать на 2с нельзя — можем не долететь до срабатывания таймера.
+    if (this._saveStateTimer) { clearTimeout(this._saveStateTimer); this._saveStateTimer = null; }
+    this._flushSaveState();
     this._cleanupBotPilot();
     this.escortTransport?.destroy();
     this.escortTransport = null;
@@ -6329,8 +6379,24 @@ export default class GameScene extends Phaser.Scene {
     if (s.lastGuardReset     != null) this.lastGuardReset    = s.lastGuardReset;
   }
 
+  // Схлопываем частые вызовы (магнит подряд подбирает пачку лута за доли секунды,
+  // опустошение стака патронов и т.п.) в один реальный save раз в SAVE_DEBOUNCE_MS —
+  // раньше JSON.stringify большого стейта + сетевой PUT на КАЖДЫЙ подобранный магнитом
+  // предмет давали заметные подсадки FPS во время фарма. window.setTimeout, не
+  // this.time.delayedCall — должен переживать scene.restart() при смене сектора.
   _saveState() {
     if (!getToken()) return;
+    this._saveStateDirty = true;
+    if (this._saveStateTimer) return;
+    this._saveStateTimer = setTimeout(() => {
+      this._saveStateTimer = null;
+      if (this._saveStateDirty) this._flushSaveState();
+    }, 2000);
+  }
+
+  _flushSaveState() {
+    if (!getToken()) return;
+    this._saveStateDirty = false;
     const state = this._serializeState();
     try { localStorage.setItem('stellar_drift_state_' + getUsername(), JSON.stringify(state)); } catch (_) {}
     apiPut('/player/state', state).catch(() => {});

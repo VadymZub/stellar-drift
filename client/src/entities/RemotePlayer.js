@@ -2,12 +2,13 @@ import * as Phaser from 'https://cdn.jsdelivr.net/npm/phaser@4.1.0/dist/phaser.e
 import { ART_ANGLE_OFFSET, COLORS, UI_RES } from '../constants.js';
 import { SHIP_BY_KEY, SHIPS } from '../ships.js';
 
-// Другой живой игрок в PvP-секторе. В отличие от Player (локальный корабль)
-// и Mob (клиент-локальный AI) — только рендер + интерполяция к позиции, которую
-// авторитетно шлёт сервер (PvpRoomManager в server/main.py). Никакой физики,
-// урона или боевой логики здесь нет — это чистый вид на чужого игрока.
+// Другой живой игрок в той же realtime-комнате (PvP-сектор, домашняя/PvE карта,
+// групповой данж — см. GameScene._currentRealtimeRoomKey). В отличие от Player
+// (локальный корабль) и Mob (клиент-локальный AI) — только рендер + интерполяция
+// к позиции, которую авторитетно шлёт сервер (PvpRoomManager в server/main.py).
+// Никакой физики, урона или боевой логики здесь нет — это чистый вид на другого игрока.
 export default class RemotePlayer {
-  constructor(scene, data) {
+  constructor(scene, data, isHostile = true) {
     this.scene  = scene;
     this.userId = data.userId;
     this.name   = data.name || 'Пилот';
@@ -20,11 +21,14 @@ export default class RemotePlayer {
     const scale = shipDef.displaySize / Math.max(src.width, src.height);
     this.sprite.setDisplaySize(Math.round(src.width * scale), Math.round(src.height * scale));
     this._artAngleOffset = shipDef.artAngleOffset ?? ART_ANGLE_OFFSET;
-    // Враждебный тинт — на глаз сразу отличим от собственного корабля/союзных мобов.
-    this.sprite.setTint(0xff7a7a);
+    // Тинт — враждебный красный в реальном PvP, дружелюбный голубой везде ещё
+    // (домашняя карта/PvE/групповой данж — атаковать их нельзя, см. _isPvpSector).
+    const tint = isHostile ? 0xff7a7a : 0x7ad4ff;
+    this.sprite.setTint(tint);
 
     this.label = scene.add.text(data.x, data.y, this.name, {
-      fontFamily: 'Inter, sans-serif', fontSize: '12px', color: '#ff8a8a', resolution: UI_RES,
+      fontFamily: 'Inter, sans-serif', fontSize: '12px',
+      color: isHostile ? '#ff8a8a' : '#8ad8ff', resolution: UI_RES,
     }).setOrigin(0.5, 0).setDepth(51);
     this.bar = scene.add.graphics().setDepth(51);
 

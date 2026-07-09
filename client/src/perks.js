@@ -181,8 +181,8 @@ export const PERK_DEFS = [
 
   { key: 'perk_laser_shredder', imgFile: 'Laser Shredder.png', name: 'Laser Shredder',
     slot: 'laser', rarity: 'rare',
-    effect: '+20% урон по корпусу',
-    desc: (b, r = 1) => `+${+(20 * r * (1 + b)).toFixed(1)}% урон по корпусу · к кораблю` },
+    effect: '+20% урон по корпусу, +5% пробитие (суммарно макс. 15%)',
+    desc: (b, r = 1) => `+${+(20 * r * (1 + b)).toFixed(1)}% урон по корпусу, +${+(5 * r * (1 + b)).toFixed(1)}% пробитие · к кораблю, пробитие макс. 15% суммарно` },
 
   { key: 'perk_laser_overload', imgFile: 'Laser Overload.png', name: 'Laser Overload',
     slot: 'laser', rarity: 'jackpot',

@@ -391,14 +391,18 @@ export default class Player {
     if (this.hasLaser) {
       this.weaponShieldMult = 0.90;
       this.weaponHullMult   = 1.30;
+      let laserShredderPen = 0;
       for (const w of laserW) {
         if (!w.perk) continue;
         const pb = perkBonus(w.perk);
         if (w.perk.key === 'perk_laser_precision') this.laserAccuracy   = Math.min(1.0, this.laserAccuracy + 0.15 * (1 + pb));
-        if (w.perk.key === 'perk_laser_shredder')  this.weaponHullMult += 0.20 * (1 + pb);
+        if (w.perk.key === 'perk_laser_shredder')  { this.weaponHullMult += 0.20 * (1 + pb); laserShredderPen += 0.05 * (1 + pb); }
         if (w.perk.key === 'perk_laser_overload')  { this.laserAccuracy = 1.0; this.weaponFireRateMult *= 1 + 0.15 * (1 + pb); }
       }
       this.laserAccuracy = Math.min(0.97, this.laserAccuracy + sl('targeting_ai') * 0.034);
+      // Пробитие лазера — тот же принцип, что у cannon-перка hull_breaker (свой
+      // суб-кап 15%), просуммировано с уже посчитанным weaponPenetration.
+      this.weaponPenetration = Math.min(0.40, this.weaponPenetration + Math.min(0.15, laserShredderPen));
     }
     this.weaponDamage   = this.cannonDamage + this.laserDamage;
     this.weaponAccuracy = this.hasLaser && !this.hasCannon ? this.laserAccuracy : this.cannonAccuracy;

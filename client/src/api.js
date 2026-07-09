@@ -25,6 +25,13 @@ export function clearSession() {
 // Бросает Error с .message из тела ответа при ошибке.
 async function apiFetch(path, opts = {}) {
   const token = getToken();
+  // Без токена всё, кроме /auth/* (login/register — им токен и не положен), всё равно
+  // получит 403 от HTTPBearer на сервере — не шлём запрос вообще. Актуально для
+  // DEV-профиля (TestProfileScene) без реального логина: иначе каждая смерть/убийство
+  // моба/etc. шумит в консоли неудачным сетевым запросом.
+  if (!token && !path.startsWith('/auth/')) {
+    throw new Error('Нет токена авторизации');
+  }
   const headers = { 'Content-Type': 'application/json', ...(opts.headers || {}) };
   if (token) headers['Authorization'] = `Bearer ${token}`;
 

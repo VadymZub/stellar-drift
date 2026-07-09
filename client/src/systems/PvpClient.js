@@ -140,7 +140,11 @@ export class PvpClient {
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     _spawn(data) {
-        this.players.set(data.userId, new RemotePlayer(this.scene, data));
+        // Красный (враждебный) только в реальном PvP-секторе — на остальных realtime-
+        // картах (домашняя/PvE/групповой данж) другие игроки союзники, красить в
+        // "враг" некорректно (и атаковать их нельзя, см. GameScene._isPvpSector).
+        const isHostile = !!this.scene._isPvpSector;
+        this.players.set(data.userId, new RemotePlayer(this.scene, data, isHostile));
     }
 
     _despawn(userId) {

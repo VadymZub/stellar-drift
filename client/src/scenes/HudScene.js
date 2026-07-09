@@ -1651,6 +1651,17 @@ export default class HudScene extends Phaser.Scene {
 
     ws.onopen = () => {
       this.groupSystem?.sectorUpdate(galaxy.current);
+      // Самолечащаяся регистрация в realtime-комнате: GameScene.create() уже пытается
+      // вызвать pvpClient.enterSector() при входе в сектор, но если в этот момент WS
+      // ещё переподключается (реконнект после разрыва/рестарта сервера), pvpClient
+      // временно null — enterSector тихо не срабатывает, и повторной попытки без
+      // этого не будет до следующей смены сектора. Раз уж сокет только что открылся —
+      // сразу проверяем текущую комнату тем же методом, что и GameScene.create().
+      const gs = this.scene.get('GameScene');
+      const roomKey = gs?.player?.alive ? gs._currentRealtimeRoomKey?.() : null;
+      if (roomKey) {
+        this.pvpClient?.enterSector(roomKey, gs.player.x, gs.player.y, gs._pvpLoadoutSnapshot());
+      }
     };
 
     ws.onmessage = evt => {
