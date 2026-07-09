@@ -1146,8 +1146,11 @@ export default class GameScene extends Phaser.Scene {
   }
 
   // Снапшот эффективного лоадаута для серверной валидации PvP-попаданий (см. PvpClient/
-  // server PvpRoomManager) — сервер трактует эти числа как потолок, не пересчитывает
-  // perks/skills/boards заново. cooldown — секунд между выстрелами текущего оружия.
+  // server PvpRoomManager) — сервер трактует эти числа как ПОТОЛОК (умножается на
+  // допуск на баффы, см. PVP_BURST_MULT на сервере), не пересчитывает perks/skills/
+  // boards заново. cooldown — секунд между выстрелами текущего оружия. critChance/
+  // critMult — крит всё равно решает сервер своим роллом, но по статам ИГРОКА, а не
+  // фиксированным числом для всех (иначе крит-билд ощущался бы одинаково слабо).
   _pvpLoadoutSnapshot() {
     const p = this.player;
     return {
@@ -1158,6 +1161,8 @@ export default class GameScene extends Phaser.Scene {
       cooldown: 1 / Math.max(0.1, p.weaponFireRate || 1),
       penetration: p.weaponPenetration || 0,
       evasion: p.evasion || 0,
+      critChance: p.critChance || 0,
+      critMult: p.critMult || 2.0,
     };
   }
 
@@ -2559,21 +2564,27 @@ export default class GameScene extends Phaser.Scene {
     // Вне реальных PvP-секторов другие игроки — союзники (см. _isPvpSector), не цель.
     if (t.isRemotePlayer) {
       if (!this._isPvpSector) { this._warnThrottle('ally_fire', 'Нельзя атаковать союзника'); return; }
-      this._consumeAmmo('cannon', cannonCount);
+      const ammoMult = this._consumeAmmo('cannon', cannonCount);
+      const perkMult = this._offensivePerkMult(p, t, true);
+      // Крит не считаем тут — его роллит сервер по loadout.critChance/critMult
+      // (см. _pvpLoadoutSnapshot), иначе игрок мог бы заявлять крит на каждый выстрел.
+      const dmg = Math.round(p.cannonDamage * skillMult * ammoMult * perkMult);
       this._fireVisualBolt(p.x, p.y, t.x, t.y, isOC ? 0xff8800 : PROJECTILE.playerColor);
       this.muzzleFlash(p.x, p.y, isOC ? 0xff8800 : 0x8fe6ff, p);
       this.sfx?.play('sfx_cannon_fire', { cooldownMs: 60 });
-      this.pvpClient?.fireClaim(t.userId, false, 'cannon');
+      this.pvpClient?.fireClaim(t.userId, 'cannon', dmg);
       return;
     }
     // PvP: общий моб сектора — HP шарится через сервер (см. PvpMobState), тоже
     // без локального takeDamage. Обычные мобы (без pvpMobId) идут дальше как раньше.
     if (t.pvpMobId) {
-      this._consumeAmmo('cannon', cannonCount);
+      const ammoMult = this._consumeAmmo('cannon', cannonCount);
+      const perkMult = this._offensivePerkMult(p, t, true);
+      const dmg = Math.round(p.cannonDamage * skillMult * ammoMult * perkMult);
       this._fireVisualBolt(p.x, p.y, t.x, t.y, isOC ? 0xff8800 : PROJECTILE.playerColor);
       this.muzzleFlash(p.x, p.y, isOC ? 0xff8800 : 0x8fe6ff, p);
       this.sfx?.play('sfx_cannon_fire', { cooldownMs: 60 });
-      this.pvpClient?.mobFireClaim(t.pvpMobId, t.maxHull, t.maxShield, t.x, t.y, 'cannon');
+      this.pvpClient?.mobFireClaim(t.pvpMobId, t.maxHull, t.maxShield, t.x, t.y, 'cannon', dmg);
       return;
     }
 
@@ -2635,6 +2646,10 @@ export default class GameScene extends Phaser.Scene {
       const shieldHit = msg.killed ? p.shield : Math.max(0, p.shield - msg.shield);
       p.hull = msg.killed ? 0 : msg.hull;
       p.shield = msg.killed ? 0 : msg.shield;
+      // КРИТИЧНО: без этого passive-реген (Player.update, гейтится по sinceDamage)
+      // считал урон "давним" (lastDamageAt тут никогда не трогался) и мгновенно
+      // накатывал щит обратно на следующем же кадре.
+      p.lastDamageAt = this.time.now;
       this.hitFlash(p.x, p.y, hullHit > 0, p);
       this.showDamage(p.x, p.y, { shieldHit, hullHit, killed: msg.killed }, msg.maxHull, msg.isCrit);
       this._shakeForHit({ hullHit }, msg.maxHull);
@@ -2671,6 +2686,10 @@ export default class GameScene extends Phaser.Scene {
     const shieldHit = msg.killed ? mob.shield : Math.max(0, mob.shield - msg.shield);
     mob.hull = msg.killed ? 0 : msg.hull;
     mob.shield = msg.killed ? 0 : msg.shield;
+    // КРИТИЧНО: без этого Mob.update() считал урон "давним" (lastDamageAt никогда не
+    // трогался при обходе локального takeDamage) и мгновенно откатывал щит обратно
+    // на следующем же кадре — именно баг "щит откатывается моментально во время боя".
+    mob.lastDamageAt = this.time.now;
     this.hitFlash(mob.x, mob.y, hullHit > 0, mob);
     this.showDamage(mob.x, mob.y, { shieldHit, hullHit, killed: msg.killed }, msg.maxHull, msg.isCrit);
     if (msg.attackerUserId === this.myUserId && msg.isCrit) {
@@ -2765,20 +2784,24 @@ export default class GameScene extends Phaser.Scene {
     if (t.isRemotePlayer) {
       if (!this._isPvpSector) { this._warnThrottle('ally_fire', 'Нельзя атаковать союзника'); return; }
       const beamColor = isOC ? 0xffcc00 : p.allLasers ? 0xce93d8 : 0xffaa00;
+      const perkMult = this._offensivePerkMult(p, t, false);
+      const dmg = Math.round(p.laserDamage * skillMult * perkMult);
       this._laserBeam(p.x, p.y, t.x, t.y, beamColor, 1.0, isOC ? 12 : 3, 200, p, t);
       this.muzzleFlash(p.x, p.y, beamColor, p);
       this.sfx?.play('sfx_laser_fire', { cooldownMs: 60 });
       this._consumeAmmo('laser');
-      this.pvpClient?.fireClaim(t.userId, false, 'laser');
+      this.pvpClient?.fireClaim(t.userId, 'laser', dmg);
       return;
     }
     if (t.pvpMobId) {
       const beamColor = isOC ? 0xffcc00 : p.allLasers ? 0xce93d8 : 0xffaa00;
+      const perkMult = this._offensivePerkMult(p, t, false);
+      const dmg = Math.round(p.laserDamage * skillMult * perkMult);
       this._laserBeam(p.x, p.y, t.x, t.y, beamColor, 1.0, isOC ? 12 : 3, 200, p, t);
       this.muzzleFlash(p.x, p.y, beamColor, p);
       this.sfx?.play('sfx_laser_fire', { cooldownMs: 60 });
       this._consumeAmmo('laser');
-      this.pvpClient?.mobFireClaim(t.pvpMobId, t.maxHull, t.maxShield, t.x, t.y, 'laser');
+      this.pvpClient?.mobFireClaim(t.pvpMobId, t.maxHull, t.maxShield, t.x, t.y, 'laser', dmg);
       return;
     }
 

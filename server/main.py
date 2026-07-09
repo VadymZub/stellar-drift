@@ -219,13 +219,22 @@ group_manager = GroupManager()
 
 PVP_FIRE_COOLDOWN_FLOOR = 0.15   # сек — ниже этого порога клиенту не верим при любом заявленном КД
 PVP_MAX_RANGE  = 1600.0          # px — потолок дальности (админ-лазер клиента максимум 1500 + запас)
-PVP_MAX_DAMAGE = 6000.0          # потолок урона одного попадания — выше топовых крит-роллов не бывает
-# Крит для PvP-попаданий — сервер решает сам (та же логика, что и isCrit у клиента
-# для боссов, см. BOSS.critChance в constants.js), а не по заявке клиента в
-# pvp_fire_claim: если довериться client-claimed isCrit, игрок мог бы заявлять
-# крит на каждый выстрел и получить свободный ×crit к разрешённому потолку урона.
-PVP_CRIT_CHANCE = 0.15
-PVP_CRIT_MULT   = 2.0           # базовый critMult без бордов на клиенте (Player.js: 2.0 без BF('critMult'))
+PVP_MAX_DAMAGE = 6000.0          # потолок БАЗОВОГО урона (loadout, без баффов) — выше топовых базовых
+                                 # значений не бывает; сам per-shot урон см. PVP_BURST_MULT ниже.
+# Клиент репортит РЕАЛЬНО посчитанный урон каждого выстрела (после скилл-баффов
+# овердрайва/берсерка/залпа, перков, элитных патронов — см. GameScene._fireCannon/
+# _fireLaser), а не полагается на статичный loadout.dmg весь визит в комнату (иначе
+# крит-билд/овердрайв ощущались бы одинаково слабо). Сервер не пересчитывает эти
+# баффы сам (это долг, недостижимый без полного дублирования боевой формулы), но
+# и не доверяет заявке безоговорочно — зажимает потолком в PVP_BURST_MULT раз
+# больше статичного loadout.dmg (щедрый, но конечный допуск на бёрст).
+PVP_BURST_MULT = 3.0
+# Крит-шанс/множитель — по статам АТАКУЮЩЕГО игрока (loadout.critChance/critMult),
+# а не фиксированные для всех: иначе билд с высоким личным крит-шансом ощущался бы
+# так же, как билд без него вообще. Ролл всё равно решает сервер, не клиент —
+# доверять client-claimed isCrit нельзя (свободный крит на каждый выстрел).
+PVP_CRIT_CHANCE_CAP = 0.65   # потолок — тот же, что у клиента (Player.js:critChance)
+PVP_CRIT_MULT_CAP   = 4.0    # потолок — тот же, что у клиента (Player.js:critMult)
 
 
 class PvpPlayerState:
@@ -254,6 +263,8 @@ class PvpPlayerState:
             # раз в ~100мс, это отдельная неточность, принятая вместе с клиент-локальным
             # движением.
             'evasion':     max(0.0, min(float(loadout.get('evasion', 0)), 0.30)),
+            'critChance':  max(0.0, min(float(loadout.get('critChance', 0)), PVP_CRIT_CHANCE_CAP)),
+            'critMult':    max(1.0, min(float(loadout.get('critMult', 2.0)), PVP_CRIT_MULT_CAP)),
         }
         self.last_shot_at = 0.0
         # Кто наносил урон этой жизни игрока (uid → суммарный урон) — используется,
@@ -364,21 +375,27 @@ class PvpRoomManager:
 pvp_room_manager = PvpRoomManager()
 
 
-def _apply_pvp_damage(dmg_ceiling: float, penetration: float,
+def _apply_pvp_damage(claimed_dmg: float, ceiling: float, penetration: float,
                        victim_hull: float, victim_shield: float,
                        victim_max_hull: float, victim_max_shield: float,
+                       crit_chance: float = 0.0, crit_mult: float = 2.0,
                        victim_evasion: float = 0.0) -> dict:
-    """Мирроит shield/hull split из Player.takeDamage (client/src/entities/Player.js) —
-    но крит, уклонение и итоговые числа решает сервер, а не заявка клиента (см.
-    PVP_CRIT_CHANCE). Общий расчёт для игрок→игрок и игрок→моб — обе жертвы описываются
-    просто парой hull/shield, дальше не важно, чьи они. victim_evasion=0 для мобов —
-    их движение клиент-локальное, сервер не знает скорость, чтобы честно её учитывать."""
+    """Мирроит shield/hull split из Player.takeDamage (client/src/entities/Player.js).
+    Урон — заявка клиента (claimed_dmg, реальный посчитанный урон выстрела со всеми
+    баффами/перками), зажатая потолком ceiling*PVP_BURST_MULT — не плоское число на
+    весь визит в комнату, но и не слепое доверие. Крит и уклонение всё равно решает
+    сервер своим роллом (по статам АТАКУЮЩЕГО — crit_chance/crit_mult, не фиксированные
+    для всех), не заявка клиента. Общий расчёт для игрок→игрок и игрок→моб — обе жертвы
+    описываются просто парой hull/shield, дальше не важно, чьи они. victim_evasion=0
+    для мобов — их движение клиент-локальное, сервер не знает скорость, чтобы честно
+    её учитывать."""
     if victim_evasion > 0 and random.random() < victim_evasion:
         return {'isCrit': False, 'dmg': 0, 'killed': False, 'dodged': True,
                 'hull': victim_hull, 'shield': victim_shield}
 
-    is_crit = random.random() < PVP_CRIT_CHANCE
-    amount = dmg_ceiling * (PVP_CRIT_MULT if is_crit else 1.0)
+    base = max(0.0, min(claimed_dmg, ceiling * PVP_BURST_MULT))
+    is_crit = random.random() < crit_chance
+    amount = base * (crit_mult if is_crit else 1.0)
 
     direct = amount * penetration
     to_shield_raw = amount - direct
@@ -405,9 +422,10 @@ def _apply_pvp_damage(dmg_ceiling: float, penetration: float,
     return {'isCrit': is_crit, 'dmg': round(amount), 'killed': killed, 'dodged': False, 'hull': hull, 'shield': shield}
 
 
-def _resolve_pvp_hit(attacker: PvpPlayerState, victim: PvpPlayerState) -> dict:
-    r = _apply_pvp_damage(attacker.loadout['dmg'], attacker.loadout['penetration'],
+def _resolve_pvp_hit(attacker: PvpPlayerState, victim: PvpPlayerState, claimed_dmg: float) -> dict:
+    r = _apply_pvp_damage(claimed_dmg, attacker.loadout['dmg'], attacker.loadout['penetration'],
                            victim.hull, victim.shield, victim.max_hull, victim.max_shield,
+                           attacker.loadout['critChance'], attacker.loadout['critMult'],
                            victim.loadout['evasion'])
     victim.hull, victim.shield = r['hull'], r['shield']
     if not r['dodged'] and r['dmg'] > 0:
@@ -1055,7 +1073,8 @@ async def chat_ws(
                     continue  # вне заявленной дальности — молча игнорируем
                 attacker.last_shot_at = now_ts
 
-                result = _resolve_pvp_hit(attacker, victim)
+                claimed_dmg = max(0.0, float(data.get('dmg', 0) or 0))
+                result = _resolve_pvp_hit(attacker, victim, claimed_dmg)
                 out = {
                     'type': 'pvp_hit_result',
                     'attackerUserId': attacker.user_id, 'targetUserId': victim.user_id,
@@ -1098,9 +1117,11 @@ async def chat_ws(
                 max_hull = max(1.0, float(data.get('maxHull', 1)))
                 max_shield = max(0.0, float(data.get('maxShield', 0)))
                 mob_state = pvp_room_manager.get_or_create_mob(sector, mob_id, max_hull, max_shield)
+                claimed_dmg = max(0.0, float(data.get('dmg', 0) or 0))
                 result = _apply_pvp_damage(
-                    attacker.loadout['dmg'], attacker.loadout['penetration'],
+                    claimed_dmg, attacker.loadout['dmg'], attacker.loadout['penetration'],
                     mob_state.hull, mob_state.shield, mob_state.max_hull, mob_state.max_shield,
+                    attacker.loadout['critChance'], attacker.loadout['critMult'],
                 )
                 mob_state.hull, mob_state.shield = result['hull'], result['shield']
                 if result['killed']:

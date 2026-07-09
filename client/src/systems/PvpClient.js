@@ -50,17 +50,21 @@ export class PvpClient {
         this._send({ type: 'pvp_pos', x, y, heading });
     }
 
-    fireClaim(targetUserId, isCrit, weaponType) {
+    /** dmg — реально посчитанный урон ЭТОГО выстрела (скилл-баффы/перки/патроны уже
+     * применены, крит — нет, крит решает сервер своим роллом по loadout.critChance/
+     * critMult). Сервер трактует dmg как заявку, зажатую потолком от loadout при входе
+     * в комнату — не слепое доверие, но и не плоское число на весь визит в комнату. */
+    fireClaim(targetUserId, weaponType, dmg) {
         if (!this.sector) return;
-        this._send({ type: 'pvp_fire_claim', targetUserId, isCrit, weaponType });
+        this._send({ type: 'pvp_fire_claim', targetUserId, weaponType, dmg });
     }
 
     /** maxHull/maxShield — сервер лениво создаёт HP-запись мобa по этим значениям при
      * первом попадании кого угодно; mobX/mobY — для мягкой проверки дальности на сервере
-     * (движение моба клиент-локальное, сервер не знает его позицию иначе). */
-    mobFireClaim(mobId, maxHull, maxShield, mobX, mobY, weaponType) {
+     * (движение моба клиент-локальное, сервер не знает его позицию иначе); dmg — см. fireClaim. */
+    mobFireClaim(mobId, maxHull, maxShield, mobX, mobY, weaponType, dmg) {
         if (!this.sector) return;
-        this._send({ type: 'pvp_mob_fire_claim', mobId, maxHull, maxShield, mobX, mobY, weaponType });
+        this._send({ type: 'pvp_mob_fire_claim', mobId, maxHull, maxShield, mobX, mobY, weaponType, dmg });
     }
 
     /** Отправляется ЖЕРТВОЙ сразу после смерти — только у неё есть реальный инвентарь,
