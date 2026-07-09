@@ -1,7 +1,9 @@
 // Stellar Drift API client
 // Token хранится в sessionStorage — живёт до закрытия вкладки.
 
-export const API_BASE = 'http://localhost:8000';
+// location.hostname, не жёсткий 'localhost' — иначе со второго ПК в локальной сети
+// клиент лез бы на свой собственный localhost вместо машины с сервером.
+export const API_BASE = `http://${location.hostname}:8000`;
 
 const TOKEN_KEY   = 'sd_token';
 const USERNAME_KEY = 'sd_username';

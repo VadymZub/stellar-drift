@@ -17,6 +17,7 @@ import { SHIPS, SHIP_BY_KEY, shipLevelMods } from '../ships.js';
 import { SECTORS, galaxy, neighbors, edgeDir, sectorAccess } from '../galaxy.js';
 import { calculateRating, getRank } from '../ranking.js';
 import VFXManager from '../systems/VFXManager.js';
+import SoundManager from '../systems/SoundManager.js';
 import MiningBase from '../entities/MiningBase.js';
 import HomeBase from '../entities/HomeBase.js';
 import ArgusController from '../systems/ArgusController.js';
@@ -194,6 +195,14 @@ export default class GameScene extends Phaser.Scene {
     }
     this.player = new Player(this, startX, startY, this.objScale);
     this.movement = new Movement(this, this.player);
+
+    // PvP-присутствие: сервер авторитетен только для игрок-игрок в этих секторах,
+    // мобы/PvE тут не трогаем — PvpClient просто держит live-позиции синхронными.
+    if (isPvp) {
+      this.pvpClient?.enterSector(galaxy.current, this.player.x, this.player.y, this._pvpLoadoutSnapshot());
+    } else {
+      this.pvpClient?.leaveSector();
+    }
 
     this.cameras.main.startFollow(this.player.sprite, false, 0.35, 0.35);
     this.cameras.main.setZoom(DPR);
@@ -446,6 +455,12 @@ export default class GameScene extends Phaser.Scene {
     const trail = { lifespan: 180, speed: 0, scale: { start: 0.55, end: 0 }, alpha: { start: 0.5, end: 0 }, blendMode: 'ADD', emitting: false };
     this.trailCyan = this.add.particles(0, 0, 'glow', { ...trail, tint: 0x8fe6ff }).setDepth(59);
     this.trailRed = this.add.particles(0, 0, 'glow', { ...trail, tint: 0xff8a7a }).setDepth(59);
+    // Трейлы для остальных типов снарядов мобов — раньше только plasma получала
+    // шлейф, ion/acid/grav/emp летели голой затонированной капсулой без следа
+    this.trailIon  = this.add.particles(0, 0, 'glow', { ...trail, tint: 0x80d8ff }).setDepth(59);
+    this.trailAcid = this.add.particles(0, 0, 'glow', { ...trail, tint: 0x76ff03 }).setDepth(59);
+    this.trailGrav = this.add.particles(0, 0, 'glow', { ...trail, tint: 0xffb74d }).setDepth(59);
+    this.trailEmp  = this.add.particles(0, 0, 'glow', { ...trail, tint: 0x4dd0e1 }).setDepth(59);
 
     this.createBoostFx();
 
@@ -493,6 +508,7 @@ export default class GameScene extends Phaser.Scene {
     this.createSpaceDust();
 
     this.vfx = new VFXManager(this);
+    this.sfx = new SoundManager(this);
     this.engineFxList = [];
     this._engineFxShipKey = null;
     this._spawnEngineFx();
@@ -777,6 +793,10 @@ export default class GameScene extends Phaser.Scene {
     // dungeonId — стабильный id слота спавна (напр. 'spot:3', 'corridor:2:bomb:5'),
     // сохраняющийся в БД-прогрессе инстанса на сутки. Если этот слот уже отмечен
     // убитым (игрок вышел и вернулся тем же днём) — не спавним его повторно.
+    // PvP: состав мобов детерминирован (фиксированные шаблоны/уровни/количество на
+    // каждый pvp_N, только офсеты позиций случайны) — значит id по порядку создания
+    // совпадёт у всех клиентов без обмена ростером через сервер. См. pvpMobId ниже.
+    let _pvpMobIdx = 0;
     const add = (k, lvl, ox, oy, opts, dungeonId) => {
       if (dungeonId && this._dungeonKilledIds?.has(dungeonId)) return null;
       const finalOpts = _diff ? { hpMult: _diff.mobHP, dmgMult: _diff.mobDamage, ...opts } : opts;
@@ -787,6 +807,7 @@ export default class GameScene extends Phaser.Scene {
       if (sec.isDungeon && galaxy.current !== 'R-1-boss') ({ x: px, y: py } = this._findFreeSpawn(px, py, 100));
       const m = new Mob(this, M[k], lvl, px, py, finalOpts);
       if (dungeonId) m.dungeonId = dungeonId;
+      if (sec.pvp) m.pvpMobId = `${galaxy.current}:${_pvpMobIdx++}`;
       this.mobs.push(m);
       return m;
     };
@@ -1094,6 +1115,23 @@ export default class GameScene extends Phaser.Scene {
   }
 
   get groupSystem() { return this.scene.get('HudScene')?.groupSystem ?? null; }
+  get pvpClient()   { return this.scene.get('HudScene')?.pvpClient ?? null; }
+
+  // Снапшот эффективного лоадаута для серверной валидации PvP-попаданий (см. PvpClient/
+  // server PvpRoomManager) — сервер трактует эти числа как потолок, не пересчитывает
+  // perks/skills/boards заново. cooldown — секунд между выстрелами текущего оружия.
+  _pvpLoadoutSnapshot() {
+    const p = this.player;
+    return {
+      shipKey: p.ship?.key || '',
+      hull: p.hull, maxHull: p.maxHull, shield: p.shield, maxShield: p.maxShield,
+      dmg: Math.max(p.cannonDamage || 0, p.laserDamage || 0),
+      range: p.weaponRange || 0,
+      cooldown: 1 / Math.max(0.1, p.weaponFireRate || 1),
+      penetration: p.weaponPenetration || 0,
+      evasion: p.evasion || 0,
+    };
+  }
 
   _dungeonDiff() {
     return DUNGEON_DIFF[this.dungeonDifficulty ?? 'normal'];
@@ -1273,6 +1311,11 @@ export default class GameScene extends Phaser.Scene {
   onDungeonBossPhase(boss, ph) {
     if (!boss?.alive) return;
     this.log(i18n.t('log.dungeon_boss_phase'));
+    // Лёгкая тряска+вспышка на переход фазы — раньше был только тинт+лог, из-за
+    // чего момент, когда босс данжа стал опаснее, физически не читался на экране
+    this.cameras.main.shake(180, 0.008);
+    this.cameras.main.flash(120, 200, 160, 255, true);
+    this.sfx?.play('sfx_boss_phase', { volume: 0.7 });
     if (ph.tint) boss.sprite.setTint(ph.tint);
     if (ph.acid) boss.tpl = { ...boss.tpl, projectileType: 'acid' };
     if (ph.dashOn) boss._kitDashCd = ph.dashOn;
@@ -1775,6 +1818,14 @@ export default class GameScene extends Phaser.Scene {
         }
       }
 
+      // PvP: другой живой игрок — та же логика клика, что и Shadow Arena бот выше
+      const rp = this.remotePlayerAt(wx, wy);
+      if (rp) {
+        this.selectTarget(rp);
+        if (isDouble) this.isFiring = true;
+        return;
+      }
+
       // Mob check first — takes priority over loot when overlapping
       const mob = this.mobAt(wx, wy);
       if (isDouble && mob) {
@@ -1995,7 +2046,7 @@ export default class GameScene extends Phaser.Scene {
         const heal = Math.round(this.player.maxHull * 0.30);
         this.player.hull = Math.min(this.player.maxHull, this.player.hull + heal);
         this.log(`🔧 Ремкомплект: +${heal} HP`);
-        this.hitFlash(this.player.x, this.player.y, true);
+        this.hitFlash(this.player.x, this.player.y, true, this.player, false);
         this.groupSystem?.recordHeal(heal);
         break;
       }
@@ -2005,7 +2056,7 @@ export default class GameScene extends Phaser.Scene {
         this._speedBoostMult = 1.5;
         this.player.recomputeStats();
         this.log('⚡ Ускоритель: +50% скорость, 15с');
-        this.muzzleFlash(this.player.x, this.player.y, 0xffee44);
+        this.muzzleFlash(this.player.x, this.player.y, 0xffee44, this.player);
         this._speedBoostTimer = this.time.delayedCall(BUFF_DUR, () => {
           this._speedBoostMult = 1.0;
           if (this.player?.alive) this.player.recomputeStats();
@@ -2022,7 +2073,7 @@ export default class GameScene extends Phaser.Scene {
         const baseR = Math.round(BASE_SCAN_RADIUS * (1 + (this.skillLevels?.scanner_boost || 0) * 0.20));
         this.scanRadius = baseR * 2;
         this.log('📡 Сканер-импульс: радиус ×2, 20с');
-        this.muzzleFlash(this.player.x, this.player.y, 0x44ddff);
+        this.muzzleFlash(this.player.x, this.player.y, 0x44ddff, this.player);
         this._scanPulseTimer = this.time.delayedCall(BUFF_DUR, () => {
           this.scanRadius = baseR;
           this._scanPulseTimer = null;
@@ -2046,7 +2097,7 @@ export default class GameScene extends Phaser.Scene {
         }
         this.player.sprite.setPosition(cx, cy);
         if (this.player.sprite.body) this.player.sprite.body.reset(cx, cy);
-        this.muzzleFlash(cx, cy, 0x8888ff);
+        this.muzzleFlash(cx, cy, 0x8888ff, this.player);
         this.log(sec.pvp ? '🌀 Варп: телепорт к родной базе' : '🌀 Аварийный прыжок: телепорт на базу');
         break;
       }
@@ -2058,7 +2109,7 @@ export default class GameScene extends Phaser.Scene {
     this.skillCooldowns.overcharge_shot = now + cd;
     this._overchargeActive = true;
     this.log('⚡ Перегрузочный выстрел — следующий выстрел ×2');
-    this.muzzleFlash(this.player.x, this.player.y, 0xff8800);
+    this.muzzleFlash(this.player.x, this.player.y, 0xff8800, this.player);
   }
 
   _doSalvo(now, cd) {
@@ -2080,7 +2131,7 @@ export default class GameScene extends Phaser.Scene {
     const heal = Math.round(this.player.maxHull * 0.30);
     this.player.hull = Math.min(this.player.maxHull, this.player.hull + heal);
     this.log(`💉 Ремонт: +${heal} HP`);
-    this.hitFlash(this.player.x, this.player.y, true);
+    this.hitFlash(this.player.x, this.player.y, true, this.player, false);
     this.groupSystem?.recordHeal(heal);
   }
 
@@ -2089,7 +2140,7 @@ export default class GameScene extends Phaser.Scene {
     const boost = Math.round(this.player.maxShield * 1.20);
     this.player.shield = Math.min(this.player.maxShield, this.player.shield + boost);
     this.log(`🛡 Всплеск щита: +${boost}`);
-    this.hitFlash(this.player.x, this.player.y, false);
+    this.hitFlash(this.player.x, this.player.y, false, this.player, false);
   }
 
   _doStealthSprint(now, cd) {
@@ -2126,7 +2177,7 @@ export default class GameScene extends Phaser.Scene {
     this._berserkerBuff = { endTime: now + BUFF_DUR, mult: 1 + boost };
     this._consBuffEndTimes.berserker = now + BUFF_DUR;
     this.log(`💀 Берсерк: +${Math.round(boost * 100)}% урон, 15с`);
-    this.hitFlash(this.player.x, this.player.y, true);
+    this.hitFlash(this.player.x, this.player.y, true, this.player, false);
     this.time.delayedCall(BUFF_DUR, () => {
       this._berserkerBuff = null;
       this._consBuffEndTimes.berserker = 0;
@@ -2145,7 +2196,7 @@ export default class GameScene extends Phaser.Scene {
     this._volleyBlastMult = 1.25;
     this.firePlayerWeapon();
     this.log('💥 Залповый огонь!');
-    this.hitFlash(p.x, p.y, false);
+    this.hitFlash(p.x, p.y, false, p, false);
   }
 
   _doShipArgosyRepair(now, cd) {
@@ -2222,8 +2273,6 @@ export default class GameScene extends Phaser.Scene {
     const sec = SECTORS[galaxy.current];
     if (sec?.isDungeon) { this.log('⚠ Телепорт недоступен в данже'); return; }
     if (!this.homeBases?.length) { this.log('⚠ В секторе нет базы'); return; }
-    const underPvpAttack = (this.mobs || []).some(m => m.alive && m.isPlayerMob && m.state !== 'idle');
-    if (underPvpAttack) { this.log('⚠ Телепорт заблокирован: атака противника'); return; }
     this.skillCooldowns['ship:wisp_recall'] = now + cd;
     const base = this.homeBases[0];
     const bx = base.x ?? this.worldWidth / 2;
@@ -2339,6 +2388,16 @@ export default class GameScene extends Phaser.Scene {
   mobAt(wx, wy) {
     let best = null, bestD = Infinity;
     for (const m of this.mobs) { if (!m.alive) continue; const d = Phaser.Math.Distance.Between(wx, wy, m.x, m.y); if (d < m.tpl.displaySize * 0.8 && d < bestD) { best = m; bestD = d; } }
+    return best;
+  }
+  // Другие живые игроки в текущем PvP-секторе — таргетятся так же, как мобы.
+  remotePlayerAt(wx, wy) {
+    if (!this.pvpClient?.players?.size) return null;
+    let best = null, bestD = Infinity;
+    for (const rp of this.pvpClient.players.values()) {
+      const d = Phaser.Math.Distance.Between(wx, wy, rp.x, rp.y);
+      if (d < 70 && d < bestD) { best = rp; bestD = d; }
+    }
     return best;
   }
   lootAt(wx, wy) {
@@ -2465,22 +2524,47 @@ export default class GameScene extends Phaser.Scene {
     const t = this.target, p = this.player;
     if (!t?.alive || !p.alive) return;
 
+    // PvP: сервер решает урон/крит (см. server main.py:_resolve_pvp_hit) — клиент
+    // только заявляет выстрел и рисует визуал, никакого локального takeDamage.
+    if (t.isRemotePlayer) {
+      this._consumeAmmo('cannon', cannonCount);
+      this._fireVisualBolt(p.x, p.y, t.x, t.y, isOC ? 0xff8800 : PROJECTILE.playerColor);
+      this.muzzleFlash(p.x, p.y, isOC ? 0xff8800 : 0x8fe6ff, p);
+      this.sfx?.play('sfx_cannon_fire', { cooldownMs: 60 });
+      this.pvpClient?.fireClaim(t.userId, false, 'cannon');
+      return;
+    }
+    // PvP: общий моб сектора — HP шарится через сервер (см. PvpMobState), тоже
+    // без локального takeDamage. Обычные мобы (без pvpMobId) идут дальше как раньше.
+    if (t.pvpMobId) {
+      this._consumeAmmo('cannon', cannonCount);
+      this._fireVisualBolt(p.x, p.y, t.x, t.y, isOC ? 0xff8800 : PROJECTILE.playerColor);
+      this.muzzleFlash(p.x, p.y, isOC ? 0xff8800 : 0x8fe6ff, p);
+      this.sfx?.play('sfx_cannon_fire', { cooldownMs: 60 });
+      this.pvpClient?.mobFireClaim(t.pvpMobId, t.maxHull, t.maxShield, t.x, t.y, 'cannon');
+      return;
+    }
+
     if (Math.random() >= (p.cannonAccuracy ?? 0.90)) {
-      this.muzzleFlash(p.x, p.y, 0x8fe6ff);
+      this.muzzleFlash(p.x, p.y, 0x8fe6ff, p);
+      this.sfx?.play('sfx_weapon_miss', { volume: 0.4, cooldownMs: 80 });
       return;
     }
 
     const isCrit    = p.critChance > 0 && Math.random() < p.critChance;
     const ammoMult  = this._consumeAmmo('cannon', cannonCount);
-    const dmg       = Math.round(p.cannonDamage * skillMult * ammoMult * (isCrit ? (p.critMult ?? 2) : 1));
+    const perkMult  = this._offensivePerkMult(p, t, true);
+    const dmg       = Math.round(p.cannonDamage * skillMult * ammoMult * perkMult * (isCrit ? (p.critMult ?? 2) : 1));
     const color     = isOC ? 0xff8800 : ammoMult > 1 ? 0xff6d00 : isCrit ? 0xffee44 : PROJECTILE.playerColor;
     // Predictive aim: lead the target based on its current velocity.
     const aimPt = _leadTarget(p.x, p.y, t.x, t.y,
       (t.sprite?.body?.velocity?.x ?? 0) / DPR,
       (t.sprite?.body?.velocity?.y ?? 0) / DPR,
       PROJECTILE.speed);
-    this.projectiles.push(new Projectile(this, 'player', p.x, p.y, aimPt.x, aimPt.y, t, dmg, p.weaponPenetration, color, 160 * Math.PI / 180));
-    this.muzzleFlash(p.x, p.y, isOC ? 0xff8800 : isCrit ? 0xffee44 : 0x8fe6ff);
+    this.projectiles.push(new Projectile(this, 'player', p.x, p.y, aimPt.x, aimPt.y, t, dmg, p.weaponPenetration, color, 160 * Math.PI / 180, 'plasma', isCrit));
+    this.muzzleFlash(p.x, p.y, isOC ? 0xff8800 : isCrit ? 0xffee44 : 0x8fe6ff, p);
+    this.sfx?.play('sfx_cannon_fire', { cooldownMs: 60 });
+    if (isCrit) this.sfx?.play('sfx_crit', { volume: 0.7 });
     if (isCrit || isOC) {
       const label = isOC ? '⚡ УДАР!' : 'КРИТ!';
       const clr   = isOC ? '#ff8800' : '#ffee44';
@@ -2491,10 +2575,179 @@ export default class GameScene extends Phaser.Scene {
     }
   }
 
+  // Чисто визуальный "снаряд" для PvP-выстрелов из пушки — не заходит в damage-pipeline
+  // (Projectile._hit вызывает victim.takeDamage(), а у RemotePlayer его нет и не должно
+  // быть: реальный урон решает сервер через pvp_fire_claim/pvp_hit_result).
+  _fireVisualBolt(x1, y1, x2, y2, color) {
+    const spr = this.add.image(x1, y1, 'bolt_sprite').setDepth(60)
+      .setTint(color).setBlendMode(Phaser.BlendModes.ADD).setDisplaySize(42, 17);
+    spr.rotation = Math.atan2(y2 - y1, x2 - x1);
+    const dist = Phaser.Math.Distance.Between(x1, y1, x2, y2);
+    const duration = Math.min(500, (dist / PROJECTILE.speed) * 1000);
+    this.tweens.add({ targets: spr, x: x2, y: y2, duration, ease: 'Linear', onComplete: () => spr.destroy() });
+  }
+
+  // Авторитетный исход PvP-попадания от сервера (см. server/main.py:_resolve_pvp_hit) —
+  // пришёл ли по мне (msg.targetUserId===myUserId) или по другому игроку, которого я
+  // вижу как RemotePlayer. hullHit/shieldHit считаем сами по разнице до/после. На kill
+  // сервер шлёт уже восстановленный (после внутреннего "респавна" в своей бухгалтерии)
+  // hull/shield жертвы — локально показываем 0, а не эти значения: визуально корабль
+  // должен выглядеть мёртвым до момента фактического респавна через диалог ремонта
+  // (as _showRepairDialog/Player.respawn() — та же цепочка, что при смерти от моба).
+  _onPvpHitResult(msg) {
+    const isMe = msg.targetUserId === this.myUserId;
+    if (isMe) {
+      const p = this.player;
+      if (msg.dodged) { this.showDodge(p.x, p.y); return; }
+      const hullHit   = msg.killed ? p.hull   : Math.max(0, p.hull   - msg.hull);
+      const shieldHit = msg.killed ? p.shield : Math.max(0, p.shield - msg.shield);
+      p.hull = msg.killed ? 0 : msg.hull;
+      p.shield = msg.killed ? 0 : msg.shield;
+      this.hitFlash(p.x, p.y, hullHit > 0, p);
+      this.showDamage(p.x, p.y, { shieldHit, hullHit, killed: msg.killed }, msg.maxHull, msg.isCrit);
+      this._shakeForHit({ hullHit }, msg.maxHull);
+      if (msg.killed && p.alive) { p.die(); this.onPlayerKilled(true); }
+      return;
+    }
+
+    const rp = this.pvpClient?.players?.get(msg.targetUserId);
+    if (!rp) return;
+    if (msg.dodged) { this.showDodge(rp.x, rp.y); return; }
+    const hullHit   = msg.killed ? rp.hull   : Math.max(0, rp.hull   - msg.hull);
+    const shieldHit = msg.killed ? rp.shield : Math.max(0, rp.shield - msg.shield);
+    rp.applyState({ hull: msg.hull, maxHull: msg.maxHull, shield: msg.shield, maxShield: msg.maxShield });
+    this.hitFlash(rp.x, rp.y, hullHit > 0, rp);
+    this.showDamage(rp.x, rp.y, { shieldHit, hullHit, killed: msg.killed }, msg.maxHull, msg.isCrit);
+    if (msg.killed) this.explosion(rp.x, rp.y, 1.1);
+    if (msg.attackerUserId === this.myUserId && msg.isCrit) {
+      const txt = this.add.text(rp.x, rp.y - 40, 'КРИТ!',
+        { fontFamily: 'Orbitron', fontSize: '14px', color: '#ffee44', fontStyle: 'bold', resolution: UI_RES })
+        .setOrigin(0.5).setDepth(71);
+      this.tweens.add({ targets: txt, y: rp.y - 80, alpha: 0, duration: 600, ease: 'Quad.easeOut', onComplete: () => txt.destroy() });
+    }
+  }
+
+  // Авторитетный исход попадания по ОБЩЕМУ мобу PvP-сектора (PvpMobState на сервере) —
+  // применяем к своей локальной копии с тем же pvpMobId. Убийство засчитывается всем,
+  // кто его видит в этот момент (не строим делёж лута по вкладу урона, как для
+  // групповых боссов — отдельная задача, если понадобится).
+  _onPvpMobHitResult(msg) {
+    const mob = this.mobs.find(m => m.pvpMobId === msg.mobId && m.alive);
+    if (!mob) return;
+    if (msg.dodged) { this.showDodge(mob.x, mob.y); return; }
+    const hullHit   = msg.killed ? mob.hull   : Math.max(0, mob.hull   - msg.hull);
+    const shieldHit = msg.killed ? mob.shield : Math.max(0, mob.shield - msg.shield);
+    mob.hull = msg.killed ? 0 : msg.hull;
+    mob.shield = msg.killed ? 0 : msg.shield;
+    this.hitFlash(mob.x, mob.y, hullHit > 0, mob);
+    this.showDamage(mob.x, mob.y, { shieldHit, hullHit, killed: msg.killed }, msg.maxHull, msg.isCrit);
+    if (msg.attackerUserId === this.myUserId && msg.isCrit) {
+      const txt = this.add.text(mob.x, mob.y - 40, 'КРИТ!',
+        { fontFamily: 'Orbitron', fontSize: '14px', color: '#ffee44', fontStyle: 'bold', resolution: UI_RES })
+        .setOrigin(0.5).setDepth(71);
+      this.tweens.add({ targets: txt, y: mob.y - 80, alpha: 0, duration: 600, ease: 'Quad.easeOut', onComplete: () => txt.destroy() });
+    }
+    if (msg.killed) this.onMobKilled(mob);
+  }
+
+  // Реконсиляция уже заспавненных локально мобов с текущим сервер-леджером при входе в
+  // сектор — если по мобу уже стреляли до нас, подхватываем актуальный hull/shield
+  // вместо "полного HP", с которым он только что заспавнился локально у нас.
+  _applyPvpMobSnapshot(mobsById) {
+    for (const mob of this.mobs) {
+      const s = mob.pvpMobId && mobsById[mob.pvpMobId];
+      if (s) { mob.hull = s.hull; mob.shield = s.shield; }
+    }
+  }
+
+  // ── PvP: общий лут с убитых игроков ────────────────────────────────────────
+  // Коробка видна только тем, кому сервер её разослал (победитель + все, кто
+  // наносил урон) — сама жертва этот Loot никогда не получает.
+  _onPvpLootSpawned(msg) {
+    const l = new Loot(this, msg.x, msg.y, msg.item, 'boss');
+    l.pvpLootId = msg.lootId;
+    this.loot.push(l);
+    this.log('💰 Трофей с убитого пилота на карте!');
+  }
+
+  // Кто-то из eligible уже забрал коробку раньше нас — убираем локальную копию,
+  // если она у нас есть (мы могли ещё не долететь/не успеть подобрать).
+  _onPvpLootRemoved(lootId) {
+    const target = this.loot.find(l => l.pvpLootId === lootId);
+    if (target?.alive) target.collect();
+    this.loot = this.loot.filter(l => l.alive);
+  }
+
+  // Подбор pvpLootId-лута — не гранится локально сразу (в отличие от обычного лута),
+  // ждём авторитетного pvp_loot_result: могли не успеть первыми.
+  _claimPvpLoot(target) {
+    if (target._claimPending) return;
+    target._claimPending = true;
+    (this._pvpLootPending ??= new Map()).set(target.pvpLootId, target);
+    this.pvpClient?.claimLoot(target.pvpLootId);
+  }
+
+  _onPvpLootResult(msg) {
+    const target = this._pvpLootPending?.get(msg.lootId);
+    this._pvpLootPending?.delete(msg.lootId);
+    if (!target) return;
+    if (msg.granted) {
+      const item = msg.item || target.item;
+      this.inventory.push(item);
+      this.log(i18n.t('log.loot_pickup', { item: itemName(item) }));
+      this._saveState();
+    } else {
+      this.log('Трофей уже забрали.');
+    }
+    if (target.alive) target.collect();
+    this.loot = this.loot.filter(l => l.alive);
+  }
+
+  // Условные множители урона от перков, требующие live-состояния цели/игрока в
+  // момент выстрела (щит цели, её скорость, HP игрока) — их нельзя запечь статически
+  // в recomputeStats, как cannonPerkPct. cannonOnly — перки из пула WEAPON_PERKS
+  // (anti_armor/marksman/vengeance) катаются только на пушки, лазер их не получает;
+  // phase_shifter/last_stand — щитовые перки, работают с любым оружием.
+  _offensivePerkMult(p, t, cannonOnly) {
+    let mult = 1;
+    if (cannonOnly) {
+      if (p.antiArmorPct > 0 && (t.maxShield <= 0 || (t.shield / t.maxShield) < 0.25)) mult *= (1 + p.antiArmorPct);
+      if (p.marksmanPct > 0) {
+        const tSpd = t.sprite?.body ? Math.hypot(t.sprite.body.velocity.x, t.sprite.body.velocity.y) : 0;
+        if (tSpd < 10) mult *= (1 + p.marksmanPct);
+      }
+      if (p.vengeancePct > 0 && p.maxHull > 0 && p.hull / p.maxHull < 0.4) mult *= (1 + p.vengeancePct);
+    }
+    if (p.phaseShifterPct > 0 && t.maxShield > 0 && (t.shield / t.maxShield) > 0.5) mult *= (1 + p.phaseShifterPct);
+    if (p.lastStandPct > 0 && p.maxHull > 0 && p.hull / p.maxHull < 0.20) mult *= (1 + p.lastStandPct);
+    return mult;
+  }
+
   // Hitscan laser: instant hit, accuracy check, shield/hull multipliers, amber VFX beam.
   _fireLaser(skillMult = 1, isOC = false) {
     const t = this.target, p = this.player;
     if (!t?.alive || !p.alive) return;
+
+    // PvP: как в _fireCannon — сервер решает исход, клиент только рисует луч и заявляет выстрел.
+    if (t.isRemotePlayer) {
+      const beamColor = isOC ? 0xffcc00 : p.allLasers ? 0xce93d8 : 0xffaa00;
+      this._laserBeam(p.x, p.y, t.x, t.y, beamColor, 1.0, isOC ? 12 : 3, 200, p, t);
+      this.muzzleFlash(p.x, p.y, beamColor, p);
+      this.sfx?.play('sfx_laser_fire', { cooldownMs: 60 });
+      this._consumeAmmo('laser');
+      this.pvpClient?.fireClaim(t.userId, false, 'laser');
+      return;
+    }
+    if (t.pvpMobId) {
+      const beamColor = isOC ? 0xffcc00 : p.allLasers ? 0xce93d8 : 0xffaa00;
+      this._laserBeam(p.x, p.y, t.x, t.y, beamColor, 1.0, isOC ? 12 : 3, 200, p, t);
+      this.muzzleFlash(p.x, p.y, beamColor, p);
+      this.sfx?.play('sfx_laser_fire', { cooldownMs: 60 });
+      this._consumeAmmo('laser');
+      this.pvpClient?.mobFireClaim(t.pvpMobId, t.maxHull, t.maxShield, t.x, t.y, 'laser');
+      return;
+    }
+
     if (this._hasWallBetween(p.x, p.y, t.x, t.y)) return;
 
     const hit    = Math.random() < (p.laserAccuracy ?? 0.80);
@@ -2504,26 +2757,29 @@ export default class GameScene extends Phaser.Scene {
     const allLasers = p.allLasers;
     const beamColor = isOC ? 0xffcc00 : isCrit ? 0xffff44 : allLasers ? 0xce93d8 : 0xffaa00;
     const beamWidth = isOC ? 12 : isCrit ? 6 : 3;
-    this._laserBeam(p.x, p.y, t.x, t.y, beamColor, hit ? 1.0 : 0.25, beamWidth);
-    this.muzzleFlash(p.x, p.y, beamColor);
+    this._laserBeam(p.x, p.y, t.x, t.y, beamColor, hit ? 1.0 : 0.25, beamWidth, 200, p, t);
+    this.muzzleFlash(p.x, p.y, beamColor, p);
     // Animated muzzle discharge — beam1 rotated toward target
     const _beamAngle = Math.atan2(t.y - p.y, t.x - p.x);
     const _beamSpr = this.vfx?.play('laser_beam1', p.x, p.y, { scale: isOC ? 0.22 : isCrit ? 0.17 : 0.13, depth: 64 });
-    if (_beamSpr) _beamSpr.setRotation(_beamAngle);
+    if (_beamSpr) { _beamSpr.setRotation(_beamAngle); this._attachFx(_beamSpr, p); }
 
-    if (!hit) return;
+    if (!hit) { this.sfx?.play('sfx_weapon_miss', { volume: 0.4, cooldownMs: 80 }); return; }
 
+    this.sfx?.play('sfx_laser_fire', { cooldownMs: 60 });
+    if (isCrit) this.sfx?.play('sfx_crit', { volume: 0.7 });
     this._consumeAmmo('laser');
-    const dmg = Math.round(p.laserDamage * skillMult * (isCrit ? (p.critMult ?? 2) : 1));
+    const perkMult = this._offensivePerkMult(p, t, false);
+    const dmg = Math.round(p.laserDamage * skillMult * perkMult * (isCrit ? (p.critMult ?? 2) : 1));
     const opts = { shieldMult: p.weaponShieldMult ?? 0.90, hullMult: p.weaponHullMult ?? 1.30, ignoreMovEvasion: true };
     const res = t.takeDamage(dmg, p.weaponPenetration, opts);
 
-    this.vfx?.play('laser_beam2', t.x, t.y, { scale: isOC ? 0.22 : 0.13, depth: 67 });
+    this._attachFx(this.vfx?.play('laser_beam2', t.x, t.y, { scale: isOC ? 0.22 : 0.13, depth: 67 }), t);
     if (res.dodged) { this.showDodge(t.x, t.y); return; }
     const toHull = (res.hullHit || 0) > 0;
-    this.hitFlash(t.x, t.y, toHull);
-    if (toHull && this._onScreen(t.x, t.y)) this.vfx?.play('hull_hit', t.x, t.y, { scale: 0.15, depth: 67 });
-    this.showDamage(t.x, t.y, res);
+    this.hitFlash(t.x, t.y, toHull, t);
+    if (toHull && this._onScreen(t.x, t.y)) this._attachFx(this.vfx?.play('hull_hit', t.x, t.y, { scale: 0.15, depth: 67 }), t);
+    this.showDamage(t.x, t.y, res, t.maxHull, isCrit);
     const laserDmgDone = (res.shieldHit || 0) + (res.hullHit || 0);
     if (laserDmgDone > 0) this.groupSystem?.recordDamage(laserDmgDone);
     if (res.killed) {
@@ -2599,28 +2855,40 @@ export default class GameScene extends Phaser.Scene {
     return amount - rem;
   }
 
-  _laserBeam(x1, y1, x2, y2, color, alpha, width = 3, duration = 200) {
+  // e1/e2 — опционально: живые сущности на концах луча (Player/Mob). Без них —
+  // прежнее поведение (луч рисуется раз и просто гаснет). С ними — оба конца
+  // пересчитываются каждый кадр в _updateTrackedBeams, пока луч не погаснет.
+  _laserBeam(x1, y1, x2, y2, color, alpha, width = 3, duration = 200, e1 = null, e2 = null) {
     const g = this.add.graphics().setDepth(65).setBlendMode('ADD');
-    const line = () => { g.beginPath(); g.moveTo(x1, y1); g.lineTo(x2, y2); g.strokePath(); };
-    // Outer glow — wide, dim
-    g.lineStyle(width * 6, color, 0.12 * alpha); line();
-    // Mid halo
-    g.lineStyle(width * 2.5, color, 0.35 * alpha); line();
-    // Bright core
-    g.lineStyle(Math.max(1, width * 0.6), 0xffffff, 0.90 * alpha); line();
+    const draw = (ax, ay, bx, by) => {
+      g.clear();
+      const line = () => { g.beginPath(); g.moveTo(ax, ay); g.lineTo(bx, by); g.strokePath(); };
+      g.lineStyle(width * 6, color, 0.12 * alpha); line();               // outer glow
+      g.lineStyle(width * 2.5, color, 0.35 * alpha); line();             // mid halo
+      g.lineStyle(Math.max(1, width * 0.6), 0xffffff, 0.90 * alpha); line(); // bright core
+    };
+    draw(x1, y1, x2, y2);
+    if (e1 || e2) (this._trackedBeams ??= []).push({ g, e1, e2, x1, y1, x2, y2, draw });
     this.tweens.add({ targets: g, alpha: 0, duration, ease: 'Expo.easeOut', onComplete: () => g.destroy() });
+    return g;
   }
   fireMobWeapon(mob, tx, ty, victim = this.player, extraOpts = {}) {
     const pType = mob.tpl.projectileType || 'plasma';
     const cfg   = PROJ_TYPES[pType] || PROJ_TYPES.plasma;
+    // Крит — только у боссов (рядовые мобы не критуют, у игрока крит уже есть
+    // симметрично). Веерные (ion) выстрелы не критуют — 3 независимых ролла на
+    // один залп были бы визуально шумными.
+    const isCrit  = !!mob.isBoss && Math.random() < (BOSS.critChance ?? 0.15);
+    const dmgMult = isCrit ? (BOSS.critMult ?? 1.8) : 1;
 
     // void — хитскан: мгновенный луч, урон без снаряда
     if (cfg.hitscan) {
       if (this._hasWallBetween(mob.x, mob.y, victim.x, victim.y)) return;
       const pen = cfg.penetration ?? 0.6;
-      const res = victim.takeDamage(mob.damage, pen, { ignoreMovEvasion: true, ...extraOpts });
-      this._laserBeam(mob.x, mob.y, victim.x, victim.y, 0xce93d8, 0.85, 4);
-      this.onProjectileHit({ owner: 'mob', victim, type: pType, effect: null, effectCfg: cfg }, res);
+      const res = victim.takeDamage(mob.damage * dmgMult, pen, { ignoreMovEvasion: true, dmgType: pType, ...extraOpts });
+      this._laserBeam(mob.x, mob.y, victim.x, victim.y, isCrit ? 0xffe14d : 0xce93d8, isCrit ? 1.0 : 0.85, isCrit ? 6 : 4, 200, mob, victim);
+      this.sfx?.play('sfx_mob_fire_hitscan', { volume: 0.4, cooldownMs: 90 });
+      this.onProjectileHit({ owner: 'mob', victim, type: pType, effect: null, effectCfg: cfg, isCrit }, res);
       return;
     }
 
@@ -2634,35 +2902,104 @@ export default class GameScene extends Phaser.Scene {
         const ey = mob.y + Math.sin(ang) * 60;
         this.projectiles.push(new Projectile(this, 'mob', mob.x, mob.y, ex, ey, victim, mob.damage * 0.35, 0.05, cfg.color, turnRate, pType));
       }
-      this.muzzleFlash(mob.x, mob.y, 0x80d8ff);
+      this.muzzleFlash(mob.x, mob.y, 0x80d8ff, mob);
+      this.sfx?.play('sfx_mob_fire_plasma', { volume: 0.35, cooldownMs: 90 });
       return;
     }
 
     // Остальные типы: один болт с самонаведением
     const turnRate = mob.isBoss ? (180 * Math.PI / 180) : (90 * Math.PI / 180);
     const pen = cfg.penetration ?? 0.05;
-    this.projectiles.push(new Projectile(this, 'mob', mob.x, mob.y, tx, ty, victim, mob.damage, pen, cfg.color, turnRate, pType));
-    const flashColor = { plasma: 0xff8a7a, acid: 0x76ff03, grav: 0xffb74d, emp: 0x4dd0e1 }[pType] ?? 0xff8a7a;
-    this.muzzleFlash(mob.x, mob.y, flashColor);
+    this.projectiles.push(new Projectile(this, 'mob', mob.x, mob.y, tx, ty, victim, mob.damage * dmgMult, pen, cfg.color, turnRate, pType, isCrit));
+    // gunner — единственный признак класса был +20% к скорострельности, никак не
+    // читаемый на глаз; даём его выстрелу свою, более резкую/яркую вспышку
+    const flashColor = isCrit ? 0xffe14d : mob.tpl.aiClass === 'gunner'
+      ? 0xffffff
+      : ({ plasma: 0xff8a7a, acid: 0x76ff03, grav: 0xffb74d, emp: 0x4dd0e1 }[pType] ?? 0xff8a7a);
+    this.muzzleFlash(mob.x, mob.y, flashColor, mob);
+    this.sfx?.play('sfx_mob_fire_plasma', { volume: 0.35, cooldownMs: 90 });
   }
-  muzzleFlash(x, y, color) {
+  // entity — опционально: живая сущность (Player/Mob), за которой эффект должен
+  // следовать все время своей жизни. Без него — прежнее поведение (снимок позиции),
+  // это ломало эффекты на движущемся корабле: вспышка оставалась висеть в пустом
+  // космосе, пока корабль улетал дальше за время тви́на.
+  muzzleFlash(x, y, color, entity) {
     const f = this.add.image(x, y, 'glow').setTint(color).setBlendMode(Phaser.BlendModes.ADD).setDepth(61).setDisplaySize(10, 10);
     this.tweens.add({ targets: f, displayWidth: 48, displayHeight: 48, alpha: 0, duration: 110, ease: 'Quad.easeOut', onComplete: () => f.destroy() });
+    return entity ? this._attachFx(f, entity) : f;
   }
-  hitFlash(x, y, toHull) {
+  // combatSfx=true — по умолчанию для реальных боевых попаданий; при переиспользовании
+  // hitFlash как generic-вспышки для активации скиллов (ремонт и т.п.) передают false,
+  // иначе "ремкомплект" звучал бы как "попадание по корпусу".
+  hitFlash(x, y, toHull, entity, combatSfx = true) {
     const f = this.add.image(x, y, 'glow').setTint(toHull ? 0xffa040 : 0x8fe6ff).setBlendMode(Phaser.BlendModes.ADD).setDepth(67).setDisplaySize(16, 16);
     this.tweens.add({ targets: f, displayWidth: 58, displayHeight: 58, alpha: 0, duration: 170, ease: 'Quad.easeOut', onComplete: () => f.destroy() });
+    if (combatSfx) this.sfx?.play(toHull ? 'sfx_hit_hull' : 'sfx_hit_shield', { volume: 0.45, cooldownMs: 40 });
+    return entity ? this._attachFx(f, entity) : f;
+  }
+
+  // Держит переданный game-object на позиции живой сущности (Player/Mob) до тех
+  // пор, пока объект не уничтожится (по завершении твина) или сущность не умрёт.
+  _attachFx(obj, entity) {
+    if (!obj) return obj;
+    (this._attachedFx ??= []).push({ obj, entity });
+    return obj;
+  }
+  _updateAttachedFx() {
+    if (!this._attachedFx?.length) return;
+    this._attachedFx = this._attachedFx.filter(({ obj, entity }) => {
+      if (!obj.active || entity?.alive === false) return false;
+      obj.setPosition(entity.x, entity.y);
+      return true;
+    });
+  }
+
+  // Как _laserBeam, но пересчитывает оба конца линии каждый кадр по живым
+  // координатам сущностей — иначе луч рисуется один раз в момент выстрела и
+  // «зависает» в пустом космосе, пока стрелок/цель продолжают лететь.
+  _updateTrackedBeams() {
+    if (!this._trackedBeams?.length) return;
+    this._trackedBeams = this._trackedBeams.filter(b => {
+      if (!b.g.active) return false;
+      const ax = b.e1?.alive !== false ? (b.e1?.x ?? b.x1) : b.x1;
+      const ay = b.e1?.alive !== false ? (b.e1?.y ?? b.y1) : b.y1;
+      const bx = b.e2?.alive !== false ? (b.e2?.x ?? b.x2) : b.x2;
+      const by = b.e2?.alive !== false ? (b.e2?.y ?? b.y2) : b.y2;
+      b.draw(ax, ay, bx, by);
+      return true;
+    });
+  }
+  // Plasma Bleed / Splinter (cannon-only weapon perks) — срабатывают на каждом
+  // успешном попадании пушки; лазер их не получает, см. _offensivePerkMult.
+  _applyCannonHitPerks(mob, dmgDealt) {
+    const p = this.player;
+    if (p.plasmaBleedPct > 0) {
+      mob._bleedDps   = (dmgDealt * p.plasmaBleedPct) / 2;
+      mob._bleedTimer = 2;
+    }
+    if (p.splinterPct > 0) {
+      const splashDmg = dmgDealt * p.splinterPct;
+      for (const m2 of this.mobs) {
+        if (m2 === mob || !m2.alive) continue;
+        const d = Phaser.Math.Distance.Between(mob.x, mob.y, m2.x, m2.y);
+        if (d > 150) continue;
+        const r2 = m2.takeDamage(splashDmg, 0.3, { ignoreMovEvasion: true });
+        this.showDamage(m2.x, m2.y, r2, m2.maxHull);
+        if (r2.killed) this.onMobKilled(m2);
+      }
+    }
   }
   onProjectileHit(proj, res) {
     if (proj.owner === 'player') {
       const m = proj.victim;
       if (res.dodged) { this.showDodge(m.x, m.y); return; }
       const toHull = (res.hullHit || 0) > 0;
-      this.hitFlash(m.x, m.y, toHull);
-      if (toHull && this._onScreen(m.x, m.y)) this.vfx?.play('hull_hit', m.x, m.y, { scale: 0.15, depth: 67 });
-      this.showDamage(m.x, m.y, res);
+      this.hitFlash(m.x, m.y, toHull, m);
+      if (toHull && this._onScreen(m.x, m.y)) this._attachFx(this.vfx?.play('hull_hit', m.x, m.y, { scale: 0.15, depth: 67 }), m);
+      this.showDamage(m.x, m.y, res, m.maxHull, proj.isCrit);
       const dmgDone = (res.shieldHit || 0) + (res.hullHit || 0);
       if (dmgDone > 0) this.groupSystem?.recordDamage(dmgDone);
+      if (dmgDone > 0) this._applyCannonHitPerks(m, dmgDone);
       if (res.killed) {
         if (m.ghostBoss) m.hull = 1; // не убиваем призрака — смерть придёт от сервера
         else this.onMobKilled(m);
@@ -2672,12 +3009,19 @@ export default class GameScene extends Phaser.Scene {
       const hy = proj.victim?.y ?? this.player.y;
       if (res?.dodged) { this.showDodge(hx, hy); return; }
       const toHull = (res?.hullHit || 0) > 0;
-      this.hitFlash(hx, hy, toHull);
-      if (toHull) this.vfx?.play('hull_hit', hx, hy, { scale: 0.15, depth: 67 });
-      this.showDamage(hx, hy, res);
+      this.hitFlash(hx, hy, toHull, proj.victim);
+      if (toHull) this._attachFx(this.vfx?.play('hull_hit', hx, hy, { scale: 0.15, depth: 67 }), proj.victim);
+      this.showDamage(hx, hy, res, proj.victim?.maxHull, proj.isCrit);
+      if (proj.isCrit && proj.victim === this.player) {
+        const txt = this.add.text(hx, hy - 40, 'КРИТ БОССА!',
+          { fontFamily: 'Orbitron', fontSize: '13px', color: '#ffe14d', fontStyle: 'bold', resolution: UI_RES })
+          .setOrigin(0.5).setDepth(71);
+        this.tweens.add({ targets: txt, y: hy - 78, alpha: 0, duration: 600, ease: 'Quad.easeOut', onComplete: () => txt.destroy() });
+      }
       if (proj.victim === this.player && !res?.dodged) {
         this._applyProjEffect(proj, hx, hy);
         if (res?.brokeShield) this.log(i18n.t('log.shield_down'));
+        this._shakeForHit(res, this.player.maxHull);
         if (!this.player.alive) this.onPlayerKilled();
       }
     }
@@ -2705,7 +3049,10 @@ export default class GameScene extends Phaser.Scene {
     }
   }
   onMobKilled(mob) {
+    this.player?.triggerEnergyShunt();
     this.explosion(mob.x, mob.y, mob.isBoss ? 1.6 : 0.6);
+    this.sfx?.play(mob.isBoss ? 'sfx_explosion_boss' : 'sfx_explosion_small', { volume: mob.isBoss ? 0.8 : 0.5, cooldownMs: mob.isBoss ? 0 : 60 });
+    if (mob.isBoss) { this.cameras.main.shake(280, 0.013); this.cameras.main.flash(140, 255, 210, 140, true); }
     const name = i18n.t(mob.tpl.nameKey); const lvl = `${i18n.t('mob.level')}${mob.level}`;
     const lvlScale = 1 + 0.5 * (mob.level - 1);
     const _credMult = this.player?.creditBonusMod ?? 1;
@@ -2929,11 +3276,6 @@ export default class GameScene extends Phaser.Scene {
       const bH = mob.level > pl ? HONOR.BOSS_HIGHER : mob.level === pl ? HONOR.BOSS_EQUAL : HONOR.BOSS_LOWER;
       this.gainHonor(bH);
     }
-    if ((sec?.pvp || sec?.isDungeon) && mob.isPlayerMob) {
-      const pl = this.pilotLevel || 1;
-      const pH = mob.level > pl ? HONOR.PVP_HIGHER : mob.level === pl ? HONOR.PVP_EQUAL : HONOR.PVP_LOWER;
-      this.gainHonor(pH);
-    }
     if (sec?.isDungeon) {
       if (galaxy.current === 'R-1-boss' && mob.corridorIndex !== undefined) {
         this._checkCorridorClear(mob.corridorIndex);
@@ -3103,14 +3445,20 @@ export default class GameScene extends Phaser.Scene {
     this.player._restoreDisplaySize();
     const deathX = this.player.x, deathY = this.player.y;
     this.explosion(deathX, deathY, 1.1);
+    this.sfx?.play('sfx_player_death', { volume: 0.85 });
+    this.cameras.main.shake(320, 0.016);
+    this.cameras.main.flash(220, 180, 30, 30, true);
     this.log(i18n.t('log.you_died'));
-    // PvP death: drop 5% plasmate as loot box; mob death: plasmate is safe
+    // PvP-смерть: штраф в виде выпавшего лута (5% плазмита), которого нет при смерти от моба —
+    // это единственная разница в обработке, дальше идёт тот же ремонт-диалог для обоих случаев.
+    // Коробку не кладём в свой this.loot — сервер решает, кому она видна (победителю и всем,
+    // кто наносил урон в эту жизнь; сама жертва её не видит и не может забрать обратно).
     if (killedByPlayer) {
       const totalP = totalPlasmateInInventory(this.inventory);
       if (totalP > 0) {
         const drop = Math.max(1, Math.floor(totalP * 0.05));
         removePlasmateFromInventory(this.inventory, drop);
-        this.loot.push(new Loot(this, deathX, deathY, { type: 'plasmate', amount: drop }, 'boss'));
+        this.pvpClient?.spawnLoot(deathX, deathY, { type: 'plasmate', amount: drop });
         this.log(i18n.t('log.plasmate_dropped', { amount: drop }));
       }
     }
@@ -3304,12 +3652,22 @@ export default class GameScene extends Phaser.Scene {
         () => finishRespawn(deathX, deathY, false, spotCr, spotSt));
     }
   }
-  showDamage(x, y, res) {
+  // maxHp — необязательно: max HP цели, чтобы масштабировать подачу по % урона
+  // (тычок роя и решающий удар босса раньше выглядели одинаково). isCrit — крит
+  // получает свой цвет прямо в числе, а не только отдельную подпись "КРИТ!" рядом.
+  showDamage(x, y, res, maxHp, isCrit = false) {
     const total = Math.round((res.shieldHit || 0) + (res.hullHit || 0)); if (total <= 0) return;
     const toHull = (res.hullHit || 0) > 0;
-    const txt = this.add.text(x + Phaser.Math.Between(-12, 12), y - 20, `-${total}`, { fontFamily: 'Orbitron', fontSize: toHull ? '20px' : '16px', color: toHull ? '#ef5350' : '#4dd0e1', fontStyle: 'bold', resolution: UI_RES, }).setOrigin(0.5).setDepth(70);
-    this.tweens.add({ targets: txt, y: y - 60, duration: 1500, ease: 'Quad.easeOut', onComplete: () => txt.destroy() });
-    this.tweens.add({ targets: txt, alpha: 0, delay: 700, duration: 800 });
+    const pct  = maxHp ? Math.min(1, total / maxHp) : 0;
+    const size = Math.round((toHull ? 20 : 16) + pct * 16);
+    const color = isCrit ? '#ffe14d' : toHull ? '#ef5350' : '#4dd0e1';
+    const txt = this.add.text(x + Phaser.Math.Between(-12, 12), y - 20, `-${total}`,
+      { fontFamily: 'Orbitron', fontSize: `${size}px`, color, fontStyle: 'bold', resolution: UI_RES })
+      .setOrigin(0.5).setDepth(70).setScale(0.55 + pct * 0.35);
+    this.tweens.add({ targets: txt, scale: 1, duration: 140, ease: 'Back.easeOut' });
+    const riseDist = 60 + pct * 40, dur = 1500 + pct * 400;
+    this.tweens.add({ targets: txt, y: y - riseDist, duration: dur, ease: 'Quad.easeOut', onComplete: () => txt.destroy() });
+    this.tweens.add({ targets: txt, alpha: 0, delay: dur * 0.47, duration: dur * 0.53 });
   }
   pingAt(x, y) {
     const ring = this.add.circle(x, y, 6, COLORS.primary, 0).setStrokeStyle(2, COLORS.primary, 0.9).setDepth(35);
@@ -3318,6 +3676,7 @@ export default class GameScene extends Phaser.Scene {
   showDodge(x, y) {
     const txt = this.add.text(x, y - 24, i18n.t('hud.dodge'), { fontFamily: 'Orbitron', fontSize: '15px', color: '#4dd0e1', fontStyle: 'bold', resolution: UI_RES, }).setOrigin(0.5).setDepth(70);
     this.tweens.add({ targets: txt, y: y - 56, alpha: 0, duration: 650, ease: 'Quad.easeOut', onComplete: () => txt.destroy() });
+    this.sfx?.play('sfx_dodge', { volume: 0.5, cooldownMs: 100 });
   }
   explosion(x, y, scale = 1) {
     const size = Math.round(scale * 300); const cls = EXP_CLASSES.find((c) => c[1] >= size) || EXP_CLASSES[EXP_CLASSES.length - 1];
@@ -3385,8 +3744,95 @@ export default class GameScene extends Phaser.Scene {
     const d = Phaser.Math.Distance.Between(p.x, p.y, z.x, z.y);
     if (d <= z.radius) {
       const falloff = 1 - (d / z.radius) * (1 - BOSS.aoeEdgeFactor);
-      const res = p.takeDamage(BOSS.aoeDamage * falloff, BOSS.aoePenetration, true);
-      this.showDamage(p.x, p.y, res); if (!p.alive) this.onPlayerKilled();
+      const res = p.takeDamage(BOSS.aoeDamage * falloff, BOSS.aoePenetration, { ignoreMovEvasion: true, aoe: true });
+      this.showDamage(p.x, p.y, res, p.maxHull);
+      this._shakeForHit(res, p.maxHull);
+      if (!p.alive) this.onPlayerKilled();
+    }
+  }
+  // Тряска камеры от удара по игроку — растёт с % урона от maxHull, с нижним
+  // порогом, чтобы щитовые тычки роя не превращали экран в непрерывную вибрацию.
+  // Раньше камера реагировала только на фазы Апофиса — обычный бой был «немым».
+  _shakeForHit(res, maxHp) {
+    const pct = (res?.hullHit || 0) / (maxHp || 1);
+    if (pct < 0.02) return;
+    const k = Math.min(1, pct);
+    this.cameras.main.shake(90 + k * 170, 0.004 + k * 0.011);
+  }
+  // Пульсирующая красная виньетка по краям экрана при HP игрока < 25% — раньше
+  // единственным сигналом низкого HP была статичная смена цвета полоски в HUD.
+  _updateLowHpVignette(dt) {
+    const p = this.player;
+    const low = !!(p?.alive && p.maxHull > 0 && p.hull / p.maxHull < 0.25);
+    if (!low) {
+      if (this._lowHpVignette) this._lowHpVignette.setVisible(false);
+      this._lowHpPulseT = 0;
+      this.sfx?.stopLoop('sfx_low_hp_warning');
+      return;
+    }
+    this.sfx?.startLoop('sfx_low_hp_warning', { volume: 0.35 });
+    if (!this._lowHpVignette) {
+      this._lowHpVignette = this.add.graphics().setScrollFactor(0).setDepth(290);
+    }
+    this._lowHpVignette.setVisible(true);
+    // Пульс ускоряется по мере приближения к 0 HP: от ~1.1с на пике порога до ~0.5с у смерти
+    const hpFrac = Phaser.Math.Clamp(p.hull / p.maxHull, 0, 0.25) / 0.25; // 1→0
+    const period = 0.5 + hpFrac * 0.6;
+    this._lowHpPulseT = ((this._lowHpPulseT ?? 0) + dt / period) % 1;
+    const pulse = 0.5 - 0.5 * Math.cos(this._lowHpPulseT * Math.PI * 2); // 0..1..0
+    const W = this.scale.width, H = this.scale.height;
+    const bw = Math.round(Math.min(W, H) * 0.16);
+    const a = 0.10 + 0.22 * pulse;
+    const g = this._lowHpVignette, red = 0xef5350;
+    g.clear();
+    g.fillGradientStyle(red, red, red, red, a, a, 0, 0); g.fillRect(0, 0, W, bw);           // верх
+    g.fillGradientStyle(red, red, red, red, 0, 0, a, a); g.fillRect(0, H - bw, W, bw);       // низ
+    g.fillGradientStyle(red, red, red, red, a, 0, a, 0); g.fillRect(0, 0, bw, H);            // лево
+    g.fillGradientStyle(red, red, red, red, 0, a, 0, a); g.fillRect(W - bw, 0, bw, H);       // право
+  }
+  // Dev-дальномер [хоткей 7, вместе с тренажёрами]: кольцо фактической дальности
+  // оружия вокруг игрока + линейка живой дистанции до ближайшего тренажёра —
+  // для проверки баланса без гадания "долетит/не долетит".
+  _updateRangeRing() {
+    const active = this._trainingDummies?.length > 0;
+    if (!active) {
+      this._rangeRingGfx?.setVisible(false);
+      this._rangeRingText?.setVisible(false);
+      this._rangeRulerText?.setVisible(false);
+      return;
+    }
+    if (!this._rangeRingGfx) {
+      this._rangeRingGfx = this.add.graphics().setDepth(30);
+      this._rangeRingText = this.add.text(0, 0, '',
+        { fontFamily: 'Orbitron', fontSize: '11px', color: '#4dd0e1', resolution: UI_RES })
+        .setOrigin(0.5, 1).setDepth(31);
+      this._rangeRulerText = this.add.text(0, 0, '',
+        { fontFamily: 'Orbitron', fontSize: '12px', color: '#ffee44', resolution: UI_RES, backgroundColor: '#000000aa' })
+        .setOrigin(0.5).setDepth(31).setPadding(4, 2, 4, 2);
+    }
+    const p = this.player;
+    if (!p?.alive) return;
+    const range = p.weaponRange ?? 600;
+    const g = this._rangeRingGfx;
+    g.setVisible(true).clear();
+    g.lineStyle(2, 0x4dd0e1, 0.55);
+    g.strokeCircle(p.x, p.y, range);
+    this._rangeRingText.setVisible(true).setPosition(p.x, p.y - range - 10).setText(`ДАЛЬНОСТЬ ОРУЖИЯ: ${Math.round(range)}px`);
+
+    let nearest = null, nd = Infinity;
+    for (const d of this._trainingDummies) {
+      if (!d.alive) continue;
+      const dist = Phaser.Math.Distance.Between(p.x, p.y, d.x, d.y);
+      if (dist < nd) { nd = dist; nearest = d; }
+    }
+    if (nearest) {
+      g.lineStyle(1.5, 0xffee44, 0.8);
+      g.lineBetween(p.x, p.y, nearest.x, nearest.y);
+      this._rangeRulerText.setVisible(true)
+        .setPosition((p.x + nearest.x) / 2, (p.y + nearest.y) / 2 - 12)
+        .setText(`${Math.round(nd)}px${nd <= range ? ' · в дальности' : ' · вне дальности'}`);
+    } else {
+      this._rangeRulerText.setVisible(false);
     }
   }
   _onScreen(x, y) { return this.cameras.main.worldView.contains(x, y); }
@@ -3487,6 +3933,12 @@ export default class GameScene extends Phaser.Scene {
       if (m.requestAoe) { this.spawnBossAoe(m, this.player.x, this.player.y); m.requestAoe = false; }
     });
     this.updateAoe();
+    // PvP: интерполяция чужих кораблей + throttled отправка своей позиции.
+    // Сами по себе никогда не наносят урона — бой идёт через pvpClient.fireClaim (шаг 4).
+    if (this.pvpClient?.sector) {
+      this.pvpClient.update(dt);
+      if (this.player.alive) this.pvpClient.sendPos(this.player.x, this.player.y, this.player.facing, dt * 1000);
+    }
     if (this.player.alive && galaxy.current === 'dungeon_3') this._updateSyndicateEMP(dt);
 
     this.miningBases.forEach(b => b.update(dt));
@@ -3496,6 +3948,10 @@ export default class GameScene extends Phaser.Scene {
     this.projectiles.forEach((p) => p.update(dt));
     if (this._wallLines?.length) this._checkProjWallCollision();
     this.updateLoot(dt); this.updateGates(dt);
+    this._updateAttachedFx();
+    this._updateTrackedBeams();
+    this._updateLowHpVignette(dt);
+    this._updateRangeRing();
     this._updateMagnet(dt);
     this._updateAutoCollect(dt);
     const now2 = this.time.now;
@@ -3672,7 +4128,10 @@ export default class GameScene extends Phaser.Scene {
       this.collectGfx.strokeCircle(target.x, target.y, 45 * (1 - frac));
       
       if (frac >= 1) {
-        if (target.isPlasmate || target.isDungeonResource) {
+        if (target.pvpLootId) {
+          this._claimPvpLoot(target);
+          this.cancelCollect();
+        } else if (target.isPlasmate || target.isDungeonResource) {
           this._collectPlasmateDeposit(target);
           this.cancelCollect();
         } else {
@@ -3766,6 +4225,11 @@ export default class GameScene extends Phaser.Scene {
 
       if (dist < 8) {
         // Arrived — collect
+        if (loot.pvpLootId) {
+          loot._magnetPull = false;
+          this._claimPvpLoot(loot);
+          continue;
+        }
         const mi = loot.item;
         if (CONSUMABLES[mi.type]) {
           const ammoAdded = this._tryAddToAmmoSlots(mi.type, mi.amount);
@@ -4298,6 +4762,7 @@ export default class GameScene extends Phaser.Scene {
     this.tweens.add({ targets: ring1, scaleX: 10, scaleY: 10, alpha: 0, duration: 1400,
       ease: 'Quad.easeOut', onComplete: () => ring1.destroy() });
     this.cameras.main.shake(300, 0.012);
+    this.sfx?.play('sfx_boss_phase', { volume: 0.8 });
     this.log(i18n.t('log.boss_shockwave'));
   }
 
@@ -4610,6 +5075,7 @@ export default class GameScene extends Phaser.Scene {
     const br = bomb.tpl.bombBlastRadius ?? 320;
     const cr = bomb.tpl.bombChainRadius ?? 400;
     this.explosion(bx, by, 1.0);
+    this.sfx?.play('sfx_mine_detonate', { volume: 0.6 });
     // Урон игроку
     if (this.player?.alive) {
       const pdist = Phaser.Math.Distance.Between(bx, by, this.player.x, this.player.y);
@@ -4617,8 +5083,9 @@ export default class GameScene extends Phaser.Scene {
         const totalHp = (this.player.hull ?? 0) + (this.player.shield ?? 0);
         const dmg = Math.max(totalHp * 0.10, 60);
         const falloff = 1 - (pdist / br) * 0.5;
-        const res = this.player.takeDamage(dmg * falloff, 0.2);
-        this.showDamage(this.player.x, this.player.y, res);
+        const res = this.player.takeDamage(dmg * falloff, 0.2, { aoe: true });
+        this.showDamage(this.player.x, this.player.y, res, this.player.maxHull);
+        this._shakeForHit(res, this.player.maxHull);
         if (!this.player.alive) this.onPlayerKilled();
       }
     }
@@ -4648,6 +5115,7 @@ export default class GameScene extends Phaser.Scene {
     const mx = mine.x, my = mine.y;
     const ang = mine._mineFireAngle ?? mine.sprite.rotation;
     const RANGE = 900, HALF_ANGLE = 0.17; // ~±10°
+    this.sfx?.play('sfx_mine_detonate', { volume: 0.6 });
     this._laserBeam(mx, my, mx + Math.cos(ang) * RANGE, my + Math.sin(ang) * RANGE, 0xff6644, 1.0, 7, 260);
     if (this.player?.alive) {
       const toP = Math.atan2(this.player.y - my, this.player.x - mx);
@@ -4656,8 +5124,9 @@ export default class GameScene extends Phaser.Scene {
       if (dAng <= HALF_ANGLE && pdist <= RANGE && !this._hasWallBetween(mx, my, this.player.x, this.player.y)) {
         const totalHp = (this.player.hull ?? 0) + (this.player.shield ?? 0);
         const dmg = Math.max(totalHp * 0.16, 100);
-        const res = this.player.takeDamage(dmg, 0.9); // высокая пробивная способность — почти весь урон в корпус
-        this.showDamage(this.player.x, this.player.y, res);
+        const res = this.player.takeDamage(dmg, 0.9, { aoe: true }); // высокая пробивная способность — почти весь урон в корпус
+        this.showDamage(this.player.x, this.player.y, res, this.player.maxHull);
+        this._shakeForHit(res, this.player.maxHull);
         if (!this.player.alive) this.onPlayerKilled();
       }
     }
@@ -4674,6 +5143,7 @@ export default class GameScene extends Phaser.Scene {
     const mx = mine.x, my = mine.y;
     const R = mine.tpl.bombBlastRadius ?? 420;
     this._spawnEMPPulse(mx, my);
+    this.sfx?.play('sfx_emp_stun', { volume: 0.6 });
     if (this.player?.alive) {
       const pdist = Phaser.Math.Distance.Between(mx, my, this.player.x, this.player.y);
       if (pdist <= R) this._applyPlayerStun(3000);
@@ -4707,8 +5177,9 @@ export default class GameScene extends Phaser.Scene {
     const dist = Phaser.Math.Distance.Between(this.player.x, this.player.y, boss.x, boss.y);
     for (const z of ZONES) {
       if (dist >= z.r - z.hw && dist <= z.r + z.hw) {
-        const res = this.player.takeDamage(z.dmg, 0);
-        this.showDamage(this.player.x, this.player.y, res);
+        const res = this.player.takeDamage(z.dmg, 0, { aoe: true });
+        this.showDamage(this.player.x, this.player.y, res, this.player.maxHull);
+        this._shakeForHit(res, this.player.maxHull);
         if (!this.player.alive) { this.onPlayerKilled(); return; }
         this.cameras.main.flash(100, 255, 200, 120, true);
         break;
@@ -4758,8 +5229,9 @@ export default class GameScene extends Phaser.Scene {
             const blastDist = Phaser.Math.Distance.Between(mine.x, mine.y, this.player.x, this.player.y);
             if (blastDist <= mine.blastRadius) {
               const falloff = 1 - (blastDist / mine.blastRadius) * 0.6;
-              const res = this.player.takeDamage(mine.damage * falloff, mine.penetration);
-              this.showDamage(this.player.x, this.player.y, res);
+              const res = this.player.takeDamage(mine.damage * falloff, mine.penetration, { aoe: true });
+              this.showDamage(this.player.x, this.player.y, res, this.player.maxHull);
+              this._shakeForHit(res, this.player.maxHull);
               if (!this.player.alive) this.onPlayerKilled();
             }
           }
@@ -5036,7 +5508,27 @@ export default class GameScene extends Phaser.Scene {
   //  БОЙ С ТЕНЬЮ — shadow_arena логика
   // ═══════════════════════════════════════════════════════════════════════════
 
+  // Суточный лимит боёв с Тенью — раньше игрок сам настраивал статы "противника"
+  // и мог подбирать конфигурацию под формальную победу без риска: дыра для
+  // фарма опыта/кредитов. Лимит считается по локальной полуночи (тот же паттерн,
+  // что у plasmateDayReset/missionDailyReset).
+  _shadowBattleGate() {
+    const nowMs = Date.now();
+    if (!this.shadowBattleDayReset || nowMs >= this.shadowBattleDayReset) {
+      this.shadowBattlesToday = 0;
+      const tomorrow = new Date(); tomorrow.setHours(24, 0, 0, 0);
+      this.shadowBattleDayReset = tomorrow.getTime();
+    }
+    const max = this.premium ? 6 : 3;
+    const remaining = Math.max(0, max - (this.shadowBattlesToday || 0));
+    return { ok: remaining > 0, remaining, max };
+  }
+
   startShadowBattle(cfg) {
+    const gate = this._shadowBattleGate();
+    if (!gate.ok) { this.log(`⚔ Бой с Тенью: лимит на сегодня исчерпан (${gate.max}/${gate.max}).`); return; }
+    this.shadowBattlesToday = (this.shadowBattlesToday || 0) + 1;
+    this._shadowRematchesUsed = 0;
     this._shadowBattleCfg  = cfg;
     this._shadowPrevSector = galaxy.current;
     galaxy.current = 'shadow_arena';
@@ -5497,8 +5989,10 @@ export default class GameScene extends Phaser.Scene {
 
     let xpGain = 0, credGain = 0, honorGain = 0;
     if (result === 'win') {
-      xpGain   = 3500;
-      credGain = 12000;
+      // ×10 меньше прежнего — конфигурация "противника" целиком в руках игрока,
+      // это тренажёр, а не источник фарма опыта/кредитов
+      xpGain   = 350;
+      credGain = 1200;
       const bPow = this.botPilot ? this._shadowBotPower() : 0;
       const pPow = this._shadowPlayerPower();
       if (bPow > pPow) honorGain = HONOR.SHADOW_WIN;
@@ -5531,11 +6025,27 @@ export default class GameScene extends Phaser.Scene {
     }
 
     const closeY = cy + panH / 2 - 44;
-    [
-      { x: cx - 100, label: 'НА БАЗУ', color: COLORS.primary, fill: 0x0d2233, hover: 0x1a3a50, action: () => this.exitShadowBattle() },
-      { x: cx + 100, label: 'РЕВАНШ',  color: 0xccbb44, fill: 0x1a1a0d, hover: 0x2a2a10,
-        action: () => { this._shadowBattleDone = false; this._cleanupBotPilot(); document.getElementById('scene-overlay')?.classList.add('active'); this.scene.restart(); } },
-    ].forEach(({ x, label, color, fill, hover, action }) => {
+    // До 2 реванша на бой (в рамках одной из 3/6 суточных попыток) — без этого
+    // игрок мог реваншироваться неограниченно против той же удобной конфигурации.
+    const rematchesLeft = 2 - (this._shadowRematchesUsed || 0);
+    const canRematch = rematchesLeft > 0;
+    const buttons = canRematch
+      ? [
+          { x: cx - 100, label: 'НА БАЗУ', color: COLORS.primary, fill: 0x0d2233, hover: 0x1a3a50, action: () => this.exitShadowBattle() },
+          { x: cx + 100, label: `РЕВАНШ (${rematchesLeft})`, color: 0xccbb44, fill: 0x1a1a0d, hover: 0x2a2a10,
+            action: () => {
+              this._shadowRematchesUsed = (this._shadowRematchesUsed || 0) + 1;
+              this._shadowBattleDone = false; this._cleanupBotPilot();
+              document.getElementById('scene-overlay')?.classList.add('active'); this.scene.restart();
+            } },
+        ]
+      : [
+          { x: cx, label: 'НА БАЗУ', color: COLORS.primary, fill: 0x0d2233, hover: 0x1a3a50, action: () => this.exitShadowBattle() },
+        ];
+    if (!canRematch) {
+      reg(this.add.text(cx, closeY - 34, 'Реванши на этот бой закончились', TFI('11px', '#667788')).setOrigin(0.5).setScrollFactor(0).setDepth(201));
+    }
+    buttons.forEach(({ x, label, color, fill, hover, action }) => {
       const btn = reg(this.add.rectangle(x, closeY, 180, 42, fill)
         .setStrokeStyle(1, color, 0.8).setInteractive({ useHandCursor: true })
         .setScrollFactor(0).setDepth(201));
@@ -5581,7 +6091,7 @@ export default class GameScene extends Phaser.Scene {
       this._makeTrainingDummy({ x: p.x + 380, y: p.y + 130, hull: 150000, shield: 150000 }),
     ];
     this._trainingDummies.forEach(d => this.mobs.push(d));
-    this.log('DEV: Тренажёры [7] — корпус 30k | щит+корп 15k+15k');
+    this.log('DEV: Тренажёры [7] — корпус 30k | щит+корп 15k+15k · кольцо дальности + линейка включены');
   }
 
   _makeTrainingDummy({ x, y, hull, shield }) {
@@ -5689,6 +6199,17 @@ export default class GameScene extends Phaser.Scene {
     this._escortMobs = null;
     this._trainingDummies?.forEach(d => d.destroy());
     this._trainingDummies = null;
+    this._rangeRingGfx?.destroy();
+    this._rangeRingGfx = null;
+    this._rangeRingText?.destroy();
+    this._rangeRingText = null;
+    this._rangeRulerText?.destroy();
+    this._rangeRulerText = null;
+    this._lowHpVignette?.destroy();
+    this._lowHpVignette = null;
+    this.sfx?.stopAllLoops();
+    this._attachedFx = [];
+    this._trackedBeams = [];
     this.argusCtrl?.destroy();
     this.argusCtrl = null;
     this.confedGuards?.destroy();
@@ -5752,6 +6273,8 @@ export default class GameScene extends Phaser.Scene {
       missionDailyReset:   this.missionDailyReset   || 0,
       plasmateToday:       this.plasmateToday        || 0,
       plasmateDayReset:    this.plasmateDayReset      || 0,
+      shadowBattlesToday:  this.shadowBattlesToday    || 0,
+      shadowBattleDayReset: this.shadowBattleDayReset  || 0,
       clan:                this.clan                  ?? null,
       lastGuardReset:      this.lastGuardReset         || {},
     };
@@ -5800,6 +6323,8 @@ export default class GameScene extends Phaser.Scene {
     if (s.missionDailyReset  != null) this.missionDailyReset  = s.missionDailyReset;
     if (s.plasmateToday      != null) this.plasmateToday      = s.plasmateToday;
     if (s.plasmateDayReset   != null) this.plasmateDayReset   = s.plasmateDayReset;
+    if (s.shadowBattlesToday != null) this.shadowBattlesToday = s.shadowBattlesToday;
+    if (s.shadowBattleDayReset != null) this.shadowBattleDayReset = s.shadowBattleDayReset;
     if (s.clan               !== undefined) this.clan         = s.clan;
     if (s.lastGuardReset     != null) this.lastGuardReset    = s.lastGuardReset;
   }

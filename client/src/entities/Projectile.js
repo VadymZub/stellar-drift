@@ -5,7 +5,7 @@ import { PROJECTILE, PROJ_TYPES } from '../constants.js';
 // type: ключ из PROJ_TYPES (plasma|ion|acid|grav|emp). void — хитскан, не создаёт объект.
 // effect: сохраняется из PROJ_TYPES[type].effect для применения при попадании в GameScene.
 export default class Projectile {
-  constructor(scene, owner, fromX, fromY, toX, toY, victim, damage, penetration, color, turnRate = 0, type = 'plasma') {
+  constructor(scene, owner, fromX, fromY, toX, toY, victim, damage, penetration, color, turnRate = 0, type = 'plasma', isCrit = false) {
     this.scene = scene;
     this.owner = owner;          // 'player' | 'mob'
     this.victim = victim;
@@ -13,6 +13,7 @@ export default class Projectile {
     this.penetration = penetration;
     this.turnRate = turnRate;    // рад/сек; 0 = прямолинейный
     this.type = type;
+    this.isCrit = isCrit;        // для showDamage — крит получает свой цвет числа
 
     const cfg = PROJ_TYPES[type] || PROJ_TYPES.plasma;
     this.effect = cfg.effect || null;
@@ -37,14 +38,11 @@ export default class Projectile {
     }
     this.sprite.rotation = ang;
 
-    // Trail: игрок = cyan, моб plasma = red, остальные типы = цвет снаряда
-    if (owner === 'player') {
-      this.trail = scene.trailCyan;
-    } else if (type === 'plasma') {
-      this.trail = scene.trailRed;
-    } else {
-      this.trail = null; // цветные снаряды без постоянного трейла (вспышки при создании)
-    }
+    // Trail: игрок = cyan; у мобов каждый тип снаряда — свой цвет шлейфа,
+    // подобранный к PROJ_TYPES[type].color (раньше только plasma получала трейл,
+    // остальные летели голой капсулой без следа)
+    const MOB_TRAILS = { plasma: 'trailRed', ion: 'trailIon', acid: 'trailAcid', grav: 'trailGrav', emp: 'trailEmp' };
+    this.trail = owner === 'player' ? scene.trailCyan : (scene[MOB_TRAILS[type]] ?? null);
     this.dead = false;
   }
 
@@ -80,7 +78,10 @@ export default class Projectile {
   }
 
   _hit() {
-    const res = this.victim.takeDamage(this.damage, this.penetration);
+    // dmgType — только для снарядов мобов: перк Adaptive у игрока отслеживает
+    // повторные попадания одного типа подряд, у мобов такого перка нет.
+    const opts = this.owner === 'mob' ? { dmgType: this.type } : undefined;
+    const res = this.victim.takeDamage(this.damage, this.penetration, opts);
     this.scene.onProjectileHit(this, res);
     this.destroy();
   }

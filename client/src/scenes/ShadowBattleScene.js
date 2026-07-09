@@ -123,6 +123,13 @@ export default class ShadowBattleScene extends Phaser.Scene {
     // ── Стат-превью бота ─────────────────────────────────────────────────
     this._statTxt = reg(this.add.text(cx, py + 524, '', TFI('12px', '#8899aa')).setOrigin(0.5));
 
+    // ── Суточный лимит: 3 боя/сутки, до 2 реванша на бой (та же дыра фарма опыта/кредитов) ─
+    const gs = this.scene.get('GameScene');
+    const gate = gs?._shadowBattleGate?.() ?? { remaining: 3, max: 3 };
+    this._limitTxt = reg(this.add.text(cx, py + PH - 66,
+      `Бои сегодня: ${gate.remaining}/${gate.max} · до 2 реванша на бой`,
+      TFI('11px', gate.remaining > 0 ? '#667788' : '#aa4444')).setOrigin(0.5));
+
     // ── Кнопки ────────────────────────────────────────────────────────────
     const startBtn = this.add.rectangle(cx - 86, py + PH - 36, 160, 44, 0x0a2a1a)
       .setStrokeStyle(2, COLORS.primary, 0.8).setInteractive({ useHandCursor: true });
@@ -248,6 +255,11 @@ export default class ShadowBattleScene extends Phaser.Scene {
   _launch() {
     const gs = this.scene.get('GameScene');
     if (!gs) { this.scene.stop(); return; }
+    const gate = gs._shadowBattleGate?.();
+    if (gate && !gate.ok) {
+      this._limitTxt?.setColor('#ff5555').setText('Лимит на сегодня исчерпан — доступ откроется в 00:00');
+      return;
+    }
     const cfg = this._cfg;
     this.scene.stop();
     gs.startShadowBattle(cfg);

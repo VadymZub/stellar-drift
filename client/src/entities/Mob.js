@@ -217,6 +217,8 @@ export default class Mob {
     this._apophisPhase   = 1;
     this._apophisSummonDone = false;
     this._fleeing        = false;
+    this._bleedTimer     = 0;
+    this._bleedDps       = 0;
   }
 
   enterEnrage() {
@@ -230,6 +232,15 @@ export default class Mob {
     if (!this.alive) return;
 
     if (this._invulTimer > 0) this._invulTimer -= dt;
+
+    // Plasma Bleed (cannon perk): DOT от последнего попадания пушкой игрока.
+    if (this._bleedTimer > 0) {
+      this._bleedTimer -= dt;
+      const bleedRes = this.takeDamage(this._bleedDps * dt, 1.0, { ignoreMovEvasion: true });
+      if (this._bleedTimer <= 0) { this._bleedTimer = 0; this._bleedDps = 0; }
+      if (bleedRes.killed) { this.scene.onMobKilled(this); return; }
+    }
+    if (!this.alive) return; // умер по другой причине в этом же кадре
 
     const now = this.scene.time.now;
     const sinceDmg = now - this.lastDamageAt;
@@ -323,9 +334,11 @@ export default class Mob {
       const fireMult  = enraged ? BOSS.enrageFireMult  : 1;
       const speedMult = enraged ? BOSS.enrageSpeedMult : 1;
 
-      // Berserker: при HP < 50% — постоянный буфф
+      // Berserker: при HP < 50% — постоянный буфф. Тинт — иначе баф скорости/огня
+      // никак не читался визуально, только по цифрам.
       if (this.tpl.aiClass === 'berserker' && !this._berserkerOn && this.hull / this.maxHull < 0.5) {
         this._berserkerOn = true;
+        this.sprite.setTint(0xff5533);
       }
       const berserkFire  = this._berserkerOn ? 1.3 : 1;
       const berserkSpeed = this._berserkerOn ? 1.4 : 1;
@@ -531,6 +544,10 @@ export default class Mob {
     this._mineLayTimer = (this.tpl.mineInterval ?? 6) + Phaser.Math.FloatBetween(-1, 1);
     const count = Phaser.Math.Between(1, 3);
     this.scene._spawnLayerMines?.(this, count);
+    // Короткая вспышка тинта в момент закладки — раньше мины появлялись за спиной
+    // мобa совершенно незаметно для игрока
+    this.sprite.setTint(0xff9a3c);
+    this.scene.time?.delayedCall(220, () => { if (this.alive) this.sprite.clearTint(); });
   }
 
   // ── Орбита вокруг точки (для дронов и охранников) ────────────────────────
@@ -668,6 +685,7 @@ export default class Mob {
       if (this._abilityData.duration <= 0) {
         this._abilityActive = false;
         this._abilityTimer  = 8;
+        this.sprite.clearTint();
       }
       return;
     }
@@ -675,6 +693,9 @@ export default class Mob {
       this._abilityActive      = true;
       this._abilityData.duration = 0.5;
       this._abilityTimer       = 8;
+      // Тинт на время рывка — раньше единственным признаком было ×2 к скорости,
+      // незаметное на глаз без сравнения с обычным движением
+      this.sprite.setTint(0xffffaa);
     }
   }
 
@@ -725,6 +746,7 @@ export default class Mob {
         this._bombTriggered = true;
         this._bombFuseTimer = this.tpl.bombFuse ?? 1.0;
         this.sprite.setTint(0xff4444);
+        this.scene.sfx?.play('sfx_bomb_arm', { volume: 0.5 });
         this.scene.tweens.add({ targets: this.sprite, alpha: { from: 1, to: 0.3 }, duration: 200, yoyo: true, repeat: -1 });
       }
     }
@@ -751,6 +773,7 @@ export default class Mob {
         // Направление фиксируется в момент взвода — импульс уйдёт туда, даже если цель сместится
         this._mineFireAngle = this.heading;
         this.sprite.setTint(0xff8844);
+        this.scene.sfx?.play('sfx_bomb_arm', { volume: 0.5 });
         this.scene.tweens.add({ targets: this.sprite, alpha: { from: 1, to: 0.3 }, duration: 150, yoyo: true, repeat: -1 });
       }
     }
@@ -772,6 +795,7 @@ export default class Mob {
         this._bombTriggered = true;
         this._bombFuseTimer = this.tpl.bombFuse ?? 0.6;
         this.sprite.setTint(0x4dd0e1);
+        this.scene.sfx?.play('sfx_bomb_arm', { volume: 0.5 });
         this.scene.tweens.add({ targets: this.sprite, alpha: { from: 1, to: 0.3 }, duration: 150, yoyo: true, repeat: -1 });
       }
     }

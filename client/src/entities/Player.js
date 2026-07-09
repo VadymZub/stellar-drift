@@ -240,13 +240,27 @@ export default class Player {
 
     // ── Step 4: Collect ALL perk % contributions in one pass each ────────────
     let cannonPerkPct  = 0, critPerkAdd = 0, hullBreakerPen = 0;
+    // anti_armor/marksman/vengeance — величина эффекта фиксируется здесь, а условие
+    // (щит цели <25%, цель неподвижна, HP игрока <40%) проверяется на месте выстрела
+    // (_fireCannon), где известны live-данные о цели/игроке.
+    let antiArmorPct = 0, marksmanPct = 0, plasmaBleedPct = 0, splinterPct = 0, vengeancePct = 0;
     for (const w of cannonW) {
       if (!w.perk) continue;
       const pb = perkBonus(w.perk);
       if (w.perk.key === 'perk_steady_aim')    cannonPerkPct  += 0.10 * (1 + pb);
       if (w.perk.key === 'perk_critical_edge') critPerkAdd    += 0.12 * (1 + pb);
       if (w.perk.key === 'perk_hull_breaker')  hullBreakerPen += 0.05 * (1 + pb);
+      if (w.perk.key === 'perk_anti_armor')    antiArmorPct   += 0.20 * (1 + pb);
+      if (w.perk.key === 'perk_marksman')      marksmanPct    += 0.15 * (1 + pb);
+      if (w.perk.key === 'perk_plasma_bleed')  plasmaBleedPct += 0.10 * (1 + pb);
+      if (w.perk.key === 'perk_splinter')      splinterPct    += 0.08 * (1 + pb);
+      if (w.perk.key === 'perk_vengeance')     vengeancePct   += 0.40 * (1 + pb);
     }
+    this.antiArmorPct   = antiArmorPct;
+    this.marksmanPct    = marksmanPct;
+    this.plasmaBleedPct = plasmaBleedPct;
+    this.splinterPct    = splinterPct;
+    this.vengeancePct   = vengeancePct;
     this.turnRateMult   = 1.0;
     this.stealthDurMult = 1.0;
     let engineThrustPct = 0;
@@ -258,6 +272,14 @@ export default class Player {
       if (e.perk.key === 'perk_engine_boost')   this.stealthDurMult *= 1 + 0.50 * (1 + pb);
     }
     let regenPerkPct = 0, evasionPerkAdd = 0, piercingResPerkRed = 0, quickRecoveryMult = 1.0;
+    // Аура-перки (cooperative/pack_aura) буфят "союзников в радиусе" — в игре нет
+    // рендера чужих живых кораблей рядом, поэтому эффект честно переносим на
+    // единственную существующую пропорцию "союзников" — размер группы в данже
+    // (тот же прокси уже используют пассивки кораблей, см. shieldPerAlly ниже).
+    let coopShieldPct = 0, packAuraPct = 0;
+    let energyShuntPct = 0, lastStandPct = 0, phaseShifterPct = 0, reactivePct = 0, splinterResPct = 0;
+    const groupN = this.scene.groupSize || 0;
+    this.adaptiveResistPct = 0;
     this.kineticAbsorbChance = 0;
     for (const s of S) {
       if (!s.perk) continue;
@@ -268,7 +290,23 @@ export default class Player {
       if (s.perk.key === 'perk_nimble')          evasionPerkAdd     += 0.06 * (1 + pb);
       if (s.perk.key === 'perk_kinetic_absorb')  this.kineticAbsorbChance = Math.max(this.kineticAbsorbChance, 0.15 * (1 + pb));
       if (s.perk.key === 'perk_bulwark' && shieldItems.length === 0) piercingResPerkRed += 0.20 * (1 + pb);
+      if (s.perk.key === 'perk_adaptive')        this.adaptiveResistPct += 0.12 * (1 + pb);
+      if (s.perk.key === 'perk_cooperative')     coopShieldPct      += 0.08 * (1 + pb) * groupN;
+      if (s.perk.key === 'perk_energy_shunt')    energyShuntPct     += 0.15 * (1 + pb);
+      if (s.perk.key === 'perk_last_stand')      lastStandPct       += 0.50 * (1 + pb);
+      if (s.perk.key === 'perk_pack_aura')       packAuraPct        += 0.05 * (1 + pb) * groupN;
+      if (s.perk.key === 'perk_phase_shifter')   phaseShifterPct    += 0.15 * (1 + pb);
+      if (s.perk.key === 'perk_reactive')        reactivePct        += 0.08 * (1 + pb);
+      if (s.perk.key === 'perk_splinter_resistance') splinterResPct += 0.20 * (1 + pb);
+      if (s.perk.key === 'perk_stealth_sync')    this.stealthDurMult *= 1 + 0.40 * (1 + pb);
     }
+    coopShieldPct = Math.min(0.60, coopShieldPct);
+    packAuraPct   = Math.min(0.40, packAuraPct);
+    this.energyShuntPct  = energyShuntPct;
+    this.lastStandPct    = lastStandPct;
+    this.phaseShifterPct = phaseShifterPct;
+    this.reactivePct     = Math.min(0.5, reactivePct);
+    this.splinterResPct  = Math.min(0.6, splinterResPct);
 
     // ── Step 5: Armor flat hull bonus — additive from each module's own raw base ─
     const armorHullFlat = armorItems.reduce((a,s) => {
@@ -297,10 +335,10 @@ export default class Player {
     // ── Step 7: FINAL STATS — BASE × (1 + Σ all % sources) ──────────────────
     // Boosters are additive with upgPct/skillPct/perkPct/boardPct — applied to the same
     // BASE that already includes ship-level upgrades (user intent: "базовые = с апгрейдом").
-    this.cannonDamage = Math.round(BASE_cannon * (1 + cannonUpgPct + sl('heavy_caliber') * 0.06 + cannonPerkPct + BF('cannonDmg') + boostDmg + mbDmg));
-    this.laserDamage  = Math.round(BASE_laser  * (1 + laserUpgPct  + sl('heavy_caliber') * 0.06 + BF('laserDmg') + boostDmg + (this.allLasers ? 0.05 : 0) + mbDmg));
+    this.cannonDamage = Math.round(BASE_cannon * (1 + cannonUpgPct + sl('heavy_caliber') * 0.06 + cannonPerkPct + packAuraPct + BF('cannonDmg') + boostDmg + mbDmg));
+    this.laserDamage  = Math.round(BASE_laser  * (1 + laserUpgPct  + sl('heavy_caliber') * 0.06 + packAuraPct + BF('laserDmg') + boostDmg + (this.allLasers ? 0.05 : 0) + mbDmg));
     this.maxHull      = Math.round(BASE_hull   * (1 + sl('reinforced_hull') * 0.06 + BF('hullMax') + boostHull + mbHull)) + armorHullFlat;
-    this.maxShield    = Math.round(BASE_shield  * (1 + shieldUpgPct + sl('shield_optimizer') * 0.05 + BF('shieldMax') + boostShield + mbShield));
+    this.maxShield    = Math.round(BASE_shield  * (1 + shieldUpgPct + sl('shield_optimizer') * 0.05 + coopShieldPct + BF('shieldMax') + boostShield + mbShield));
     this.baseSpeed    = Math.round(BASE_speed   * (1 + speedUpgPct  + engineThrustPct + BF('speed') + speedBoostPct));
     this.shieldRegenPerSec = Math.round(BASE_regen * (1 + regenUpgPct + regenPerkPct + BF('shieldRegen')));
 
@@ -425,6 +463,18 @@ export default class Player {
     if (this.shield <= 0 && this.kineticAbsorbChance > 0 && Math.random() < this.kineticAbsorbChance) {
       return { shieldHit: 0, hullHit: 0, brokeShield: false, absorbed: true };
     }
+    // Adaptive (shield perk): щит «запоминает» тип последнего попадания и гасит
+    // повторные удары того же типа в течение 4с — второй акид/ион подряд бьёт слабее.
+    if (opts.dmgType && this.adaptiveResistPct > 0 && this._adaptiveType === opts.dmgType && this._adaptiveTimer > 0) {
+      amount *= (1 - Math.min(0.6, this.adaptiveResistPct));
+    }
+    if (opts.dmgType) { this._adaptiveType = opts.dmgType; this._adaptiveTimer = 4; }
+    // Splinter Resistance (shield perk): сопротивление AOE-источникам (бомбы/мины/кольца боссов).
+    if (opts.aoe && this.splinterResPct > 0) amount *= (1 - this.splinterResPct);
+    // Last Stand (shield perk): доп. живучесть, порог считаем ДО текущего удара.
+    if (this.lastStandPct > 0 && this.maxHull > 0 && (this.hull / this.maxHull) < 0.20) {
+      amount *= (1 - Math.min(0.5, this.lastStandPct * 0.5));
+    }
     amount = Math.round(amount * (this.damageResistMod ?? 1) * (this._lockdownMult ?? 1));
     // Aegis dome: hull is immune — all damage forced into shield
     if ((this.scene._aegisDomeEndTime || 0) > this.scene.time.now) penetration = 0;
@@ -450,22 +500,38 @@ export default class Player {
 
     // Aegis passive: 7% chance to reflect shield-absorbed damage to nearest mob
     if (hadShield && this.reflectChance > 0 && Math.random() < this.reflectChance) {
-      const reflectDmg = Math.round(toShieldRaw * shieldMult * 0.30);
-      if (reflectDmg > 0) {
-        const mobs = this.scene.mobs ?? [];
-        let closest = null, bestD = 700;
-        for (const m of mobs) {
-          if (!m.alive) continue;
-          const d = Phaser.Math.Distance.Between(this.sprite.x, this.sprite.y, m.x, m.y);
-          if (d < bestD) { closest = m; bestD = d; }
-        }
-        if (closest) closest.takeDamage(reflectDmg, 0);
-      }
+      this._reflectDamageToNearestMob(toShieldRaw * shieldMult * 0.30);
+    }
+    // Reactive (shield perk): постоянно отражает часть полученного урона, в отличие
+    // от Aegis выше (шанс-based, только по щиту) — считаем от суммарного урона по кораблю.
+    if (this.reactivePct > 0) {
+      this._reflectDamageToNearestMob((toShieldRaw * shieldMult + hullHit) * this.reactivePct);
     }
 
     const brokeShield = hadShield && this.shield <= 0;
     if (this.hull <= 0) { this.hull = 0; this.die(); }
     return { shieldHit: toShieldRaw * shieldMult, hullHit, brokeShield };
+  }
+
+  // Общий хелпер для Aegis-пассивки и перка Reactive — оба отражают долю
+  // полученного урона в ближайшего живого моба в радиусе.
+  _reflectDamageToNearestMob(dmg, maxDist = 700) {
+    const reflectDmg = Math.round(dmg);
+    if (reflectDmg <= 0) return;
+    const mobs = this.scene.mobs ?? [];
+    let closest = null, bestD = maxDist;
+    for (const m of mobs) {
+      if (!m.alive) continue;
+      const d = Phaser.Math.Distance.Between(this.sprite.x, this.sprite.y, m.x, m.y);
+      if (d < bestD) { closest = m; bestD = d; }
+    }
+    if (closest) closest.takeDamage(reflectDmg, 0);
+  }
+
+  // Energy Shunt (shield perk): вызывается GameScene.onMobKilled — 5с буст к скорости
+  // реген щита. Не стакается, просто продлевает окно на очередное убийство.
+  triggerEnergyShunt() {
+    if (this.energyShuntPct > 0) this._shuntEndTime = this.scene.time.now + 5000;
   }
 
   die() {
@@ -525,6 +591,11 @@ export default class Player {
       this.gravTimer -= dt;
       if (this.gravTimer <= 0) { this.gravTimer = 0; this.gravMult = 1; }
     }
+    // Adaptive (shield perk): «текущий тип урона» забывается без повторных попаданий.
+    if (this._adaptiveTimer > 0) {
+      this._adaptiveTimer -= dt;
+      if (this._adaptiveTimer <= 0) { this._adaptiveTimer = 0; this._adaptiveType = null; }
+    }
     if (this.boosting) this.lastBoostAt = now; // отсчёт «после форсажа» идёт от его конца
     const sinceDamage = now - this.lastDamageAt;
     const sinceBoost = now - this.lastBoostAt;
@@ -533,7 +604,10 @@ export default class Player {
     const regenDelayMs = (this.shieldRegenDelaySec ?? 6) * 1000;
     if (!this.boosting && sinceDamage > regenDelayMs &&
         sinceBoost > regenDelayMs && this.shield < this.maxShield) {
-      this.shield = Math.min(this.maxShield, this.shield + this.shieldRegenPerSec * dt);
+      // Energy Shunt (shield perk): временный буст реген-скорости после убийства моба.
+      const shuntActive = (this._shuntEndTime || 0) > now;
+      const regenRate = this.shieldRegenPerSec * (shuntActive ? 1 + this.energyShuntPct : 1);
+      this.shield = Math.min(this.maxShield, this.shield + regenRate * dt);
     }
     // Авто-ремонт корпуса: если не атакуют hullRepairDelay (10 с) — чиним 5%/сек.
     if (sinceDamage > this.cfg.hullRepairDelay && this.hull < this.maxHull) {

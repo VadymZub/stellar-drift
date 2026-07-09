@@ -9,6 +9,7 @@ import { countConsumableInInventory } from '../items.js';
 import { prerenderTex } from '../utils/prerenderTex.js';
 import { loadSettings, saveSettings, getMinimapDims } from '../settings.js';
 import { GroupSystem } from '../systems/GroupSystem.js';
+import { PvpClient } from '../systems/PvpClient.js';
 
 const BOOSTER_DEFS = [
   { key: 'boost_damage', icon: '⚔', label: 'Урон +10%',  color: '#ff8c40' },
@@ -1533,12 +1534,29 @@ export default class HudScene extends Phaser.Scene {
     this._chatWsDestroyed = false;
     let ws;
     try {
-      ws = new WebSocket(`ws://localhost:8000/ws/chat?token=${encodeURIComponent(token)}`);
+      // location.hostname — тот же принцип, что в api.js API_BASE (см. комментарий там)
+      ws = new WebSocket(`ws://${location.hostname}:8000/ws/chat?token=${encodeURIComponent(token)}`);
     } catch { return; }
     this._chatWS = ws;
 
-    // GroupSystem использует этот же WS
+    // GroupSystem и PvpClient используют этот же WS (см. header-комментарии обоих модулей)
     this.groupSystem = new GroupSystem(this.scene.get('GameScene'), ws);
+    this.pvpClient   = new PvpClient(this.scene.get('GameScene'), ws);
+    this.pvpClient.onHitResult = (msg) => {
+      this.scene.get('GameScene')?._onPvpHitResult(msg);
+    };
+    this.pvpClient.onMobHitResult = (msg) => {
+      this.scene.get('GameScene')?._onPvpMobHitResult(msg);
+    };
+    this.pvpClient.onLootSpawned = (msg) => {
+      this.scene.get('GameScene')?._onPvpLootSpawned(msg);
+    };
+    this.pvpClient.onLootResult = (msg) => {
+      this.scene.get('GameScene')?._onPvpLootResult(msg);
+    };
+    this.pvpClient.onLootRemoved = (lootId) => {
+      this.scene.get('GameScene')?._onPvpLootRemoved(lootId);
+    };
     this.groupSystem.onGoldReward = (gold) => {
       const gs = this.scene.get('GameScene');
       if (gs) { gs.starGold = (gs.starGold || 0) + gold; }
@@ -1639,9 +1657,20 @@ export default class HudScene extends Phaser.Scene {
       let d;
       try { d = JSON.parse(evt.data); } catch { return; }
 
+      if (d.type === 'session_info') {
+        const gs = this.scene.get('GameScene');
+        if (gs) gs.myUserId = d.userId;
+        return;
+      }
+
       // Группо- и friend-сообщения роутим в GroupSystem
       if (d.type?.startsWith('group_') || d.type?.startsWith('friend_')) {
         this.groupSystem?.handleMessage(d);
+        return;
+      }
+      // PvP-сообщения (присутствие/позиции/бой) роутим в PvpClient
+      if (d.type?.startsWith('pvp_')) {
+        this.pvpClient?.handleMessage(d);
         return;
       }
 
@@ -1667,6 +1696,8 @@ export default class HudScene extends Phaser.Scene {
     ws.onclose = () => {
       this._chatWS = null;
       this.groupSystem = null;
+      this.pvpClient?.leaveSector(); // destroy any RemotePlayer sprites before dropping the reference
+      this.pvpClient = null;
       this._friendsList = [];
       this._rebuildFriendsWin();
       this._rebuildGroupWin();

@@ -6,6 +6,7 @@ import { SECTORS } from '../galaxy.js';
 import { buildBitmapFont } from '../utils/buildBitmapFont.js';
 import { prepShipTex, removeWhiteBg } from '../utils/prepShipTex.js';
 import { PERK_DEFS } from '../perks.js';
+import { SFX_KEYS } from '../systems/SoundManager.js';
 
 // Классы взрывов (px нативного кадра). Стек 28 кадров на класс — из design/slice_explosion24.py,
 // лежит в client/explosion24/<class>_sheet.png (игра берёт свежий стек оттуда).
@@ -92,6 +93,12 @@ export default class BootScene extends Phaser.Scene {
     this.load.image('ring_apophis_inner',  'assets/mobs/ring_apophis_inner.png');
     this.load.image('corridor_chest',      'assets/mobs/corridor_chest.png');
     this.load.image('ancient_miniboss',    'assets/mobs/ancient_miniboss.png');
+
+    // Боевые SFX (см. client/assets/sfx/sfx_prompts.md) — файлов может пока не
+    // быть (звук генерируется отдельно); Phaser пропускает недостающие файлы,
+    // не блокируя загрузку остального, SoundManager сам не проигрывает то, чего
+    // нет в кэше — игра работает молча, без ошибок, до тех пор пока их не положат.
+    for (const key of SFX_KEYS) this.load.audio(key, `assets/sfx/${key}.mp3`);
 
     // Иконки рангов (7 тиров)
     for (let t = 1; t <= 7; t++) this.load.image(`rank_tier${t}`, `assets/ranks/rank_tier${t}.png`);
