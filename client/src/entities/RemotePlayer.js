@@ -77,16 +77,24 @@ export default class RemotePlayer {
     this.drawBar();
   }
 
+  // Позиция (this.x/y) меняется почти каждый кадр — setPosition — дешёвая
+  // трансформация; содержимое бара (заливка hull/shield) перерисовываем только
+  // когда реально изменилось (см. тот же паттерн в Mob.js:drawBar).
   drawBar() {
     const w = 46, h = 4;
-    const bx = this.x - w / 2, by = this.y - this.sprite.displayHeight * 0.6 - 10;
+    this.bar.setPosition(this.x, this.y - this.sprite.displayHeight * 0.6 - 10);
+    const hullFrac   = Math.max(0, this.hull / this.maxHull);
+    const shieldFrac = this.maxShield > 0 ? Math.max(0, this.shield / this.maxShield) : 0;
+    const sig = `${Math.round(hullFrac * 1000)}:${Math.round(shieldFrac * 1000)}`;
+    if (sig === this._lastBarSig) return;
+    this._lastBarSig = sig;
     this.bar.clear();
-    this.bar.fillStyle(0x000000, 0.5); this.bar.fillRect(bx - 1, by - 1, w + 2, h + 2);
+    this.bar.fillStyle(0x000000, 0.5); this.bar.fillRect(-w / 2 - 1, -1, w + 2, h + 2);
     this.bar.fillStyle(COLORS.danger, 1);
-    this.bar.fillRect(bx, by, w * Math.max(0, this.hull / this.maxHull), h);
+    this.bar.fillRect(-w / 2, 0, w * hullFrac, h);
     if (this.maxShield > 0) {
       this.bar.fillStyle(COLORS.primary, 1);
-      this.bar.fillRect(bx, by - 3, w * Math.max(0, this.shield / this.maxShield), 2);
+      this.bar.fillRect(-w / 2, -3, w * shieldFrac, 2);
     }
   }
 

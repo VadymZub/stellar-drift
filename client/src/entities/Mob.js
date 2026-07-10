@@ -946,16 +946,29 @@ export default class Mob {
   }
 
   // ── Полоска HP/Shield ────────────────────────────────────────────────────
+  // Каждый живой моб на карте держит СВОЙ Graphics-объект для HP-бара, и раньше
+  // drawBar() делал clear()+redraw КАЖДЫЙ кадр для КАЖДОГО моба, даже стоящих на
+  // месте с полным здоровьем — на карте с десятками мобов (см. "expanded home map
+  // spawns") это была одна из главных причин GraphicsWebGLRenderer в профилировке.
+  // Позиция моба меняется почти каждый кадр (это ок, setPosition — дешёвая
+  // трансформация), а вот содержимое бара (заливка hull/shield) — только когда
+  // реально меняется хп/щит, поэтому геометрию рисуем в ЛОКАЛЬНЫХ координатах
+  // (относительно (0,0) бара) один раз при изменении, а позиционируем отдельно.
   drawBar() {
     const w = 46, h = 4;
-    const bx = this.x - w / 2, by = this.y - this.tpl.displaySize * 0.6;
+    this.bar.setPosition(this.x, this.y - this.tpl.displaySize * 0.6);
+    const hullFrac   = this.hull / this.maxHull;
+    const shieldFrac = this.maxShield > 0 ? this.shield / this.maxShield : 0;
+    const sig = `${Math.round(hullFrac * 1000)}:${Math.round(shieldFrac * 1000)}`;
+    if (sig === this._lastBarSig) return;
+    this._lastBarSig = sig;
     this.bar.clear();
-    this.bar.fillStyle(0x000000, 0.5); this.bar.fillRect(bx - 1, by - 1, w + 2, h + 2);
+    this.bar.fillStyle(0x000000, 0.5); this.bar.fillRect(-w / 2 - 1, -1, w + 2, h + 2);
     this.bar.fillStyle(COLORS.danger, 1);
-    this.bar.fillRect(bx, by, w * (this.hull / this.maxHull), h);
+    this.bar.fillRect(-w / 2, 0, w * hullFrac, h);
     if (this.maxShield > 0) {
       this.bar.fillStyle(COLORS.primary, 1);
-      this.bar.fillRect(bx, by - 3, w * (this.shield / this.maxShield), 2);
+      this.bar.fillRect(-w / 2, -3, w * shieldFrac, 2);
     }
   }
 
