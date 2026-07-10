@@ -846,6 +846,9 @@ export default class GameScene extends Phaser.Scene {
           id: `${galaxy.current}_base_${idx}`,
           pvpTier: pvpLvl,
         });
+        // Общий HP-леджер с мобами (см. PvpMobState на сервере) — id базы уже стабилен
+        // и сектор-скопирован, roomKey добавляем для единообразия с мобами/группами.
+        if (this._realtimeRoomKey) base.pvpMobId = `${this._realtimeRoomKey}:${base.id}`;
         this.miningBases.push(base);
         return base;
       });
@@ -2687,7 +2690,8 @@ export default class GameScene extends Phaser.Scene {
   // кто его видит в этот момент (не строим делёж лута по вкладу урона, как для
   // групповых боссов — отдельная задача, если понадобится).
   _onPvpMobHitResult(msg) {
-    const mob = this.mobs.find(m => m.pvpMobId === msg.mobId && m.alive);
+    const mob = this.mobs.find(m => m.pvpMobId === msg.mobId && m.alive)
+      || this.miningBases.find(b => b.pvpMobId === msg.mobId && b.alive);
     if (!mob) return;
     if (msg.dodged) { this.showDodge(mob.x, mob.y); return; }
     const hullHit   = msg.killed ? mob.hull   : Math.max(0, mob.hull   - msg.hull);
@@ -2711,14 +2715,19 @@ export default class GameScene extends Phaser.Scene {
     // (сервер решает исход), так что без явного die() mob.alive остаётся true — спрайт
     // не скрывается, следующий выстрел лениво пересоздаёт запись на сервере с полным HP,
     // выглядит как "моб живёт с hull=0, потом сам восстанавливается".
-    if (msg.killed && mob.alive) { mob.die(); this.onMobKilled(mob); }
+    // MiningBase не имеет .die()/не идёт в onMobKilled() (там ждут mob.tpl для наград) —
+    // у базы своя логика разрушения (_onDestroyed: выплата золота владельцам, сброс corp).
+    if (msg.killed && mob.alive) {
+      if (mob.isMiningBase) mob._onDestroyed();
+      else { mob.die(); this.onMobKilled(mob); }
+    }
   }
 
   // Реконсиляция уже заспавненных локально мобов с текущим сервер-леджером при входе в
   // сектор — если по мобу уже стреляли до нас, подхватываем актуальный hull/shield
   // вместо "полного HP", с которым он только что заспавнился локально у нас.
   _applyPvpMobSnapshot(mobsById) {
-    for (const mob of this.mobs) {
+    for (const mob of [...this.mobs, ...this.miningBases]) {
       const s = mob.pvpMobId && mobsById[mob.pvpMobId];
       if (s) { mob.hull = s.hull; mob.shield = s.shield; }
     }

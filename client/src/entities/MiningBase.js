@@ -14,6 +14,10 @@ export default class MiningBase {
     this.y       = y;
     this.id      = id || `base_${Math.round(x)}_${Math.round(y)}`;
     this.pvpTier = pvpTier;
+    // Отличаем от Mob/RemotePlayer в общем PvP-коде (_onPvpMobHitResult и т.п.) без
+    // instanceof; pvpMobId навешивает GameScene.spawnMobs() после конструктора (нужен
+    // this._realtimeRoomKey, которого MiningBase не знает).
+    this.isMiningBase = true;
 
     const saved = _registry.get(this.id);
     if (saved) {
@@ -66,6 +70,16 @@ export default class MiningBase {
   get canBeAttacked() {
     return this.alive && !(this.corp === 'neutral' && this._neutralPhase === 'immune');
   }
+
+  // У базы нет щита и нет отдельного поля maxHull — эти геттеры/сеттер существуют только
+  // чтобы общий realtime-код (GameScene._onPvpMobHitResult, PvpClient.mobFireClaim)
+  // мог работать с базой как с "мобом" без instanceof/дублирования логики. Сеттер
+  // shield — no-op (в строгом режиме ES-модулей присвоение свойству без сеттера бросит
+  // TypeError, а не тихо проигнорируется).
+  get maxHull()  { return BASE_CONFIG.hullMax; }
+  get shield()    { return 0; }
+  set shield(_v)  { /* базы без щита */ }
+  get maxShield() { return 0; }
 
   // Called by Projectile._hit() — must return {hullHit, shieldHit, killed}
   takeDamage(damage) {
