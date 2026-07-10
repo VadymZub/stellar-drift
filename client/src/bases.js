@@ -11,7 +11,8 @@ export const BASE_CONFIG = {
   neutralImmuneSec: 3600,  // 60 min
   turretSlots:      6,
   turretCostCredits: 5000,
-  turretSize:       80,    // turret sprite display size px
+  turretSize:       84,    // turret sprite display size px — fitted to the socket
+                            // averaged across all 4 base skins, see TURRET_SLOTS below
   baseCostCredits:  20000,
   pointsPerSec:     1,
   goldPerHrLow:     1,   // pvpTier 1-2
@@ -29,13 +30,19 @@ export const BASE_CONFIG = {
 
 // Turret slot offsets relative to base center (world px), tuned for displaySize 460.
 // Layout: 2 top, 2 middle (widest), 2 bottom — matches the 6-pod octagonal art.
+// Measured directly off the 4 base_*.png skins (each squashed to the 460×460 square
+// setDisplaySize forces regardless of native aspect — same squash the game applies)
+// and averaged across helios/karax/tides/neutral, since the 4 skins aren't pixel-identical
+// (native sizes 460×512 / 433×512 / 404×512 / 442×512). helios/karax/neutral land within
+// a few px of this average; tides' pods sit ~35-40px lower in its own canvas, so the fit
+// there is the deliberate compromise from averaging rather than a per-skin table.
 export const TURRET_SLOTS = [
-  { x: -120, y: -175 },
-  { x:  120, y: -175 },
-  { x: -170, y:    0 },
-  { x:  170, y:    0 },
-  { x: -120, y:  175 },
-  { x:  120, y:  175 },
+  { x: -153, y: -174 },
+  { x:  153, y: -174 },
+  { x: -190, y:  -47 },
+  { x:  190, y:  -47 },
+  { x: -153, y:   56 },
+  { x:  153, y:   56 },
 ];
 
 // Cannon II costs star-gold; price scales with PvP tier (1⭐ on pvp1 … 5⭐ on pvp5)

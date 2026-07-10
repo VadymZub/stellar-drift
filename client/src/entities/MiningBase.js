@@ -245,7 +245,7 @@ export default class MiningBase {
     const { x, y } = this;
     const sz  = BASE_CONFIG.displaySize;       // 460 — active / building
     const szD = BASE_CONFIG.displayDestroyed;  // 340 — destroyed (smaller, dimmed)
-    const tsz = BASE_CONFIG.turretSize;        // 80
+    const tsz = BASE_CONFIG.turretSize;
 
     // Faint capture-zone circle
     this._zone = this.scene.add.circle(x, y, BASE_CONFIG.captureRadius, 0x4dd0e1, 0.04)
@@ -337,11 +337,17 @@ export default class MiningBase {
 
   _refreshTurrets() {
     const assets = CORP_ASSETS[this.corp] || CORP_ASSETS.neutral;
+    const tsz = BASE_CONFIG.turretSize;
     this.turrets.forEach((type, i) => {
       const spr = this._turretSprites[i];
       if (!spr) return;
       if (type && this.state === 'active') {
-        spr.setTexture(type === 'cannon2' ? assets.cannon2 : assets.cannon1).setVisible(true);
+        // setTexture() ТОЛЬКО меняет кадр, scaleX/scaleY остаются от предыдущей
+        // текстуры — cannon1/cannon2 у разных корпов различаются нативным пикс.
+        // размером (268-389 × 305-463), без переприменения setDisplaySize турель
+        // при смене типа/корпа рисовалась бы то мельче, то на треть крупнее tsz.
+        spr.setTexture(type === 'cannon2' ? assets.cannon2 : assets.cannon1)
+          .setDisplaySize(tsz, tsz).setVisible(true);
       } else {
         spr.setVisible(false);
       }
