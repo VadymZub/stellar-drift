@@ -75,6 +75,16 @@ export class PvpClient {
         this._send({ type: 'pvp_mob_fire_claim', mobId, maxHull, maxShield, mobX, mobY, weaponType, dmg });
     }
 
+    /** Залп турели добывающей базы — НЕ личное оружие игрока (сервер валидирует
+     * урон/дальность/КД по типу турели, не по loadout отправителя, и дедуплицирует
+     * между клиентами, которые видят ту же турель — см. TURRET_WEAPONS в main.py).
+     * turretId должен быть стабилен и уникален (base.id + слот), baseX/baseY —
+     * позиция самой турели/базы, не отправляющего игрока. */
+    turretFireClaim(turretId, mobId, maxHull, maxShield, mobX, mobY, baseX, baseY, weaponType, dmg) {
+        if (!this.sector) return;
+        this._send({ type: 'pvp_turret_fire_claim', turretId, mobId, maxHull, maxShield, mobX, mobY, baseX, baseY, weaponType, dmg });
+    }
+
     /** Отправляется ЖЕРТВОЙ сразу после смерти — только у неё есть реальный инвентарь,
      * откуда считается дроп. Сервер сам решает, кому коробка будет видна (см. eligible
      * на сервере: победитель + все, кто наносил урон в эту жизнь). */

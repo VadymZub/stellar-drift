@@ -406,10 +406,22 @@ export default class MiningBase {
         spr.setRotation(Math.atan2(nearest.y - ty, nearest.x - tx) + Math.PI / 2);
       }
 
-      const res = nearest.takeDamage(damage, 0);
       this._turretCooldowns[i] = rateInv;
       gs.muzzleFlash?.(tx, ty, 0xffaa44);
-      if (res.killed) gs.onMobKilled?.(nearest);
+      if (nearest.pvpMobId) {
+        // Общий моб реалтайм-комнаты — залп идёт через turretFireClaim, НЕ через
+        // локальный takeDamage (иначе урон турели видел бы только этот клиент,
+        // и мог бы "ожить" мобу, которого уже убили другие — см. Mob-баг выше).
+        // turretId = id базы + слот — стабилен, сервер дедуплицирует по нему
+        // независимые заявки всех клиентов, видящих эту же турель.
+        gs.pvpClient?.turretFireClaim(
+          `${this.id}:${i}`, nearest.pvpMobId, nearest.maxHull, nearest.maxShield,
+          nearest.x, nearest.y, tx, ty, type, damage,
+        );
+      } else {
+        const res = nearest.takeDamage(damage, 0);
+        if (res.killed) gs.onMobKilled?.(nearest);
+      }
     });
   }
 

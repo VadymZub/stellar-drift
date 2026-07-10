@@ -236,6 +236,19 @@ PVP_BURST_MULT = 3.0
 PVP_CRIT_CHANCE_CAP = 0.65   # потолок — тот же, что у клиента (Player.js:critChance)
 PVP_CRIT_MULT_CAP   = 4.0    # потолок — тот же, что у клиента (Player.js:critMult)
 
+# Турели добывающих баз — залп НЕ привязан к личному оружию/лоадауту конкретного
+# игрока (иначе конфликтовал бы с cooldown/range того игрока, чей клиент случайно
+# первым отправил заявку). Каждый игрок, видящий базу, крутит свою локальную копию
+# MiningBase._updateTurrets — все они независимо решают "пора стрелять" по одному
+# и тому же слоту почти одновременно; turret_last_fire (см. PvpRoomManager)
+# дедуплицирует это в один засчитанный залп за минимальный интервал турели, чтобы
+# урон турели не рос с числом наблюдателей рядом с базой. Значения — зеркало
+# client/src/bases.js BASE_CONFIG (cannon1/cannon2 range/damage/rate).
+TURRET_WEAPONS = {
+    'cannon1': {'damage': 80.0,  'range': 400.0, 'minInterval': (1.0 / 0.8) * 0.9},
+    'cannon2': {'damage': 130.0, 'range': 550.0, 'minInterval': (1.0 / 1.2) * 0.9},
+}
+
 
 def _clamp_pvp_loadout(loadout: dict) -> dict:
     """Потолки заявленного лоадаута — клиент репортит свои эффективные статы (сервер их
@@ -322,6 +335,9 @@ class PvpRoomManager:
         self.player_sector: dict[int, str] = {}   # user_id → sector, для leave на disconnect
         self.mob_rooms: dict[str, dict[str, PvpMobState]] = {}
         self.loot_rooms: dict[str, dict[str, PvpLootBox]] = {}
+        # turret_id (уже включает sector через base.id) → time.time() последнего
+        # засчитанного залпа — см. TURRET_WEAPONS выше и pvp_turret_fire_claim ниже.
+        self.turret_last_fire: dict[str, float] = {}
 
     def enter(self, sector: str, user_id: int, username: str, x: float, y: float, loadout: dict) -> PvpPlayerState:
         self.leave(user_id)  # если уже был в другом PvP-секторе — сначала выходим оттуда
@@ -1157,6 +1173,54 @@ async def chat_ws(
                     **result,
                 }
                 room_uids = [attacker.user_id] + [p.user_id for p in pvp_room_manager.others(sector, attacker.user_id)]
+                await chat_manager.broadcast_to_uids(room_uids, out)
+
+            # ── PvP: заявка на выстрел ТУРЕЛИ добывающей базы по общему мобу —
+            #    урон/дальность/КД считаем по типу турели (TURRET_WEAPONS), НЕ по
+            #    личному лоадауту отправившего игрока (турель — не его оружие).
+            #    turret_last_fire дедуплицирует независимые заявки разных клиентов
+            #    об одном и том же залпе (см. комментарий у TURRET_WEAPONS) —
+            #    засчитываем первую, остальные в пределах minInterval молча игнорируем.
+            elif msg_type == 'pvp_turret_fire_claim':
+                sector = pvp_room_manager.player_sector.get(user.id)
+                mob_id = data.get('mobId')
+                turret_id = data.get('turretId')
+                if not sector or not mob_id or not turret_id:
+                    continue
+                turret_id = str(turret_id)[:120]
+                weapon_type = str(data.get('weaponType', 'cannon1'))[:20]
+                cfg = TURRET_WEAPONS.get(weapon_type, TURRET_WEAPONS['cannon1'])
+                now_ts = time.time()
+                if now_ts - pvp_room_manager.turret_last_fire.get(turret_id, 0.0) < cfg['minInterval']:
+                    continue
+                base_x, base_y = data.get('baseX'), data.get('baseY')
+                mob_x, mob_y = data.get('mobX'), data.get('mobY')
+                if base_x is not None and mob_x is not None:
+                    dist = math.hypot(float(mob_x) - float(base_x), float(mob_y) - float(base_y))
+                    if dist > cfg['range']:
+                        continue
+                pvp_room_manager.turret_last_fire[turret_id] = now_ts
+
+                mob_id = str(mob_id)[:80]
+                max_hull = max(1.0, float(data.get('maxHull', 1)))
+                max_shield = max(0.0, float(data.get('maxShield', 0)))
+                mob_state = pvp_room_manager.get_or_create_mob(sector, mob_id, max_hull, max_shield)
+                claimed_dmg = max(0.0, float(data.get('dmg', 0) or 0))
+                result = _apply_pvp_damage(
+                    claimed_dmg, cfg['damage'], 0.0,
+                    mob_state.hull, mob_state.shield, mob_state.max_hull, mob_state.max_shield,
+                )
+                mob_state.hull, mob_state.shield = result['hull'], result['shield']
+                if result['killed']:
+                    pvp_room_manager.remove_mob(sector, mob_id)
+
+                out = {
+                    'type': 'pvp_mob_hit_result', 'mobId': mob_id, 'attackerUserId': None,
+                    'weaponType': weapon_type,
+                    'maxHull': mob_state.max_hull, 'maxShield': mob_state.max_shield,
+                    **result,
+                }
+                room_uids = [user.id] + [p.user_id for p in pvp_room_manager.others(sector, user.id)]
                 await chat_manager.broadcast_to_uids(room_uids, out)
 
             # ── PvP: лут с убитого игрока — репортит сама жертва (только у её
