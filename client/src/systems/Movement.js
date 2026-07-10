@@ -122,7 +122,14 @@ export default class Movement {
       desired *= Math.max(0.1, dist / 50);
     } else if (!this.steerMode) {
       // Physics stopping distance: v²/(2a). Use 1.4× safety margin.
-      const stopDist = Math.max(120, p.speed * p.speed / (2 * HANDLING.accel) * 1.4);
+      // Считаем от desired (целевая скорость крейсерского полёта ДО этого throttle),
+      // а не от p.speed — иначе замкнутый цикл, который на форсаже выглядит как
+      // ритмичное дёрганье, не связанное с частотой кадров: p.speed чуть падает от
+      // самого throttle → stopDist (квадратично зависит от скорости) падает СИЛЬНЕЕ →
+      // dist снова >= stopDist → throttle отпускает → скорость снова растёт → stopDist
+      // снова растёт → throttle снова включается → повтор. desired — внешняя, не
+      // зависящая от собственного torможения величина, цикл разрывается.
+      const stopDist = Math.max(120, desired * desired / (2 * HANDLING.accel) * 1.4);
       if (dist < stopDist) desired *= Math.max(0, dist / stopDist);
     }
 
