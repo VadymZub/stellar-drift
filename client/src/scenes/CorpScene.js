@@ -401,19 +401,34 @@ export default class CorpScene extends Phaser.Scene {
       gs.playerCorp = corp;
       galaxy.current = CORP_HOME[corp] || 'helios_1';
       this.scene.stop();
-      // Load the new sector's map before restarting (lazy-loaded, may not be in cache)
+      // Load the new sector's map before restarting (lazy-loaded, may not be in cache).
       const _swMap = SECTORS[galaxy.current]?.map;
       const _doRestart = () => {
         document.getElementById('scene-overlay')?.classList.add('active');
         gs.scene.restart({ corpSwitch: true });
       };
-      if (_swMap && !gs.textures.exists(_swMap)) {
+      // gs.load (GameScene's own Loader) can already be mid-flight with unrelated
+      // work — background asset streaming (_bgPreloadDeferred) or the neighbor-sector
+      // speculative preload queued by createJumpgates() — since a corp switch jumps
+      // straight to a sector that isn't necessarily a "neighbor" ever queued ahead of
+      // time. Calling .image()+.start() while the loader is already LOADING can drop
+      // our file or fire 'complete' for that OTHER batch, restarting into the new
+      // sector before its map texture actually exists — BackgroundScene/HomeBase then
+      // correctly render nothing for a texture that was never loaded (plain
+      // rectangles/text like the enter button still render fine, which is why only
+      // "buttons" show). Wait out any in-flight load and verify the texture actually
+      // landed before restarting, with a bounded retry so a genuine load failure can't
+      // soft-lock the switch forever.
+      let _swAttempts = 0;
+      const _ensureMapLoaded = () => {
+        if (!_swMap || gs.textures.exists(_swMap)) { _doRestart(); return; }
+        if (++_swAttempts > 5) { _doRestart(); return; }
+        if (gs.load.isLoading?.()) { gs.load.once('complete', _ensureMapLoaded); return; }
         gs.load.image(_swMap, `assets/maps/${_swMap}.jpg`);
-        gs.load.once('complete', _doRestart);
+        gs.load.once('complete', _ensureMapLoaded);
         gs.load.start();
-      } else {
-        _doRestart();
-      }
+      };
+      _ensureMapLoaded();
     });
 
     // CANCEL button
