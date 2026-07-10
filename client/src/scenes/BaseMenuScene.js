@@ -19,9 +19,13 @@ export default class BaseMenuScene extends Phaser.Scene {
     const { width, height } = this.scale;
     const cx = width / 2, cy = height / 2;
 
-    // Full-screen dim — clicking outside closes
+    // Full-screen dim — clicking outside closes. stopPropagation everywhere in this
+    // scene is required — GameScene's OWN scene-level pointerdown listener (click to
+    // move the ship) also runs on every click that reaches the canvas regardless of
+    // what this (separate, overlaid) scene's objects consume, so without it clicking
+    // any button here also moved the ship underneath.
     const dim = this.add.rectangle(cx, cy, width, height, 0x000000, 0.55).setInteractive();
-    dim.on('pointerdown', () => this.scene.stop());
+    dim.on('pointerdown', (pointer, lx, ly, event) => { if (event) event.stopPropagation(); this.scene.stop(); });
 
     if (this.base.state === 'destroyed') {
       this._buildDestroyedPanel(cx, cy);
@@ -57,7 +61,8 @@ export default class BaseMenuScene extends Phaser.Scene {
     if (canAfford) {
       btn.on('pointerover',  () => btn.setFillStyle(0x1a3a24));
       btn.on('pointerout',   () => btn.setFillStyle(btnColor));
-      btn.on('pointerdown',  () => {
+      btn.on('pointerdown',  (pointer, lx, ly, event) => {
+        if (event) event.stopPropagation();
         this.base.buyBase(this.playerName);
         this.scene.restart({ base: this.base, playerName: this.playerName });
       });
@@ -77,11 +82,16 @@ export default class BaseMenuScene extends Phaser.Scene {
     const isOwner   = this.base.owners.some(o => o.name === this.playerName);
     const ownerRows = Math.max(1, this.base.owners.length);
     const speedUpH  = (!isActive && isOwner) ? 72 : 0;
-    const turretH   = isActive ? 164 : 0;
+    const hasShield = this.base.maxShield > 0;
+    const hpBlockH  = hasShield ? 68 : 42;
+    // Слоты: заголовок "ТУРЕЛЬНЫЕ СЛОТЫ" (40px до первого ряда — раньше было 26px,
+    // из-за чего лейбл визуально налезал на первую строку карточек турелей, см.
+    // отступ ниже) + 2 ряда карточек (57px + 8px зазор каждый).
+    const turretH   = isActive ? (40 + 2 * (57 + 8)) : 0;
     const H         = Math.min(780,
       PAD + 18              // title
       + 29                  // state
-      + 42                  // hp bar block
+      + hpBlockH             // hp (+ shield) bar block
       + speedUpH
       + 26                  // spacer / income
       + 21 + 5              // owners header
@@ -106,21 +116,35 @@ export default class BaseMenuScene extends Phaser.Scene {
     this.time.addEvent({ delay: 1000, loop: true, callback: () => { if (stateLbl?.active) stateLbl.setText(this._stateText()); } });
     y += 29;
 
-    // HP bar — live-updated during construction
+    // HP/shield bars — live-updated during construction and combat (this.base.maxHull/
+    // maxShield are tier-scaled getters, not the flat BASE_CONFIG constants — a base on
+    // pvp1-3 has less than the pvp4/5 base values, this used to always show/divide by
+    // the flat 100% value regardless of tier).
     const barW   = W - PAD * 2;
     this.add.text(cx - barW / 2, y - 12, 'ОБШИВКА', { ...TF, fontSize: '11px', color: '#2a4a5a' }).setOrigin(0, 0.5);
     this.add.rectangle(cx, y, barW, 16, 0x0a1420).setOrigin(0.5).setStrokeStyle(1, 0x1a3a50, 0.7);
     const hpFill = this.add.rectangle(cx - barW / 2, y, 1, 16, 0x4dd0e1).setOrigin(0, 0.5);
     const hpTxt  = this.add.text(cx, y + 20, '', { ...TF, fontSize: '13px', color: '#4a7090' }).setOrigin(0.5);
+    let shieldFill = null, shieldTxt = null;
+    if (hasShield) {
+      this.add.rectangle(cx, y + 38, barW, 12, 0x0a1420).setOrigin(0.5).setStrokeStyle(1, 0x1a3a50, 0.7);
+      shieldFill = this.add.rectangle(cx - barW / 2, y + 38, 1, 12, 0x80deea).setOrigin(0, 0.5);
+      shieldTxt  = this.add.text(cx, y + 56, '', { ...TF, fontSize: '13px', color: '#4a7090' }).setOrigin(0.5);
+    }
     const refreshHp = () => {
-      const f = BASE_CONFIG.hullMax > 0 ? this.base.hull / BASE_CONFIG.hullMax : 0;
+      const f = this.base.maxHull > 0 ? this.base.hull / this.base.maxHull : 0;
       const c = f > 0.5 ? 0x4dd0e1 : f > 0.25 ? 0xffb74d : 0xef5350;
       if (hpFill?.active) { hpFill.setDisplaySize(Math.max(1, Math.round(barW * f)), 13).setFillStyle(c); }
-      if (hpTxt?.active)  { hpTxt.setText(`HP  ${this.base.hull.toLocaleString()} / ${BASE_CONFIG.hullMax.toLocaleString()}`); }
+      if (hpTxt?.active)  { hpTxt.setText(`HP  ${Math.round(this.base.hull).toLocaleString()} / ${Math.round(this.base.maxHull).toLocaleString()}`); }
+      if (hasShield && shieldFill?.active) {
+        const sf = this.base.maxShield > 0 ? this.base.shield / this.base.maxShield : 0;
+        shieldFill.setDisplaySize(Math.max(1, Math.round(barW * sf)), 9);
+        shieldTxt.setText(`ЩИТ  ${Math.round(this.base.shield).toLocaleString()} / ${Math.round(this.base.maxShield).toLocaleString()}`);
+      }
     };
     refreshHp();
     this.time.addEvent({ delay: 1000, loop: true, callback: refreshHp });
-    y += 42;
+    y += hpBlockH;
 
     // Speed-up button (building state, owners only)
     if (!isActive && isOwner) {
@@ -136,7 +160,8 @@ export default class BaseMenuScene extends Phaser.Scene {
       if (canAfford) {
         btn.on('pointerover',  () => btn.setFillStyle(0x263d16));
         btn.on('pointerout',   () => btn.setFillStyle(btnColor));
-        btn.on('pointerdown',  () => {
+        btn.on('pointerdown',  (pointer, lx, ly, event) => {
+          if (event) event.stopPropagation();
           const ok = this.base.speedUpBuild(this.playerName);
           if (ok) this.scene.restart({ base: this.base, playerName: this.playerName });
         });
@@ -181,8 +206,11 @@ export default class BaseMenuScene extends Phaser.Scene {
 
     // Turret slots (active only)
     if (isActive) {
+      // 40px до первого ряда карточек, не 26 — на 16px текст "ТУРЕЛЬНЫЕ СЛОТЫ" (origin
+      // 0,0.5) с 26px отступом визуально налезал на верх первой карточки (slotH=57,
+      // так что верхний край карточки был выше нижнего края лейбла).
       this.add.text(cx - barW / 2, y, 'ТУРЕЛЬНЫЕ СЛОТЫ', { ...TF, fontSize: '16px', color: '#ccddff' }).setOrigin(0, 0.5);
-      y += 26;
+      y += 40;
 
       const colW  = Math.floor(barW / 3);
       const slotH = 57;
@@ -197,7 +225,16 @@ export default class BaseMenuScene extends Phaser.Scene {
         if (type) {
           this.add.rectangle(bx, by, colW - 8, slotH, 0x0d2a1a).setStrokeStyle(1, COLORS.primary, 0.7).setOrigin(0.5);
           this.add.text(bx, by - 10, type === 'cannon2' ? 'Cannon II' : 'Cannon I', { ...TF, fontSize: '14px', color: '#4dd0e1' }).setOrigin(0.5);
-          this.add.text(bx, by + 10, '▣ установлена',                               { ...TF, fontSize: '13px', color: '#336644' }).setOrigin(0.5);
+          const hpTxt = this.add.text(bx, by + 10, '', { ...TF, fontSize: '12px', color: '#336644' }).setOrigin(0.5);
+          const refreshTurretHp = () => {
+            const tt = this.base.turretTargets[i];
+            if (!hpTxt?.active) return;
+            if (!tt || !tt.alive) { hpTxt.setText('уничтожена'); return; }
+            hpTxt.setText(`HP ${Math.round(tt.hull).toLocaleString()}/${Math.round(tt.maxHull).toLocaleString()}`
+              + (tt.maxShield > 0 ? `  ·  щ.${Math.round(tt.shield).toLocaleString()}` : ''));
+          };
+          refreshTurretHp();
+          this.time.addEvent({ delay: 1000, loop: true, callback: refreshTurretHp });
         } else if (isOwner) {
           const bg = this.add.rectangle(bx, by, colW - 8, slotH, 0x111828)
             .setStrokeStyle(1, 0x334466, 0.8).setOrigin(0.5).setInteractive();
@@ -205,7 +242,7 @@ export default class BaseMenuScene extends Phaser.Scene {
           this.add.text(bx, by + 10, '+ Купить',       { ...TF, fontSize: '14px', color: '#4488cc' }).setOrigin(0.5);
           bg.on('pointerover',  () => bg.setFillStyle(0x182438));
           bg.on('pointerout',   () => bg.setFillStyle(0x111828));
-          bg.on('pointerdown',  () => this._turretPicker(i));
+          bg.on('pointerdown',  (pointer, lx, ly, event) => { if (event) event.stopPropagation(); this._turretPicker(i); });
         } else {
           this.add.rectangle(bx, by, colW - 8, slotH, 0x0a0d14).setStrokeStyle(1, 0x222233, 0.6).setOrigin(0.5);
           this.add.text(bx, by, `Слот ${i + 1}`, { ...TF, fontSize: '13px', color: '#334455' }).setOrigin(0.5);
@@ -255,7 +292,8 @@ export default class BaseMenuScene extends Phaser.Scene {
       if (opt.ok) {
         btn.on('pointerover',  () => btn.setFillStyle(0x1a2e40));
         btn.on('pointerout',   () => btn.setFillStyle(fillClr));
-        btn.on('pointerdown',  () => {
+        btn.on('pointerdown',  (pointer, lx, ly, event) => {
+          if (event) event.stopPropagation();
           created.forEach(o => o?.destroy());
           this.base.buyTurret(slotIdx, opt.type, this.playerName);
           this.scene.restart({ base: this.base, playerName: this.playerName });
@@ -265,8 +303,8 @@ export default class BaseMenuScene extends Phaser.Scene {
 
     const cancel = this.add.text(cx, cy + ph / 2 - 21, 'Отмена', { ...TF, fontSize: '16px', color: '#445566' }).setOrigin(0.5).setInteractive();
     created.push(cancel);
-    cancel.on('pointerdown',  () => created.forEach(o => o?.destroy()));
-    overlay.on('pointerdown', () => created.forEach(o => o?.destroy()));
+    cancel.on('pointerdown',  (pointer, lx, ly, event) => { if (event) event.stopPropagation(); created.forEach(o => o?.destroy()); });
+    overlay.on('pointerdown', (pointer, lx, ly, event) => { if (event) event.stopPropagation(); created.forEach(o => o?.destroy()); });
   }
 
   // ── Helpers ───────────────────────────────────────────────────────────────
@@ -282,7 +320,7 @@ export default class BaseMenuScene extends Phaser.Scene {
     this.add.text(cx, y, 'ЗАКРЫТЬ', { ...TF, fontSize: '16px', color: '#3ac0d0' }).setOrigin(0.5);
     bg.on('pointerover',  () => bg.setFillStyle(0x162638));
     bg.on('pointerout',   () => bg.setFillStyle(0x0c1622));
-    bg.on('pointerdown',  () => this.scene.stop());
+    bg.on('pointerdown',  (pointer, lx, ly, event) => { if (event) event.stopPropagation(); this.scene.stop(); });
   }
 
   _stateText() {

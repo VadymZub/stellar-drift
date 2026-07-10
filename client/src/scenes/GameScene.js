@@ -1881,13 +1881,23 @@ export default class GameScene extends Phaser.Scene {
       }
       if (mob) { this.cancelCollect(); this.selectTarget(mob); return; }
 
-      // Double-click empty space → check for turret attack first (turrets sit outside
-      // the base's own click radius, see turretAt), then the base itself.
-      if (isDouble) {
-        const turret = this.turretAt(wx, wy);
-        if (turret?.canBeAttacked) { this.selectTarget(turret); this.isFiring = true; return; }
-        const base = this.baseAt(wx, wy);
-        if (base?.canBeAttacked) { this.selectTarget(base); this.isFiring = true; return; }
+      // Turret/base — same click UX as mobs above: single click selects (shows the
+      // targeting reticle), double click also opens fire. Previously this only
+      // responded to isDouble at all, so a single click did nothing and looked like
+      // the reticle simply wouldn't lock onto a base/turret. Turret first — it sits
+      // outside the base's own 120px click radius (see turretAt/baseAt), never
+      // overlapping, but turrets are the more specific target so check them first.
+      const turret = this.turretAt(wx, wy);
+      if (turret?.canBeAttacked) {
+        this.cancelCollect(); this.selectTarget(turret);
+        if (isDouble) this.isFiring = true;
+        return;
+      }
+      const base = this.baseAt(wx, wy);
+      if (base?.canBeAttacked) {
+        this.cancelCollect(); this.selectTarget(base);
+        if (isDouble) this.isFiring = true;
+        return;
       }
 
       const box = this.lootAt(wx, wy);
