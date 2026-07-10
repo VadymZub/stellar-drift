@@ -1,6 +1,7 @@
 import * as Phaser from 'https://cdn.jsdelivr.net/npm/phaser@4.1.0/dist/phaser.esm.js';
 import { BASE_CONFIG, TURRET_SLOTS, CORP_ASSETS, cannon2GoldCost, goldPerSecByTier, pvpTierMult } from '../bases.js';
 import { UI_RES } from '../constants.js';
+import { prerenderTex } from '../utils/prerenderTex.js';
 
 // Persists base ownership/state across sector re-entries.
 const _registry = new Map();
@@ -11,6 +12,9 @@ const SHIELD_REGEN_DELAY_MS = 30000;
 const SHIELD_REGEN_PCT_SEC  = 0.05;
 const HULL_REGEN_DELAY_MS   = 180000;
 const HULL_REGEN_PCT_SEC    = 0.005;
+
+// Турельные HP-бары — фиксированный размер, не зависит от aspect базы.
+const TBAR_W = 46, TBAR_H = 4;
 
 // Боевая проекция ОДНОЙ турели — независимая от базы цель (как моб): свой hull/shield/
 // pvpMobId, свой реген, killable без уничтожения самой базы. Визуал (спрайт/поворот/
@@ -33,8 +37,11 @@ class TurretTarget {
     this.alive        = true;
   }
 
-  get x() { return this.base.x + TURRET_SLOTS[this.slotIdx].x; }
-  get y() { return this.base.y + TURRET_SLOTS[this.slotIdx].y; }
+  // Смещение слота — доля от РЕАЛЬНОГО (aspect-корректного) размера базы этого корпа,
+  // пересчитывается в MiningBase._recomputeTurretOffsets() при каждой смене corp/state
+  // (см. там же, почему это больше не фиксированные пиксели).
+  get x() { return this.base.x + (this.base._turretOffsets?.[this.slotIdx]?.x ?? 0); }
+  get y() { return this.base.y + (this.base._turretOffsets?.[this.slotIdx]?.y ?? 0); }
   get corp() { return this.base.corp; }
   get canBeAttacked() { return this.alive && this.base.canBeAttacked; }
 
@@ -122,6 +129,7 @@ export default class MiningBase {
     this._earnTimer       = 0;
     this._labelTick       = 0;
     this._turretCooldowns = Array(BASE_CONFIG.turretSlots).fill(0);
+    this._turretOffsets   = null; // computed in _createVisuals() below
 
     this._buildSprite   = null;
     this._baseSprite    = null;
@@ -365,9 +373,47 @@ export default class MiningBase {
 
   // ── Private ─────────────────────────────────────────────────────────────────
 
+  // Высота = targetH, ширина сохраняет РЕАЛЬНОЕ соотношение сторон загруженной
+  // текстуры — раньше setDisplaySize(sz,sz) принудительно тянул/сжимал ЛЮБУЮ
+  // текстуру под квадрат, что визуально растягивало по горизонтали некв адратные
+  // скины баз (helios 460×512, у остальных другие пропорции — и это будет меняться
+  // при каждой замене арта, как только что произошло с karax: 433×512 → 1182×1331).
+  // Считаем из РЕАЛЬНЫХ размеров загруженной текстуры, не из хардкода — переживёт
+  // будущие замены ассетов без повторной калибровки.
+  _fitSize(textureKey, targetH) {
+    if (!textureKey || !this.scene.textures.exists(textureKey)) return { w: targetH, h: targetH };
+    const src = this.scene.textures.get(textureKey).getSourceImage();
+    return { w: Math.round(targetH * src.width / src.height), h: targetH };
+  }
+
+  // TURRET_SLOTS хранит доли (fx/fy) от половины ширины/высоты АКТИВНОЙ текстуры этого
+  // корпа — пересчитываем в мировые px заново при каждой смене corp/state, т.к. у
+  // каждого скина своя ширина (высота 512 общая для всех, поэтому фиксированная).
+  _recomputeTurretOffsets() {
+    const assets = CORP_ASSETS[this.corp] || CORP_ASSETS.neutral;
+    const { w, h } = this._fitSize(assets.base, BASE_CONFIG.displaySize);
+    this._turretOffsets = TURRET_SLOTS.map(s => ({ x: s.fx * w / 2, y: s.fy * h / 2 }));
+  }
+
+  // Двигает уже существующие спрайты турелей/их HP-баров на пересчитанные offsets —
+  // нужно при смене corp (разная ширина скина), не только при первом создании.
+  _repositionTurrets() {
+    const tsz = BASE_CONFIG.turretSize;
+    TURRET_SLOTS.forEach((_, i) => {
+      const off = this._turretOffsets[i];
+      const sx = this.x + off.x, sy = this.y + off.y;
+      this._turretSprites[i]?.setPosition(sx, sy);
+      const bx = sx, by = sy + tsz / 2 + 8;
+      this._turretHpBarsBg[i]?.setPosition(bx, by);
+      this._turretHpBars[i]?.setPosition(bx - TBAR_W / 2, by);
+      this._turretShieldBars[i]?.setPosition(bx - TBAR_W / 2, by - TBAR_H);
+    });
+  }
+
   _createVisuals() {
     const { x, y } = this;
-    const sz  = BASE_CONFIG.displaySize;       // 460 — active / building
+    this._recomputeTurretOffsets(); // needed before positioning turret sprites/bars below
+    const sz  = BASE_CONFIG.displaySize;       // 460 — active / building (HEIGHT reference)
     const szD = BASE_CONFIG.displayDestroyed;  // 340 — destroyed (smaller, dimmed)
     const tsz = BASE_CONFIG.turretSize;
 
@@ -376,35 +422,37 @@ export default class MiningBase {
       .setDepth(-5);
 
     // Building-state sprite
+    const buildSize = this._fitSize('base_building', sz);
     this._buildSprite = this.scene.add.image(x, y, 'base_building')
-      .setDisplaySize(sz, sz).setDepth(5).setVisible(false);
+      .setDisplaySize(buildSize.w, buildSize.h).setDepth(5).setVisible(false);
 
     // Active / destroyed sprite (texture + size swapped on state change)
+    const destroyedSize = this._fitSize('base_destroyed', szD);
     this._baseSprite = this.scene.add.image(x, y, 'base_destroyed')
-      .setDisplaySize(szD, szD).setDepth(5).setVisible(false);
+      .setDisplaySize(destroyedSize.w, destroyedSize.h).setDepth(5).setVisible(false);
 
     // Turret sprites — positioned at slot offsets, hidden until slot is built
-    this._turretSprites = TURRET_SLOTS.map(s =>
-      this.scene.add.image(x + s.x, y + s.y, 'cannon1_neutral')
+    this._turretSprites = TURRET_SLOTS.map((s, i) =>
+      this.scene.add.image(x + this._turretOffsets[i].x, y + this._turretOffsets[i].y, 'cannon1_neutral')
         .setDisplaySize(tsz, tsz).setDepth(6).setVisible(false)
     );
 
     // Per-turret hp/shield bars — small strips just below each turret sprite
-    const tbw = 46, tbh = 4;
     this._turretHpBarsBg   = [];
     this._turretHpBars     = [];
     this._turretShieldBars = [];
-    TURRET_SLOTS.forEach(s => {
-      const bx = x + s.x, by = y + s.y + tsz / 2 + 8;
+    TURRET_SLOTS.forEach((s, i) => {
+      const bx = x + this._turretOffsets[i].x, by = y + this._turretOffsets[i].y + tsz / 2 + 8;
       this._turretHpBarsBg.push(
-        this.scene.add.rectangle(bx, by, tbw, tbh, 0x000000, 0.5).setDepth(7).setVisible(false));
+        this.scene.add.rectangle(bx, by, TBAR_W, TBAR_H, 0x000000, 0.5).setDepth(7).setVisible(false));
       this._turretHpBars.push(
-        this.scene.add.rectangle(bx - tbw / 2, by, 0, tbh, 0xef5350, 1).setOrigin(0, 0.5).setDepth(7).setVisible(false));
+        this.scene.add.rectangle(bx - TBAR_W / 2, by, 0, TBAR_H, 0xef5350, 1).setOrigin(0, 0.5).setDepth(7).setVisible(false));
       this._turretShieldBars.push(
-        this.scene.add.rectangle(bx - tbw / 2, by - tbh, 0, 2, 0x4dd0e1, 1).setOrigin(0, 0.5).setDepth(7).setVisible(false));
+        this.scene.add.rectangle(bx - TBAR_W / 2, by - TBAR_H, 0, 2, 0x4dd0e1, 1).setOrigin(0, 0.5).setDepth(7).setVisible(false));
     });
 
-    // HP bar — floats above the top edge of the active/building sprite
+    // HP bar — floats above the top edge of the active/building sprite (height-only
+    // offset from center, unaffected by per-corp width variation).
     const barY = y - sz / 2 - 22;
     this._hpBarBg = this.scene.add.rectangle(x, barY, 200, 8, 0x333344, 1).setDepth(7);
     this._hpBar   = this.scene.add.rectangle(x - 100, barY, 0, 8, 0x4dd0e1, 1)
@@ -453,12 +501,20 @@ export default class MiningBase {
     this._baseSprite.setVisible(s === 'active' || s === 'destroyed');
 
     if (s === 'destroyed') {
-      this._baseSprite.setTexture('base_destroyed').setDisplaySize(szD, szD).setAlpha(0.55);
+      const dSize = this._fitSize('base_destroyed', szD);
+      this._baseSprite.setTexture('base_destroyed').setDisplaySize(dSize.w, dSize.h).setAlpha(0.55);
     } else if (s === 'active') {
-      this._baseSprite.setTexture(assets.base).setDisplaySize(sz, sz).setAlpha(1);
+      const aSize = this._fitSize(assets.base, sz);
+      this._baseSprite.setTexture(assets.base).setDisplaySize(aSize.w, aSize.h).setAlpha(1);
     } else { // building
-      this._buildSprite.setDisplaySize(sz, sz);
+      const bSize = this._fitSize('base_building', sz);
+      this._buildSprite.setDisplaySize(bSize.w, bSize.h);
     }
+
+    // Corp (and hence active-texture aspect) may have changed — re-derive turret slot
+    // positions and move already-created sprites/bars there.
+    this._recomputeTurretOffsets();
+    this._repositionTurrets();
 
     this._refreshHpBar();
     this._refreshTurrets();
@@ -515,12 +571,14 @@ export default class MiningBase {
       const spr = this._turretSprites[i];
       if (!spr) return;
       if (type && this.state === 'active') {
-        // setTexture() ТОЛЬКО меняет кадр, scaleX/scaleY остаются от предыдущей
-        // текстуры — cannon1/cannon2 у разных корпов различаются нативным пикс.
-        // размером (268-389 × 305-463), без переприменения setDisplaySize турель
-        // при смене типа/корпа рисовалась бы то мельче, то на треть крупнее tsz.
-        spr.setTexture(type === 'cannon2' ? assets.cannon2 : assets.cannon1)
-          .setDisplaySize(tsz, tsz).setVisible(true);
+        const rawKey = type === 'cannon2' ? assets.cannon2 : assets.cannon1;
+        // Прямой setTexture()+setDisplaySize() на крупном исходнике (cannon2 у
+        // некоторых корпов — 389×463px+) даунскейленный в один проход до 84px давал
+        // заметно мыльную картинку — та же проблема, что prerenderTex уже решает для
+        // кораблей (см. _prepShipTex в BootScene): степ-халвинг перед финальным
+        // ресайзом вместо одного большого прыжка.
+        const key = prerenderTex(this.scene, rawKey, tsz, tsz);
+        spr.setTexture(key).setDisplaySize(tsz, tsz).setVisible(true);
       } else {
         spr.setVisible(false);
       }
@@ -568,8 +626,9 @@ export default class MiningBase {
 
       this._turretCooldowns[i] -= dt;
 
-      const tx = this.x + slot.x;
-      const ty = this.y + slot.y;
+      const off = this._turretOffsets[i];
+      const tx = this.x + off.x;
+      const ty = this.y + off.y;
 
       // Find nearest alive mob in range — every frame, not just on the fire tick,
       // so rotation below can track it smoothly between shots.
@@ -602,8 +661,8 @@ export default class MiningBase {
       const perpX = -Math.sin(angle), perpY = Math.cos(angle);
       const boltColor = type === 'cannon2' ? 0xff6a00 : 0xffaa44;
       for (let bIdx = 0; bIdx < boltCount; bIdx++) {
-        const off = boltCount === 1 ? 0 : (bIdx === 0 ? -7 : 7);
-        gs._fireVisualBolt?.(tx + perpX * off, ty + perpY * off, nearest.x + perpX * off, nearest.y + perpY * off, boltColor);
+        const boltOff = boltCount === 1 ? 0 : (bIdx === 0 ? -7 : 7);
+        gs._fireVisualBolt?.(tx + perpX * boltOff, ty + perpY * boltOff, nearest.x + perpX * boltOff, nearest.y + perpY * boltOff, boltColor);
       }
       gs.muzzleFlash?.(tx, ty, 0xffaa44);
 

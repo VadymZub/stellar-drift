@@ -46,21 +46,26 @@ export function pvpTierMult(pvpTier) {
   return 1.0; // pvpTier 4, 5
 }
 
-// Turret slot offsets relative to base center (world px), tuned for displaySize 460.
+// Turret slot offsets as FRACTIONS of the base's own half-width/half-height (fx×w/2,
+// fy×h/2), not absolute pixels — the base sprite now keeps its NATIVE aspect ratio
+// instead of being squashed into a square (see MiningBase._baseDisplaySize), and each
+// corp skin has a different native width (only the height, 512px, is shared across all
+// 4), so a fixed pixel offset can't fit every corp at once. Fractions scale correctly
+// per corp using whatever width that corp's own texture resolves to at render time.
 // Layout: 2 top, 2 middle (widest), 2 bottom — matches the 6-pod octagonal art.
-// Measured directly off the 4 base_*.png skins (each squashed to the 460×460 square
-// setDisplaySize forces regardless of native aspect — same squash the game applies)
-// and averaged across helios/karax/tides/neutral, since the 4 skins aren't pixel-identical
-// (native sizes 460×512 / 433×512 / 404×512 / 442×512). helios/karax/neutral land within
-// a few px of this average; tides' pods sit ~35-40px lower in its own canvas, so the fit
-// there is the deliberate compromise from averaging rather than a per-skin table.
+// Measured directly off base_helios.png and base_tides.png at their correct (non-square)
+// aspect and averaged; base_karax.png was very recently swapped for a much higher-res
+// version with essentially the same aspect/composition as helios, and base_neutral.png
+// was missing entirely at calibration time, so this is a 2-way average, not 4-way.
+// tides' pods still sit measurably lower in its own canvas than helios — same accepted
+// compromise as before, just re-measured against the corrected aspect ratio.
 export const TURRET_SLOTS = [
-  { x: -153, y: -174 },
-  { x:  153, y: -174 },
-  { x: -190, y:  -47 },
-  { x:  190, y:  -47 },
-  { x: -153, y:   56 },
-  { x:  153, y:   56 },
+  { fx: -0.620, fy: -0.600 },
+  { fx:  0.620, fy: -0.600 },
+  { fx: -0.785, fy: -0.137 },
+  { fx:  0.785, fy: -0.137 },
+  { fx: -0.620, fy:  0.285 },
+  { fx:  0.620, fy:  0.285 },
 ];
 
 // Cannon II costs star-gold; price scales with PvP tier (1⭐ on pvp1 … 5⭐ on pvp5)
