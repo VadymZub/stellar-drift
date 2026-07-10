@@ -3,7 +3,12 @@ import { COLORS, UI_RES } from '../constants.js';
 import MiningBase from '../entities/MiningBase.js';
 import { galaxy, SECTORS } from '../galaxy.js';
 
-const TF = { fontFamily: 'Orbitron', resolution: UI_RES };
+// Orbitron — короткие титулы/лейблы/кнопки (как O() в GarageScene/MissionsScene).
+// Inter — плотные табличные данные/числа (как F() там же): Orbitron на 11-15px в
+// таблице визуально "грязнит" мелкий текст и оставляет меньше места на строку,
+// из-за чего колонки КОРП/ОПЫТ начинали налезать друг на друга (см. правку ниже).
+const TF  = { fontFamily: 'Orbitron, sans-serif', resolution: UI_RES };
+const TFD = { fontFamily: 'Inter, sans-serif',    resolution: UI_RES };
 
 const CORP_META = {
   helios:  { label: 'HELIOS',  color: '#ffb74d', hex: 0xffb74d, fill: 0x1a1200 },
@@ -166,15 +171,19 @@ export default class CorpScene extends Phaser.Scene {
       const all = [...MOCK_PLAYERS.map(p => ({ ...p, level: Math.min(50, 1 + Math.floor(p.xp / 100000)) })), me]
         .sort((a, b) => b.xp - a.xp);
       this._sectionTitle(px + pw / 2, contentY + 4, 'ТОП ИГРОКОВ ПО ОПЫТУ');
-      this._rowHdr(px, contentY + 22, pw, ['#', 'ИМЯ', 'УРОВЕНЬ', 'КОРП', 'ОПЫТ'],
-        [20, 58, pw - 270, pw - 170, pw - 60]);
+      // КОРП и ОПЫТ — оба право-выровнены в свою зону (см. aligns), а не "КОРП слева
+      // растёт вправо / ОПЫТ справа растёт влево навстречу" — раньше при длинном
+      // "НЕЙТРАЛ" + широком числе им обоим banально не хватало 110px зазора.
+      const xpOffsets = [20, 58, pw - 240, pw - 140, pw - 40];
+      const xpAligns  = [0, 0, 0, 1, 1];
+      this._rowHdr(px, contentY + 22, pw, ['#', 'ИМЯ', 'УРОВЕНЬ', 'КОРП', 'ОПЫТ'], xpOffsets, xpAligns);
       let y = contentY + 42;
       all.slice(0, 12).forEach((p, i) => {
         const c   = CORP_META[p.corp] || CORP_META.neutral;
         const clr = p.isMe ? '#4dd0e1' : (i < 3 ? '#ffcc44' : '#aabbcc');
         const row = this._row(px, y, pw,
           [`${i + 1}.`, (p.isMe ? '▶ ' : '') + p.name, `${p.level}`, c.label, `${Math.round(p.xp / 1000)}k`],
-          [20, 58, pw - 270, pw - 170, pw - 60], clr);
+          xpOffsets, clr, xpAligns);
         row[3]?.setColor(c.color);
         y += 28;
       });
@@ -182,15 +191,16 @@ export default class CorpScene extends Phaser.Scene {
       const me = { name: gs?.playerName || 'You', honor: gs?.pilotHonor || 0, corp: gs?.playerCorp || 'neutral', isMe: true };
       const all = [...MOCK_PLAYERS, me].sort((a, b) => b.honor - a.honor);
       this._sectionTitle(px + pw / 2, contentY + 4, 'ТОП ИГРОКОВ ПО PvP (ЧЕСТЬ)');
-      this._rowHdr(px, contentY + 22, pw, ['#', 'ИМЯ', 'КОРП', 'ОЧКИ ЧЕСТИ'],
-        [20, 58, pw - 230, pw - 80]);
+      const pvpOffsets = [20, 58, pw - 140, pw - 40];
+      const pvpAligns  = [0, 0, 1, 1];
+      this._rowHdr(px, contentY + 22, pw, ['#', 'ИМЯ', 'КОРП', 'ОЧКИ ЧЕСТИ'], pvpOffsets, pvpAligns);
       let y = contentY + 42;
       all.slice(0, 12).forEach((p, i) => {
         const c   = CORP_META[p.corp] || CORP_META.neutral;
         const clr = p.isMe ? '#4dd0e1' : (i < 3 ? '#ffcc44' : '#aabbcc');
         const row = this._row(px, y, pw,
           [`${i + 1}.`, (p.isMe ? '▶ ' : '') + p.name, c.label, `${Math.round(p.honor / 1000)}k`],
-          [20, 58, pw - 230, pw - 80], clr);
+          pvpOffsets, clr, pvpAligns);
         row[2]?.setColor(c.color);
         y += 28;
       });
@@ -232,9 +242,9 @@ export default class CorpScene extends Phaser.Scene {
       const rankLabel = ['1.  ⭐', '2.', '3.'][i];
       const t1 = this.add.text(cx, cardY + 26, rankLabel, { ...TF, fontSize: '20px', color: meta.color }).setOrigin(0.5);
       const t2 = this.add.text(cx, cardY + 62, meta.label, { ...TF, fontSize: '22px', color: meta.color }).setOrigin(0.5);
-      const t3 = this.add.text(cx, cardY + 100, Math.floor(p).toLocaleString(), { ...TF, fontSize: '20px', color: '#ccddee' }).setOrigin(0.5);
-      const t4 = this.add.text(cx, cardY + 124, 'очков', { ...TF, fontSize: '12px', color: '#334455' }).setOrigin(0.5);
-      const t5 = this.add.text(cx, cardY + 152, `Баз активных: ${b}`, { ...TF, fontSize: '12px', color: '#445566' }).setOrigin(0.5);
+      const t3 = this.add.text(cx, cardY + 100, Math.floor(p).toLocaleString(), { ...TFD, fontSize: '20px', color: '#ccddee' }).setOrigin(0.5);
+      const t4 = this.add.text(cx, cardY + 124, 'очков', { ...TFD, fontSize: '12px', color: '#334455' }).setOrigin(0.5);
+      const t5 = this.add.text(cx, cardY + 152, `Баз активных: ${b}`, { ...TFD, fontSize: '12px', color: '#445566' }).setOrigin(0.5);
       this._objs.push(t1, t2, t3, t4, t5);
 
       if (isMe) {
@@ -278,11 +288,11 @@ export default class CorpScene extends Phaser.Scene {
 
     const costClr = (costDef.type === 'gold' && !canAfford) ? '#884444' : '#ffcc44';
     const t2 = this.add.text(px + pw / 2, cy + 64, costLine,
-      { ...TF, fontSize: '14px', color: costClr }).setOrigin(0.5);
+      { ...TFD, fontSize: '14px', color: costClr }).setOrigin(0.5);
     this._objs.push(t2);
 
     const t3 = this.add.text(px + pw / 2, cy + 88, costHint,
-      { ...TF, fontSize: '12px', color: '#334455' }).setOrigin(0.5);
+      { ...TFD, fontSize: '12px', color: '#334455' }).setOrigin(0.5);
     this._objs.push(t3);
 
     // Corp cards
@@ -308,7 +318,7 @@ export default class CorpScene extends Phaser.Scene {
       if (costDef.type === 'gold') costStr = `${costDef.amount} ⭐`;
       else costStr = '−20% чести / вклада';
       const tl2  = this.add.text(cardX, cardY + 88, costStr,
-        { ...TF, fontSize: '16px', color: canAfford ? '#ffcc44' : '#443333' }).setOrigin(0.5);
+        { ...TFD, fontSize: '16px', color: canAfford ? '#ffcc44' : '#443333' }).setOrigin(0.5);
       const tl3  = this.add.text(cardX, cardY + 138, canAfford ? '[ ВСТУПИТЬ ]' : '🔒 НЕДОСТАТОЧНО ⭐',
         { ...TF, fontSize: '14px', color: canAfford ? '#aabbcc' : '#443333' }).setOrigin(0.5);
       this._objs.push(tl1, tl2, tl3);
@@ -361,11 +371,11 @@ export default class CorpScene extends Phaser.Scene {
     }
 
     const costLbl = this.add.text(cx, cy - 44, costStr,
-      { ...TF, fontSize: '15px', color: '#ffcc44' }).setOrigin(0.5).setDepth(22);
+      { ...TFD, fontSize: '15px', color: '#ffcc44' }).setOrigin(0.5).setDepth(22);
     created.push(costLbl);
 
     const warnLbl = this.add.text(cx, cy - 14, warnStr,
-      { ...TF, fontSize: '12px', color: '#664422' }).setOrigin(0.5).setDepth(22);
+      { ...TFD, fontSize: '12px', color: '#664422' }).setOrigin(0.5).setDepth(22);
     created.push(warnLbl);
 
     const close = () => created.forEach(o => o?.destroy());
@@ -427,19 +437,21 @@ export default class CorpScene extends Phaser.Scene {
     this._objs.push(t);
   }
 
-  _rowHdr(px, y, pw, labels, xOffsets) {
+  _rowHdr(px, y, pw, labels, xOffsets, aligns) {
     labels.forEach((lbl, i) => {
-      const t = this.add.text(px + xOffsets[i], y, lbl, { ...TF, fontSize: '11px', color: '#334455' })
-        .setOrigin(i === labels.length - 1 ? 1 : 0, 0.5);
+      const origin = aligns ? aligns[i] : (i === labels.length - 1 ? 1 : 0);
+      const t = this.add.text(px + xOffsets[i], y, lbl, { ...TFD, fontSize: '11px', color: '#334455' })
+        .setOrigin(origin, 0.5);
       this._objs.push(t);
     });
   }
 
-  _row(px, y, pw, data, xOffsets, color) {
+  _row(px, y, pw, data, xOffsets, color, aligns) {
     return data.map((val, i) => {
+      const origin = aligns ? aligns[i] : (i === data.length - 1 ? 1 : 0);
       const t = this.add.text(px + xOffsets[i], y, String(val),
-        { ...TF, fontSize: '15px', color })
-        .setOrigin(i === data.length - 1 ? 1 : 0, 0.5);
+        { ...TFD, fontSize: '15px', color })
+        .setOrigin(origin, 0.5);
       this._objs.push(t);
       return t;
     });
