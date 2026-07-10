@@ -10,8 +10,12 @@ export function minimapRect(scene, dims) {
   return { x: scene.scale.width - d.w - d.pad, y: d.pad, w: d.w, h: d.h };
 }
 
-// Вписываем мир в квадрат миникарты с сохранением пропорций (letterbox).
-function fit(rect, ww, wh) {
+// Вписываем мир в квадрат миникарты с сохранением пропорций (letterbox). Экспортирован
+// для HudScene.drawMinimap() — там десятки блипов (мобы/лут/плазмит) считаются КАЖДЫЙ
+// кадр, и вызов worldToMinimap() на каждый из них пересчитывал fit() (лишние деления)
+// и аллоцировал новый объект — заметный источник Minor GC на карте с большим числом
+// сущностей (см. профилировку). drawMinimap() считает fit() один раз за кадр сам.
+export function fit(rect, ww, wh) {
   const s = Math.min(rect.w / ww, rect.h / wh);
   return { s, ox: rect.x + (rect.w - ww * s) / 2, oy: rect.y + (rect.h - wh * s) / 2 };
 }

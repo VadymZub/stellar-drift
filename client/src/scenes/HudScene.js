@@ -2,7 +2,7 @@ import * as Phaser from 'https://cdn.jsdelivr.net/npm/phaser@4.1.0/dist/phaser.e
 import { COLORS, UI_RES, BASE_SCAN_RADIUS, DPR } from '../constants.js';
 import { i18n } from '../i18n.js';
 import { levelInfo, MAX_LEVEL } from '../leveling.js';
-import { minimapRect, worldToMinimap } from '../systems/minimap.js';
+import { minimapRect, fit } from '../systems/minimap.js';
 import { SECTORS, galaxy } from '../galaxy.js';
 import { getActiveMissionSectorTargets } from '../data/missions.js';
 import { countConsumableInInventory } from '../items.js';
@@ -883,13 +883,19 @@ export default class HudScene extends Phaser.Scene {
 
   // Миникарта векторными блипами: панель + база/safe-зона + лут + мобы + игрок + waypoint.
   // Всё геометрией (не камера) → резко при любом DPR. Позиции мира → миникарты через worldToMinimap.
+  // fit() once per frame (not per blip) — worldToMinimap() used to be called once per
+  // entity (mobs/loot/plasmate can be dozens on the expanded home map), each call both
+  // recomputing the same fit division AND allocating a fresh {x,y} object; inlining
+  // "f.ox + x*f.s" below avoids both, cutting a real source of per-frame GC pressure
+  // (see profilировка — intermittent stutter matched periodic Minor GC, not a steady
+  // per-frame drain).
   drawMinimap() {
     const g = this.miniGfx; g.clear();
     if (this.gs.atBase) return;
     const gs = this.gs;
     const r = minimapRect(this, getMinimapDims(loadSettings().minimapSize));
     const ww = gs.worldWidth, wh = gs.worldHeight;
-    const mmScale = Math.min(r.w / ww, r.h / wh);
+    const f = fit(r, ww, wh);
 
     // Панель + рамка с техно-углами
     g.fillStyle(0x03090f, 0.9); g.fillRect(r.x, r.y, r.w, r.h);
@@ -908,10 +914,10 @@ export default class HudScene extends Phaser.Scene {
     // База + кольцо безопасной зоны (центр мира)
     const sec = SECTORS[galaxy.current];
     if (!sec.isDungeon && !sec.pvp && !sec.personal) {
-      const base = worldToMinimap(ww / 2, wh / 2, r, ww, wh);
+      const bx = f.ox + (ww / 2) * f.s, by = f.oy + (wh / 2) * f.s;
       g.lineStyle(1, COLORS.safezone, 0.5);
-      g.strokeCircle(base.x, base.y, gs.safeZoneRadius * base.s);
-      g.fillStyle(COLORS.primary, 0.9); g.fillCircle(base.x, base.y, 3);
+      g.strokeCircle(bx, by, gs.safeZoneRadius * f.s);
+      g.fillStyle(COLORS.primary, 0.9); g.fillCircle(bx, by, 3);
     }
 
     // Стены данжа на миникарте — всегда видны, цвет по типу
@@ -924,11 +930,11 @@ export default class HudScene extends Phaser.Scene {
       g.fillStyle(wc, 0.35);
       g.lineStyle(0.5, wc, 0.7);
       for (const wall of gs.walls.getChildren()) {
-        const wp = worldToMinimap(wall.x, wall.y, r, ww, wh);
-        const sw = Math.max(1, wall.width * mmScale);
-        const sh = Math.max(1, wall.height * mmScale);
-        g.fillRect(wp.x - sw / 2, wp.y - sh / 2, sw, sh);
-        g.strokeRect(wp.x - sw / 2, wp.y - sh / 2, sw, sh);
+        const wx = f.ox + wall.x * f.s, wy = f.oy + wall.y * f.s;
+        const sw = Math.max(1, wall.width * f.s);
+        const sh = Math.max(1, wall.height * f.s);
+        g.fillRect(wx - sw / 2, wy - sh / 2, sw, sh);
+        g.strokeRect(wx - sw / 2, wy - sh / 2, sw, sh);
       }
     }
 
@@ -936,29 +942,29 @@ export default class HudScene extends Phaser.Scene {
     if (gs.homeBases) {
       const CORP_HUE = { helios: 0xffb74d, karax: 0xef5350, tides: 0x4dd0e1 };
       for (const hb of gs.homeBases) {
-        const hp = worldToMinimap(hb.x, hb.y, r, ww, wh);
+        const hx = f.ox + hb.x * f.s, hy = f.oy + hb.y * f.s;
         const isOwn = hb.corp === gs.playerCorp;
         const c = isOwn ? 0xffffff : (CORP_HUE[hb.corp] || 0x888888);
         g.lineStyle(2, c, isOwn ? 0.95 : 0.65);
-        g.strokeCircle(hp.x, hp.y, 5);
+        g.strokeCircle(hx, hy, 5);
         g.fillStyle(c, isOwn ? 1.0 : 0.75);
-        g.fillCircle(hp.x, hp.y, 2.5);
+        g.fillCircle(hx, hy, 2.5);
       }
     }
 
     // Добувальні бази (тільки PvP, завжди видні)
     if (sec.pvp && gs.miningBases) {
       for (const mb of gs.miningBases) {
-        const mp = worldToMinimap(mb.x, mb.y, r, ww, wh);
+        const mx = f.ox + mb.x * f.s, my = f.oy + mb.y * f.s;
         const isOwn = mb.corp === gs.playerCorp;
         const isNeutral = !mb.corp || mb.corp === 'neutral';
         const c = isOwn ? 0x66ff88 : isNeutral ? 0x778899 : 0xff5555;
         const a = mb.state === 'destroyed' ? 0.3 : 0.85;
         const sz = 3;
         g.lineStyle(1.5, c, a);
-        g.strokeRect(mp.x - sz, mp.y - sz, sz * 2, sz * 2);
+        g.strokeRect(mx - sz, my - sz, sz * 2, sz * 2);
         g.fillStyle(c, a * 0.5);
-        g.fillRect(mp.x - sz + 1, mp.y - sz + 1, sz * 2 - 2, sz * 2 - 2);
+        g.fillRect(mx - sz + 1, my - sz + 1, sz * 2 - 2, sz * 2 - 2);
       }
     }
 
@@ -967,15 +973,14 @@ export default class HudScene extends Phaser.Scene {
     const px2 = gs.player?.x ?? ww / 2, py2 = gs.player?.y ?? wh / 2;
     const fullScan = gs._scannerActive === true;
     // Кольцо радиуса сканирования (не рисуем, когда полный скан — видно всё)
+    const pcx = f.ox + px2 * f.s, pcy = f.oy + py2 * f.s;
     if (!fullScan) {
-      const pCenter = worldToMinimap(px2, py2, r, ww, wh);
       g.lineStyle(1, 0x4de1aa, 0.3);
-      g.strokeCircle(pCenter.x, pCenter.y, sr * mmScale);
+      g.strokeCircle(pcx, pcy, sr * f.s);
     } else {
       // Лёгкое фиолетовое кольцо — индикатор активного сканера
-      const pCenter = worldToMinimap(px2, py2, r, ww, wh);
       g.lineStyle(1.5, 0xab47bc, 0.55);
-      g.strokeCircle(pCenter.x, pCenter.y, r.w * 0.46);
+      g.strokeCircle(pcx, pcy, r.w * 0.46);
     }
 
     // Плазмит и данж-ресурсы — точки, только в радиусе сканирования
@@ -983,14 +988,14 @@ export default class HudScene extends Phaser.Scene {
       for (const d of gs.plasmateDeposits) {
         if (!d.alive) continue;
         if (!fullScan && Phaser.Math.Distance.Between(px2, py2, d.x, d.y) > sr) continue;
-        const p = worldToMinimap(d.x, d.y, r, ww, wh);
+        const dpx = f.ox + d.x * f.s, dpy = f.oy + d.y * f.s;
         if (d.isDungeonResource) {
           const DTINT = { biomech_fragment: 0xb39ddb, quantum_shard: 0x80ffff, plasma_strand: 0xff8c00 };
           g.fillStyle(DTINT[d.resourceType] || 0xffffff, 0.9);
-          g.fillCircle(p.x, p.y, 2.2);
+          g.fillCircle(dpx, dpy, 2.2);
         } else {
           g.fillStyle(0xaa66ff, 0.85);
-          g.fillCircle(p.x, p.y, 1.8);
+          g.fillCircle(dpx, dpy, 1.8);
         }
       }
     }
@@ -999,12 +1004,12 @@ export default class HudScene extends Phaser.Scene {
     for (const l of gs.loot) {
       if (!l.alive) continue;
       if (!fullScan && Phaser.Math.Distance.Between(px2, py2, l.x, l.y) > sr) continue;
-      const lp = worldToMinimap(l.x, l.y, r, ww, wh);
+      const lx = f.ox + l.x * f.s, ly = f.oy + l.y * f.s;
       if (l.tier === 'jackpot') {
-        g.fillStyle(0x00e5ff, 1); g.fillCircle(lp.x, lp.y, 2.5);
-        g.lineStyle(1, 0x00e5ff, 0.7); g.strokeCircle(lp.x, lp.y, 4.5);
+        g.fillStyle(0x00e5ff, 1); g.fillCircle(lx, ly, 2.5);
+        g.lineStyle(1, 0x00e5ff, 0.7); g.strokeCircle(lx, ly, 4.5);
       } else {
-        g.fillStyle(COLORS.amber, 0.9); g.fillCircle(lp.x, lp.y, 1.6);
+        g.fillStyle(COLORS.amber, 0.9); g.fillCircle(lx, ly, 1.6);
       }
     }
 
@@ -1012,38 +1017,38 @@ export default class HudScene extends Phaser.Scene {
     for (const m of gs.mobs) {
       if (!m.alive) continue;
       if (!fullScan && Phaser.Math.Distance.Between(px2, py2, m.x, m.y) > sr) continue;
-      const p = worldToMinimap(m.x, m.y, r, ww, wh);
-      if (m.isBoss) { g.fillStyle(0xff7a6b, 1); g.fillCircle(p.x, p.y, 3.4); }
-      else { g.fillStyle(COLORS.danger, 0.95); g.fillCircle(p.x, p.y, 2); }
+      const mpx = f.ox + m.x * f.s, mpy = f.oy + m.y * f.s;
+      if (m.isBoss) { g.fillStyle(0xff7a6b, 1); g.fillCircle(mpx, mpy, 3.4); }
+      else { g.fillStyle(COLORS.danger, 0.95); g.fillCircle(mpx, mpy, 2); }
     }
 
     // Бот (арена теней) — отдельная красная точка
     if (gs.botPilot?.alive) {
-      const bp = worldToMinimap(gs.botPilot.x, gs.botPilot.y, r, ww, wh);
-      g.fillStyle(0xff4444, 1); g.fillCircle(bp.x, bp.y, 3);
+      const bpx = f.ox + gs.botPilot.x * f.s, bpy = f.oy + gs.botPilot.y * f.s;
+      g.fillStyle(0xff4444, 1); g.fillCircle(bpx, bpy, 3);
     }
 
     // Джапгейты (порталы) — cyan-кольца, чтобы видеть, куда лететь для прыжка
     const missionTargets = getActiveMissionSectorTargets(gs.missionState, gs.playerCorp ?? 'helios');
     if (gs.gates) {
       for (const ga of gs.gates) {
-        const p = worldToMinimap(ga.x, ga.y, r, ww, wh);
+        const gx = f.ox + ga.x * f.s, gy = f.oy + ga.y * f.s;
         const isMissionGate = missionTargets.has(ga.target);
         if (isMissionGate) {
           // Amber outer ring for mission target gate
-          g.lineStyle(2, COLORS.amber, 0.7); g.strokeCircle(p.x, p.y, 8);
+          g.lineStyle(2, COLORS.amber, 0.7); g.strokeCircle(gx, gy, 8);
         }
-        g.lineStyle(2, COLORS.primary, 0.95); g.strokeCircle(p.x, p.y, 4.5);
-        g.fillStyle(0x9fe6ff, 0.9); g.fillCircle(p.x, p.y, 1.8);
+        g.lineStyle(2, COLORS.primary, 0.95); g.strokeCircle(gx, gy, 4.5);
+        g.fillStyle(0x9fe6ff, 0.9); g.fillCircle(gx, gy, 1.8);
         if (isMissionGate) {
           // Amber star above gate marker
           g.fillStyle(COLORS.amber, 0.95);
-          const sx = p.x, sy = p.y - 12, sr = 4;
+          const sx = gx, sy = gy - 12, starR = 4;
           for (let i = 0; i < 5; i++) {
             const aOuter = (i * 4 * Math.PI / 5) - Math.PI / 2;
             const aInner = aOuter + 2 * Math.PI / 10;
-            const ox = sx + Math.cos(aOuter) * sr, oy = sy + Math.sin(aOuter) * sr;
-            const ix = sx + Math.cos(aInner) * sr * 0.45, iy = sy + Math.sin(aInner) * sr * 0.45;
+            const ox = sx + Math.cos(aOuter) * starR, oy = sy + Math.sin(aOuter) * starR;
+            const ix = sx + Math.cos(aInner) * starR * 0.45, iy = sy + Math.sin(aInner) * starR * 0.45;
             if (i === 0) g.beginPath(), g.moveTo(ox, oy);
             else g.lineTo(ox, oy);
             g.lineTo(ix, iy);
@@ -1056,40 +1061,40 @@ export default class HudScene extends Phaser.Scene {
     // Escort transport — amber diamond (visually distinct from cyan gate circles)
     const et = gs.escortTransport;
     if (et?.alive) {
-      const ep = worldToMinimap(et.x, et.y, r, ww, wh);
+      const epx = f.ox + et.x * f.s, epy = f.oy + et.y * f.s;
       const ds = 5.5;
       g.fillStyle(0xffb74d, 0.92);
       g.beginPath();
-      g.moveTo(ep.x,      ep.y - ds);
-      g.lineTo(ep.x + ds, ep.y);
-      g.lineTo(ep.x,      ep.y + ds);
-      g.lineTo(ep.x - ds, ep.y);
+      g.moveTo(epx,      epy - ds);
+      g.lineTo(epx + ds, epy);
+      g.lineTo(epx,      epy + ds);
+      g.lineTo(epx - ds, epy);
       g.closePath(); g.fillPath();
       g.lineStyle(1.5, 0xffe082, 0.85);
       g.beginPath();
-      g.moveTo(ep.x,      ep.y - ds);
-      g.lineTo(ep.x + ds, ep.y);
-      g.lineTo(ep.x,      ep.y + ds);
-      g.lineTo(ep.x - ds, ep.y);
+      g.moveTo(epx,      epy - ds);
+      g.lineTo(epx + ds, epy);
+      g.lineTo(epx,      epy + ds);
+      g.lineTo(epx - ds, epy);
       g.closePath(); g.strokePath();
     }
 
     // Waypoint (если задан курс)
     const pl = gs.player;
     if (pl && pl.waypoint) {
-      const w = worldToMinimap(pl.waypoint.x, pl.waypoint.y, r, ww, wh);
-      g.lineStyle(1, COLORS.amber, 0.9); g.strokeCircle(w.x, w.y, 3);
+      const wpx = f.ox + pl.waypoint.x * f.s, wpy = f.oy + pl.waypoint.y * f.s;
+      g.lineStyle(1, COLORS.amber, 0.9); g.strokeCircle(wpx, wpy, 3);
     }
 
     // Игрок — треугольник по курсу (heading)
     if (pl && pl.alive) {
-      const p = worldToMinimap(pl.x, pl.y, r, ww, wh);
+      const px3 = f.ox + pl.x * f.s, py3 = f.oy + pl.y * f.s;
       const h = pl.heading, sz = 5.5;
       g.fillStyle(0xffffff, 1);
       g.beginPath();
-      g.moveTo(p.x + Math.cos(h) * sz, p.y + Math.sin(h) * sz);
-      g.lineTo(p.x + Math.cos(h + 2.6) * sz * 0.75, p.y + Math.sin(h + 2.6) * sz * 0.75);
-      g.lineTo(p.x + Math.cos(h - 2.6) * sz * 0.75, p.y + Math.sin(h - 2.6) * sz * 0.75);
+      g.moveTo(px3 + Math.cos(h) * sz, py3 + Math.sin(h) * sz);
+      g.lineTo(px3 + Math.cos(h + 2.6) * sz * 0.75, py3 + Math.sin(h + 2.6) * sz * 0.75);
+      g.lineTo(px3 + Math.cos(h - 2.6) * sz * 0.75, py3 + Math.sin(h - 2.6) * sz * 0.75);
       g.closePath(); g.fillPath();
     }
 
