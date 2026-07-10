@@ -615,12 +615,18 @@ export default class GameScene extends Phaser.Scene {
     this.dust = this.add.particles(cx, cy, 'glow', {
       emitZone: { type: 'random', source: new Phaser.Geom.Rectangle(-1500, -1200, 3000, 2400) },
       lifespan: 800,
-      scaleX: 18.0, 
+      scaleX: 18.0,
       scaleY: 0.05,
       alpha: 0.6,
       tint: 0xffffff,
       blendMode: 'ADD',
-      frequency: 1,
+      // frequency — ms между спавном частиц, а не "интенсивность": 1 = 1000
+      // частиц/сек, при lifespan=800мс это ~800 частиц ОДНОВРЕМЕННО живых, все
+      // пересчитываются в JS каждый кадр ТОЛЬКО во время форсажа (emitting
+      // переключается в update() по p.boosting) — стабильный источник подвисания
+      // именно на форсаже, не связанный с остальной профилировкой выше. 12 → тот же
+      // визуальный эффект заметно реже, ~66 частиц одновременно (~12× меньше).
+      frequency: 12,
       emitting: false,
       speedX: 0,
       speedY: 0,
