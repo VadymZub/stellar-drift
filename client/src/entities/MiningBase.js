@@ -481,15 +481,16 @@ export default class MiningBase {
     const shieldFrac = this.maxShield > 0 ? this.shield / this.maxShield : 0;
     const hW = Math.round(200 * hullFrac), sW = Math.round(200 * shieldFrac);
     const color = hullFrac > 0.5 ? 0x4dd0e1 : hullFrac > 0.25 ? 0xffb74d : 0xef5350;
-    const sig = `${hW}:${sW}:${color}`;
-    if (sig === this._lastHpSig) return;
-    this._lastHpSig = sig;
+    // Числа по отдельности, не склеенная строка — строка на сравнение была бы новой
+    // аллокацией каждый кадр даже при пропуске перерисовки (см. Mob.js:drawBar).
+    if (hW === this._lastHW && sW === this._lastSW && color === this._lastColor) return;
+    this._lastHW = hW; this._lastSW = sW; this._lastColor = color;
     this._hpBar.setDisplaySize(hW, 8).setFillStyle(color);
     this._shieldBar.setDisplaySize(sW, 4);
   }
 
   _refreshTurretHpBars() {
-    if (!this._lastTurretHpSig) this._lastTurretHpSig = [];
+    if (!this._lastTurretHW) { this._lastTurretHW = []; this._lastTurretSW = []; }
     this.turrets.forEach((type, i) => {
       const tt = this.turretTargets[i];
       const bg = this._turretHpBarsBg[i], bar = this._turretHpBars[i], sbar = this._turretShieldBars[i];
@@ -500,9 +501,8 @@ export default class MiningBase {
       const hullFrac   = tt.maxHull   > 0 ? tt.hull   / tt.maxHull   : 0;
       const shieldFrac = tt.maxShield > 0 ? tt.shield / tt.maxShield : 0;
       const hW = Math.round(46 * hullFrac), sW = Math.round(46 * shieldFrac);
-      const sig = `${hW}:${sW}`;
-      if (this._lastTurretHpSig[i] === sig) return;
-      this._lastTurretHpSig[i] = sig;
+      if (this._lastTurretHW[i] === hW && this._lastTurretSW[i] === sW) return;
+      this._lastTurretHW[i] = hW; this._lastTurretSW[i] = sW;
       bar.setDisplaySize(hW, 4);
       sbar.setDisplaySize(sW, 2);
     });

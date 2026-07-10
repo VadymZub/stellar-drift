@@ -673,11 +673,14 @@ export default class HudScene extends Phaser.Scene {
       // ── Цель ── (щит — cyan-полоска над корпусом, если у цели есть щит)
       const t = this.gs.target;
       let targetBottom = 16;
-      // Сигнатура для решения "перерисовывать ли Graphics-бары" ниже — строим её из
-      // округлённой ШИРИНЫ ЗАЛИВКИ (то, что реально видно), а не из сырой доли, чтобы
-      // не пропустить визуально значимое изменение и не перерисовывать на суб-
-      // пиксельный шум регена.
-      let tBarSig = 'none';
+      // Числа для решения "перерисовывать ли Graphics-бары" ниже — округлённая ШИРИНА
+      // ЗАЛИВКИ (то, что реально видно), а не сырая доля, чтобы не пропустить визуально
+      // значимое изменение и не перерисовывать на суб-пиксельный шум регена. Именно
+      // числа, не строка-сигнатура — конкатенация была бы новой аллокацией каждый
+      // кадр просто для сравнения (см. Mob.js:drawBar за тем же фиксом и почему это
+      // важно: см. Memory-график в профилировке, "пила" JS heap от частых GC-пауз).
+      // targetKind: 0=нет цели, 1=есть щит, 2=только корпус.
+      let targetKind = 0, tsW = 0, thW = 0;
       if (t && t.alive) {
         // Мобы несут .tpl (имя/уровень); база/турель/другой игрок — нет, у них
         // общая PvP-цепочка (_onPvpMobHitResult и т.п.) не требует .tpl вовсе, так
@@ -695,14 +698,14 @@ export default class HudScene extends Phaser.Scene {
         this.tName.setX(W / 2);
         this._setText(this.tName, label).setVisible(true);
         if (t.maxShield > 0) {
-          const tsW = Math.ceil(220 * Phaser.Math.Clamp(t.shield / t.maxShield, 0, 1));
-          const thW = Math.ceil(220 * Phaser.Math.Clamp(t.hull / t.maxHull, 0, 1));
-          tBarSig = `s${tsW}h${thW}`;
+          tsW = Math.ceil(220 * Phaser.Math.Clamp(t.shield / t.maxShield, 0, 1));
+          thW = Math.ceil(220 * Phaser.Math.Clamp(t.hull / t.maxHull, 0, 1));
+          targetKind = 1;
           this.tHullTxt.setY(64);
           this._setText(this.tHullTxt, `${i18n.t('hud.shield')} ${Math.ceil(t.shield)}  ·  ${i18n.t('hud.hull')} ${Math.ceil(t.hull)}/${t.maxHull}`);
         } else {
-          const thW = Math.ceil(220 * Phaser.Math.Clamp(t.hull / t.maxHull, 0, 1));
-          tBarSig = `h${thW}`;
+          thW = Math.ceil(220 * Phaser.Math.Clamp(t.hull / t.maxHull, 0, 1));
+          targetKind = 2;
           this.tHullTxt.setY(58);
           this._setText(this.tHullTxt, `${i18n.t('hud.hull')} ${Math.ceil(t.hull)} / ${t.maxHull}`);
         }
@@ -722,9 +725,11 @@ export default class HudScene extends Phaser.Scene {
       // когда реальная ширина заливки или цвет действительно изменились.
       const sW = Math.ceil(160 * Phaser.Math.Clamp(sFrac, 0, 1));
       const hW = Math.ceil(160 * Phaser.Math.Clamp(hFrac, 0, 1));
-      const barsSig = `p:${sW}:${hW}:${hullColor}|t:${tBarSig}`;
-      if (barsSig !== this._lastBarsSig) {
-        this._lastBarsSig = barsSig;
+      const changed = sW !== this._lastPSW || hW !== this._lastPHW || hullColor !== this._lastHullColor
+        || targetKind !== this._lastTargetKind || tsW !== this._lastTSW || thW !== this._lastTHW;
+      if (changed) {
+        this._lastPSW = sW; this._lastPHW = hW; this._lastHullColor = hullColor;
+        this._lastTargetKind = targetKind; this._lastTSW = tsW; this._lastTHW = thW;
         g.clear();
         this.bar(g, 38, 20, 160, 16, sFrac, COLORS.primary);
         this.bar(g, 38, 44, 160, 16, hFrac, hullColor);
@@ -742,7 +747,7 @@ export default class HudScene extends Phaser.Scene {
       // At base: hide all combat/flight stats
       [this._icoShield, this._valShield, this._icoHull, this._valHull, this.pSpeed,
        this.tName, this.tHullTxt, this.safeTxt].forEach(o => o.setVisible(false));
-      if (this._lastBarsSig !== 'atbase') { this._lastBarsSig = 'atbase'; g.clear(); }
+      if (this._lastTargetKind !== -1) { this._lastTargetKind = -1; g.clear(); }
     }
 
     // ── Info panel: always update (stays current at base + in space) ──
@@ -1268,18 +1273,20 @@ export default class HudScene extends Phaser.Scene {
     if (!xg) return;
     if (this._ipCollapsed) {
       // XP меняется только по убийствам/миссиям, не каждый кадр — не трогаем Graphics
-      // (clear+redraw) пока картинка реально не изменилась (см. update()'s barsSig).
-      if (this._lastIpXpSig !== 'collapsed') { this._lastIpXpSig = 'collapsed'; xg.clear(); }
+      // (clear+redraw) пока картинка реально не изменилась. Числа, не строка — см.
+      // тот же фикс в Mob.js:drawBar (аллокация строки на сравнение = мусор каждый
+      // кадр даже когда ничего не рисуем).
+      if (!this._lastIpCollapsed) { this._lastIpCollapsed = true; xg.clear(); }
       return;
     }
+    this._lastIpCollapsed = false;
     const BH = 24, LH = 21, PW = 148;
     const barX = this._ipx + 10;
     const barY = this._ipy + BH + 4 + 6 * LH + 2;  // below rank line
     const barW = PW - 20;
     const fillW = Math.round(barW * (this._ipXpFrac || 0));
-    const sig = `${barX}:${barY}:${fillW}`;
-    if (sig === this._lastIpXpSig) return;
-    this._lastIpXpSig = sig;
+    if (barX === this._lastIpBarX && barY === this._lastIpBarY && fillW === this._lastIpFillW) return;
+    this._lastIpBarX = barX; this._lastIpBarY = barY; this._lastIpFillW = fillW;
     xg.clear();
     xg.fillStyle(0x1a1030, 0.6); xg.fillRect(barX, barY, barW, 6);
     xg.fillStyle(0x7c4dff, 0.9); xg.fillRect(barX, barY, fillW, 6);

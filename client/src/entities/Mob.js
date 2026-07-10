@@ -959,9 +959,13 @@ export default class Mob {
     this.bar.setPosition(this.x, this.y - this.tpl.displaySize * 0.6);
     const hullFrac   = this.hull / this.maxHull;
     const shieldFrac = this.maxShield > 0 ? this.shield / this.maxShield : 0;
-    const sig = `${Math.round(hullFrac * 1000)}:${Math.round(shieldFrac * 1000)}`;
-    if (sig === this._lastBarSig) return;
-    this._lastBarSig = sig;
+    // Числа, не строка — шаблонная строка тут была НОВОЙ аллокацией каждый кадр на
+    // каждого моба просто для сравнения, то есть сама решала "не рисовать" ценой
+    // мусора, который всё равно копился и вызывал частые паузы GC (см. Memory-график
+    // в профилировке — характерная "пила" JS heap).
+    const hSig = Math.round(hullFrac * 1000), sSig = Math.round(shieldFrac * 1000);
+    if (hSig === this._lastHullSig && sSig === this._lastShieldSig) return;
+    this._lastHullSig = hSig; this._lastShieldSig = sSig;
     this.bar.clear();
     this.bar.fillStyle(0x000000, 0.5); this.bar.fillRect(-w / 2 - 1, -1, w + 2, h + 2);
     this.bar.fillStyle(COLORS.danger, 1);

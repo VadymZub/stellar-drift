@@ -85,9 +85,11 @@ export default class RemotePlayer {
     this.bar.setPosition(this.x, this.y - this.sprite.displayHeight * 0.6 - 10);
     const hullFrac   = Math.max(0, this.hull / this.maxHull);
     const shieldFrac = this.maxShield > 0 ? Math.max(0, this.shield / this.maxShield) : 0;
-    const sig = `${Math.round(hullFrac * 1000)}:${Math.round(shieldFrac * 1000)}`;
-    if (sig === this._lastBarSig) return;
-    this._lastBarSig = sig;
+    // Числа, не строка — см. тот же фикс в Mob.js:drawBar (шаблонная строка на
+    // сравнение = аллокация каждый кадр = давление на GC).
+    const hSig = Math.round(hullFrac * 1000), sSig = Math.round(shieldFrac * 1000);
+    if (hSig === this._lastHullSig && sSig === this._lastShieldSig) return;
+    this._lastHullSig = hSig; this._lastShieldSig = sSig;
     this.bar.clear();
     this.bar.fillStyle(0x000000, 0.5); this.bar.fillRect(-w / 2 - 1, -1, w + 2, h + 2);
     this.bar.fillStyle(COLORS.danger, 1);
