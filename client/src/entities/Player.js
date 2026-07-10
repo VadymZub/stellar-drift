@@ -441,6 +441,13 @@ export default class Player {
     this.weaponDamage = this.cannonDamage + this.laserDamage;
     this.hull  = Math.min(this.hull, this.maxHull);
     if (this.shield > this.maxShield) this.shield = this.maxShield;
+
+    // Realtime-комнаты (PvpRoomManager на сервере) держат ОДНОРАЗОВЫЙ снимок статов как
+    // потолок для валидации попаданий (см. GameScene._pvpLoadoutSnapshot) — без этого
+    // смена корабля/экипировки/уровня ПОСЛЕ входа в комнату оставляла бы потолок от
+    // старого, слабее, лоадаута на весь остаток визита (реальный урон рос, потолок нет —
+    // сервер зажимал бы урон в разы сильнее задуманного).
+    this.scene._onPlayerStatsChanged?.();
   }
 
   // Урон: penetration-доля идёт прямо в корпус, остальное — в щит, излишек переливается в корпус.

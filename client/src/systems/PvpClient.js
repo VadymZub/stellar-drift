@@ -41,6 +41,14 @@ export class PvpClient {
         this._send({ type: 'pvp_enter', sector, x, y, loadout });
     }
 
+    /** Обновляет потолок лоадаута без выхода/входа в комнату (без этого смена корабля/
+     * экипировки/уровня ПОСЛЕ входа оставляла бы сервер с протухшим потолком урона —
+     * см. Player.recomputeStats). Позиции/членство в комнате не трогает. */
+    updateLoadout(loadout) {
+        if (!this.sector) return;
+        this._send({ type: 'pvp_update_loadout', loadout });
+    }
+
     /** Throttled internally — safe to call every frame from GameScene.update(). */
     sendPos(x, y, heading, dtMs) {
         if (!this.sector) return;

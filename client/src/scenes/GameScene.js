@@ -1166,6 +1166,14 @@ export default class GameScene extends Phaser.Scene {
     };
   }
 
+  // Вызывается из Player.recomputeStats() при ЛЮБОМ пересчёте статов (смена корабля/
+  // экипировки/уровня/скиллов) — если сейчас есть активная realtime-комната, шлём
+  // серверу свежий потолок для валидации попаданий, а не оставляем протухший с
+  // момента входа в комнату (см. комментарий в recomputeStats).
+  _onPlayerStatsChanged() {
+    if (this._realtimeRoomKey) this.pvpClient?.updateLoadout(this._pvpLoadoutSnapshot());
+  }
+
   _dungeonDiff() {
     return DUNGEON_DIFF[this.dungeonDifficulty ?? 'normal'];
   }
@@ -2698,7 +2706,12 @@ export default class GameScene extends Phaser.Scene {
         .setOrigin(0.5).setDepth(71);
       this.tweens.add({ targets: txt, y: mob.y - 80, alpha: 0, duration: 600, ease: 'Quad.easeOut', onComplete: () => txt.destroy() });
     }
-    if (msg.killed) this.onMobKilled(mob);
+    // mob.die() — обычно вызывается ИЗНУТРИ Mob.takeDamage() при hull<=0, ДО того как
+    // вызывающий код вызовет onMobKilled(). Здесь takeDamage() в принципе не вызывается
+    // (сервер решает исход), так что без явного die() mob.alive остаётся true — спрайт
+    // не скрывается, следующий выстрел лениво пересоздаёт запись на сервере с полным HP,
+    // выглядит как "моб живёт с hull=0, потом сам восстанавливается".
+    if (msg.killed && mob.alive) { mob.die(); this.onMobKilled(mob); }
   }
 
   // Реконсиляция уже заспавненных локально мобов с текущим сервер-леджером при входе в
