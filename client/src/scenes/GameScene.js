@@ -3972,6 +3972,20 @@ export default class GameScene extends Phaser.Scene {
   log(msg) { this.game.events.emit('hud-log', msg); }
   update(time, delta) {
     const dt = delta / 1000;
+
+    // Phaser's Camera.startFollow() lerp (0.35 set in create()) is applied as a FIXED
+    // FRACTION PER CALL, not scaled by dt — it implicitly assumes a constant ~60fps
+    // call rate. Any frame-timing jitter (GC pause, a heavier frame, browser hiccup —
+    // not even a full dropped frame, just inconsistent dt) changes how much ground the
+    // camera actually covers that frame in TIME terms, so the ship visibly jerks within
+    // the viewport even though its own world position moved smoothly. Worse at boost
+    // because the camera has more distance to close per frame, so the same timing
+    // jitter produces a proportionally bigger pixel error. Recomputing the lerp each
+    // frame to match what "0.35 at a nominal 60fps" would give at THIS frame's actual
+    // dt makes the follow speed frame-rate independent instead of frame-COUNT dependent.
+    const camLerp = 1 - Math.pow(1 - 0.35, dt * 60);
+    this.cameras.main.setLerp(camLerp, camLerp);
+
     this.bgNear.tilePositionX = this.cameras.main.scrollX * 0.05;
     this.bgNear.tilePositionY = this.cameras.main.scrollY * 0.05;
 
