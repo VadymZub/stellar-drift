@@ -3861,7 +3861,13 @@ export default class GameScene extends Phaser.Scene {
       }
       if (now >= z.detonateAt) { z.done = true; this.detonateAoe(z); }
     }
-    this.aoeZones = this.aoeZones.filter((z) => !z.done);
+    // Swap-pop, не .filter() — тот же принцип, что и для projectiles выше.
+    for (let i = this.aoeZones.length - 1; i >= 0; i--) {
+      if (this.aoeZones[i].done) {
+        this.aoeZones[i] = this.aoeZones[this.aoeZones.length - 1];
+        this.aoeZones.pop();
+      }
+    }
   }
   detonateAoe(z) {
     this.explosion(z.x, z.y, 1.6);
@@ -4091,7 +4097,16 @@ export default class GameScene extends Phaser.Scene {
     this.miningBases.forEach(b => b.update(dt));
     this.nearBase = false; // reset before home bases accumulate — any base can set it to true
     this.homeBases.forEach(b => b.update(dt));
-    this.projectiles = this.projectiles.filter((p) => !p.dead);
+    // Убираем протухшие снаряды IN-PLACE (swap-pop) — .filter() пересобирал новый
+    // массив КАЖДЫЙ кадр безусловно, даже когда никто не умер; при активной стрельбе
+    // (мобы бьют хитскан-лазерами/плазмой почти постоянно) это была ещё одна
+    // безусловная аллокация 60 раз/сек (см. profилировку — та же "пила" JS heap).
+    for (let i = this.projectiles.length - 1; i >= 0; i--) {
+      if (this.projectiles[i].dead) {
+        this.projectiles[i] = this.projectiles[this.projectiles.length - 1];
+        this.projectiles.pop();
+      }
+    }
     this.projectiles.forEach((p) => p.update(dt));
     if (this._wallLines?.length) this._checkProjWallCollision();
     this.updateLoot(dt); this.updateGates(dt);

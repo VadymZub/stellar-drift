@@ -2406,7 +2406,7 @@ export default class HudScene extends Phaser.Scene {
 
     this._bstClosed   = saved.closed || false;
     this._bstDrag     = { active: false, ox: 0, oy: 0 };
-    this._bstPrevKeys = new Set();
+    this._bstPrevActive = {};
     this._bstLastVisCount = -1;
     this._bstWW = WW; this._bstHdrH = hdrH; this._bstRowH = rowH;
 
@@ -2455,22 +2455,32 @@ export default class HudScene extends Phaser.Scene {
     try { localStorage.setItem('sd_booster_win', JSON.stringify({ x: Math.round(c.x), y: Math.round(c.y), closed: this._bstClosed })); } catch {}
   }
 
+  // Раньше строило Set (map+filter) и разворачивало его в массив через [...] КАЖДЫЙ
+  // кадр безусловно, даже когда нет ни одного активного бустера — 2-3 новых
+  // коллекции/сек*60 просто чтобы решить "не открылся ли новый бустер". Тот же вклад
+  // в GC-паузы, что и строковые сигнатуры баров (см. profилировку — "пила" JS heap
+  // не сходила, пока не убрали ВСЕ такие безусловные аллокации, не только строки).
   _updateBoosterWidget() {
     const now = Date.now();
     const ab  = this.gs.activeBoosters || {};
+    if (!this._bstPrevActive) this._bstPrevActive = {};
 
-    const activeKeys = new Set(BOOSTER_DEFS.map(d => d.key).filter(k => (ab[k] || 0) > now));
+    let anyActive = false, newlyActivated = false;
+    for (const d of BOOSTER_DEFS) {
+      const active = (ab[d.key] || 0) > now;
+      if (active) anyActive = true;
+      if (active && !this._bstPrevActive[d.key]) newlyActivated = true;
+      this._bstPrevActive[d.key] = active;
+    }
 
     // Auto-reopen if a new booster was activated while widget was closed
-    const newKey = [...activeKeys].find(k => !this._bstPrevKeys.has(k));
-    if (newKey && this._bstClosed) {
+    if (newlyActivated && this._bstClosed) {
       this._bstClosed = false;
       this._bstSavePos();
     }
-    this._bstPrevKeys = activeKeys;
 
     const c = this._bstCon;
-    if (!activeKeys.size || this._bstClosed) { c.setVisible(false); return; }
+    if (!anyActive || this._bstClosed) { c.setVisible(false); return; }
     c.setVisible(true);
 
     let visCount = 0;
@@ -2480,7 +2490,7 @@ export default class HudScene extends Phaser.Scene {
       row.icon.setVisible(active); row.label.setVisible(active); row.timer.setVisible(active);
       if (active) {
         const rem = Math.ceil((expiry - now) / 1000);
-        row.timer.setText(`${String(Math.floor(rem / 60)).padStart(2, '0')}:${String(rem % 60).padStart(2, '0')}`);
+        this._setText(row.timer, `${String(Math.floor(rem / 60)).padStart(2, '0')}:${String(rem % 60).padStart(2, '0')}`);
         visCount++;
       }
     }
