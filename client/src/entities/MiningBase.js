@@ -467,20 +467,29 @@ export default class MiningBase {
     this._refreshOwnerLabel();
   }
 
+  // setDisplaySize()/setFillStyle() каждый кадр на ~14 Rectangle-объектов (HP+щит базы
+  // + HP+щит на 6 турелях), даже когда прочность/щит не менялись (полное здоровье,
+  // не в бою) — то же самое, что было в HudScene (см. правку статов там). Трогаем
+  // объекты только когда реальный пиксельный размер/цвет действительно поменялись.
   _refreshHpBar() {
     const show  = this.state !== 'destroyed';
-    const hullFrac   = this.maxHull   > 0 ? this.hull   / this.maxHull   : 0;
-    const shieldFrac = this.maxShield > 0 ? this.shield / this.maxShield : 0;
     this._hpBarBg.setVisible(show);
     this._hpBar.setVisible(show);
     this._shieldBar.setVisible(show && this.maxShield > 0);
-    this._hpBar.setDisplaySize(Math.round(200 * hullFrac), 8);
-    this._shieldBar.setDisplaySize(Math.round(200 * shieldFrac), 4);
+    if (!show) return;
+    const hullFrac   = this.maxHull   > 0 ? this.hull   / this.maxHull   : 0;
+    const shieldFrac = this.maxShield > 0 ? this.shield / this.maxShield : 0;
+    const hW = Math.round(200 * hullFrac), sW = Math.round(200 * shieldFrac);
     const color = hullFrac > 0.5 ? 0x4dd0e1 : hullFrac > 0.25 ? 0xffb74d : 0xef5350;
-    this._hpBar.setFillStyle(color);
+    const sig = `${hW}:${sW}:${color}`;
+    if (sig === this._lastHpSig) return;
+    this._lastHpSig = sig;
+    this._hpBar.setDisplaySize(hW, 8).setFillStyle(color);
+    this._shieldBar.setDisplaySize(sW, 4);
   }
 
   _refreshTurretHpBars() {
+    if (!this._lastTurretHpSig) this._lastTurretHpSig = [];
     this.turrets.forEach((type, i) => {
       const tt = this.turretTargets[i];
       const bg = this._turretHpBarsBg[i], bar = this._turretHpBars[i], sbar = this._turretShieldBars[i];
@@ -490,8 +499,12 @@ export default class MiningBase {
       if (!show || !tt) return;
       const hullFrac   = tt.maxHull   > 0 ? tt.hull   / tt.maxHull   : 0;
       const shieldFrac = tt.maxShield > 0 ? tt.shield / tt.maxShield : 0;
-      bar.setDisplaySize(Math.round(46 * hullFrac), 4);
-      sbar.setDisplaySize(Math.round(46 * shieldFrac), 2);
+      const hW = Math.round(46 * hullFrac), sW = Math.round(46 * shieldFrac);
+      const sig = `${hW}:${sW}`;
+      if (this._lastTurretHpSig[i] === sig) return;
+      this._lastTurretHpSig[i] = sig;
+      bar.setDisplaySize(hW, 4);
+      sbar.setDisplaySize(sW, 2);
     });
   }
 
