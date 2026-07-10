@@ -1,5 +1,5 @@
 import * as Phaser from 'https://cdn.jsdelivr.net/npm/phaser@4.1.0/dist/phaser.esm.js';
-import { BASE_CONFIG, TURRET_SLOTS, CORP_ASSETS, cannon2GoldCost, goldPerSecByTier } from '../bases.js';
+import { BASE_CONFIG, TURRET_SLOTS, CORP_ASSETS, cannon2GoldCost, goldPerSecByTier, turretDamageMult } from '../bases.js';
 import { UI_RES } from '../constants.js';
 
 // Persists base ownership/state across sector re-entries.
@@ -386,34 +386,54 @@ export default class MiningBase {
       if (!type) return;
 
       const range   = type === 'cannon2' ? BASE_CONFIG.cannon2Range  : BASE_CONFIG.cannon1Range;
-      const damage  = type === 'cannon2' ? BASE_CONFIG.cannon2Damage : BASE_CONFIG.cannon1Damage;
+      const damage  = (type === 'cannon2' ? BASE_CONFIG.cannon2Damage : BASE_CONFIG.cannon1Damage)
+        * turretDamageMult(this.pvpTier);
       const rateInv = type === 'cannon2'
         ? 1 / BASE_CONFIG.cannon2Rate
         : 1 / BASE_CONFIG.cannon1Rate;
+      const boltCount = type === 'cannon2' ? 2 : 1;
 
       this._turretCooldowns[i] -= dt;
-      if (this._turretCooldowns[i] > 0) return;
 
       const tx = this.x + slot.x;
       const ty = this.y + slot.y;
 
-      // Find nearest alive mob in range
+      // Find nearest alive mob in range — every frame, not just on the fire tick,
+      // so rotation below can track it smoothly between shots.
       let nearest = null, nearestDist = range;
       for (const mob of mobs) {
         if (!mob.alive) continue;
         const d = Phaser.Math.Distance.Between(tx, ty, mob.x, mob.y);
         if (d < nearestDist) { nearest = mob; nearestDist = d; }
       }
-      if (!nearest) return;
 
-      // Rotate turret art toward target (sprites drawn nose-up → +π/2 offset)
+      // Turn turret art toward target gradually (sprites drawn nose-up → +π/2
+      // offset) — setRotation() only on the fire tick made the barrel visibly
+      // snap once per cooldown (1s) instead of tracking smoothly every frame.
       const spr = this._turretSprites[i];
-      if (spr?.visible) {
-        spr.setRotation(Math.atan2(nearest.y - ty, nearest.x - tx) + Math.PI / 2);
+      if (spr?.visible && nearest) {
+        const targetAngle = Math.atan2(nearest.y - ty, nearest.x - tx) + Math.PI / 2;
+        const diff = Phaser.Math.Angle.Wrap(targetAngle - spr.rotation);
+        const maxStep = 6 * dt; // rad/sec turn rate
+        spr.rotation += Phaser.Math.Clamp(diff, -maxStep, maxStep);
       }
 
+      if (!nearest || this._turretCooldowns[i] > 0) return;
       this._turretCooldowns[i] = rateInv;
+
+      // Скоростной болт (см. GameScene._fireVisualBolt — тот же спрайт/скорость,
+      // что и у выстрелов игрока) — раньше был только muzzleFlash в точке турели,
+      // сам летящий снаряд к цели не рисовался. cannon2 стреляет двумя болтами
+      // (визуальный стиль "спаренной" пушки), cannon1 — одним.
+      const angle = Math.atan2(nearest.y - ty, nearest.x - tx);
+      const perpX = -Math.sin(angle), perpY = Math.cos(angle);
+      const boltColor = type === 'cannon2' ? 0xff6a00 : 0xffaa44;
+      for (let bIdx = 0; bIdx < boltCount; bIdx++) {
+        const off = boltCount === 1 ? 0 : (bIdx === 0 ? -7 : 7);
+        gs._fireVisualBolt?.(tx + perpX * off, ty + perpY * off, nearest.x + perpX * off, nearest.y + perpY * off, boltColor);
+      }
       gs.muzzleFlash?.(tx, ty, 0xffaa44);
+
       if (nearest.pvpMobId) {
         // Общий моб реалтайм-комнаты — залп идёт через turretFireClaim, НЕ через
         // локальный takeDamage (иначе урон турели видел бы только этот клиент,
@@ -422,7 +442,7 @@ export default class MiningBase {
         // независимые заявки всех клиентов, видящих эту же турель.
         gs.pvpClient?.turretFireClaim(
           `${this.id}:${i}`, nearest.pvpMobId, nearest.maxHull, nearest.maxShield,
-          nearest.x, nearest.y, tx, ty, type, damage,
+          nearest.x, nearest.y, tx, ty, type, damage, this.pvpTier,
         );
       } else {
         const res = nearest.takeDamage(damage, 0);

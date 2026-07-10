@@ -19,14 +19,25 @@ export const BASE_CONFIG = {
   goldPerHrHigh:    2,   // pvpTier 3-5
   maxOwners:        10,
 
-  cannon1Range:  400,
-  cannon1Damage: 80,
-  cannon1Rate:   0.8,   // shots / sec
+  // Урон — базовые значения для pvp4/pvp5 (коэф. 1.0), см. turretDamageMult ниже;
+  // дальность/скорострельность НЕ масштабируются по тиру, только урон.
+  cannon1Range:  600,
+  cannon1Damage: 500,
+  cannon1Rate:   1,     // shots / sec
 
-  cannon2Range:  550,
-  cannon2Damage: 130,
-  cannon2Rate:   1.2,
+  cannon2Range:  650,
+  cannon2Damage: 1000,
+  cannon2Rate:   1,
 };
+
+// Множитель урона турели по pvp-тиру арены — на pvp1-3 турели слабее заявленного
+// базового урона (cannon1Damage/cannon2Damage), на pvp4/pvp5 бьют в полную силу.
+export function turretDamageMult(pvpTier) {
+  if (pvpTier <= 1) return 0.3;
+  if (pvpTier === 2) return 0.6;
+  if (pvpTier === 3) return 0.8;
+  return 1.0; // pvpTier 4, 5
+}
 
 // Turret slot offsets relative to base center (world px), tuned for displaySize 460.
 // Layout: 2 top, 2 middle (widest), 2 bottom — matches the 6-pod octagonal art.

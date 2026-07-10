@@ -80,9 +80,9 @@ export class PvpClient {
      * между клиентами, которые видят ту же турель — см. TURRET_WEAPONS в main.py).
      * turretId должен быть стабилен и уникален (base.id + слот), baseX/baseY —
      * позиция самой турели/базы, не отправляющего игрока. */
-    turretFireClaim(turretId, mobId, maxHull, maxShield, mobX, mobY, baseX, baseY, weaponType, dmg) {
+    turretFireClaim(turretId, mobId, maxHull, maxShield, mobX, mobY, baseX, baseY, weaponType, dmg, pvpTier) {
         if (!this.sector) return;
-        this._send({ type: 'pvp_turret_fire_claim', turretId, mobId, maxHull, maxShield, mobX, mobY, baseX, baseY, weaponType, dmg });
+        this._send({ type: 'pvp_turret_fire_claim', turretId, mobId, maxHull, maxShield, mobX, mobY, baseX, baseY, weaponType, dmg, pvpTier });
     }
 
     /** Отправляется ЖЕРТВОЙ сразу после смерти — только у неё есть реальный инвентарь,
