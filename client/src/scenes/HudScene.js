@@ -401,6 +401,7 @@ export default class HudScene extends Phaser.Scene {
     this._abSlots.forEach((slot, i) => {
       const key = (gs.actionBar || [])[i] || null;
       slot._key = key;
+      slot._lastCdBarH = undefined; // force a fresh cdGfx redraw decision post-rebuild
       if (slot.iconImg) { slot.iconImg.destroy(); slot.iconImg = null; }
       if (slot._pickGfx) { slot._pickGfx.destroy(); slot._pickGfx = null; }
 
@@ -496,6 +497,20 @@ export default class HudScene extends Phaser.Scene {
       const slot  = this._abSlots[i];
       const key   = bar[i] || null;
 
+      // Прогресс-полоска (cdGfx) перерисовывается только когда её высота реально
+      // изменилась — Graphics.clear()+redraw на все 10 слотов КАЖДЫЙ кадр, включая
+      // пустые/неактивные слоты без кулдауна, заметно грузило рендер (см.
+      // профилировку). null = полоска не нужна (нет кулдауна прямо сейчас).
+      const setCdBar = (barH) => {
+        if (barH === slot._lastCdBarH) return;
+        slot._lastCdBarH = barH;
+        slot.cdGfx.clear();
+        if (barH !== null) {
+          slot.cdGfx.fillStyle(0x000000, 0.68);
+          slot.cdGfx.fillRoundedRect(slot.sx, slot.sy, slot.SW, barH, slot.R ?? Math.round(5 * DPR));
+        }
+      };
+
       if (key?.startsWith('use:')) {
         const buffEnd = (gs._consBuffEndTimes || {})[key] || 0;
         const buffRem = Math.max(0, buffEnd - time);
@@ -506,21 +521,20 @@ export default class HudScene extends Phaser.Scene {
         const invCount  = countConsumableInInventory(gs.inventory || [], type);
         const ammoCount = (gs.ammoSlots || []).reduce((s, sl) => s + (sl.type === type ? sl.count : 0), 0);
         const total     = invCount + ammoCount;
-        slot.cdGfx.clear();
         if (buffRem > 0) {
-          slot.cdTxt.setPosition(slot.sx + slot.SW / 2, slot.sy + slot.SH / 2).setOrigin(0.5, 0.5)
-            .setColor('#4de8a0').setText(`${Math.ceil(buffRem / 1000)}`);
+          setCdBar(null);
+          slot.cdTxt.setPosition(slot.sx + slot.SW / 2, slot.sy + slot.SH / 2).setOrigin(0.5, 0.5).setColor('#4de8a0');
+          this._setText(slot.cdTxt, `${Math.ceil(buffRem / 1000)}`);
           if (slot.iconImg) slot.iconImg.setAlpha(1.0);
         } else if (cdRem > 0) {
-          const prog = cdRem / cdMs;
-          slot.cdGfx.fillStyle(0x000000, 0.68);
-          slot.cdGfx.fillRoundedRect(slot.sx, slot.sy, slot.SW, Math.ceil(slot.SH * prog), slot.R ?? Math.round(5 * DPR));
-          slot.cdTxt.setPosition(slot.sx + slot.SW / 2, slot.sy + slot.SH / 2).setOrigin(0.5, 0.5)
-            .setColor('#ffffff').setText(`${Math.ceil(cdRem / 1000)}`);
+          setCdBar(Math.ceil(slot.SH * (cdRem / cdMs)));
+          slot.cdTxt.setPosition(slot.sx + slot.SW / 2, slot.sy + slot.SH / 2).setOrigin(0.5, 0.5).setColor('#ffffff');
+          this._setText(slot.cdTxt, `${Math.ceil(cdRem / 1000)}`);
           if (slot.iconImg) slot.iconImg.setAlpha(0.3);
         } else {
-          slot.cdTxt.setPosition(slot.sx + slot.SW / 2, slot.sy + slot.SH - Math.round(2 * DPR)).setOrigin(0.5, 1)
-            .setColor('#ffffff').setText(total > 0 ? `${total}` : '');
+          setCdBar(null);
+          slot.cdTxt.setPosition(slot.sx + slot.SW / 2, slot.sy + slot.SH - Math.round(2 * DPR)).setOrigin(0.5, 1).setColor('#ffffff');
+          this._setText(slot.cdTxt, total > 0 ? `${total}` : '');
           if (slot.iconImg) slot.iconImg.setAlpha(total > 0 ? 1.0 : 0.3);
         }
         continue;
@@ -533,18 +547,20 @@ export default class HudScene extends Phaser.Scene {
       const cdRem   = Math.max(0, cdEnd - time);
       const lv      = (key?.startsWith('ship:') || key?.startsWith('argus:')) ? 1 : (gs.skillLevels?.[key] || 0);
 
-      slot.cdGfx.clear();
       if (key && buffRem > 0) {
-        slot.cdTxt.setColor('#4de8a0').setText(`${Math.ceil(buffRem / 1000)}`);
+        setCdBar(null);
+        slot.cdTxt.setColor('#4de8a0');
+        this._setText(slot.cdTxt, `${Math.ceil(buffRem / 1000)}`);
         if (slot.iconImg) slot.iconImg.setAlpha(1.0);
       } else if (key && cdRem > 0) {
-        const prog = cdRem / cdMs;
-        slot.cdGfx.fillStyle(0x000000, 0.68);
-        slot.cdGfx.fillRoundedRect(slot.sx, slot.sy, slot.SW, Math.ceil(slot.SH * prog), slot.R ?? Math.round(5 * DPR));
-        slot.cdTxt.setColor('#ffffff').setText(`${Math.ceil(cdRem / 1000)}`);
+        setCdBar(Math.ceil(slot.SH * (cdRem / cdMs)));
+        slot.cdTxt.setColor('#ffffff');
+        this._setText(slot.cdTxt, `${Math.ceil(cdRem / 1000)}`);
         if (slot.iconImg) slot.iconImg.setAlpha(lv === 0 ? 0.25 : 0.45);
       } else {
-        slot.cdTxt.setColor('#ffffff').setText('');
+        setCdBar(null);
+        slot.cdTxt.setColor('#ffffff');
+        this._setText(slot.cdTxt, '');
         if (slot.iconImg) slot.iconImg.setAlpha(lv === 0 ? 0.25 : 1.0);
       }
     }
@@ -636,7 +652,7 @@ export default class HudScene extends Phaser.Scene {
 
   update() {
     const W = this.scale.width, H = this.scale.height;
-    const g = this.bars; g.clear();
+    const g = this.bars;
     const p = this.gs.player;
     if (!p) return;
 
@@ -646,19 +662,22 @@ export default class HudScene extends Phaser.Scene {
       // ── Игрок ── (горизонтальные бары с иконкой и значением)
       const sFrac = p.shield / p.maxShield, hFrac = p.hull / p.maxHull;
       this._icoShield.setVisible(true);
-      this._valShield.setText(`${Math.ceil(p.shield)} / ${p.maxShield}`).setVisible(true);
-      this.bar(g, 38, 20, 160, 16, sFrac, COLORS.primary);
+      this._setText(this._valShield, `${Math.ceil(p.shield)} / ${p.maxShield}`).setVisible(true);
       this._icoHull.setVisible(true);
-      this._valHull.setText(`${Math.ceil(p.hull)} / ${p.maxHull}`).setVisible(true);
+      this._setText(this._valHull, `${Math.ceil(p.hull)} / ${p.maxHull}`).setVisible(true);
       const hullColor = hFrac > 0.5 ? COLORS.emerald : (hFrac > 0.25 ? COLORS.amber : COLORS.danger);
-      this.bar(g, 38, 44, 160, 16, hFrac, hullColor);
       const boostTag = p.boosting ? `  ⚡${i18n.t('hud.boost')}` : '';
-      this.pSpeed.setText(`${i18n.t('hud.speed')}  ${Math.round(p.speed)}${boostTag}`)
+      this._setText(this.pSpeed, `${i18n.t('hud.speed')}  ${Math.round(p.speed)}${boostTag}`)
         .setColor(p.boosting ? '#ffb74d' : '#9fb3b8').setVisible(true);
 
       // ── Цель ── (щит — cyan-полоска над корпусом, если у цели есть щит)
       const t = this.gs.target;
       let targetBottom = 16;
+      // Сигнатура для решения "перерисовывать ли Graphics-бары" ниже — строим её из
+      // округлённой ШИРИНЫ ЗАЛИВКИ (то, что реально видно), а не из сырой доли, чтобы
+      // не пропустить визуально значимое изменение и не перерисовывать на суб-
+      // пиксельный шум регена.
+      let tBarSig = 'none';
       if (t && t.alive) {
         // Мобы несут .tpl (имя/уровень); база/турель/другой игрок — нет, у них
         // общая PvP-цепочка (_onPvpMobHitResult и т.п.) не требует .tpl вовсе, так
@@ -673,15 +692,19 @@ export default class HudScene extends Phaser.Scene {
         } else {
           label = t.name || '';
         }
-        this.tName.setX(W / 2).setText(label).setVisible(true);
-        const bx = W / 2 - 110;
+        this.tName.setX(W / 2);
+        this._setText(this.tName, label).setVisible(true);
         if (t.maxShield > 0) {
-          this.bar(g, bx, 40, 220, 6, t.shield / t.maxShield, COLORS.primary);
-          this.bar(g, bx, 50, 220, 8, t.hull / t.maxHull, COLORS.danger);
-          this.tHullTxt.setY(64).setText(`${i18n.t('hud.shield')} ${Math.ceil(t.shield)}  ·  ${i18n.t('hud.hull')} ${Math.ceil(t.hull)}/${t.maxHull}`);
+          const tsW = Math.ceil(220 * Phaser.Math.Clamp(t.shield / t.maxShield, 0, 1));
+          const thW = Math.ceil(220 * Phaser.Math.Clamp(t.hull / t.maxHull, 0, 1));
+          tBarSig = `s${tsW}h${thW}`;
+          this.tHullTxt.setY(64);
+          this._setText(this.tHullTxt, `${i18n.t('hud.shield')} ${Math.ceil(t.shield)}  ·  ${i18n.t('hud.hull')} ${Math.ceil(t.hull)}/${t.maxHull}`);
         } else {
-          this.bar(g, bx, 44, 220, 8, t.hull / t.maxHull, COLORS.danger);
-          this.tHullTxt.setY(58).setText(`${i18n.t('hud.hull')} ${Math.ceil(t.hull)} / ${t.maxHull}`);
+          const thW = Math.ceil(220 * Phaser.Math.Clamp(t.hull / t.maxHull, 0, 1));
+          tBarSig = `h${thW}`;
+          this.tHullTxt.setY(58);
+          this._setText(this.tHullTxt, `${i18n.t('hud.hull')} ${Math.ceil(t.hull)} / ${t.maxHull}`);
         }
         this.tHullTxt.setX(W / 2).setVisible(true);
         targetBottom = 86;
@@ -691,23 +714,47 @@ export default class HudScene extends Phaser.Scene {
 
       // ── Безопасная зона ──
       this.safeTxt.setX(W / 2).setY(targetBottom).setVisible(!!this.gs.safeProtected);
+
+      // Graphics.clear()+перерисовка пересобирает геометрию и заливает её в GPU —
+      // дорогая операция (см. профилировку: GraphicsWebGLRenderer). Полосы щита/
+      // корпуса игрока и цели визуально не меняются большую часть времени (полное
+      // здоровье, статичная/отсутствующая цель), так что трогаем Graphics только
+      // когда реальная ширина заливки или цвет действительно изменились.
+      const sW = Math.ceil(160 * Phaser.Math.Clamp(sFrac, 0, 1));
+      const hW = Math.ceil(160 * Phaser.Math.Clamp(hFrac, 0, 1));
+      const barsSig = `p:${sW}:${hW}:${hullColor}|t:${tBarSig}`;
+      if (barsSig !== this._lastBarsSig) {
+        this._lastBarsSig = barsSig;
+        g.clear();
+        this.bar(g, 38, 20, 160, 16, sFrac, COLORS.primary);
+        this.bar(g, 38, 44, 160, 16, hFrac, hullColor);
+        if (t && t.alive) {
+          const bx = W / 2 - 110;
+          if (t.maxShield > 0) {
+            this.bar(g, bx, 40, 220, 6, t.shield / t.maxShield, COLORS.primary);
+            this.bar(g, bx, 50, 220, 8, t.hull / t.maxHull, COLORS.danger);
+          } else {
+            this.bar(g, bx, 44, 220, 8, t.hull / t.maxHull, COLORS.danger);
+          }
+        }
+      }
     } else {
       // At base: hide all combat/flight stats
       [this._icoShield, this._valShield, this._icoHull, this._valHull, this.pSpeed,
        this.tName, this.tHullTxt, this.safeTxt].forEach(o => o.setVisible(false));
-      g.clear();
+      if (this._lastBarsSig !== 'atbase') { this._lastBarsSig = 'atbase'; g.clear(); }
     }
 
     // ── Info panel: always update (stays current at base + in space) ──
-    this.pCredits.setText(`💰 ${(this.gs.credits || 0).toLocaleString()}`);
-    this.pStarGold.setText(`⭐ ${this.gs.starGold || 0}`);
-    this.pHonor.setText(`⚔️ ${(this.gs.pilotHonor || 0).toLocaleString()}`);
-    this.pCorpRep.setText(`🛡 ${Math.round((this.gs.corpRep || 0) * 100)}%`);
+    this._setText(this.pCredits, `💰 ${(this.gs.credits || 0).toLocaleString()}`);
+    this._setText(this.pStarGold, `⭐ ${this.gs.starGold || 0}`);
+    this._setText(this.pHonor, `⚔️ ${(this.gs.pilotHonor || 0).toLocaleString()}`);
+    this._setText(this.pCorpRep, `🛡 ${Math.round((this.gs.corpRep || 0) * 100)}%`);
     const info = levelInfo(this.gs.pilotXp || 0);
-    this.pPilot.setText(`${i18n.t('hud.pilot')}  ${i18n.t('mob.level')}${info.level}`);
-    this.pRank.setText(this.gs.pilotRank ? this.gs.pilotRank.name.toUpperCase() : '');
+    this._setText(this.pPilot, `${i18n.t('hud.pilot')}  ${i18n.t('mob.level')}${info.level}`);
+    this._setText(this.pRank, this.gs.pilotRank ? this.gs.pilotRank.name.toUpperCase() : '');
     this._ipXpFrac = info.level >= MAX_LEVEL ? 1 : info.frac;
-    this.pXpTxt.setText(info.level >= MAX_LEVEL ? 'MAX' : `${Math.floor(info.into)} / ${info.need}`);
+    this._setText(this.pXpTxt, info.level >= MAX_LEVEL ? 'MAX' : `${Math.floor(info.into)} / ${info.need}`);
     this._updateInfoPanelContent();
 
     // ── Миникарта (векторные блипы) ──
@@ -722,10 +769,10 @@ export default class HudScene extends Phaser.Scene {
         const gs = this.gs;
         const _cx2 = Math.round(p.x);
         const _cy2 = Math.round(gs.worldHeight - p.y);
-        this._mmSectorTxt.setPosition(_cx, _labelY)
-          .setText(SECTORS[galaxy.current]?.name ?? '').setVisible(true);
-        this._mmCoordTxt.setPosition(_cx, _labelY + 14)
-          .setText(`${_cx2}  ·  ${_cy2}`).setVisible(true);
+        this._mmSectorTxt.setPosition(_cx, _labelY).setVisible(true);
+        this._setText(this._mmSectorTxt, SECTORS[galaxy.current]?.name ?? '');
+        this._mmCoordTxt.setPosition(_cx, _labelY + 14).setVisible(true);
+        this._setText(this._mmCoordTxt, `${_cx2}  ·  ${_cy2}`);
       } else {
         this._mmSectorTxt.setVisible(false);
         this._mmCoordTxt.setVisible(false);
@@ -762,9 +809,9 @@ export default class HudScene extends Phaser.Scene {
     const cargoCount = this.gs.inventory?.length || 0;
     const cargoMax   = this.gs._cargoMax();
     this._cargoTxt.setPosition(W - 16, H - 80)
-      .setText(`ТРЮМ  ${cargoCount}/${cargoMax}`)
       .setColor(cargoCount >= cargoMax ? '#ef5350' : '#4a6678')
       .setVisible(!atBase);
+    this._setText(this._cargoTxt, `ТРЮМ  ${cargoCount}/${cargoMax}`);
 
     const inMap = this.scene.isActive('MapScene');
 
@@ -811,6 +858,17 @@ export default class HudScene extends Phaser.Scene {
     }
 
     this._updateBoosterWidget();
+  }
+
+  // Phaser регенерирует текстуру текста при КАЖДОМ setText(), даже если строка не
+  // изменилась — вызов на каждый кадр ради статичных величин (кредиты, ранг, уровень
+  // пилота меняются раз в несколько секунд, не 60 раз в секунду) впустую грузил
+  // рендер (см. профилировку: updateText/syncFont съедали ~13% времени кадра).
+  // Кэш висит прямо на самом game-object'е — по одному текстовому полю на кадр,
+  // а не на общей карте, так что новые поля просто получают undefined→строка один раз.
+  _setText(obj, str) {
+    if (obj && obj._lastSetText !== str) { obj._lastSetText = str; obj.setText(str); }
+    return obj;
   }
 
   bar(g, x, y, w, h, frac, color) {
@@ -1201,16 +1259,25 @@ export default class HudScene extends Phaser.Scene {
   }
 
   _updateInfoPanelContent() {
-    if (this._ipCollapsed) { this._ipXpGfx?.clear(); return; }
     const xg = this._ipXpGfx;
     if (!xg) return;
-    xg.clear();
+    if (this._ipCollapsed) {
+      // XP меняется только по убийствам/миссиям, не каждый кадр — не трогаем Graphics
+      // (clear+redraw) пока картинка реально не изменилась (см. update()'s barsSig).
+      if (this._lastIpXpSig !== 'collapsed') { this._lastIpXpSig = 'collapsed'; xg.clear(); }
+      return;
+    }
     const BH = 24, LH = 21, PW = 148;
     const barX = this._ipx + 10;
     const barY = this._ipy + BH + 4 + 6 * LH + 2;  // below rank line
     const barW = PW - 20;
+    const fillW = Math.round(barW * (this._ipXpFrac || 0));
+    const sig = `${barX}:${barY}:${fillW}`;
+    if (sig === this._lastIpXpSig) return;
+    this._lastIpXpSig = sig;
+    xg.clear();
     xg.fillStyle(0x1a1030, 0.6); xg.fillRect(barX, barY, barW, 6);
-    xg.fillStyle(0x7c4dff, 0.9); xg.fillRect(barX, barY, Math.round(barW * (this._ipXpFrac || 0)), 6);
+    xg.fillStyle(0x7c4dff, 0.9); xg.fillRect(barX, barY, fillW, 6);
   }
 
   // ══════════════════════════════════════════════════════════
