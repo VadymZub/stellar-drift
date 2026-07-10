@@ -660,8 +660,20 @@ export default class HudScene extends Phaser.Scene {
       const t = this.gs.target;
       let targetBottom = 16;
       if (t && t.alive) {
-        const enrageTag = (t.isBoss && t.phase >= 2) ? `  ⚠${i18n.t('hud.enraged')}` : '';
-        this.tName.setX(W / 2).setText(`${i18n.t(t.tpl.nameKey)}  ${i18n.t('mob.level')}${t.level}${enrageTag}`).setVisible(true);
+        // Мобы несут .tpl (имя/уровень); база/турель/другой игрок — нет, у них
+        // общая PvP-цепочка (_onPvpMobHitResult и т.п.) не требует .tpl вовсе, так
+        // что t.tpl.nameKey тут раньше падал при выборе базы/турели/RemotePlayer.
+        let label;
+        if (t.isMiningBase) label = i18n.t('hud.mining_base');
+        else if (t.isTurretTarget) label = i18n.t(t.type === 'cannon2' ? 'hud.turret_cannon2' : 'hud.turret_cannon1');
+        else if (t.isRemotePlayer) label = t.name;
+        else if (t.tpl) {
+          const enrageTag = (t.isBoss && t.phase >= 2) ? `  ⚠${i18n.t('hud.enraged')}` : '';
+          label = `${i18n.t(t.tpl.nameKey)}  ${i18n.t('mob.level')}${t.level}${enrageTag}`;
+        } else {
+          label = t.name || '';
+        }
+        this.tName.setX(W / 2).setText(label).setVisible(true);
         const bx = W / 2 - 110;
         if (t.maxShield > 0) {
           this.bar(g, bx, 40, 220, 6, t.shield / t.maxShield, COLORS.primary);

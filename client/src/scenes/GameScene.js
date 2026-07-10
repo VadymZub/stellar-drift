@@ -1881,8 +1881,11 @@ export default class GameScene extends Phaser.Scene {
       }
       if (mob) { this.cancelCollect(); this.selectTarget(mob); return; }
 
-      // Double-click empty space → check for base attack
+      // Double-click empty space → check for turret attack first (turrets sit outside
+      // the base's own click radius, see turretAt), then the base itself.
       if (isDouble) {
+        const turret = this.turretAt(wx, wy);
+        if (turret?.canBeAttacked) { this.selectTarget(turret); this.isFiring = true; return; }
         const base = this.baseAt(wx, wy);
         if (base?.canBeAttacked) { this.selectTarget(base); this.isFiring = true; return; }
       }
@@ -2460,6 +2463,19 @@ export default class GameScene extends Phaser.Scene {
     for (const b of this.miningBases) { const d = Phaser.Math.Distance.Between(wx, wy, b.x, b.y); if (d < 120 && d < bestD) { best = b; bestD = d; } }
     return best;
   }
+  // Турели — независимые от базы цели (см. MiningBase.turretTargets/TurretTarget) —
+  // клик по конкретному слоту таргетит только его, а не всю базу.
+  turretAt(wx, wy) {
+    let best = null, bestD = Infinity;
+    for (const b of this.miningBases) {
+      for (const tt of b.turretTargets) {
+        if (!tt?.alive) continue;
+        const d = Phaser.Math.Distance.Between(wx, wy, tt.x, tt.y);
+        if (d < 50 && d < bestD) { best = tt; bestD = d; }
+      }
+    }
+    return best;
+  }
   cancelCollect() { this.collectTarget = null; this.collectTimer = 0; }
 
   dropItemAtPlayer(item) {
@@ -2586,9 +2602,12 @@ export default class GameScene extends Phaser.Scene {
       this.pvpClient?.fireClaim(t.userId, 'cannon', dmg);
       return;
     }
-    // PvP: общий моб сектора — HP шарится через сервер (см. PvpMobState), тоже
-    // без локального takeDamage. Обычные мобы (без pvpMobId) идут дальше как раньше.
+    // PvP: общий моб сектора / база / турель — HP шарится через сервер (см.
+    // PvpMobState), тоже без локального takeDamage. Обычные мобы (без pvpMobId) идут
+    // дальше как раньше. База/турель несут .corp — свой корпус атаковать нельзя
+    // (нейтральные и вражеские — можно, corp-check только на "свой").
     if (t.pvpMobId) {
+      if (t.corp && t.corp === this.playerCorp) { this._warnThrottle('ally_fire', 'Нельзя атаковать свою базу'); return; }
       const ammoMult = this._consumeAmmo('cannon', cannonCount);
       const perkMult = this._offensivePerkMult(p, t, true);
       const dmg = Math.round(p.cannonDamage * skillMult * ammoMult * perkMult);
@@ -2691,7 +2710,8 @@ export default class GameScene extends Phaser.Scene {
   // групповых боссов — отдельная задача, если понадобится).
   _onPvpMobHitResult(msg) {
     const mob = this.mobs.find(m => m.pvpMobId === msg.mobId && m.alive)
-      || this.miningBases.find(b => b.pvpMobId === msg.mobId && b.alive);
+      || this.miningBases.find(b => b.pvpMobId === msg.mobId && b.alive)
+      || this.miningBases.flatMap(b => b.turretTargets).filter(Boolean).find(tt => tt.pvpMobId === msg.mobId && tt.alive);
     if (!mob) return;
     if (msg.dodged) { this.showDodge(mob.x, mob.y); return; }
     const hullHit   = msg.killed ? mob.hull   : Math.max(0, mob.hull   - msg.hull);
@@ -2717,8 +2737,11 @@ export default class GameScene extends Phaser.Scene {
     // выглядит как "моб живёт с hull=0, потом сам восстанавливается".
     // MiningBase не имеет .die()/не идёт в onMobKilled() (там ждут mob.tpl для наград) —
     // у базы своя логика разрушения (_onDestroyed: выплата золота владельцам, сброс corp).
+    // TurretTarget — свой слот на базе: смерть турели НЕ разрушает саму базу, только
+    // освобождает слот (_onTurretDestroyed), в отличие от _onDestroyed.
     if (msg.killed && mob.alive) {
-      if (mob.isMiningBase) mob._onDestroyed();
+      if (mob.isTurretTarget) { mob.alive = false; mob.base._onTurretDestroyed(mob.slotIdx); }
+      else if (mob.isMiningBase) mob._onDestroyed();
       else { mob.die(); this.onMobKilled(mob); }
     }
   }
@@ -2727,7 +2750,8 @@ export default class GameScene extends Phaser.Scene {
   // сектор — если по мобу уже стреляли до нас, подхватываем актуальный hull/shield
   // вместо "полного HP", с которым он только что заспавнился локально у нас.
   _applyPvpMobSnapshot(mobsById) {
-    for (const mob of [...this.mobs, ...this.miningBases]) {
+    const turretTargets = this.miningBases.flatMap(b => b.turretTargets).filter(Boolean);
+    for (const mob of [...this.mobs, ...this.miningBases, ...turretTargets]) {
       const s = mob.pvpMobId && mobsById[mob.pvpMobId];
       if (s) { mob.hull = s.hull; mob.shield = s.shield; }
     }
@@ -2816,6 +2840,7 @@ export default class GameScene extends Phaser.Scene {
       return;
     }
     if (t.pvpMobId) {
+      if (t.corp && t.corp === this.playerCorp) { this._warnThrottle('ally_fire', 'Нельзя атаковать свою базу'); return; }
       const beamColor = isOC ? 0xffcc00 : p.allLasers ? 0xce93d8 : 0xffaa00;
       const perkMult = this._offensivePerkMult(p, t, false);
       const dmg = Math.round(p.laserDamage * skillMult * perkMult);

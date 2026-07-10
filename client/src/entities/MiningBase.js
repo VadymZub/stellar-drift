@@ -1,9 +1,69 @@
 import * as Phaser from 'https://cdn.jsdelivr.net/npm/phaser@4.1.0/dist/phaser.esm.js';
-import { BASE_CONFIG, TURRET_SLOTS, CORP_ASSETS, cannon2GoldCost, goldPerSecByTier, turretDamageMult } from '../bases.js';
+import { BASE_CONFIG, TURRET_SLOTS, CORP_ASSETS, cannon2GoldCost, goldPerSecByTier, pvpTierMult } from '../bases.js';
 import { UI_RES } from '../constants.js';
 
 // Persists base ownership/state across sector re-entries.
 const _registry = new Map();
+
+// Реген щита/прочности — 30с без урона → щит +5%/сек, 3мин без урона → корпус +0.5%/сек
+// (одни и те же ставки для базы и для турелей).
+const SHIELD_REGEN_DELAY_MS = 30000;
+const SHIELD_REGEN_PCT_SEC  = 0.05;
+const HULL_REGEN_DELAY_MS   = 180000;
+const HULL_REGEN_PCT_SEC    = 0.005;
+
+// Боевая проекция ОДНОЙ турели — независимая от базы цель (как моб): свой hull/shield/
+// pvpMobId, свой реген, killable без уничтожения самой базы. Визуал (спрайт/поворот/
+// стрельба по мобам) остаётся у MiningBase — этот класс несёт только боевое состояние +
+// форму, которую ждёт общий PvP-код GameScene (_onPvpMobHitResult, _fireCannon/_fireLaser,
+// mobFireClaim): x/y/hull/maxHull/shield/maxShield/alive/canBeAttacked/pvpMobId/corp.
+class TurretTarget {
+  constructor(base, slotIdx, type) {
+    this.base    = base;
+    this.slotIdx = slotIdx;
+    this.type    = type;
+    this.isTurretTarget = true;
+
+    const mult = pvpTierMult(base.pvpTier);
+    this.maxHull   = (type === 'cannon2' ? BASE_CONFIG.turretHullMax.cannon2   : BASE_CONFIG.turretHullMax.cannon1)   * mult;
+    this.maxShield = (type === 'cannon2' ? BASE_CONFIG.turretShieldMax.cannon2 : BASE_CONFIG.turretShieldMax.cannon1) * mult;
+    this.hull         = this.maxHull;
+    this.shield       = this.maxShield;
+    this.lastDamageAt = -1e9;
+    this.alive        = true;
+  }
+
+  get x() { return this.base.x + TURRET_SLOTS[this.slotIdx].x; }
+  get y() { return this.base.y + TURRET_SLOTS[this.slotIdx].y; }
+  get corp() { return this.base.corp; }
+  get canBeAttacked() { return this.alive && this.base.canBeAttacked; }
+
+  // pvpMobId базы навешивается GameScene ПОСЛЕ конструктора MiningBase (нужен ещё не
+  // готовый на тот момент this._realtimeRoomKey) — турели же создаются и раньше
+  // (restore из registry в конструкторе базы), и позже (buyTurret в течение игры),
+  // так что читаем текущее значение базы лениво, а не кэшируем на момент создания.
+  get pvpMobId() {
+    return this.base.pvpMobId ? `${this.base.pvpMobId}:turret:${this.slotIdx}` : null;
+  }
+
+  applyState(saved) {
+    if (!saved) return;
+    this.hull         = saved.hull ?? this.hull;
+    this.shield       = saved.shield ?? this.shield;
+    this.lastDamageAt = saved.lastDamageAt ?? this.lastDamageAt;
+  }
+
+  update(dt, now) {
+    if (!this.alive) return;
+    const sinceDmg = now - this.lastDamageAt;
+    if (this.maxShield > 0 && sinceDmg > SHIELD_REGEN_DELAY_MS && this.shield < this.maxShield) {
+      this.shield = Math.min(this.maxShield, this.shield + this.maxShield * SHIELD_REGEN_PCT_SEC * dt);
+    }
+    if (sinceDmg > HULL_REGEN_DELAY_MS && this.hull < this.maxHull) {
+      this.hull = Math.min(this.maxHull, this.hull + this.maxHull * HULL_REGEN_PCT_SEC * dt);
+    }
+  }
+}
 
 export default class MiningBase {
   static get registry() { return _registry; }
@@ -24,10 +84,13 @@ export default class MiningBase {
       this.corp          = saved.corp;
       this.state         = saved.state;
       this.hull          = saved.hull;
+      this.shield        = saved.shield ?? 0;
+      this.lastDamageAt  = saved.lastDamageAt ?? -1e9;
       this.owners        = saved.owners.slice();
       this.pointsBanked  = saved.pointsBanked;
       this.goldBanked    = saved.goldBanked;
       this.turrets       = saved.turrets.slice();
+      this._turretState  = (saved.turretState || Array(BASE_CONFIG.turretSlots).fill(null)).slice();
       this._neutralPhase = saved.neutralPhase || 'open';
       this._neutralTimer = saved.neutralTimer || 0;
       this._buildTimer   = saved.buildTimer || 0;
@@ -35,14 +98,26 @@ export default class MiningBase {
       this.corp          = 'neutral';
       this.state         = 'destroyed';
       this.hull          = 0;
+      this.shield        = 0;
+      this.lastDamageAt  = -1e9;
       this.owners        = [];
       this.pointsBanked  = 0;
       this.goldBanked    = 0;
       this.turrets       = Array(BASE_CONFIG.turretSlots).fill(null);
+      this._turretState  = Array(BASE_CONFIG.turretSlots).fill(null);
       this._neutralPhase = 'open';
       this._neutralTimer = 0;
       this._buildTimer   = 0;
     }
+
+    // Боевые прокси турелей — отдельно от this.turrets (голые строки типа, которые
+    // читает BaseMenuScene без изменений). Восстанавливаем hp/shield из _turretState.
+    this.turretTargets = this.turrets.map((type, i) => {
+      if (!type) return null;
+      const tt = new TurretTarget(this, i, type);
+      tt.applyState(this._turretState[i]);
+      return tt;
+    });
 
     this._earnTimer       = 0;
     this._labelTick       = 0;
@@ -53,6 +128,10 @@ export default class MiningBase {
     this._turretSprites = [];
     this._hpBar         = null;
     this._hpBarBg       = null;
+    this._shieldBar     = null;
+    this._turretHpBars     = [];
+    this._turretHpBarsBg   = [];
+    this._turretShieldBars = [];
     this._nameLabel     = null;
     this._stateLabel    = null;
     this._ownerLabel    = null;
@@ -71,24 +150,31 @@ export default class MiningBase {
     return this.alive && !(this.corp === 'neutral' && this._neutralPhase === 'immune');
   }
 
-  // У базы нет щита и нет отдельного поля maxHull — эти геттеры/сеттер существуют только
-  // чтобы общий realtime-код (GameScene._onPvpMobHitResult, PvpClient.mobFireClaim)
-  // мог работать с базой как с "мобом" без instanceof/дублирования логики. Сеттер
-  // shield — no-op (в строгом режиме ES-модулей присвоение свойству без сеттера бросит
-  // TypeError, а не тихо проигнорируется).
-  get maxHull()  { return BASE_CONFIG.hullMax; }
-  get shield()    { return 0; }
-  set shield(_v)  { /* базы без щита */ }
-  get maxShield() { return 0; }
+  // Прочность/щит масштабируются по pvp-тиру арены (см. pvpTierMult в bases.js) —
+  // базовые значения в BASE_CONFIG заданы для pvp4/pvp5.
+  get maxHull()   { return BASE_CONFIG.hullMax   * pvpTierMult(this.pvpTier); }
+  get maxShield() { return BASE_CONFIG.shieldMax * pvpTierMult(this.pvpTier); }
 
-  // Called by Projectile._hit() — must return {hullHit, shieldHit, killed}
+  // Called by Projectile._hit() — must return {hullHit, shieldHit, killed}. На практике
+  // мёртвый код для игроков (у базы всегда есть pvpMobId в реальном PvP-секторе, так что
+  // урон идёт через mobFireClaim/сервер, не через takeDamage) — но держим корректным на
+  // случай локального/оффлайн пути.
   takeDamage(damage) {
     if (!this.canBeAttacked) return { hullHit: 0, shieldHit: 0, killed: false };
-    const actual = Math.min(Math.round(damage), this.hull);
-    this.hull -= actual;
+    this.lastDamageAt = this.scene.time.now;
+    let dmg = Math.round(damage);
+    let shieldHit = 0;
+    if (this.shield > 0) {
+      shieldHit = Math.min(dmg, this.shield);
+      this.shield -= shieldHit;
+      dmg -= shieldHit;
+    }
+    const hullHit = Math.min(dmg, this.hull);
+    this.hull -= hullHit;
     this._refreshHpBar();
-    if (this.hull <= 0) this._onDestroyed();
-    return { hullHit: actual, shieldHit: 0, killed: false };
+    const killed = this.hull <= 0;
+    if (killed) this._onDestroyed();
+    return { hullHit, shieldHit, killed };
   }
 
   // Opens BaseMenuScene; called by menu button click or F key
@@ -125,7 +211,8 @@ export default class MiningBase {
     }
     gs.starGold -= cost;
     this.state = 'active';
-    this.hull  = BASE_CONFIG.hullMax;
+    this.hull   = this.maxHull;
+    this.shield = this.maxShield;
     this._buildTimer = BASE_CONFIG.buildTimeSec;
     this._labelTick  = 0;
     this._refreshVisuals();
@@ -142,11 +229,13 @@ export default class MiningBase {
     }
     gs.credits -= BASE_CONFIG.baseCostCredits;
     // Corp from GameScene.playerCorp (set at scene init from prestige ship ownership).
-    this.corp  = gs.playerCorp || 'neutral';
-    this.state = 'building';
-    this.hull  = 0;
+    this.corp   = gs.playerCorp || 'neutral';
+    this.state  = 'building';
+    this.hull   = 0;
+    this.shield = 0;
     this.owners = [{ name: playerName, points: 0, gold: 0 }];
     this.turrets = Array(BASE_CONFIG.turretSlots).fill(null);
+    this.turretTargets = Array(BASE_CONFIG.turretSlots).fill(null);
     this._buildTimer = 0;
     this._refreshVisuals();
     this._persist();
@@ -170,22 +259,38 @@ export default class MiningBase {
       gs.credits -= BASE_CONFIG.turretCostCredits;
     }
     this.turrets[slotIdx] = type;
+    this.turretTargets[slotIdx] = new TurretTarget(this, slotIdx, type);
     this._refreshTurrets();
     this._persist();
     gs.log(`Турель ${type} установлена на слот ${slotIdx + 1}`);
   }
 
+  // Турель уничтожена индивидуально (killed:true пришёл на её pvpMobId) — освобождаем
+  // слот, саму базу это не трогает (в отличие от _onDestroyed, который сносит всё).
+  _onTurretDestroyed(slotIdx) {
+    this.turrets[slotIdx] = null;
+    this.turretTargets[slotIdx] = null;
+    this._refreshTurrets();
+    this._refreshTurretHpBars();
+    this._persist();
+    this.scene.log?.(`Турель уничтожена (слот ${slotIdx + 1})`);
+  }
+
   update(dt) {
+    const gs  = this.scene;
+    const now = gs.time.now;
+
     if (this.state === 'building') {
       this._buildTimer += dt;
       const frac = Math.min(1, this._buildTimer / BASE_CONFIG.buildTimeSec);
-      this.hull = Math.round(BASE_CONFIG.hullMax * frac);
+      this.hull = Math.round(this.maxHull * frac);
       this._refreshHpBar();
       this._labelTick += dt;
       if (this._labelTick >= 1) { this._labelTick = 0; this._refreshStateLabel(); }
       if (this._buildTimer >= BASE_CONFIG.buildTimeSec) {
-        this.state = 'active';
-        this.hull  = BASE_CONFIG.hullMax;
+        this.state  = 'active';
+        this.hull   = this.maxHull;
+        this.shield = this.maxShield;
         this._refreshVisuals();
         this._persist();
         this.scene.log('База построена и активна!');
@@ -214,7 +319,6 @@ export default class MiningBase {
           this._earnTimer -= 1;
           const share   = 1 / this.owners.length;
           const goldSec = goldPerSecByTier(this.pvpTier);
-          const gs = this.scene;
           const myOwner = this.owners.find(o => o.name === gs.playerName);
           for (const o of this.owners) {
             o.points += BASE_CONFIG.pointsPerSec * share;
@@ -226,17 +330,37 @@ export default class MiningBase {
         }
       }
 
+      // Реген щита/прочности базы (см. константы вверху файла — те же ставки для
+      // базы и турелей, запрошены пользователем отдельно от урона).
+      const sinceDmg = now - this.lastDamageAt;
+      if (this.maxShield > 0 && sinceDmg > SHIELD_REGEN_DELAY_MS && this.shield < this.maxShield) {
+        this.shield = Math.min(this.maxShield, this.shield + this.maxShield * SHIELD_REGEN_PCT_SEC * dt);
+      }
+      if (sinceDmg > HULL_REGEN_DELAY_MS && this.hull < this.maxHull) {
+        this.hull = Math.min(this.maxHull, this.hull + this.maxHull * HULL_REGEN_PCT_SEC * dt);
+      }
+
+      for (const tt of this.turretTargets) tt?.update(dt, now);
+
       this._updateTurrets(dt);
+      // Как Mob._updateVisuals — перерисовываем бары каждый кадр, а не только по
+      // событиям (иначе PvP-попадания по pvpMobId, меняющие hull/shield ИЗВНЕ через
+      // GameScene._onPvpMobHitResult, визуально не отражались бы вовсе).
+      this._refreshHpBar();
+      this._refreshTurretHpBars();
     }
   }
 
   destroy() {
     [this._buildSprite, this._baseSprite,
-     this._hpBar, this._hpBarBg,
+     this._hpBar, this._hpBarBg, this._shieldBar,
      this._nameLabel, this._stateLabel, this._ownerLabel,
      this._menuBtnBg, this._menuBtnLbl, this._zone]
       .forEach(o => o?.destroy());
     this._turretSprites.forEach(t => t?.destroy());
+    this._turretHpBars.forEach(t => t?.destroy());
+    this._turretHpBarsBg.forEach(t => t?.destroy());
+    this._turretShieldBars.forEach(t => t?.destroy());
   }
 
   // ── Private ─────────────────────────────────────────────────────────────────
@@ -265,10 +389,27 @@ export default class MiningBase {
         .setDisplaySize(tsz, tsz).setDepth(6).setVisible(false)
     );
 
+    // Per-turret hp/shield bars — small strips just below each turret sprite
+    const tbw = 46, tbh = 4;
+    this._turretHpBarsBg   = [];
+    this._turretHpBars     = [];
+    this._turretShieldBars = [];
+    TURRET_SLOTS.forEach(s => {
+      const bx = x + s.x, by = y + s.y + tsz / 2 + 8;
+      this._turretHpBarsBg.push(
+        this.scene.add.rectangle(bx, by, tbw, tbh, 0x000000, 0.5).setDepth(7).setVisible(false));
+      this._turretHpBars.push(
+        this.scene.add.rectangle(bx - tbw / 2, by, 0, tbh, 0xef5350, 1).setOrigin(0, 0.5).setDepth(7).setVisible(false));
+      this._turretShieldBars.push(
+        this.scene.add.rectangle(bx - tbw / 2, by - tbh, 0, 2, 0x4dd0e1, 1).setOrigin(0, 0.5).setDepth(7).setVisible(false));
+    });
+
     // HP bar — floats above the top edge of the active/building sprite
     const barY = y - sz / 2 - 22;
     this._hpBarBg = this.scene.add.rectangle(x, barY, 200, 8, 0x333344, 1).setDepth(7);
     this._hpBar   = this.scene.add.rectangle(x - 100, barY, 0, 8, 0x4dd0e1, 1)
+      .setOrigin(0, 0.5).setDepth(7);
+    this._shieldBar = this.scene.add.rectangle(x - 100, barY - 6, 0, 4, 0x80deea, 1)
       .setOrigin(0, 0.5).setDepth(7);
 
     const tf = { fontFamily: 'Orbitron', fontSize: '16px', color: '#4dd0e1', resolution: UI_RES };
@@ -321,18 +462,37 @@ export default class MiningBase {
 
     this._refreshHpBar();
     this._refreshTurrets();
+    this._refreshTurretHpBars();
     this._refreshStateLabel();
     this._refreshOwnerLabel();
   }
 
   _refreshHpBar() {
-    const frac = BASE_CONFIG.hullMax > 0 ? this.hull / BASE_CONFIG.hullMax : 0;
     const show  = this.state !== 'destroyed';
+    const hullFrac   = this.maxHull   > 0 ? this.hull   / this.maxHull   : 0;
+    const shieldFrac = this.maxShield > 0 ? this.shield / this.maxShield : 0;
     this._hpBarBg.setVisible(show);
     this._hpBar.setVisible(show);
-    this._hpBar.setDisplaySize(Math.round(200 * frac), 8);
-    const color = frac > 0.5 ? 0x4dd0e1 : frac > 0.25 ? 0xffb74d : 0xef5350;
+    this._shieldBar.setVisible(show && this.maxShield > 0);
+    this._hpBar.setDisplaySize(Math.round(200 * hullFrac), 8);
+    this._shieldBar.setDisplaySize(Math.round(200 * shieldFrac), 4);
+    const color = hullFrac > 0.5 ? 0x4dd0e1 : hullFrac > 0.25 ? 0xffb74d : 0xef5350;
     this._hpBar.setFillStyle(color);
+  }
+
+  _refreshTurretHpBars() {
+    this.turrets.forEach((type, i) => {
+      const tt = this.turretTargets[i];
+      const bg = this._turretHpBarsBg[i], bar = this._turretHpBars[i], sbar = this._turretShieldBars[i];
+      if (!bg || !bar || !sbar) return;
+      const show = !!(type && this.state === 'active' && tt?.alive);
+      bg.setVisible(show); bar.setVisible(show); sbar.setVisible(show && tt?.maxShield > 0);
+      if (!show || !tt) return;
+      const hullFrac   = tt.maxHull   > 0 ? tt.hull   / tt.maxHull   : 0;
+      const shieldFrac = tt.maxShield > 0 ? tt.shield / tt.maxShield : 0;
+      bar.setDisplaySize(Math.round(46 * hullFrac), 4);
+      sbar.setDisplaySize(Math.round(46 * shieldFrac), 2);
+    });
   }
 
   _refreshTurrets() {
@@ -383,11 +543,11 @@ export default class MiningBase {
 
     TURRET_SLOTS.forEach((slot, i) => {
       const type = this.turrets[i];
-      if (!type) return;
+      if (!type || !this.turretTargets[i]?.alive) return;
 
       const range   = type === 'cannon2' ? BASE_CONFIG.cannon2Range  : BASE_CONFIG.cannon1Range;
       const damage  = (type === 'cannon2' ? BASE_CONFIG.cannon2Damage : BASE_CONFIG.cannon1Damage)
-        * turretDamageMult(this.pvpTier);
+        * pvpTierMult(this.pvpTier);
       const rateInv = type === 'cannon2'
         ? 1 / BASE_CONFIG.cannon2Rate
         : 1 / BASE_CONFIG.cannon1Rate;
@@ -454,6 +614,7 @@ export default class MiningBase {
   _onDestroyed() {
     this.state = 'destroyed';
     this.hull  = 0;
+    this.shield = 0;
     for (const o of this.owners) {
       this.pointsBanked += o.points;
       this.goldBanked   += o.gold;
@@ -472,6 +633,7 @@ export default class MiningBase {
     this.corp   = 'neutral';
     this.owners = [];
     this.turrets = Array(BASE_CONFIG.turretSlots).fill(null);
+    this.turretTargets = Array(BASE_CONFIG.turretSlots).fill(null);
     this._neutralPhase = 'open';
     this._neutralTimer = 0;
     this._refreshVisuals();
@@ -483,11 +645,13 @@ export default class MiningBase {
   resetToNeutral() {
     this.corp          = 'neutral';
     this.state         = 'active';
-    this.hull          = BASE_CONFIG.hullMax;
+    this.hull          = this.maxHull;
+    this.shield        = this.maxShield;
     this.owners        = [];
     this.pointsBanked  = 0;
     this.goldBanked    = 0;
     this.turrets       = Array(BASE_CONFIG.turretSlots).fill(null);
+    this.turretTargets = Array(BASE_CONFIG.turretSlots).fill(null);
     this._neutralPhase = 'open';
     this._neutralTimer = 0;
     this._buildTimer   = 0;
@@ -500,10 +664,15 @@ export default class MiningBase {
       corp:         this.corp,
       state:        this.state,
       hull:         this.hull,
+      shield:       this.shield,
+      lastDamageAt: this.lastDamageAt,
       owners:       this.owners.map(o => ({ ...o })),
       pointsBanked: this.pointsBanked,
       goldBanked:   this.goldBanked,
       turrets:      this.turrets.slice(),
+      turretState:  this.turretTargets.map(tt => tt
+        ? { hull: tt.hull, shield: tt.shield, lastDamageAt: tt.lastDamageAt }
+        : null),
       neutralPhase: this._neutralPhase,
       neutralTimer: this._neutralTimer,
       buildTimer:   this._buildTimer,

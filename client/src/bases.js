@@ -2,7 +2,12 @@
 export const CORPS = ['neutral', 'helios', 'karax', 'tides'];
 
 export const BASE_CONFIG = {
-  hullMax:          12000,
+  // Базовые значения для pvp4/pvp5 (коэф. 1.0) — см. pvpTierMult ниже, масштабирует
+  // и это, и урон турелей (cannon1Damage/cannon2Damage) одним и тем же коэффициентом.
+  hullMax:          100000,
+  shieldMax:        100000,
+  turretHullMax:    { cannon1: 10000, cannon2: 20000 },
+  turretShieldMax:  { cannon1: 10000, cannon2: 20000 },
   displaySize:      460,   // active / building sprite px
   displayDestroyed: 340,   // destroyed sprite (smaller, dimmed)
   captureRadius:    180,   // F-key interact range
@@ -19,7 +24,7 @@ export const BASE_CONFIG = {
   goldPerHrHigh:    2,   // pvpTier 3-5
   maxOwners:        10,
 
-  // Урон — базовые значения для pvp4/pvp5 (коэф. 1.0), см. turretDamageMult ниже;
+  // Урон — базовые значения для pvp4/pvp5 (коэф. 1.0), см. pvpTierMult ниже;
   // дальность/скорострельность НЕ масштабируются по тиру, только урон.
   cannon1Range:  600,
   cannon1Damage: 500,
@@ -30,9 +35,11 @@ export const BASE_CONFIG = {
   cannon2Rate:   1,
 };
 
-// Множитель урона турели по pvp-тиру арены — на pvp1-3 турели слабее заявленного
-// базового урона (cannon1Damage/cannon2Damage), на pvp4/pvp5 бьют в полную силу.
-export function turretDamageMult(pvpTier) {
+// Общий коэффициент по pvp-тиру арены — масштабирует и урон турелей
+// (cannon1Damage/cannon2Damage), и прочность/щит базы и турелей (hullMax/shieldMax/
+// turretHullMax/turretShieldMax): на pvp1-3 всё слабее заявленных базовых значений,
+// на pvp4/pvp5 — полная сила (те и есть базовые значения, коэф. 1.0).
+export function pvpTierMult(pvpTier) {
   if (pvpTier <= 1) return 0.3;
   if (pvpTier === 2) return 0.6;
   if (pvpTier === 3) return 0.8;

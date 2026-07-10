@@ -253,7 +253,7 @@ TURRET_WEAPONS = {
 
 
 def _turret_damage_mult(pvp_tier) -> float:
-    """Зеркало turretDamageMult в client/src/bases.js — урон турели слабее заявленного
+    """Зеркало pvpTierMult в client/src/bases.js — урон турели слабее заявленного
     базового на pvp1-3, полная сила на pvp4/pvp5."""
     tier = int(pvp_tier or 1)
     if tier <= 1: return 0.3
