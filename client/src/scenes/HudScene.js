@@ -1467,6 +1467,8 @@ export default class HudScene extends Phaser.Scene {
     this.events.once('shutdown', () => {
       this._chatWsDestroyed = true;
       this._chatWS?.close();
+      if (this._chatReconnectTimer) { clearTimeout(this._chatReconnectTimer); this._chatReconnectTimer = null; }
+      this._hideConnectionLostModal();
       this.game.events.off('chat-message', null, this);
       this._chatInputEl?.parentNode?.removeChild(this._chatInputEl);
     });
@@ -1828,6 +1830,7 @@ export default class HudScene extends Phaser.Scene {
     };
 
     ws.onopen = () => {
+      this._hideConnectionLostModal();
       this.groupSystem?.sectorUpdate(galaxy.current);
       // Самолечащаяся регистрация в realtime-комнате: GameScene.create() уже пытается
       // вызвать pvpClient.enterSector() при входе в сектор, но если в этот момент WS
@@ -1882,7 +1885,7 @@ export default class HudScene extends Phaser.Scene {
       }
     };
 
-    ws.onclose = () => {
+    ws.onclose = (evt) => {
       this._chatWS = null;
       this.groupSystem = null;
       this.pvpClient?.leaveSector(); // destroy any RemotePlayer sprites before dropping the reference
@@ -1891,9 +1894,64 @@ export default class HudScene extends Phaser.Scene {
       this._rebuildFriendsWin();
       this._rebuildGroupWin();
       this._updateSocialBtnStyles();
-      if (!this._chatWsDestroyed) setTimeout(() => this._connectChatWS(), 5000);
+      if (this._chatWsDestroyed) return; // осознанное закрытие (logout/shutdown сцены) — без модалки и без реконнекта
+      // 4003 — сервер на пределе бета-лимита одновременных игроков (см. server/main.py
+      // ChatManager.is_full/MAX_CONCURRENT_USERS). Реконнект всё равно продолжаем —
+      // слот освобождается, как только кто-то выйдет.
+      const subtitle = evt?.code === 4003
+        ? 'Сервер сейчас заполнен (бета, лимит игроков)'
+        : 'Связь с сервером прервана';
+      this._showConnectionLostModal(subtitle);
+      this._chatReconnectTimer = setTimeout(() => this._connectChatWS(), 5000);
     };
     ws.onerror = () => {};
+  }
+
+  // ── Модалка "соединение потеряно" — любая причина закрытия WS (обрыв сети,
+  // рестарт/падение сервера, бета-лимит игроков и т.п.) заканчивается тут:
+  // фоновый реконнект и так уже был (см. ws.onclose), но раньше это было
+  // незаметно игроку — теперь явное сообщение + кнопка немедленного повтора.
+  _showConnectionLostModal(subtitle) {
+    const wasShowing = !!this._connLostObjs;
+    if (this._connLostObjs) { this._connLostObjs.forEach(o => o?.destroy()); this._connLostObjs = null; }
+    const gs = this.scene.get('GameScene');
+    if (!wasShowing && gs) gs._modalBlockingClicks = true; // см. паттерн в GameScene — иначе клик по кнопке ниже двигает корабль
+    const W = this.scale.width, H = this.scale.height;
+    const objs = [];
+    objs.push(this.add.rectangle(0, 0, W, H, 0x000000, 0.55).setOrigin(0, 0).setDepth(500).setScrollFactor(0).setInteractive());
+    const OW = 340, OH = 150, ox = (W - OW) / 2, oy = (H - OH) / 2;
+    objs.push(this.add.rectangle(ox, oy, OW, OH, 0x0e0608, 0.97)
+      .setOrigin(0, 0).setStrokeStyle(1.5, 0xef5350, 0.8).setDepth(501).setScrollFactor(0));
+    objs.push(this.add.text(ox + OW / 2, oy + 28, '⚠ Соединение потеряно', {
+      fontFamily: 'Orbitron, sans-serif', fontSize: '15px', color: '#ef5350', resolution: UI_RES,
+    }).setOrigin(0.5).setDepth(502).setScrollFactor(0));
+    objs.push(this.add.text(ox + OW / 2, oy + 62, subtitle, {
+      fontFamily: 'Inter, sans-serif', fontSize: '12px', color: '#ccaaaa', resolution: UI_RES,
+      wordWrap: { width: OW - 40 }, align: 'center',
+    }).setOrigin(0.5).setDepth(502).setScrollFactor(0));
+    const btnY = oy + OH - 32;
+    const btn = this.add.rectangle(ox + OW / 2, btnY, 170, 32, 0x1a0808, 1)
+      .setStrokeStyle(1, 0xef5350, 0.8).setDepth(502).setScrollFactor(0).setInteractive({ useHandCursor: true });
+    btn.on('pointerdown', () => this._retryConnectionNow());
+    objs.push(btn);
+    objs.push(this.add.text(ox + OW / 2, btnY, 'ПОВТОРИТЬ СЕЙЧАС', {
+      fontFamily: 'Orbitron, sans-serif', fontSize: '11px', color: '#ef9a9a', resolution: UI_RES,
+    }).setOrigin(0.5).setDepth(503).setScrollFactor(0));
+    this._connLostObjs = objs;
+  }
+
+  _hideConnectionLostModal() {
+    if (!this._connLostObjs) return;
+    this._connLostObjs.forEach(o => o?.destroy());
+    this._connLostObjs = null;
+    const gs = this.scene.get('GameScene');
+    if (gs) this.time.delayedCall(0, () => { gs._modalBlockingClicks = false; });
+  }
+
+  _retryConnectionNow() {
+    if (this._chatReconnectTimer) { clearTimeout(this._chatReconnectTimer); this._chatReconnectTimer = null; }
+    this._hideConnectionLostModal();
+    this._connectChatWS();
   }
 
   _saveChatState() {

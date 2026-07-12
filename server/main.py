@@ -6,10 +6,10 @@ import time
 from fastapi import FastAPI, Depends, HTTPException, WebSocket, WebSocketDisconnect, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from sqlalchemy import or_, and_
-from sqlalchemy.orm import Session
+from sqlalchemy import or_, and_, select, delete
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from database import engine, get_db, Base
+from database import engine, get_db, SessionLocal, Base
 from models import User, PlayerState, AuditLog, ChatMessage, Friendship, DungeonRun, DungeonLives, MiningBaseState
 from schemas import (
     RegisterRequest, LoginRequest, TokenResponse, UserResponse,
@@ -21,9 +21,17 @@ from schemas import (
 )
 from auth import hash_password, verify_password, create_token, decode_token
 
-Base.metadata.create_all(bind=engine)
-
 app = FastAPI(title="Stellar Drift API", version="0.1.0")
+
+
+@app.on_event("startup")
+async def _create_tables():
+    # create_all — синхронный вызов metadata, run_sync прогоняет его через
+    # обычное DBAPI-соединение движка (aiosqlite) без блокировки event loop
+    # (см. диалог про переход на async SQLAlchemy).
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -37,9 +45,20 @@ bearer = HTTPBearer()
 
 # ── Chat ─────────────────────────────────────────────────────────────
 
+# Потолок одновременных подключений на бета-тест (см. нагрузочный тест —
+# server/loadtest.py: SQLite/aiosqlite упирается в контеншн на открытии новых
+# соединений уже при ~80-90 одновременно живых WS). 100 — это ПОЛЬЗОВАТЕЛИ
+# (уникальные uid), не сокеты: реконнект того же игрока не съедает слот.
+MAX_CONCURRENT_USERS = 100
+
+
 class ChatManager:
     def __init__(self):
         self.active: dict = {}
+
+    def is_full(self, uid: int) -> bool:
+        existing_uids = {m['uid'] for m in self.active.values()}
+        return uid not in existing_uids and len(existing_uids) >= MAX_CONCURRENT_USERS
 
     async def connect(self, ws: WebSocket, uid: int, name: str, corp_ch: str, clan_ch):
         # Один пользователь — одно активное соединение. Без этого повторный коннект
@@ -537,12 +556,12 @@ def _online_sectors() -> dict[str, str]:
     return {m['name']: m.get('sector', '') for m in chat_manager.active.values()}
 
 
-def _get_friend_list(username: str, db: Session) -> list[dict]:
+async def _get_friend_list(username: str, db: AsyncSession) -> list[dict]:
     online   = _online_names()
     sectors  = _online_sectors()
-    rows = db.query(Friendship).filter(
+    rows = (await db.execute(select(Friendship).where(
         or_(Friendship.user_a == username, Friendship.user_b == username)
-    ).all()
+    ))).scalars().all()
     result = []
     for r in rows:
         other     = r.user_b if r.user_a == username else r.user_a
@@ -574,8 +593,8 @@ def _to_frontend_ch(db_ch: str) -> str:
     return db_ch
 
 
-def _player_channels(user_id: int, db: Session):
-    ps = db.query(PlayerState).filter(PlayerState.user_id == user_id).first()
+async def _player_channels(user_id: int, db: AsyncSession):
+    ps = (await db.execute(select(PlayerState).where(PlayerState.user_id == user_id))).scalar_one_or_none()
     state = (ps.state or {}) if ps else {}
     corp = state.get('playerCorp') or 'helios'
     corp_ch = f'corp_{corp}' if corp != 'neutral' else 'corp_helios'
@@ -584,14 +603,14 @@ def _player_channels(user_id: int, db: Session):
     return corp_ch, clan_ch
 
 
-def get_current_user(
+async def get_current_user(
     creds: HTTPAuthorizationCredentials = Depends(bearer),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
 ) -> User:
     user_id = decode_token(creds.credentials)
     if not user_id:
         raise HTTPException(status_code=401, detail="Invalid or expired token")
-    user = db.get(User, user_id)
+    user = await db.get(User, user_id)
     if not user:
         raise HTTPException(status_code=401, detail="User not found")
     return user
@@ -600,20 +619,24 @@ def get_current_user(
 # ── Auth ─────────────────────────────────────────────────────────────
 
 @app.post("/auth/register", response_model=TokenResponse)
-def register(body: RegisterRequest, db: Session = Depends(get_db)):
-    if db.query(User).filter(User.username == body.username).first():
+async def register(body: RegisterRequest, db: AsyncSession = Depends(get_db)):
+    existing = (await db.execute(select(User).where(User.username == body.username))).scalar_one_or_none()
+    if existing:
         raise HTTPException(status_code=400, detail="Username already taken")
-    user = User(username=body.username, password_hash=hash_password(body.password))
+    # bcrypt намеренно медленный (CPU-bound) — в тред-пул, иначе блокирует event loop
+    # на ~100-300мс на КАЖДУЮ регистрацию (см. диалог про нагрузочный тест).
+    password_hash = await asyncio.to_thread(hash_password, body.password)
+    user = User(username=body.username, password_hash=password_hash)
     db.add(user)
-    db.commit()
-    db.refresh(user)
+    await db.commit()
+    await db.refresh(user)
     return TokenResponse(access_token=create_token(user.id), username=user.username)
 
 
 @app.post("/auth/login", response_model=TokenResponse)
-def login(body: LoginRequest, db: Session = Depends(get_db)):
-    user = db.query(User).filter(User.username == body.username).first()
-    if not user or not verify_password(body.password, user.password_hash):
+async def login(body: LoginRequest, db: AsyncSession = Depends(get_db)):
+    user = (await db.execute(select(User).where(User.username == body.username))).scalar_one_or_none()
+    if not user or not await asyncio.to_thread(verify_password, body.password, user.password_hash):
         raise HTTPException(status_code=401, detail="Invalid username or password")
     return TokenResponse(access_token=create_token(user.id), username=user.username)
 
@@ -626,8 +649,8 @@ def me(user: User = Depends(get_current_user)):
 # ── Player state ──────────────────────────────────────────────────────
 
 @app.get("/player/state", response_model=PlayerStateResponse)
-def get_state(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    ps = db.query(PlayerState).filter(PlayerState.user_id == user.id).first()
+async def get_state(user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    ps = (await db.execute(select(PlayerState).where(PlayerState.user_id == user.id))).scalar_one_or_none()
     return PlayerStateResponse(
         state=ps.state if ps else {},
         updated_at=ps.updated_at if ps else None,
@@ -635,38 +658,35 @@ def get_state(user: User = Depends(get_current_user), db: Session = Depends(get_
 
 
 @app.put("/player/state")
-def save_state(
+async def save_state(
     body: dict,
     user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
 ):
-    ps = db.query(PlayerState).filter(PlayerState.user_id == user.id).first()
+    ps = (await db.execute(select(PlayerState).where(PlayerState.user_id == user.id))).scalar_one_or_none()
     if ps:
         ps.state = body
     else:
         ps = PlayerState(user_id=user.id, state=body)
         db.add(ps)
-    db.commit()
+    await db.commit()
     return {"ok": True}
 
 
 # ── Audit log ─────────────────────────────────────────────────────────
 
 @app.get("/audit", response_model=list[AuditEntryResponse])
-def get_audit(
+async def get_audit(
     limit: int = 200,
     user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
 ):
-    rows = (
-        db.query(AuditLog)
-        .order_by(AuditLog.ts.desc())
-        .limit(max(1, min(limit, 500)))
-        .all()
-    )
+    rows = (await db.execute(
+        select(AuditLog).order_by(AuditLog.ts.desc()).limit(max(1, min(limit, 500)))
+    )).scalars().all()
     result = []
     for row in rows:
-        u = db.get(User, row.user_id) if row.user_id else None
+        u = await db.get(User, row.user_id) if row.user_id else None
         result.append(AuditEntryResponse(
             id=row.id, action=row.action, params=row.params,
             sector=row.sector, ts=row.ts,
@@ -676,14 +696,14 @@ def get_audit(
 
 
 @app.post("/audit")
-def add_audit(
+async def add_audit(
     body: AuditEntryCreate,
     user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
 ):
     entry = AuditLog(user_id=user.id, action=body.action, params=body.params, sector=body.sector)
     db.add(entry)
-    db.commit()
+    await db.commit()
     return {"ok": True}
 
 
@@ -702,28 +722,28 @@ def root():
 DUNGEON_LIVES_MAX = 7
 
 
-def _get_or_create_lives(db: Session, user_id: int, dungeon_key: str, day_key: str) -> DungeonLives:
-    row = db.query(DungeonLives).filter(
+async def _get_or_create_lives(db: AsyncSession, user_id: int, dungeon_key: str, day_key: str) -> DungeonLives:
+    row = (await db.execute(select(DungeonLives).where(
         DungeonLives.user_id == user_id,
         DungeonLives.dungeon_key == dungeon_key,
         DungeonLives.day_key == day_key,
-    ).first()
+    ))).scalar_one_or_none()
     if not row:
         row = DungeonLives(user_id=user_id, dungeon_key=dungeon_key, day_key=day_key, lives_used=0, locked_out=0)
         db.add(row)
-        db.commit()
-        db.refresh(row)
+        await db.commit()
+        await db.refresh(row)
     return row
 
 
 @app.get("/dungeon/status", response_model=DungeonStatusResponse)
-def dungeon_status(
+async def dungeon_status(
     key: str,
     dayKey: str,
     user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
 ):
-    lives = _get_or_create_lives(db, user.id, key, dayKey)
+    lives = await _get_or_create_lives(db, user.id, key, dayKey)
     remaining = max(0, DUNGEON_LIVES_MAX - lives.lives_used)
     locked = bool(lives.locked_out)
     reason = "Данж уже пройден сегодня или жизни исчерпаны — доступ откроется в 01:00." if locked else None
@@ -734,24 +754,24 @@ def dungeon_status(
 
 
 @app.post("/dungeon/enter", response_model=DungeonEnterResponse)
-def dungeon_enter(
+async def dungeon_enter(
     body: DungeonEnterRequest,
     user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
 ):
-    lives = _get_or_create_lives(db, user.id, body.key, body.dayKey)
+    lives = await _get_or_create_lives(db, user.id, body.key, body.dayKey)
     if lives.locked_out:
         return DungeonEnterResponse(ok=False, reason="Данж уже пройден сегодня или жизни исчерпаны.")
 
     # Ключ инстанса НЕ включает сложность: один выделенный инстанс на
     # (данж, сутки, соло-юзер/группа) — сложность фиксируется первым входом
     # и возвращается клиенту, чтобы модалка выбора не создавала второй инстанс.
-    run = db.query(DungeonRun).filter(
+    run = (await db.execute(select(DungeonRun).where(
         DungeonRun.dungeon_key == body.key,
         DungeonRun.day_key == body.dayKey,
         DungeonRun.owner_kind == body.ownerKind,
         DungeonRun.owner_key == body.ownerKey,
-    ).first()
+    ))).scalar_one_or_none()
     if not run:
         run = DungeonRun(
             dungeon_key=body.key, difficulty=body.difficulty, day_key=body.dayKey,
@@ -760,8 +780,8 @@ def dungeon_enter(
             corridor_state=None, boss_alive=1, completed=0,
         )
         db.add(run)
-        db.commit()
-        db.refresh(run)
+        await db.commit()
+        await db.refresh(run)
 
     remaining = max(0, DUNGEON_LIVES_MAX - lives.lives_used)
     return DungeonEnterResponse(
@@ -773,80 +793,80 @@ def dungeon_enter(
 
 
 @app.post("/dungeon/mob_killed")
-def dungeon_mob_killed(
+async def dungeon_mob_killed(
     body: DungeonMobKilledRequest,
     user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
 ):
-    run = db.get(DungeonRun, body.runId)
+    run = await db.get(DungeonRun, body.runId)
     if not run:
         raise HTTPException(status_code=404, detail="Run not found")
     ids = list(run.killed_mob_ids or [])
     if body.mobId not in ids:
         ids.append(body.mobId)
         run.killed_mob_ids = ids
-        db.commit()
+        await db.commit()
     return {"ok": True}
 
 
 @app.post("/dungeon/loot_drop")
-def dungeon_loot_drop(
+async def dungeon_loot_drop(
     body: DungeonLootDropRequest,
     user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
 ):
-    run = db.get(DungeonRun, body.runId)
+    run = await db.get(DungeonRun, body.runId)
     if not run:
         raise HTTPException(status_code=404, detail="Run not found")
     loot = list(run.floor_loot or [])
     loot.append(body.loot)
     run.floor_loot = loot
-    db.commit()
+    await db.commit()
     return {"ok": True}
 
 
 @app.post("/dungeon/loot_collected")
-def dungeon_loot_collected(
+async def dungeon_loot_collected(
     body: DungeonLootCollectedRequest,
     user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
 ):
-    run = db.get(DungeonRun, body.runId)
+    run = await db.get(DungeonRun, body.runId)
     if not run:
         raise HTTPException(status_code=404, detail="Run not found")
     run.floor_loot = [l for l in (run.floor_loot or []) if l.get('id') != body.lootId]
-    db.commit()
+    await db.commit()
     return {"ok": True}
 
 
 @app.post("/dungeon/corridor_state")
-def dungeon_corridor_state(
+async def dungeon_corridor_state(
     body: DungeonCorridorStateRequest,
     user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
 ):
-    run = db.get(DungeonRun, body.runId)
+    run = await db.get(DungeonRun, body.runId)
     if not run:
         raise HTTPException(status_code=404, detail="Run not found")
     run.corridor_state = body.state
-    db.commit()
+    await db.commit()
     return {"ok": True}
 
 
 @app.post("/dungeon/death", response_model=DungeonDeathResponse)
-def dungeon_death(
+async def dungeon_death(
     body: DungeonDeathRequest,
     user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
 ):
-    lives = _get_or_create_lives(db, user.id, body.key, body.dayKey)
+    lives = await _get_or_create_lives(db, user.id, body.key, body.dayKey)
     # Аргус (админский слив) репортится с другим key, не относящимся к данжам —
     # клиент просто не вызывает этот эндпоинт для смертей вне sec.isDungeon.
     if not lives.locked_out:
         lives.lives_used = min(DUNGEON_LIVES_MAX, lives.lives_used + 1)
         if lives.lives_used >= DUNGEON_LIVES_MAX:
             lives.locked_out = 1
-        db.commit()
+        await db.commit()
     remaining = max(0, DUNGEON_LIVES_MAX - lives.lives_used)
     return DungeonDeathResponse(
         livesUsed=lives.lives_used, livesRemaining=remaining, lockedOut=bool(lives.locked_out),
@@ -854,27 +874,27 @@ def dungeon_death(
 
 
 @app.post("/dungeon/complete")
-def dungeon_complete(
+async def dungeon_complete(
     body: DungeonCompleteRequest,
     user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
 ):
-    run = db.get(DungeonRun, body.runId)
+    run = await db.get(DungeonRun, body.runId)
     if run:
         run.completed = 1
         run.boss_alive = 0
-        db.commit()
+        await db.commit()
     # Прохождение засчитывается всем участникам группы (или только себе, соло) —
     # суточная попытка расходуется за коллективный клир, не только у того,
     # чей клиент отправил событие.
     names = set(body.memberUsernames) | {user.username}
     for name in names:
-        member = db.query(User).filter(User.username == name).first()
+        member = (await db.execute(select(User).where(User.username == name))).scalar_one_or_none()
         if not member:
             continue
-        lives = _get_or_create_lives(db, member.id, body.key, body.dayKey)
+        lives = await _get_or_create_lives(db, member.id, body.key, body.dayKey)
         lives.locked_out = 1
-        db.commit()
+        await db.commit()
     return {"ok": True}
 
 
@@ -885,50 +905,48 @@ def dungeon_complete(
 # PlayerState.state — источник истины по геймдизайну баз остаётся в клиенте.
 
 @app.get("/mining_base/sector/{sector}", response_model=MiningBaseSectorResponse)
-def mining_base_sector(
+async def mining_base_sector(
     sector: str,
     user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
 ):
-    rows = db.query(MiningBaseState).filter(MiningBaseState.sector == sector).all()
+    rows = (await db.execute(select(MiningBaseState).where(MiningBaseState.sector == sector))).scalars().all()
     return MiningBaseSectorResponse(bases={r.base_id: r.state for r in rows})
 
 
 @app.post("/mining_base/save")
-def mining_base_save(
+async def mining_base_save(
     body: MiningBaseSaveRequest,
     user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
 ):
-    row = db.query(MiningBaseState).filter(MiningBaseState.base_id == body.baseId).first()
+    row = (await db.execute(select(MiningBaseState).where(MiningBaseState.base_id == body.baseId))).scalar_one_or_none()
     if row:
         row.state = body.state
         row.sector = body.sector
     else:
         row = MiningBaseState(base_id=body.baseId, sector=body.sector, state=body.state)
         db.add(row)
-    db.commit()
+    await db.commit()
     return {"ok": True}
 
 
 # ── Chat REST ─────────────────────────────────────────────────────────
 
 @app.get("/chat/history")
-def chat_history(
+async def chat_history(
     channel: str = Query('general'),
     limit: int = Query(50),
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
 ):
-    corp_ch, clan_ch = _player_channels(current_user.id, db)
+    corp_ch, clan_ch = await _player_channels(current_user.id, db)
     db_ch = _to_db_ch(channel, corp_ch, clan_ch)
-    msgs = (
-        db.query(ChatMessage)
-        .filter(ChatMessage.channel == db_ch)
+    msgs = (await db.execute(
+        select(ChatMessage).where(ChatMessage.channel == db_ch)
         .order_by(ChatMessage.ts.desc())
         .limit(max(1, min(limit, 200)))
-        .all()
-    )
+    )).scalars().all()
     return [{'from': m.username, 'text': m.text, 'time': _fmt_time(m.ts)} for m in reversed(msgs)]
 
 
@@ -938,18 +956,37 @@ def chat_history(
 async def chat_ws(
     ws: WebSocket,
     token: str = Query(...),
-    db: Session = Depends(get_db),
 ):
+    # ВАЖНО: НЕ держим один AsyncSession на весь коннект (как раньше через
+    # Depends(get_db)) — при ≥100 одновременных WS каждый держал бы своё
+    # выделенное SQLite/aiosqlite-соединение открытым на всю жизнь сокета,
+    # и уже сам факт открытия ~100 соединений разом упирался в контеншн на
+    # уровне aiosqlite/файла (см. нагрузочный тест — коннект замедлялся до
+    # 5-9с при 60+ одновременно живых WS, хотя сам зависон event loop уже
+    # был починен переходом на async). Вместо этого берём короткоживущую
+    # сессию через `async with SessionLocal()` только на время конкретной
+    # БД-операции — SQLite не выигрывает от долгих открытых соединений,
+    # а короткие сессии не накапливаются с ростом числа онлайн-игроков.
     user_id = decode_token(token)
     if not user_id:
         await ws.close(code=4001)
         return
-    user = db.get(User, user_id)
-    if not user:
-        await ws.close(code=4001)
+    if chat_manager.is_full(user_id):
+        # accept() ПЕРЕД close() обязателен — закрытие ДО accept() (как у 4001 ниже)
+        # схлопывается в голый HTTP 403 на уровне ASGI-хендшейка, и реальный код
+        # закрытия до браузерного WebSocket.onclose просто не долетает. Тут код
+        # нужен клиенту (HudScene._connectChatWS различает 4003, чтобы показать
+        # игроку понятное сообщение вместо тихого фейла), поэтому здесь иначе.
+        await ws.accept()
+        await ws.close(code=4003, reason='server_full')
         return
+    async with SessionLocal() as db:
+        user = await db.get(User, user_id)
+        if not user:
+            await ws.close(code=4001)
+            return
+        corp_ch, clan_ch = await _player_channels(user.id, db)
 
-    corp_ch, clan_ch = _player_channels(user.id, db)
     await chat_manager.connect(ws, user.id, user.username, corp_ch, clan_ch)
 
     # Клиент не знает свой числовой user.id (в токене/логине только username) — а он
@@ -963,22 +1000,21 @@ async def chat_ws(
     if clan_ch:
         history_pairs.append((clan_ch, 'clan'))
 
-    for db_ch, fe_ch in history_pairs:
-        msgs = (
-            db.query(ChatMessage)
-            .filter(ChatMessage.channel == db_ch)
-            .order_by(ChatMessage.ts.desc())
-            .limit(50)
-            .all()
-        )
-        await ws.send_json({
-            'type': 'history',
-            'channel': fe_ch,
-            'messages': [{'from': m.username, 'text': m.text, 'time': _fmt_time(m.ts)} for m in reversed(msgs)],
-        })
+    async with SessionLocal() as db:
+        for db_ch, fe_ch in history_pairs:
+            msgs = (await db.execute(
+                select(ChatMessage).where(ChatMessage.channel == db_ch)
+                .order_by(ChatMessage.ts.desc())
+                .limit(50)
+            )).scalars().all()
+            await ws.send_json({
+                'type': 'history',
+                'channel': fe_ch,
+                'messages': [{'from': m.username, 'text': m.text, 'time': _fmt_time(m.ts)} for m in reversed(msgs)],
+            })
 
-    # Send friend list on connect; notify online friends that this user came online
-    friend_list = _get_friend_list(user.username, db)
+        # Send friend list on connect; notify online friends that this user came online
+        friend_list = await _get_friend_list(user.username, db)
     await ws.send_json({'type': 'friend_list', 'friends': friend_list})
     for f in friend_list:
         if f['status'] == 'accepted' and f['online']:
@@ -998,8 +1034,9 @@ async def chat_ws(
                     continue
                 db_ch = _to_db_ch(fe_ch, corp_ch, clan_ch)
                 ts = time.time()
-                db.add(ChatMessage(channel=db_ch, user_id=user.id, username=user.username, text=text, ts=ts))
-                db.commit()
+                async with SessionLocal() as db:
+                    db.add(ChatMessage(channel=db_ch, user_id=user.id, username=user.username, text=text, ts=ts))
+                    await db.commit()
                 await chat_manager.broadcast(db_ch, {
                     'type': 'msg', 'channel': fe_ch,
                     'from': user.username, 'text': text, 'time': _fmt_time(ts),
@@ -1113,7 +1150,8 @@ async def chat_ws(
                 if ws in chat_manager.active:
                     chat_manager.active[ws]['sector'] = sec
                 # Notify online friends of new sector
-                fl = _get_friend_list(user.username, db)
+                async with SessionLocal() as db:
+                    fl = await _get_friend_list(user.username, db)
                 for f in fl:
                     if f['status'] == 'accepted' and f['online']:
                         await chat_manager.send_pm(f['name'], {
@@ -1252,10 +1290,11 @@ async def chat_ws(
                 await chat_manager.broadcast_to_uids(room_uids, out)
 
                 if result['killed']:
-                    db.add(AuditLog(user_id=victim.user_id, action='pvp_kill', params={
-                        'killer': attacker.username, 'victim': victim.username, 'sector': sector,
-                    }, sector=sector))
-                    db.commit()
+                    async with SessionLocal() as db:
+                        db.add(AuditLog(user_id=victim.user_id, action='pvp_kill', params={
+                            'killer': attacker.username, 'victim': victim.username, 'sector': sector,
+                        }, sector=sector))
+                        await db.commit()
                     if result.get('bountyBonus'):
                         await chat_manager.broadcast('general', {'type': 'pvp_bounty_cleared', 'userId': victim.user_id})
 
@@ -1436,82 +1475,86 @@ async def chat_ws(
                 if not to_name or to_name == user.username:
                     await ws.send_json({'type': 'friend_error', 'text': 'Некорректное имя'})
                 else:
-                    target = db.query(User).filter(User.username == to_name).first()
-                    if not target:
-                        await ws.send_json({'type': 'friend_error', 'text': f'Игрок {to_name} не найден'})
-                    else:
-                        existing = db.query(Friendship).filter(
-                            or_(
-                                and_(Friendship.user_a == user.username, Friendship.user_b == to_name),
-                                and_(Friendship.user_a == to_name,       Friendship.user_b == user.username),
-                            )
-                        ).first()
-                        if existing:
-                            if existing.status == 'accepted':
-                                await ws.send_json({'type': 'friend_error', 'text': f'{to_name} уже в списке друзей'})
-                            elif existing.user_a == user.username:
-                                await ws.send_json({'type': 'friend_error', 'text': 'Запрос уже отправлен'})
+                    async with SessionLocal() as db:
+                        target = (await db.execute(select(User).where(User.username == to_name))).scalar_one_or_none()
+                        if not target:
+                            await ws.send_json({'type': 'friend_error', 'text': f'Игрок {to_name} не найден'})
+                        else:
+                            existing = (await db.execute(select(Friendship).where(
+                                or_(
+                                    and_(Friendship.user_a == user.username, Friendship.user_b == to_name),
+                                    and_(Friendship.user_a == to_name,       Friendship.user_b == user.username),
+                                )
+                            ))).scalar_one_or_none()
+                            if existing:
+                                if existing.status == 'accepted':
+                                    await ws.send_json({'type': 'friend_error', 'text': f'{to_name} уже в списке друзей'})
+                                elif existing.user_a == user.username:
+                                    await ws.send_json({'type': 'friend_error', 'text': 'Запрос уже отправлен'})
+                                else:
+                                    # They sent request first → auto-accept
+                                    existing.status = 'accepted'
+                                    await db.commit()
+                                    fl = await _get_friend_list(user.username, db)
+                                    await ws.send_json({'type': 'friend_list', 'friends': fl})
+                                    if to_name in _online_names():
+                                        fl2 = await _get_friend_list(to_name, db)
+                                        await chat_manager.send_pm(to_name, {'type': 'friend_list', 'friends': fl2})
                             else:
-                                # They sent request first → auto-accept
-                                existing.status = 'accepted'
-                                db.commit()
-                                fl = _get_friend_list(user.username, db)
+                                db.add(Friendship(user_a=user.username, user_b=to_name, status='pending'))
+                                await db.commit()
+                                fl = await _get_friend_list(user.username, db)
                                 await ws.send_json({'type': 'friend_list', 'friends': fl})
                                 if to_name in _online_names():
-                                    fl2 = _get_friend_list(to_name, db)
-                                    await chat_manager.send_pm(to_name, {'type': 'friend_list', 'friends': fl2})
-                        else:
-                            db.add(Friendship(user_a=user.username, user_b=to_name, status='pending'))
-                            db.commit()
-                            fl = _get_friend_list(user.username, db)
-                            await ws.send_json({'type': 'friend_list', 'friends': fl})
-                            if to_name in _online_names():
-                                await chat_manager.send_pm(to_name, {
-                                    'type': 'friend_request_in', 'from': user.username,
-                                })
+                                    await chat_manager.send_pm(to_name, {
+                                        'type': 'friend_request_in', 'from': user.username,
+                                    })
 
             # ── Друзья: принять запрос ────────────────────────────────
             elif msg_type == 'friend_accept':
                 from_name = str(data.get('from', '')).strip()
                 if from_name:
-                    row = db.query(Friendship).filter(
-                        Friendship.user_a == from_name,
-                        Friendship.user_b == user.username,
-                        Friendship.status == 'pending',
-                    ).first()
-                    if row:
-                        row.status = 'accepted'
-                        db.commit()
-                        fl = _get_friend_list(user.username, db)
-                        await ws.send_json({'type': 'friend_list', 'friends': fl})
-                        if from_name in _online_names():
-                            fl2 = _get_friend_list(from_name, db)
-                            await chat_manager.send_pm(from_name, {'type': 'friend_list', 'friends': fl2})
+                    async with SessionLocal() as db:
+                        row = (await db.execute(select(Friendship).where(
+                            Friendship.user_a == from_name,
+                            Friendship.user_b == user.username,
+                            Friendship.status == 'pending',
+                        ))).scalar_one_or_none()
+                        if row:
+                            row.status = 'accepted'
+                            await db.commit()
+                            fl = await _get_friend_list(user.username, db)
+                            await ws.send_json({'type': 'friend_list', 'friends': fl})
+                            if from_name in _online_names():
+                                fl2 = await _get_friend_list(from_name, db)
+                                await chat_manager.send_pm(from_name, {'type': 'friend_list', 'friends': fl2})
 
             # ── Друзья: отклонить запрос ──────────────────────────────
             elif msg_type == 'friend_decline':
                 from_name = str(data.get('from', '')).strip()
                 if from_name:
-                    db.query(Friendship).filter(
-                        Friendship.user_a == from_name,
-                        Friendship.user_b == user.username,
-                    ).delete()
-                    db.commit()
-                    fl = _get_friend_list(user.username, db)
+                    async with SessionLocal() as db:
+                        await db.execute(delete(Friendship).where(
+                            Friendship.user_a == from_name,
+                            Friendship.user_b == user.username,
+                        ))
+                        await db.commit()
+                        fl = await _get_friend_list(user.username, db)
                     await ws.send_json({'type': 'friend_list', 'friends': fl})
 
             # ── Друзья: удалить из списка ─────────────────────────────
             elif msg_type == 'friend_remove':
                 name = str(data.get('name', '')).strip()
                 if name:
-                    db.query(Friendship).filter(
-                        or_(
-                            and_(Friendship.user_a == user.username, Friendship.user_b == name),
-                            and_(Friendship.user_a == name,          Friendship.user_b == user.username),
-                        )
-                    ).delete()
-                    db.commit()
-                    fl = _get_friend_list(user.username, db)
+                    async with SessionLocal() as db:
+                        await db.execute(delete(Friendship).where(
+                            or_(
+                                and_(Friendship.user_a == user.username, Friendship.user_b == name),
+                                and_(Friendship.user_a == name,          Friendship.user_b == user.username),
+                            )
+                        ))
+                        await db.commit()
+                        fl = await _get_friend_list(user.username, db)
                     await ws.send_json({'type': 'friend_list', 'friends': fl})
 
     except Exception as e:
@@ -1525,7 +1568,8 @@ async def chat_ws(
             traceback.print_exc()
         # Notify online friends that this user went offline
         try:
-            fl = _get_friend_list(user.username, db)
+            async with SessionLocal() as db:
+                fl = await _get_friend_list(user.username, db)
             for f in fl:
                 if f['status'] == 'accepted' and f['online']:
                     await chat_manager.send_pm(f['name'], {'type': 'friend_offline', 'name': user.username})
