@@ -35,6 +35,9 @@ import { startAfkGuard } from '../systems/afkGuard.js';
 
 const PICKUP_RADIUS = 95;
 const PICKUP_TIME = 2000;
+// Розыск оправдан только при реальном разрыве в силе — младше на 1-2 уровня не
+// считается: жертва должна быть минимум на столько уровней ниже обидчика.
+const BOUNTY_LEVEL_GAP = 3;
 
 const DEV_MODE = true;
 const MOCK_CORP_RATINGS = [0.95, 0.92, 0.88, 0.85, 0.82, 0.78, 0.75, 0.72, 0.68, 0.65, 0.62, 0.58, 0.55, 0.52, 0.48];
@@ -1801,16 +1804,25 @@ export default class GameScene extends Phaser.Scene {
           ? this._dungeonVariantIndex(DUNGEON_LAYOUTS[gate.target].variants.length)
           : 0;
         let res;
-        try {
-          res = await dungeonEnter({
-            key: gate.target, difficulty: difficulty ?? 'normal', dayKey: this._dungeonDayKey(),
-            ownerKind, ownerKey, variantIndex,
-          });
-        } catch (e) {
-          this.log('Сервер недоступен — вход в данж невозможен.');
-          return;
+        if (DEV_MODE && !getToken()) {
+          // DEV-профиль без реального логина (см. LoginScene "пропустить авторизацию")
+          // не имеет токена — apiFetch бросает 'Нет токена авторизации' на КАЖДОМ вызове,
+          // dungeonEnter молча уходил в catch и ничего не происходило. Тот же DEV-фоллбэк
+          // паттерн, что и для PvP-боя без pvpClient (_localPvpFireResolve) — симулируем
+          // успешный ответ локально, без похода на сервер.
+          res = { ok: true, difficulty: difficulty ?? 'normal', variantIndex, killedMobIds: [], floorLoot: [], corridorState: null };
+        } else {
+          try {
+            res = await dungeonEnter({
+              key: gate.target, difficulty: difficulty ?? 'normal', dayKey: this._dungeonDayKey(),
+              ownerKind, ownerKey, variantIndex,
+            });
+          } catch (e) {
+            this.log('Сервер недоступен — вход в данж невозможен.');
+            return;
+          }
+          if (!res.ok) { this.log(res.reason || 'Данж недоступен.'); return; }
         }
-        if (!res.ok) { this.log(res.reason || 'Данж недоступен.'); return; }
         // Инстанс уже существует (начат ранее сегодня) — сложность зафиксирована первым
         // входом, модалка могла предложить другую: держимся исходного выбора.
         if (difficulty && res.difficulty !== difficulty) {
@@ -1837,11 +1849,29 @@ export default class GameScene extends Phaser.Scene {
 
   _showDungeonDifficultyModal(gate, onConfirm) {
     const W = this.scale.width, H = this.scale.height;
-    const OW = 360, OH = 340;
+    const modKeys = Object.keys(DUNGEON_MODIFIERS);
+    const rowH = 42, rowGap = 6;
+    const OW = 440;
+    // Computed top-down so nothing overflows/overlaps regardless of modifier count:
+    // title(18) → 3 diff buttons(54 each) → modifiers header → N rows → bottom 2-button row.
+    const diffEndY    = 48 + 3 * 54;
+    const modsHeaderY = diffEndY + 14;
+    const modsStartY  = modsHeaderY + 20;
+    const modsEndY    = modsStartY + modKeys.length * (rowH + rowGap) - rowGap;
+    const OH = modsEndY + 70;
     const ox = (W - OW) / 2, oy = (H - OH) / 2;
     const objs = [];
-    const destroy = () => { objs.forEach(o => o?.destroy()); };
     const selectedMods = new Set();
+    let selectedDiff = null;
+    // Модалка рисуется прямо в GameScene (не отдельной Scene), поэтому глобальный
+    // pointerdown-обработчик (клик = двигать корабль) о ней не знает — без этого флага
+    // клик по любой кнопке ОДНОВРЕМЕННО тоже уводил корабль в точку клика.
+    this._modalBlockingClicks = true;
+    // Phaser вызывает pointerdown-обработчик самой кнопки ДО глобального сценового —
+    // если снять флаг тут же синхронно, глобальный обработчик (в той же цепочке этого
+    // же клика) увидит его уже false и всё равно сдвинет корабль. Снимаем со сдвигом
+    // на следующий тик — глобальный успевает проверить true.
+    const destroy = () => { objs.forEach(o => o?.destroy()); this.time.delayedCall(0, () => { this._modalBlockingClicks = false; }); };
 
     objs.push(this.add.rectangle(ox, oy, OW, OH, 0x060c14, 0.97)
       .setOrigin(0, 0).setStrokeStyle(1.5, 0x4dd0e1, 0.5).setDepth(200).setScrollFactor(0));
@@ -1855,20 +1885,33 @@ export default class GameScene extends Phaser.Scene {
       { key: 'elite',  label: 'ELITE',   hint: 'Рекомендуется 4–5 игроков',   fill: 0x1e0808, border: 0xef5350, tc: '#ef9a9a' },
     ];
 
+    // Bottom buttons declared up-front (assigned below) so redrawSelection can
+    // reference them — only actually called from click handlers, wired up after.
+    let jumpBg = null, jumpTxt = null;
+    const diffBoxes = [];
+    const redrawSelection = () => {
+      diffBoxes.forEach(({ bg, m }) => {
+        const sel = selectedDiff === m.key;
+        bg.setStrokeStyle(sel ? 3 : 1, m.border, sel ? 1 : 0.8);
+      });
+      const ready = !!selectedDiff;
+      jumpBg.setFillStyle(ready ? 0x0a2818 : 0x10161f, 1);
+      jumpBg.setStrokeStyle(1, ready ? COLORS.emerald : 0x2a3540, ready ? 0.9 : 0.5);
+      jumpTxt.setColor(ready ? '#66cc77' : '#3a4a54');
+    };
+
+    // Клик по сложности теперь только ВЫБИРАЕТ её (подсвечивает), не прыгает сразу —
+    // сам прыжок только по отдельной кнопке ПРЫЖОК внизу, когда сложность выбрана.
     modes.forEach((m, i) => {
       const by = oy + 48 + i * 54;
-      const btn = this.add.rectangle(ox + OW / 2, by + 22, OW - 40, 46, m.fill, 1)
+      const bg = this.add.rectangle(ox + OW / 2, by + 22, OW - 40, 46, m.fill, 1)
         .setOrigin(0.5, 0.5).setStrokeStyle(1, m.border, 0.8).setDepth(201).setScrollFactor(0)
         .setInteractive({ useHandCursor: true });
-      btn.on('pointerover', () => btn.setAlpha(0.85));
-      btn.on('pointerout',  () => btn.setAlpha(1));
-      btn.on('pointerdown', () => {
-        // Итоговая сложность приходит от сервера в onConfirm (может отличаться,
-        // если сегодня уже начат инстанс данжа на другой сложности)
-        destroy();
-        onConfirm(m.key, Array.from(selectedMods));
-      });
-      objs.push(btn);
+      bg.on('pointerover', () => { if (selectedDiff !== m.key) bg.setAlpha(0.85); });
+      bg.on('pointerout',  () => bg.setAlpha(1));
+      bg.on('pointerdown', () => { selectedDiff = m.key; redrawSelection(); });
+      objs.push(bg);
+      diffBoxes.push({ bg, m });
       objs.push(this.add.text(ox + 35, by + 12, m.label, {
         fontFamily: 'Orbitron, sans-serif', fontSize: '12px', color: m.tc, resolution: 2,
       }).setOrigin(0, 0).setDepth(202).setScrollFactor(0));
@@ -1879,21 +1922,23 @@ export default class GameScene extends Phaser.Scene {
 
     // Контракты-модификаторы: необязательные тумблеры, можно выбрать несколько сразу,
     // стакуются друг с другом и с выбранной сложностью выше (см. GameScene._dungeonDiff()).
-    const modsY = oy + 48 + modes.length * 54 + 6;
-    objs.push(this.add.text(ox + 24, modsY, 'МОДИФИКАТОРЫ (необязательно)', {
+    objs.push(this.add.text(ox + 24, oy + modsHeaderY, 'МОДИФИКАТОРЫ (необязательно)', {
       fontFamily: 'Orbitron, sans-serif', fontSize: '10px', color: '#556677', resolution: 2,
     }).setOrigin(0, 0).setDepth(201).setScrollFactor(0));
 
-    Object.entries(DUNGEON_MODIFIERS).forEach(([key, mod], i) => {
-      const my = modsY + 20 + i * 32;
-      const bg = this.add.rectangle(ox + OW / 2, my + 12, OW - 40, 26, 0x0d1a26, 1)
+    const labelWrapW = OW - 54 - 24;
+    modKeys.forEach((key, i) => {
+      const mod = DUNGEON_MODIFIERS[key];
+      const my = oy + modsStartY + i * (rowH + rowGap);
+      const bg = this.add.rectangle(ox + OW / 2, my + rowH / 2, OW - 40, rowH, 0x0d1a26, 1)
         .setOrigin(0.5).setStrokeStyle(1, 0x2a3a4a, 0.8).setDepth(201).setScrollFactor(0)
         .setInteractive({ useHandCursor: true });
-      const check = this.add.text(ox + 32, my, '☐', {
+      const check = this.add.text(ox + 32, my + 6, '☐', {
         fontFamily: 'Inter, sans-serif', fontSize: '13px', color: '#556677', resolution: 2,
       }).setOrigin(0, 0).setDepth(202).setScrollFactor(0);
-      const label = this.add.text(ox + 54, my, `${mod.label} — ${mod.hint}`, {
+      const label = this.add.text(ox + 54, my + 5, `${mod.label} — ${mod.hint}`, {
         fontFamily: 'Inter, sans-serif', fontSize: '10px', color: '#8ab0bc', resolution: 2,
+        wordWrap: { width: labelWrapW },
       }).setOrigin(0, 0).setDepth(202).setScrollFactor(0);
       bg.on('pointerdown', () => {
         if (selectedMods.has(key)) { selectedMods.delete(key); check.setText('☐').setColor('#556677'); bg.setStrokeStyle(1, 0x2a3a4a, 0.8); }
@@ -1902,12 +1947,29 @@ export default class GameScene extends Phaser.Scene {
       objs.push(bg, check, label);
     });
 
-    const cancelY = oy + OH - 16;
-    const cancel = this.add.text(ox + OW / 2, cancelY, 'ОТМЕНА', {
-      fontFamily: 'Orbitron, sans-serif', fontSize: '10px', color: '#445566', resolution: 2,
-    }).setOrigin(0.5).setDepth(202).setScrollFactor(0).setInteractive({ useHandCursor: true });
-    cancel.on('pointerdown', () => destroy());
-    objs.push(cancel);
+    // Bottom row: ОТМЕНА (всегда активна) + ПРЫЖОК (активна только после выбора сложности).
+    const btnY = oy + OH - 30;
+    const cancelBg = this.add.rectangle(ox + OW / 2 - 92, btnY, 160, 38, 0x0d1e2c, 1)
+      .setStrokeStyle(1, 0x2a4a60, 0.8).setDepth(201).setScrollFactor(0).setInteractive({ useHandCursor: true });
+    cancelBg.on('pointerover', () => cancelBg.setFillStyle(0x14283a, 1));
+    cancelBg.on('pointerout',  () => cancelBg.setFillStyle(0x0d1e2c, 1));
+    cancelBg.on('pointerdown', () => destroy());
+    objs.push(cancelBg);
+    objs.push(this.add.text(ox + OW / 2 - 92, btnY, 'ОТМЕНА', {
+      fontFamily: 'Orbitron, sans-serif', fontSize: '12px', color: '#4dd0e1', resolution: 2,
+    }).setOrigin(0.5).setDepth(202).setScrollFactor(0));
+
+    jumpBg = this.add.rectangle(ox + OW / 2 + 92, btnY, 160, 38, 0x10161f, 1)
+      .setStrokeStyle(1, 0x2a3540, 0.5).setDepth(201).setScrollFactor(0).setInteractive({ useHandCursor: true });
+    jumpTxt = this.add.text(ox + OW / 2 + 92, btnY, 'ПРЫЖОК', {
+      fontFamily: 'Orbitron, sans-serif', fontSize: '12px', color: '#3a4a54', resolution: 2,
+    }).setOrigin(0.5).setDepth(202).setScrollFactor(0);
+    jumpBg.on('pointerdown', () => {
+      if (!selectedDiff) return;
+      destroy();
+      onConfirm(selectedDiff, Array.from(selectedMods));
+    });
+    objs.push(jumpBg, jumpTxt);
   }
 
   updateGates(dt) {
@@ -2027,6 +2089,12 @@ export default class GameScene extends Phaser.Scene {
     const W = this.scale.width, H = this.scale.height;
     const OW = 300, OH = 120, ox = (W - OW) / 2, oy = (H - OH) / 2;
     const objs = [];
+    this._modalBlockingClicks = true;
+    // Phaser вызывает pointerdown-обработчик самой кнопки ДО глобального сценового —
+    // если снять флаг тут же синхронно, глобальный обработчик (в той же цепочке этого
+    // же клика) увидит его уже false и всё равно сдвинет корабль. Снимаем со сдвигом
+    // на следующий тик — глобальный успевает проверить true.
+    const destroy = () => { objs.forEach(o => o?.destroy()); this.time.delayedCall(0, () => { this._modalBlockingClicks = false; }); };
     const bg = this.add.rectangle(ox, oy, OW, OH, 0x0e0608, 0.97)
       .setOrigin(0, 0).setStrokeStyle(1.5, 0xef5350, 0.8).setDepth(200).setScrollFactor(0);
     objs.push(bg);
@@ -2037,13 +2105,13 @@ export default class GameScene extends Phaser.Scene {
     const btnY = oy + OH - 22;
     const noBtn = this.add.rectangle(ox + OW / 2 - 65, btnY, 100, 28, 0x0d1e2c, 1)
       .setStrokeStyle(1, 0x2a4a60, 0.8).setDepth(201).setScrollFactor(0).setInteractive({ useHandCursor: true });
-    noBtn.on('pointerdown', () => { objs.forEach(o => o?.destroy()); });
+    noBtn.on('pointerdown', () => destroy());
     objs.push(noBtn);
     objs.push(this.add.text(ox + OW / 2 - 65, btnY, 'НАЗАД', { fontFamily: 'Orbitron, sans-serif', fontSize: '11px', color: '#4dd0e1', resolution: 2 }).setOrigin(0.5).setDepth(202).setScrollFactor(0));
 
     const yesBtn = this.add.rectangle(ox + OW / 2 + 65, btnY, 100, 28, 0x1a0808, 1)
       .setStrokeStyle(1, 0xef5350, 0.8).setDepth(201).setScrollFactor(0).setInteractive({ useHandCursor: true });
-    yesBtn.on('pointerdown', () => { objs.forEach(o => o?.destroy()); onConfirm(); });
+    yesBtn.on('pointerdown', () => { destroy(); onConfirm(); });
     objs.push(yesBtn);
     objs.push(this.add.text(ox + OW / 2 + 65, btnY, 'ВОЙТИ', { fontFamily: 'Orbitron, sans-serif', fontSize: '11px', color: '#ef9a9a', resolution: 2 }).setOrigin(0.5).setDepth(202).setScrollFactor(0));
   }
@@ -2087,6 +2155,11 @@ export default class GameScene extends Phaser.Scene {
 
     this.input.on('pointerdown', (pointer) => {
       if (this.scene.isActive('GarageScene') || this.scene.isActive('CargoScene') || this.scene.isActive('MapScene') || this.scene.isActive('BaseMenuScene') || this.scene.isActive('CorpScene') || this.scene.isActive('SkillScene') || this.scene.isActive('ClanScene') || this.scene.isActive('MissionsScene') || this.scene.isActive('ShopScene')) return;
+      // Модалки, нарисованные прямо в GameScene (не отдельной Scene, поэтому не покрыты
+      // проверкой выше) — напр. _showDungeonDifficultyModal/_showBountyPrompt/
+      // _showJumpDangerWarning — ставят этот флаг, пока открыты, чтобы клик по кнопке
+      // модалки не ОДНОВРЕМЕННО уводил корабль в точку клика.
+      if (this._modalBlockingClicks) return;
       if (this.atBase) return;
 
       const now = this.time.now;
@@ -3100,14 +3173,14 @@ export default class GameScene extends Phaser.Scene {
   }
 
   // Решает жертва, не сервер и не авто-хук: из всех, кто наносил урон за эту жизнь
-  // (msg.damageBy — тот же снапшот, что честь выше использует), берём выше-уровневых
-  // не-защитников своей базы, топ-3 по вкладу урона, и спрашиваем разрешение.
+  // (msg.damageBy — тот же снапшот, что честь выше использует), берём тех, кто минимум
+  // на BOUNTY_LEVEL_GAP уровней выше и не защищает свою базу, топ-3 по вкладу урона.
   _promptBountyChoice(msg) {
     const damageBy = msg.damageBy || {};
     const myLvl = this.pilotLevel ?? 1;
     const candidates = Object.entries(damageBy)
       .map(([uid, dmg]) => ({ dmg, rp: this.pvpClient?.players?.get(Number(uid)) }))
-      .filter(c => c.rp && c.rp.level > myLvl && !this._isDefendingOwnBase(c.rp))
+      .filter(c => c.rp && c.rp.level >= myLvl + BOUNTY_LEVEL_GAP && !this._isDefendingOwnBase(c.rp))
       .sort((a, b) => b.dmg - a.dmg)
       .slice(0, 3)
       .map(c => c.rp);
@@ -3120,6 +3193,12 @@ export default class GameScene extends Phaser.Scene {
     const OW = 380, OH = 110;
     const ox = (W - OW) / 2, oy = (H - OH) / 2;
     const objs = [];
+    this._modalBlockingClicks = true;
+    // Phaser вызывает pointerdown-обработчик самой кнопки ДО глобального сценового —
+    // если снять флаг тут же синхронно, глобальный обработчик (в той же цепочке этого
+    // же клика) увидит его уже false и всё равно сдвинет корабль. Снимаем со сдвигом
+    // на следующий тик — глобальный успевает проверить true.
+    const destroy = () => { objs.forEach(o => o?.destroy()); this.time.delayedCall(0, () => { this._modalBlockingClicks = false; }); };
     const bg = this.add.rectangle(ox, oy, OW, OH, 0x0e0608, 0.97)
       .setOrigin(0, 0).setStrokeStyle(1.5, 0xef5350, 0.8).setDepth(200).setScrollFactor(0);
     objs.push(bg);
@@ -3133,14 +3212,14 @@ export default class GameScene extends Phaser.Scene {
     const btnY = oy + OH - 22;
     const noBtn = this.add.rectangle(ox + OW / 2 - 75, btnY, 120, 28, 0x0d1e2c, 1)
       .setStrokeStyle(1, 0x2a4a60, 0.8).setDepth(201).setScrollFactor(0).setInteractive({ useHandCursor: true });
-    noBtn.on('pointerdown', () => objs.forEach(o => o?.destroy()));
+    noBtn.on('pointerdown', () => destroy());
     objs.push(noBtn);
     objs.push(this.add.text(ox + OW / 2 - 75, btnY, 'НЕТ', { fontFamily: 'Orbitron, sans-serif', fontSize: '11px', color: '#4dd0e1', resolution: 2 }).setOrigin(0.5).setDepth(202).setScrollFactor(0));
 
     const yesBtn = this.add.rectangle(ox + OW / 2 + 75, btnY, 120, 28, 0x1a0808, 1)
       .setStrokeStyle(1, 0xef5350, 0.8).setDepth(201).setScrollFactor(0).setInteractive({ useHandCursor: true });
     yesBtn.on('pointerdown', () => {
-      objs.forEach(o => o?.destroy());
+      destroy();
       for (const rp of candidates) this.pvpClient?.bountyPost(rp.userId, rp.name, rp.corp);
       this.log(`💀 В розыск отправлен${candidates.length > 1 ? 'ы' : ''}: ${names}.`);
     });
