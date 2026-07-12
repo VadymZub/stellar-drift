@@ -1,4 +1,4 @@
-import * as Phaser from 'https://cdn.jsdelivr.net/npm/phaser@4.1.0/dist/phaser.esm.js';
+import * as Phaser from 'https://cdn.jsdelivr.net/npm/phaser@4.2.1/dist/phaser.esm.js';
 import { COLORS, UI_RES } from '../constants.js';
 import { i18n } from '../i18n.js';
 import { SECTORS, EDGES, galaxy, neighbors, sectorAccess } from '../galaxy.js';
@@ -152,7 +152,7 @@ export default class MapScene extends Phaser.Scene {
 
   node(cx, cy, w, h, key, s, cur, nb, lvl, playerCorp, missionTargets) {
     const isCur      = key === cur;
-    const acc        = sectorAccess(key, lvl, this.gs.activeShip, this.gs.premium);
+    const acc        = sectorAccess(key, lvl, this.gs.activeShip, this.gs.premium, this.gs.missionState, playerCorp);
     const isNeighbor = nb.includes(key);
     const canJump    = isNeighbor && acc.ok;
     const sc         = sectorCorp(key);           // 'karax' | 'tides' | null
@@ -258,7 +258,7 @@ export default class MapScene extends Phaser.Scene {
       const s = SECTORS[key];
       if (!s) return;
       const ny = pY + headerH + i * (nodeH + gap);
-      const acc = sectorAccess(key, lvl, this.gs.activeShip, this.gs.premium);
+      const acc = sectorAccess(key, lvl, this.gs.activeShip, this.gs.premium, this.gs.missionState, this.gs.playerCorp);
       const ok = acc.ok;
       const isCur = key === cur;
       const isPrem = !!s.premium;

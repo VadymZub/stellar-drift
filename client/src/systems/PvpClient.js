@@ -31,6 +31,10 @@ export class PvpClient {
         this.onLootSpawned  = null; // (msg) => void — новый общий лут-бокс мне видим
         this.onLootResult   = null; // (msg) => void — ответ на мою claimLoot
         this.onLootRemoved  = null; // (lootId) => void — кто-то другой забрал раньше меня
+        this.onEscortStarted = null; // (msg) => void — кто-то другой в комнате начал daily_escort
+        this.onBountyPosted  = null; // (msg) => void — {userId,name} поставлен в розыск
+        this.onBountyCleared = null; // (msg) => void — {userId} розыск снят (убит)
+        this.onBountySnapshot = null; // (msg) => void — {bounties:[{userId,name}]} при подключении
     }
 
     // ── Outgoing ─────────────────────────────────────────────────────────────
@@ -105,6 +109,25 @@ export class PvpClient {
         this._clearAll();
     }
 
+    /** Оповещает остальных в комнате, что этот игрок начал daily_escort — сервер лишь
+     * ретранслирует (без состояния), см. server main.py pvp_escort_start. */
+    escortStart() {
+        if (!this.sector) return;
+        this._send({ type: 'pvp_escort_start' });
+    }
+
+    /** Отправляется ЖЕРТВОЙ сразу после своей смерти в PvP, если убийца оказался выше
+     * уровнем (см. GameScene._onPvpHitResult) — сервер не проверяет уровни повторно. */
+    bountyPost(killerId, killerName, killerCorp) {
+        this._send({ type: 'pvp_bounty_post', killerId, killerName, killerCorp });
+    }
+
+    /** Запрашивает свежий список розыска (online/sector считаются сервером на момент
+     * запроса) — вызывается при открытии вкладки РОЗЫСК в CorpScene. */
+    bountyQuery() {
+        this._send({ type: 'pvp_bounty_query' });
+    }
+
     // ── Incoming (call from WS onmessage handler, routed by HudScene) ────────
 
     handleMessage(msg) {
@@ -150,6 +173,22 @@ export class PvpClient {
             case 'pvp_loot_removed':
                 this.onLootRemoved?.(msg.lootId);
                 break;
+
+            case 'pvp_escort_started':
+                this.onEscortStarted?.(msg);
+                break;
+
+            case 'pvp_bounty_posted':
+                this.onBountyPosted?.(msg);
+                break;
+
+            case 'pvp_bounty_cleared':
+                this.onBountyCleared?.(msg);
+                break;
+
+            case 'pvp_bounty_snapshot':
+                this.onBountySnapshot?.(msg);
+                break;
         }
     }
 
@@ -162,10 +201,11 @@ export class PvpClient {
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     _spawn(data) {
-        // Красный (враждебный) только в реальном PvP-секторе — на остальных realtime-
-        // картах (домашняя/PvE/групповой данж) другие игроки союзники, красить в
-        // "враг" некорректно (и атаковать их нельзя, см. GameScene._isPvpSector).
-        const isHostile = !!this.scene._isPvpSector;
+        // Красный (враждебный) только в реальном PvP-секторе И чужой корпус — на
+        // остальных realtime-картах (домашняя/PvE/групповой данж) и игроков СВОЕГО
+        // корпа даже в PvP другие игроки союзники, красить в "враг" некорректно (и
+        // атаковать их нельзя, см. GameScene._fireCannon/_fireLaser ally-fire чек).
+        const isHostile = !!this.scene._isPvpSector && data.corp !== (this.scene.playerCorp || 'neutral');
         this.players.set(data.userId, new RemotePlayer(this.scene, data, isHostile));
     }
 

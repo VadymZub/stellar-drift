@@ -90,3 +90,17 @@ class DungeonLives(Base):
     lives_used  = Column(Integer, nullable=False, default=0)   # 0..7
     locked_out  = Column(Integer, nullable=False, default=0)   # bool as int — 7 жизней исчерпаны ИЛИ данж уже пройден сегодня
     updated_at  = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class MiningBaseState(Base):
+    # Общий (не привязанный к юзеру) объект — база живёт в мире и её владеют/атакуют
+    # разные игроки. Один JSON-блоб = ровно то, что клиент строит в
+    # MiningBase._persist() (client/src/entities/MiningBase.js), сервер не разбирает
+    # структуру, только хранит/отдаёт как есть (тот же подход, что PlayerState.state).
+    __tablename__ = "mining_base_state"
+
+    id         = Column(Integer, primary_key=True)
+    base_id    = Column(String(80), unique=True, nullable=False, index=True)  # '<sector>_base_<idx>'
+    sector     = Column(String(50), nullable=False, index=True)
+    state      = Column(JSON, nullable=False, default=dict)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

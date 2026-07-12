@@ -1,4 +1,4 @@
-import * as Phaser from 'https://cdn.jsdelivr.net/npm/phaser@4.1.0/dist/phaser.esm.js';
+import * as Phaser from 'https://cdn.jsdelivr.net/npm/phaser@4.2.1/dist/phaser.esm.js';
 import { COLORS, UI_RES } from '../constants.js';
 import MiningBase from '../entities/MiningBase.js';
 import { galaxy, SECTORS } from '../galaxy.js';
@@ -68,6 +68,7 @@ export default class CorpScene extends Phaser.Scene {
     const g = this.add.graphics();
     g.fillStyle(0x080c18, 0.97);  g.fillRoundedRect(px, py, pw, ph, 10);
     g.lineStyle(2, COLORS.primary, 0.8); g.strokeRoundedRect(px, py, pw, ph, 10);
+    this._panelBottom = py + ph;
 
     const playerCorp = gs?.playerCorp || 'neutral';
     const cm = CORP_META[playerCorp];
@@ -97,7 +98,7 @@ export default class CorpScene extends Phaser.Scene {
     dg.strokeLineShape(new Phaser.Geom.Line(px + 8, py + 70, px + pw - 8, py + 70));
 
     // Tabs — merged XP+PvP into РЕЙТИНГИ (3 tabs instead of 4)
-    const TABS = ['РЕЙТИНГИ', 'КОРПОРАЦИИ', 'СМЕНИТЬ КОРП'];
+    const TABS = ['РЕЙТИНГИ', 'КОРПОРАЦИИ', 'РОЗЫСК', 'СМЕНИТЬ КОРП'];
     const tabW = Math.floor((pw - 16) / TABS.length);
     const tabY = py + 75;
     this._tabBgs  = [];
@@ -112,7 +113,11 @@ export default class CorpScene extends Phaser.Scene {
       const txt = this.add.text(tx, tabY + 14, label, { ...TF, fontSize: '13px', color: '#557799' }).setOrigin(0.5);
       this._tabBgs.push(bg);
       this._tabTxts.push(txt);
-      bg.on('pointerdown', () => this._tab !== i && this._showTab(i, px, tabY + 34, pw, gs));
+      bg.on('pointerdown', () => {
+        if (this._tab === i) return;
+        if (i === 2) gs.pvpClient?.bountyQuery(); // fresh online/sector on open, not cached
+        this._showTab(i, px, tabY + 34, pw, gs);
+      });
       bg.on('pointerover',  () => { if (this._tab !== i) bg.setFillStyle(0x142233); });
       bg.on('pointerout',   () => { if (this._tab !== i) bg.setFillStyle(0x0d1a26); });
     });
@@ -127,6 +132,7 @@ export default class CorpScene extends Phaser.Scene {
     this._objs.forEach(o => o?.destroy());
     this._objs = [];
     this._tab  = idx;
+    this._boardPx = px; this._boardCy = cy; this._boardPw = pw; // for _refreshBountyTab
 
     this._tabBgs.forEach((bg, i) => {
       const on = i === idx;
@@ -135,7 +141,7 @@ export default class CorpScene extends Phaser.Scene {
       this._tabTxts[i].setColor(on ? '#4dd0e1' : '#557799');
     });
 
-    const draw = [this._drawRatings, this._drawStandings, this._drawSwitch];
+    const draw = [this._drawRatings, this._drawStandings, this._drawBounty, this._drawSwitch];
     draw[idx].call(this, px, cy, pw, gs);
   }
 
@@ -254,7 +260,82 @@ export default class CorpScene extends Phaser.Scene {
     });
   }
 
-  // ── Tab 2: Switch corp ──────────────────────────────────────────────────────
+  // ── Tab 2: Bounty board — live list of currently wanted players ─────────────
+  // gs.bountyBoard: [{userId,name,online,sector}], refreshed on-demand via
+  // pvpClient.bountyQuery() when this tab opens (see click handler in create()) —
+  // online/sector are computed server-side at query time, not cached from connect.
+  // gs.wantedPlayers (Map<userId,name>) is the separate, always-live subset used
+  // for nameplate markers — this tab reads the richer gs.bountyBoard instead.
+
+  _drawBounty(px, cy, pw, gs) {
+    this._sectionTitle(px + pw / 2, cy + 8, 'ДОСКА РОЗЫСКА');
+
+    const hint = this.add.text(px + pw / 2, cy + 28,
+      'Убийца выше уровнем жертвы попадает в розыск. Убей разыскиваемого в PvP — получишь ×3 честь + 20 ⭐ (делится по вкладу урона). 10+ жертв на счету — «крупная дичь», награда ×2.',
+      { ...TFD, fontSize: '12px', color: '#664422', wordWrap: { width: pw - 60 }, align: 'center' }).setOrigin(0.5, 0);
+    this._objs.push(hint);
+
+    const list = gs?.bountyBoard ?? [];
+    if (!list.length) {
+      const t = this.add.text(px + pw / 2, cy + 90, 'Сейчас никто не в розыске.',
+        { ...TFD, fontSize: '15px', color: '#334455' }).setOrigin(0.5);
+      this._objs.push(t);
+      return;
+    }
+
+    // Убийца всегда из ЧУЖОЙ корпорации (дружественный огонь между своими запрещён
+    // на сервере — см. pvp_fire_claim), корп полезен показать сразу в списке.
+    const offsets = [20, 58, pw - 330, pw - 220, pw - 40];
+    const aligns  = [0, 0, 0, 0, 1];
+    const hdrY = cy + 68;
+    this._rowHdr(px, hdrY, pw, ['#', 'ПИЛОТ', 'КОРП', 'КАРТА', 'СТАТУС'], offsets, aligns);
+
+    const listY = hdrY + 20;
+    const listH = this._panelBottom - 20 - listY;
+    const rowH = 28, rowGap = 4;
+    const container = this.add.container(px, listY);
+    this._objs.push(container);
+
+    list.forEach((b, i) => {
+      const ry = i * (rowH + rowGap);
+      const corpMeta = CORP_META[b.corp] || CORP_META.neutral;
+      const mapName = b.online ? (SECTORS[b.sector]?.name ?? b.sector ?? '—') : '—';
+      const statusColor = b.online ? '#5aaa66' : '#5a7a8a';
+      const statusLabel = b.online ? 'онлайн' : 'офлайн';
+      // 10+ квалифицирующих жертв на счету — "крупная дичь", ×2 награда за поимку (см. server _resolve_pvp_hit)
+      const isBigGame = (b.kills ?? 1) >= 10;
+      const nameLabel = isBigGame ? `💀 ${b.name}  🔥 ×2` : `💀 ${b.name}`;
+      const nameColor = isBigGame ? '#ffb74d' : '#ff5252';
+
+      const row = [
+        this.add.text(offsets[0], ry, `${i + 1}.`, { ...TFD, fontSize: '14px', color: '#ff5252' }).setOrigin(0, 0.5),
+        this.add.text(offsets[1], ry, nameLabel, { ...TFD, fontSize: '14px', color: nameColor }).setOrigin(0, 0.5),
+        this.add.text(offsets[2], ry, corpMeta.label, { ...TF, fontSize: '12px', color: corpMeta.color }).setOrigin(0, 0.5),
+        this.add.text(offsets[3], ry, mapName, { ...TFD, fontSize: '13px', color: '#8ab0bc' }).setOrigin(0, 0.5),
+        this.add.text(offsets[4], ry, statusLabel, { ...TFD, fontSize: '13px', color: statusColor }).setOrigin(1, 0.5),
+      ];
+      container.add(row);
+    });
+
+    const totalH = list.length * (rowH + rowGap);
+    if (totalH > listH) {
+      this.input.on('wheel', (p, _o, _dx, dy) => {
+        if (p.x < px || p.x > px + pw || p.y < listY || p.y > listY + listH) return;
+        container.y = Phaser.Math.Clamp(container.y - dy * 0.5, listY - (totalH - listH), listY);
+      });
+      // Opaque strip below the list masks scrolled-past rows instead of a true geometry mask.
+      this._objs.push(this.add.rectangle(px, listY + listH, pw, 60, 0x080c18, 1).setOrigin(0, 0).setDepth(12));
+    }
+  }
+
+  // Called by HudScene's pvpClient.onBountySnapshot when this tab is the active one —
+  // re-renders with the freshly queried online/sector data instead of a stale draw.
+  _refreshBountyTab(gs) {
+    if (this._tab !== 2) return;
+    this._showTab(2, this._boardPx, this._boardCy, this._boardPw, gs);
+  }
+
+  // ── Tab 3: Switch corp ──────────────────────────────────────────────────────
 
   _drawSwitch(px, cy, pw, gs) {
     const switchCount = gs?.corpSwitchCount || 0;

@@ -1,5 +1,5 @@
-import * as Phaser from 'https://cdn.jsdelivr.net/npm/phaser@4.1.0/dist/phaser.esm.js';
-import { BASE_CONFIG, TURRET_SLOTS, cannon2GoldCost, goldPerSecByTier } from '../bases.js';
+import * as Phaser from 'https://cdn.jsdelivr.net/npm/phaser@4.2.1/dist/phaser.esm.js';
+import { BASE_CONFIG, cannon2GoldCost, goldPerSecByTier } from '../bases.js';
 import { COLORS, UI_RES } from '../constants.js';
 
 // All sizes are ×1.3 vs the original 500/22 design.
@@ -44,8 +44,9 @@ export default class BaseMenuScene extends Phaser.Scene {
     this._panel(cx, cy, W, H);
 
     const top = cy - H / 2 + PAD;
-    this.add.text(cx, top + 16, 'ДОБЫВАЮЩАЯ БАЗА', { ...TF, fontSize: '23px', color: '#4dd0e1' }).setOrigin(0.5);
-    this.add.text(cx, top + 48, 'РАЗРУШЕНА',       { ...TF, fontSize: '17px', color: '#ef5350' }).setOrigin(0.5);
+    this.add.text(cx, top + 14, this.base.stationName, { ...TF, fontSize: '21px', color: '#4dd0e1' }).setOrigin(0.5);
+    this.add.text(cx, top + 36, 'ДОБЫВАЮЩАЯ БАЗА',      { ...TF, fontSize: '12px', color: '#5a8095' }).setOrigin(0.5);
+    this.add.text(cx, top + 58, 'РАЗРУШЕНА',            { ...TF, fontSize: '17px', color: '#ef5350' }).setOrigin(0.5);
 
     const gs = this.scene.get('GameScene');
     const canAfford = (gs?.credits || 0) >= BASE_CONFIG.baseCostCredits;
@@ -89,7 +90,7 @@ export default class BaseMenuScene extends Phaser.Scene {
     // отступ ниже) + 2 ряда карточек (57px + 8px зазор каждый).
     const turretH   = isActive ? (40 + 2 * (57 + 8)) : 0;
     const H         = Math.min(780,
-      PAD + 18              // title
+      PAD + 50              // title (station name + "ДОБЫВАЮЩАЯ БАЗА" subtitle)
       + 29                  // state
       + hpBlockH             // hp (+ shield) bar block
       + speedUpH
@@ -105,10 +106,12 @@ export default class BaseMenuScene extends Phaser.Scene {
     this._panel(cx, cy, W, H);
     let y = cy - H / 2 + PAD;
 
-    // Title
+    // Title — station name on top (readable at a glance), corp/type as a smaller
+    // subtitle right below so it doesn't compete for attention with the name.
     const corpName = this.base.corp !== 'neutral' ? ` · ${this.base.corp.toUpperCase()}` : '';
-    this.add.text(cx, y + 16, `ДОБЫВАЮЩАЯ БАЗА${corpName}`, { ...TF, fontSize: '21px', color: '#4dd0e1' }).setOrigin(0.5);
-    y += 36;
+    this.add.text(cx, y + 14, this.base.stationName, { ...TF, fontSize: '20px', color: '#4dd0e1' }).setOrigin(0.5);
+    this.add.text(cx, y + 34, `ДОБЫВАЮЩАЯ БАЗА${corpName}`, { ...TF, fontSize: '12px', color: '#5a8095' }).setOrigin(0.5);
+    y += 50;
 
     // State line — live-updated every second
     const stateColor = isActive ? '#4dd0e1' : '#ffb74d';
@@ -215,7 +218,7 @@ export default class BaseMenuScene extends Phaser.Scene {
       const colW  = Math.floor(barW / 3);
       const slotH = 57;
 
-      TURRET_SLOTS.forEach((_, i) => {
+      Array.from({ length: BASE_CONFIG.turretSlots }, (_, i) => i).forEach((i) => {
         const col  = i % 3;
         const row  = Math.floor(i / 3);
         const bx   = cx - barW / 2 + col * colW + colW / 2;
@@ -223,18 +226,12 @@ export default class BaseMenuScene extends Phaser.Scene {
         const type = this.base.turrets[i];
 
         if (type) {
+          const tt = this.base.turretTargets[i];
+          const alive = !tt || tt.alive;
           this.add.rectangle(bx, by, colW - 8, slotH, 0x0d2a1a).setStrokeStyle(1, COLORS.primary, 0.7).setOrigin(0.5);
           this.add.text(bx, by - 10, type === 'cannon2' ? 'Cannon II' : 'Cannon I', { ...TF, fontSize: '14px', color: '#4dd0e1' }).setOrigin(0.5);
-          const hpTxt = this.add.text(bx, by + 10, '', { ...TF, fontSize: '12px', color: '#336644' }).setOrigin(0.5);
-          const refreshTurretHp = () => {
-            const tt = this.base.turretTargets[i];
-            if (!hpTxt?.active) return;
-            if (!tt || !tt.alive) { hpTxt.setText('уничтожена'); return; }
-            hpTxt.setText(`HP ${Math.round(tt.hull).toLocaleString()}/${Math.round(tt.maxHull).toLocaleString()}`
-              + (tt.maxShield > 0 ? `  ·  щ.${Math.round(tt.shield).toLocaleString()}` : ''));
-          };
-          refreshTurretHp();
-          this.time.addEvent({ delay: 1000, loop: true, callback: refreshTurretHp });
+          this.add.text(bx, by + 10, alive ? '▣ установлена' : '▣ уничтожена',
+            { ...TF, fontSize: '12px', color: alive ? '#336644' : '#663333' }).setOrigin(0.5);
         } else if (isOwner) {
           const bg = this.add.rectangle(bx, by, colW - 8, slotH, 0x111828)
             .setStrokeStyle(1, 0x334466, 0.8).setOrigin(0.5).setInteractive();

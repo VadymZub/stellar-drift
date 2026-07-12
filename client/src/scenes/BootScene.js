@@ -1,4 +1,4 @@
-import * as Phaser from 'https://cdn.jsdelivr.net/npm/phaser@4.1.0/dist/phaser.esm.js';
+import * as Phaser from 'https://cdn.jsdelivr.net/npm/phaser@4.2.1/dist/phaser.esm.js';
 import { i18n } from '../i18n.js';
 import { MOBS, DPR } from '../constants.js';
 import { SHIPS } from '../ships.js';
@@ -237,6 +237,11 @@ export default class BootScene extends Phaser.Scene {
       if ((m.displaySize ?? 0) > (_mobTexMax.get(m.key) ?? 0)) _mobTexMax.set(m.key, m.displaySize);
     }
     const _jobs = [
+      // ×2 фиксированно (НЕ DPR) — пробовали привязать к реальному DPR вместо
+      // максимума, чтобы сэкономить GPU-память на не-retina экранах, но вращающиеся
+      // спрайты (heading меняется постоянно) заметно теряли резкость: точное
+      // совпадение с физическим DPR без запаса недостаточно из-за передискретизации
+      // при повороте под произвольным углом. Откачено — визуальное качество важнее.
       ...SHIPS.map(s => () => prepShipTex(this, s.key, s.displaySize * 2)),
       ...[..._mobTexMax].map(([k, ds]) => () => prepShipTex(this, k, ds * 2)),
       ...['drover_g', 'phantom_g', 'argosy_g', 'helion_g', 'drifter_g'].map(k => () => prepShipTex(this, k, 446)),

@@ -1,4 +1,4 @@
-import * as Phaser from 'https://cdn.jsdelivr.net/npm/phaser@4.1.0/dist/phaser.esm.js';
+import * as Phaser from 'https://cdn.jsdelivr.net/npm/phaser@4.2.1/dist/phaser.esm.js';
 import { COLORS, UI_RES } from '../constants.js';
 import { itemName, itemStats, itemIconKey, addConsumableToInventory, removeConsumableFromInventory, countConsumableInInventory, DUNGEON_RES_EXCHANGE_RATE, BUFF_KEY_TO_RESOURCE, BUFF_KEY_TO_MATERIAL, RESOURCE_NAMES, MATERIAL_NAMES } from '../items.js';
 import { prerenderTex } from '../utils/prerenderTex.js';

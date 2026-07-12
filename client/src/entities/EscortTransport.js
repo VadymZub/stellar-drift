@@ -1,4 +1,4 @@
-import * as Phaser from 'https://cdn.jsdelivr.net/npm/phaser@4.1.0/dist/phaser.esm.js';
+import * as Phaser from 'https://cdn.jsdelivr.net/npm/phaser@4.2.1/dist/phaser.esm.js';
 import { UI_RES } from '../constants.js';
 
 // Transport sprite has nose at BOTTOM (like pirate mobs), not nose-up like player ships.
@@ -203,7 +203,7 @@ export default class EscortTransport {
     this.scene.tweens.add({ targets: this.sprite, alpha: 0, duration: 700,
       onComplete: () => { this.sprite?.destroy(); this.sprite = null; } });
     this._destroyUI();
-    this.scene.advanceMission('daily_escort', 1);
+    this.scene.advanceEscortMission(1);
     this.scene.log('Транспорт добрался до базы! Миссия выполнена.');
   }
 
@@ -214,12 +214,7 @@ export default class EscortTransport {
     this.scene.explosion(this.x, this.y, 1.1);
     this.sprite?.destroy(); this.sprite = null;
     this._destroyUI();
-    // Mark mission as failed for the rest of the day
-    const st = this.scene.missionState?.['daily_escort'];
-    if (st) {
-      st.status     = 'failed';
-      st.objectives.forEach(o => { o.current = 0; });
-    }
+    this.scene.failEscortMission();
     this.scene.log('⚠ Транспорт уничтожен! Миссия провалена — попробуй завтра.');
   }
 

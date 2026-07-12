@@ -28,7 +28,11 @@ export const DEFAULTS = {
   engineTrails: true,
   cameraShake:  true,
   bgParallax:   true,
+  // Требует перезагрузки страницы — Phaser не умеет менять antialias/antialiasGL
+  // у уже созданного WebGL-контекста "на лету" (см. main.js/SettingsScene._save()).
+  antialiasing: true,
   showFps:      false,
+  showRam:      false, // JS heap usage (performance.memory — Chrome/Chromium only)
   // Sound
   masterVol:    100,
   musicVol:     75,

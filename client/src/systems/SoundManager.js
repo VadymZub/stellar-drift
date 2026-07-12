@@ -1,4 +1,4 @@
-import * as Phaser from 'https://cdn.jsdelivr.net/npm/phaser@4.1.0/dist/phaser.esm.js';
+import * as Phaser from 'https://cdn.jsdelivr.net/npm/phaser@4.2.1/dist/phaser.esm.js';
 
 // Конвенция ключей ↔ файлов описана в client/assets/sfx/sfx_prompts.md.
 // Файлов пока может не быть (звук — отдельный этап генерации художником/саунд-

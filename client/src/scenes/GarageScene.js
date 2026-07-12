@@ -1,4 +1,4 @@
-import * as Phaser from 'https://cdn.jsdelivr.net/npm/phaser@4.1.0/dist/phaser.esm.js';
+import * as Phaser from 'https://cdn.jsdelivr.net/npm/phaser@4.2.1/dist/phaser.esm.js';
 import { COLORS, UI_RES } from '../constants.js';
 import { i18n } from '../i18n.js';
 import { itemName, itemStats, itemSellPrice, itemIconKey, SLOT_KEY, creditUpgradeCost, starUpgradeCost, modMult,
@@ -1461,7 +1461,10 @@ export default class GarageScene extends Phaser.Scene {
     let cy = contentY + 18;
     const cx = detX + detW / 2;
 
-    const imgSize = 192;
+    // Было 192 — с реролл-секцией внизу общая высота контента превышала detH, и
+    // кнопка реролла с подписью уходила ниже границы окна. Иконка перка чисто
+    // декоративная, ужимаем ради места без потери читаемости остального.
+    const imgSize = 148;
     if (this.textures.exists(pDef.key)) {
       const _src = this.textures.get(pDef.key).getSourceImage();
       const _sw = _src.naturalWidth || _src.width;
@@ -1476,7 +1479,7 @@ export default class GarageScene extends Phaser.Scene {
       fg.fillStyle(rarHex, 0.3); fg.fillRoundedRect(cx - imgSize / 2, cy, imgSize, imgSize, 10);
       fg.lineStyle(2, rarHex, 0.7); fg.strokeRoundedRect(cx - imgSize / 2, cy, imgSize, imgSize, 10);
     }
-    cy += imgSize + 10;
+    cy += imgSize + 8;
 
     // Rarity badge
     const rbg = this.add.graphics();
@@ -1484,7 +1487,7 @@ export default class GarageScene extends Phaser.Scene {
     rbg.fillStyle(rarHex, 0.15); rbg.fillRoundedRect(cx - rlw / 2, cy, rlw, rlh, 5);
     rbg.lineStyle(1, rarHex, 0.6); rbg.strokeRoundedRect(cx - rlw / 2, cy, rlw, rlh, 5);
     this.add.text(cx, cy + rlh / 2, rarLabel, this.O('11px', rarColor)).setOrigin(0.5);
-    cy += rlh + 6;
+    cy += rlh + 4;
 
     // Roll quality badge
     const roll      = perk.roll ?? 1;
@@ -1498,7 +1501,7 @@ export default class GarageScene extends Phaser.Scene {
     this.add.text(cx, cy + qlh / 2,
       `Качество: ${Math.round(roll * 100)}%  ·  ${qInfo.label}`,
       this.F('11px', qColor)).setOrigin(0.5);
-    cy += qlh + 10;
+    cy += qlh + 6;
 
     // Name
     this.add.text(cx, cy, pDef.name, this.O('18px', rarColor)).setOrigin(0.5, 0);
@@ -1517,7 +1520,7 @@ export default class GarageScene extends Phaser.Scene {
     this.add.text(cx, cy,
       `Кред: +${(cLvl * 0.9).toFixed(1)}%  ·  Звёзды: +${(sLvl * 9).toFixed(0)}%`,
       this.F('12px', '#2a4a5a')).setOrigin(0.5, 0);
-    cy += 18;
+    cy += 14;
 
     // Separator — линия с ромбом посередине
     const dg = this.add.graphics();
@@ -1527,7 +1530,7 @@ export default class GarageScene extends Phaser.Scene {
     dg.strokeLineShape(new Phaser.Geom.Line(smx + sds + 2, smy, detX + detW - 16, smy));
     dg.fillStyle(0x2a6080, 0.9);
     dg.beginPath(); dg.moveTo(smx, smy - sds); dg.lineTo(smx + sds, smy); dg.lineTo(smx, smy + sds); dg.lineTo(smx - sds, smy); dg.closePath(); dg.fillPath();
-    cy += 14;
+    cy += 10;
 
     // Two upgrade columns
     const halfW = (detW - 40) / 2;
@@ -1616,7 +1619,7 @@ export default class GarageScene extends Phaser.Scene {
     sepG2.fillStyle(0x2a6080, 0.9);
     sepG2.beginPath(); sepG2.moveTo(smx2, smy2 - sds2); sepG2.lineTo(smx2 + sds2, smy2);
     sepG2.lineTo(smx2, smy2 + sds2); sepG2.lineTo(smx2 - sds2, smy2); sepG2.closePath(); sepG2.fillPath();
-    cy += 12;
+    cy += 8;
 
     this.add.text(cx, cy, isPerfect ? '✦ КАЧЕСТВО МАКСИМАЛЬНОЕ' : 'УЛУЧШЕНИЕ КАЧЕСТВА',
       this.O('12px', isPerfect ? qColor : '#2a5a6a')).setOrigin(0.5, 0);

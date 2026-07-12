@@ -7,7 +7,6 @@ const HEAL_CD     = 180;
 const HEAL_PCT    = 0.30;
 const TOP_REWARD  = 8;
 const REWARD_GOLD = 100;
-const HONOR_GAIN  = HONOR.ARGUS;
 
 // Movement
 const ORBIT_R_TIGHT     = 380;
@@ -25,10 +24,21 @@ const CHASE_DIST        = 1500;
 // Quantum FX
 const SCAN_PERIOD    = 3.0;   // секунд между sweep-анимациями
 const SCAN_DURATION  = 0.8;   // секунд на прохождение корпуса
-const FLICKER_MIN    = 2.0;   // сек — мин интервал мерцания
-const FLICKER_MAX    = 4.0;
+// Окно неуязвимости "квантовой фазы" — детерминированное по wall-clock (Date.now()),
+// ТА ЖЕ формула на сервере (см. server _argus_phase_invincible) считает реальный
+// дожд урона по этому же расписанию — единое окно для всех атакующих, не
+// независимый рандом-таймер на каждом клиенте (было так раньше, см. диалог).
+const FLICKER_PERIOD_NORMAL  = 3.0;
+const FLICKER_PERIOD_BERSERK = 1.2;
+const FLICKER_DURATION       = 0.4;
 const BERSERK_HP     = 0.40;
 const JUMP_DIST      = 400;   // px — дальность квантового прыжка
+
+// Чисто косметическое мерцание на корабле ИГРОКА, когда он сам летает на Аргусе
+// (DEV-клавиша 8, attachToPlayer) — не влияет на бой/неуязвимость (та детерминирована
+// и общая, см. FLICKER_PERIOD_*/_isPhaseInvincible выше), только на себе, рандом ок.
+const PLAYER_FLICKER_MIN = 2.0;
+const PLAYER_FLICKER_MAX = 4.0;
 
 export default class ArgusController {
   constructor(scene) {
@@ -41,16 +51,15 @@ export default class ArgusController {
     this._movePhase   = 'approach';
     this._orbitModeT  = 0;
     this._orbitModeDur = 10;
-    this._damageMap   = new Map();
     this._dmgHistory  = [];
+    this._lastHull    = 0;
 
     // Quantum FX state
     this._layerWhite   = null;
     this._layerViolet  = null;
     this._layerBlue    = null;
     this._scanLine     = null;
-    this._phaseTimer   = 0;
-    this._nextPhase    = FLICKER_MIN + Math.random() * (FLICKER_MAX - FLICKER_MIN);
+    this._wasPhaseInvincible = false;
     this._scanT        = 0;
     this._blueOffX     = 4;
     this._violetOscT   = 0;
@@ -89,7 +98,7 @@ export default class ArgusController {
       blue:       gs.add.image(x, y, texKey).setDepth(49).setAlpha(0.35).setTint(0x00d4ff).setDisplaySize(dw, dh).setBlendMode('ADD'),
       scan:       gs.add.graphics().setDepth(51),
       phaseTimer: 0,
-      nextPhase:  FLICKER_MIN + Math.random() * (FLICKER_MAX - FLICKER_MIN),
+      nextPhase:  PLAYER_FLICKER_MIN + Math.random() * (PLAYER_FLICKER_MAX - PLAYER_FLICKER_MIN),
       scanT:      0,
       blueOffX:   4,
       player,
@@ -152,7 +161,7 @@ export default class ArgusController {
     fx.phaseTimer += dt;
     if (fx.phaseTimer >= fx.nextPhase) {
       fx.phaseTimer = 0;
-      fx.nextPhase  = FLICKER_MIN + Math.random() * (FLICKER_MAX - FLICKER_MIN);
+      fx.nextPhase  = PLAYER_FLICKER_MIN + Math.random() * (PLAYER_FLICKER_MAX - PLAYER_FLICKER_MIN);
       const gs = this.scene;
       gs.tweens.add({ targets: p.sprite, alpha: { from: 1.0, to: 0.3 }, duration: 80, yoyo: true, repeat: 2, ease: 'Stepped' });
       fx.blueOffX = 4 + (Math.random() > 0.5 ? 8 : -8);
@@ -467,24 +476,31 @@ export default class ArgusController {
     this.mob = new Mob(gs, MOBS.argus_boss, level, cx + 800, cy, {
       behavior: 'roam', patrolRadius: 600, leash: Infinity,
     });
+    // Аргус — мобовский босс, бой и награды как у босса в групповом данже: реальный
+    // общий (не per-client-local) HP/урон через тот же pvpMobId-леджер, что и
+    // остальные PvP-мобы/групповые боссы (см. GameScene._fireCannon/_onPvpMobHitResult
+    // — они уже обрабатывают ЛЮБОЙ mob.pvpMobId одинаково, отдельного кода не нужно).
+    // Раньше был чисто per-client-local Mob без pvpMobId — реальные разные игроки не
+    // делили ни HP, ни честный учёт урона (см. диалог "сейчас это дыра").
+    this.mob.isArgusBoss = true;
+    this.mob.pvpMobId = gs._realtimeRoomKey ? `${gs._realtimeRoomKey}:argus` : null;
     gs.mobs.push(this.mob);
 
-    // Reset per-spawn state
-    this._damageMap      = new Map();
+    // Reset per-spawn state (_damageMap заменён на this.mob._damageBy — реальный
+    // кросс-клиентский учёт через pvpMobId, см. GameScene._onPvpMobHitResult)
     this._dmgHistory     = [];
     this._healTimer      = 0;
     this._moveTimer      = 0;
     this._orbitAngle     = 0;
     this._movePhase      = 'approach';
     this._orbitModeT     = 0;
-    this._phaseTimer     = 0;
-    this._nextPhase      = FLICKER_MIN + Math.random() * (FLICKER_MAX - FLICKER_MIN);
+    this._wasPhaseInvincible = false;
     this._scanT          = 0;
     this._blueOffX       = 4;
     this._violetOscT     = 0;
     this._berserkApplied = false;
 
-    this._phaseInvincible = false;
+    this._lastHull = this.mob.hull;
 
     // Mob ability cooldowns (seconds until next use; offset so they don't fire simultaneously)
     this._mobPulsarCd    = 20;
@@ -494,25 +510,6 @@ export default class ArgusController {
     this._mobMissileGfx  = null;
 
     this._setupQuantumFX();
-
-    // Wrap takeDamage: quantum invincibility + damage tracking + white flash
-    const origTD = this.mob.takeDamage.bind(this.mob);
-    const ctrl   = this;
-    this.mob.takeDamage = function(amount, pen, opts) {
-      if (ctrl._phaseInvincible) return { shieldHit: 0, hullHit: 0, killed: false };
-      const res = origTD(amount, pen, opts);
-      const hit = (res.hullHit || 0) + (res.shieldHit || 0);
-      if (hit > 0) {
-        const name = ctrl.scene.playerName ?? 'Player';
-        ctrl._damageMap.set(name, (ctrl._damageMap.get(name) || 0) + hit);
-        ctrl._dmgHistory.push({ ts: Date.now(), amount: hit });
-        if (ctrl._layerWhite && ctrl.mob?.phase >= 2) {
-          ctrl._layerWhite.setAlpha(0.8);
-          ctrl.scene.time.delayedCall(200, () => { if (ctrl._layerWhite) ctrl._layerWhite.setAlpha(0.15); });
-        }
-      }
-      return res;
-    };
 
     gs.log('⚠ АРГУС вышел на орбиту — уровень ' + level);
     this._logAudit('ARGUS_SPAWN', { level, sector: galaxy.current });
@@ -592,14 +589,14 @@ export default class ArgusController {
       this._scanLine.fillRect(m.x - halfW, m.y - halfH + m.sprite.displayHeight * prog, m.sprite.displayWidth, 2);
     }
 
-    // Phase flicker timer
-    this._phaseTimer += dt;
-    if (this._phaseTimer >= this._nextPhase) {
-      this._phaseTimer = 0;
-      const base = m.phase >= 2 ? (FLICKER_MIN / 3) : FLICKER_MIN;
-      this._nextPhase = base + Math.random() * (FLICKER_MAX - FLICKER_MIN) / (m.phase >= 2 ? 3 : 1);
-      this._triggerPhaseFlicker();
-    }
+    // Окно неуязвимости — не собственный рандом-таймер, а детерминированная функция
+    // wall-clock (см. _isPhaseInvincible) — та же формула, что сервер реально
+    // применяет как evasion=1.0 при резолве урона (см. server _argus_phase_invincible).
+    // Триггерим визуальный "мерцающий" эффект по фронту false→true.
+    const hullFrac = m.maxHull > 0 ? m.hull / m.maxHull : 1;
+    const invincibleNow = this._isPhaseInvincible(hullFrac);
+    if (invincibleNow && !this._wasPhaseInvincible) this._triggerPhaseFlicker();
+    this._wasPhaseInvincible = invincibleNow;
 
     // Auto-trigger berserk at 40% hull
     if (!this._berserkApplied && m.maxHull > 0 && m.hull / m.maxHull < BERSERK_HP) {
@@ -609,14 +606,24 @@ export default class ArgusController {
     }
   }
 
+  // Детерминированная (wall-clock, Date.now()) проверка — ИДЕНТИЧНАЯ формула на
+  // сервере (см. server _argus_phase_invincible) реально режектит урон, попавший в
+  // это окно (evasion=1.0). Общая для всех клиентов эпоха — без неё каждый клиент
+  // видел бы своё, несовпадающее окно.
+  _isPhaseInvincible(hullFrac) {
+    const period = hullFrac < BERSERK_HP ? FLICKER_PERIOD_BERSERK : FLICKER_PERIOD_NORMAL;
+    return (Date.now() / 1000) % period < FLICKER_DURATION;
+  }
+
   _triggerPhaseFlicker() {
     const m  = this.mob;
     const gs = this.scene;
     if (!m?.alive) return;
 
-    // Quantum phase window: 100% evasion for 400ms
-    this._phaseInvincible = true;
-    gs.time.delayedCall(400, () => { this._phaseInvincible = false; });
+    // Раньше тут ещё стоял this._phaseInvincible (100% "уклонение" на 400мс) — работал
+    // через takeDamage-wrapper, которого больше нет (урон теперь серверно-авторитетный
+    // через pvpMobId, см. _spawn) — как и у обычного босса в групповом данже, там тоже
+    // нет клиентского окна неуязвимости поверх сервера. Остаётся чисто визуальный эффект.
 
     // Main layer: 2 alpha dips (visible "phasing out")
     gs.tweens.add({
@@ -819,6 +826,15 @@ export default class ArgusController {
     }
 
     if (this.mob?.alive) {
+      // Реальный урон теперь приходит серверно-авторитетно (mob.hull мутируется извне
+      // через _onPvpMobHitResult, см. pvpMobId в _spawn) — раньше это ловил takeDamage-
+      // wrapper, которого больше нет. _getRecentDps() (триггер orbit-фазы) кормим
+      // разницей hull кадр-к-кадру вместо этого; self-heal тоже поднимает hull, но это
+      // редкий и заметный скачок вверх (lost<0 просто игнорируется ниже).
+      const lost = this._lastHull - this.mob.hull;
+      if (lost > 0) this._dmgHistory.push({ ts: Date.now(), amount: lost });
+      this._lastHull = this.mob.hull;
+
       this._updateMovement(dt);
       this._updateQuantum(dt);
       this._updateSelfHeal(dt);
@@ -970,7 +986,6 @@ export default class ArgusController {
     if (m.alive) m.die();
     m.sprite?.destroy();
     m.label?.destroy();
-    m.bar?.destroy();
     this.scene.mobs = this.scene.mobs.filter(x => x !== m);
     if (this.scene.target === m) { this.scene.target = null; this.scene.isFiring = false; }
     this.mob = null;
@@ -986,12 +1001,18 @@ export default class ArgusController {
 
   _onArgusDied() {
     const gs = this.scene;
-    const sorted = [...this._damageMap.entries()]
+    // Реальный кросс-клиентский учёт урона — mob._damageBy, тот же общий механизм, что
+    // и у обычного босса в групповом данже (см. GameScene._onPvpMobHitResult, копится
+    // там же по pvpMobId, не свой отдельный _damageMap только по себе).
+    const by = this.mob?._damageBy || {};
+    const totalDmg = Object.values(by).reduce((s, d) => s + d, 0);
+    const sorted = Object.entries(by)
       .sort((a, b) => b[1] - a[1])
       .slice(0, TOP_REWARD)
       .map(([name, dmg]) => ({ name, dmg: Math.round(dmg) }));
 
-    const inTop = sorted.some(p => p.name === (gs.playerName ?? 'Player'));
+    const myName = gs.playerName ?? 'Player';
+    const inTop = sorted.some(p => p.name === myName);
 
     if (inTop) {
       gs.starGold = (gs.starGold || 0) + REWARD_GOLD;
@@ -1000,7 +1021,16 @@ export default class ArgusController {
         gs.gainCorpRep?.(0.10);
         gs.log('🏅 Сезонный бонус: +10% корпоративный рейтинг');
       }
-      gs.gainHonor?.(HONOR_GAIN);
+      // Честь — как у обычного босса (BOSS_HIGHER/EQUAL/LOWER по уровню Аргуса
+      // относительно своего), помноженная на реальную (кросс-клиентскую) долю урона —
+      // не фиксированный HONOR.ARGUS всем в топ-8, см. диалог "как у босса в групповом
+      // данже". Округление математическое.
+      const pl = gs.pilotLevel || 1;
+      const argusLevel = this.mob?.level ?? 50;
+      const tier = argusLevel > pl ? HONOR.BOSS_HIGHER : argusLevel === pl ? HONOR.BOSS_EQUAL : HONOR.BOSS_LOWER;
+      const myShare = totalDmg > 0 ? (by[myName] || 0) / totalDmg : 0;
+      const honorGain = Math.round(tier * myShare);
+      if (honorGain > 0) gs.gainHonor?.(honorGain);
     } else {
       gs.log(`АРГУС ПОВЕРЖЕН — ты не вошёл в топ-${TOP_REWARD} по урону`);
     }

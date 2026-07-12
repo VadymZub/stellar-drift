@@ -1,4 +1,4 @@
-import * as Phaser from 'https://cdn.jsdelivr.net/npm/phaser@4.1.0/dist/phaser.esm.js';
+import * as Phaser from 'https://cdn.jsdelivr.net/npm/phaser@4.2.1/dist/phaser.esm.js';
 import { PROJECTILE, PROJ_TYPES } from '../constants.js';
 
 // Плазма-болт / спецснаряд. Может лететь прямо или с самонаведением (turnRate рад/сек).

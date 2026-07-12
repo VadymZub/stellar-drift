@@ -70,3 +70,11 @@ export function dungeonDeath(key, dayKey)       { return apiPost('/dungeon/death
 export function dungeonComplete(runId, key, dayKey, memberUsernames) {
   return apiPost('/dungeon/complete', { runId, key, dayKey, memberUsernames });
 }
+
+// ── Добывающие базы (общие для всех игроков сектора, не user-scoped) ────────
+export function miningBaseSector(sector) {
+  return apiGet(`/mining_base/sector/${encodeURIComponent(sector)}`);
+}
+export function miningBaseSave(baseId, sector, state) {
+  return apiPost('/mining_base/save', { baseId, sector, state });
+}

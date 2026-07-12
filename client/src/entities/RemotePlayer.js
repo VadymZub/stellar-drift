@@ -1,4 +1,4 @@
-import * as Phaser from 'https://cdn.jsdelivr.net/npm/phaser@4.1.0/dist/phaser.esm.js';
+import * as Phaser from 'https://cdn.jsdelivr.net/npm/phaser@4.2.1/dist/phaser.esm.js';
 import { ART_ANGLE_OFFSET, COLORS, UI_RES } from '../constants.js';
 import { SHIP_BY_KEY, SHIPS } from '../ships.js';
 
@@ -12,6 +12,8 @@ export default class RemotePlayer {
     this.scene  = scene;
     this.userId = data.userId;
     this.name   = data.name || 'Пилот';
+    this.corp   = data.corp || 'neutral'; // для ally-fire чека в GameScene._fireCannon/_fireLaser
+    this.level  = data.level || 1;        // для тира чести (PVP_HIGHER/EQUAL/LOWER), см. _onPvpHitResult
     this.alive  = true;
     this.isRemotePlayer = true; // отличаем от Mob/Player в таргетинге/огне GameScene без instanceof
 
@@ -26,9 +28,10 @@ export default class RemotePlayer {
     const tint = isHostile ? 0xff7a7a : 0x7ad4ff;
     this.sprite.setTint(tint);
 
+    this._baseColor = isHostile ? '#ff8a8a' : '#8ad8ff';
     this.label = scene.add.text(data.x, data.y, this.name, {
       fontFamily: 'Inter, sans-serif', fontSize: '12px',
-      color: isHostile ? '#ff8a8a' : '#8ad8ff', resolution: UI_RES,
+      color: this._baseColor, resolution: UI_RES,
     }).setOrigin(0.5, 0).setDepth(51);
     this.bar = scene.add.graphics().setDepth(51);
 
@@ -75,6 +78,17 @@ export default class RemotePlayer {
     this.sprite.rotation = this.heading + this._artAngleOffset;
     this.label.setPosition(this.x, this.y + this.sprite.displayHeight * 0.55);
     this.drawBar();
+    this._updateWantedMarker();
+  }
+
+  // Доска розыска: префикс + красный цвет ника, пока этот игрок в gs.wantedPlayers
+  // (Map<userId,name> — см. HudScene onBountyPosted/Cleared/Snapshot).
+  _updateWantedMarker() {
+    const isWanted = this.scene.wantedPlayers?.has(this.userId) ?? false;
+    if (isWanted === this._wasWanted) return;
+    this._wasWanted = isWanted;
+    this.label.setText(isWanted ? `💀 ${this.name}` : this.name);
+    this.label.setColor(isWanted ? '#ff5252' : this._baseColor);
   }
 
   // Позиция (this.x/y) меняется почти каждый кадр — setPosition — дешёвая

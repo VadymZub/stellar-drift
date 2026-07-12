@@ -1,4 +1,4 @@
-import * as Phaser from 'https://cdn.jsdelivr.net/npm/phaser@4.1.0/dist/phaser.esm.js';
+import * as Phaser from 'https://cdn.jsdelivr.net/npm/phaser@4.2.1/dist/phaser.esm.js';
 import Mob from '../entities/Mob.js';
 import { MOBS } from '../constants.js';
 
@@ -39,6 +39,16 @@ export default class ConfedGuardSystem {
   }
 
   update(dt, player) {
+    // _neutralBases()/.filter() и _aggroAll()/spread раньше пересобирали новые
+    // массивы КАЖДЫЙ кадр безусловно (даже пока игрок просто стоит у нейтральной
+    // базы) — та же "пила" JS heap, что и у projectiles/_attachedFx (см.
+    // GameScene.update()). Тут ничего не требует 60Hz-точности (спавн-таймеры
+    // считаются секундами, aggro — состояние, а не событие), так что считаем
+    // раз в секунду, а не каждый кадр.
+    this._pollTimer = (this._pollTimer ?? 0) + dt;
+    if (this._pollTimer < 1) return;
+    this._pollTimer -= 1;
+
     const bases = this._neutralBases();
 
     if (!bases.length) {
@@ -49,11 +59,11 @@ export default class ConfedGuardSystem {
 
     // Prune dead refs
     if (this._main && !this._main.alive) this._main = null;
-    this._drones = this._drones.filter(d => d?.alive);
+    if (this._drones.some(d => !d?.alive)) this._drones = this._drones.filter(d => d?.alive);
 
-    // Countdown spawn timers
-    this._mainCd  -= dt;
-    this._droneCd -= dt;
+    // Countdown spawn timers (в секундах — тот же шаг, что и _pollTimer выше)
+    this._mainCd  -= 1;
+    this._droneCd -= 1;
 
     if (this._mainCd <= 0 && !this._main) {
       this._spawnMain(bases);

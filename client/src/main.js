@@ -1,4 +1,4 @@
-import * as Phaser from 'https://cdn.jsdelivr.net/npm/phaser@4.1.0/dist/phaser.esm.js';
+import * as Phaser from 'https://cdn.jsdelivr.net/npm/phaser@4.2.1/dist/phaser.esm.js';
 import { COLORS, DPR } from './constants.js';
 import BootScene from './scenes/BootScene.js';
 import LoginScene from './scenes/LoginScene.js';
@@ -19,12 +19,20 @@ import SkillScene from './scenes/SkillScene.js';
 import TestProfileScene from './scenes/TestProfileScene.js';
 import ShadowBattleScene from './scenes/ShadowBattleScene.js';
 import SettingsScene from './scenes/SettingsScene.js';
+import { loadSettings } from './settings.js';
 
 // Canvas at physical pixel resolution. CSS canvas element uses image-rendering:pixelated
 // for nearest-neighbour CSS scaling — eliminates bilinear blur at non-integer DPR
 // (e.g. Windows 125% = 0.8× CSS downscale, NN has no blur artifact).
 const W = () => Math.floor(window.innerWidth  * DPR);
 const H = () => Math.floor(window.innerHeight * DPR);
+
+// antialiasGL умножает fill-rate стоимость каждого draw call'а — одна из самых
+// дорогих настроек рендера на слабых встроенных GPU (Intel Iris Xe и т.п.), поэтому
+// вынесено в настройки (SettingsScene → "Графика"). Читается ОДИН раз при загрузке
+// страницы — Phaser не умеет менять antialias/antialiasGL у уже созданного WebGL-
+// контекста на лету, так что смена настройки требует перезагрузки (см. SettingsScene._save()).
+const _aa = loadSettings().antialiasing;
 
 const config = {
   type: Phaser.AUTO,
@@ -38,8 +46,8 @@ const config = {
     height: H(),
   },
   render: {
-    antialias: true,
-    antialiasGL: true,
+    antialias: _aa,
+    antialiasGL: _aa,
     roundPixels: true,
     powerPreference: 'high-performance',
     pixelArt: false,

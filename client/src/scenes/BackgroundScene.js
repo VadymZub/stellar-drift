@@ -1,5 +1,6 @@
-import * as Phaser from 'https://cdn.jsdelivr.net/npm/phaser@4.1.0/dist/phaser.esm.js';
+import * as Phaser from 'https://cdn.jsdelivr.net/npm/phaser@4.2.1/dist/phaser.esm.js';
 import { SECTORS, galaxy } from '../galaxy.js';
+import { loadSettings } from '../settings.js';
 
 // Фон сектора в ОТДЕЛЬНОЙ сцене БЕЗ зума (под GameScene). Так карта рисуется 1:1 к экрану
 // (cover-fit, аспект сохранён), не попадая под DPR-зум мир-камеры (иначе показывалась четверть).
@@ -34,6 +35,13 @@ export default class BackgroundScene extends Phaser.Scene {
       this.fit();
     }
     // Плавный параллакс: центрируем смещение относительно центра мира, чтобы минимизировать выход за края.
+    // Настройка "Параллакс фон" (SettingsScene → Графика) — раньше тумблер ничего не
+    // проверял (единственный реально ВИДИМЫЙ параллакс-слой — не путать с bgNear в
+    // GameScene, который тоже гейтится той же настройкой, но куда менее заметен).
+    if (loadSettings().bgParallax === false) {
+      this.img.setPosition(this.scale.width / 2, this.scale.height / 2);
+      return;
+    }
     const gs = this.scene.get('GameScene');
     const cam = gs.cameras && gs.cameras.main;
     if (cam && gs.worldWidth) {

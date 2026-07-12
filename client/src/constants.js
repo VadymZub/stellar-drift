@@ -53,6 +53,40 @@ export const DUNGEON_DIFF = {
   elite:  { mobCount: 2.5, mobHP: 2.8, mobDamage: 2.0, deposits: 2.0, goldMult: 2.5, xpMult: 1.5, dropRate: 0.35 },
 };
 
+// Мировое событие "нашествие" — раз в сутки на каждый PvP-сектор, разное (детерминированное
+// по дате+ключу сектора, без сервера — см. GameScene._worldEventStartHour) время старта.
+// Волна 1 (60%) сразу, волна 2 (40%, подкрепление) через 5 мин если ещё есть выжившие
+// из волны 1. Сила мобов ×3 от обычной (базовой, домашнего сектора) — см. hpMult/dmgMult.
+export const WORLD_EVENT_SECTORS = {
+  pvp_1: { mobPool: ['corsair_02', 'corsair_03', 'corsair_04'], count: 24, lvlMin: 15, lvlMax: 25,
+           rewards: { credits: 1500, xp: 500, stars: 0 } },
+  pvp_2: { mobPool: ['corsair_05', 'corsair_06', 'corsair_07', 'syndicate_01', 'syndicate_02', 'syndicate_03'],
+           count: 30, lvlMin: 25, lvlMax: 35, rewards: { credits: 3000, xp: 1000, stars: 0 } },
+  pvp_3: { mobPool: ['syndicate_04', 'syndicate_05', 'syndicate_07', 'syndicate_08'],
+           count: 36, lvlMin: 35, lvlMax: 45, rewards: { credits: 5500, xp: 2000, stars: 0 } },
+  pvp_4: { mobPool: ['confed_01', 'confed_02', 'syndicate_09', 'syndicate_10'], eliteKey: 'confed_06',
+           count: 42, lvlMin: 41, lvlMax: 50, rewards: { credits: 9000, xp: 3500, stars: 0 } },
+  pvp_5: { mobPool: ['syndicate_09', 'syndicate_10', 'syndicate_11'], bossKey: 'ancient_06',
+           count: 48, lvlMin: 45, lvlMax: 50, rewards: { credits: 15000, xp: 6000, stars: 20 } },
+};
+export const WORLD_EVENT_STRENGTH_MULT = 3;
+export const WORLD_EVENT_WAVE1_FRAC   = 0.6;
+export const WORLD_EVENT_WAVE2_DELAY_MS = 5  * 60000;
+export const WORLD_EVENT_WINDOW_MS      = 15 * 60000;
+
+// Контракты-модификаторы данжа: опциональные переключаемые риск/награда тумблеры,
+// выбираются в модалке сложности (можно несколько сразу), стакуются мультипликативно
+// поверх DUNGEON_DIFF (см. GameScene._dungeonDiff()). Недоступны в R-1-boss (та карта
+// уже всегда форсит 'normal' и не показывает модалку сложности вовсе).
+export const DUNGEON_MODIFIERS = {
+  fury:    { label: 'Ярость',             hint: '×1.6 урон мобов → +15% дроп, ×1.3 золото',
+             mult: { mobDamage: 1.6, dropRate: 0.15, goldMult: 1.3 } },
+  armored: { label: 'Бронированный конвой', hint: '×2 щит мобов, ×1.5 хп → +15% дроп, ×1.5 золото',
+             mult: { mobHP: 1.5, mobShieldBonus: 2 / 1.5, dropRate: 0.15, goldMult: 1.5 } },
+  bounty:  { label: 'Изобилие',           hint: '×2 приспешников босса, урон приспешников ×1.3 → ×1.15 опыт',
+             mult: { mobAddsCount: 2, mobAddsDamage: 1.3, xpMult: 1.15 } },
+};
+
 // Рост числа обычных мобов в данже относительно старых карт (нормальная сложность).
 // Через dungeonLootNorm() пропорционально режет пер-мобовый лут, чтобы суммарный фарм
 // данжа вырос не более чем на LOOT_BUDGET_CAP. R-1-boss не участвует (всегда 1).
@@ -317,8 +351,10 @@ export const HONOR = {
   PVP_HIGHER:  100,  // victim level > player level
   PVP_EQUAL:   50,
   PVP_LOWER:   10,
-  ARENA_WIN:   100,
+  ARENA_WIN:   50,   // будущая арена с записью/очередью — значение задано, ещё не подключено (нет сектора), см. диалог
   APOPHYSIS:   200,
-  ARGUS:       1000,
-  SHADOW_WIN:  20,   // shadow stronger than player
+  // Аргус честь больше не считает по отдельной константе — как у обычного босса в
+  // групповом данже (BOSS_HIGHER/EQUAL/LOWER по уровню), см. ArgusController._onArgusDied.
+  // Shadow Arena больше не даёт честь (тренажёр с полностью подконтрольной игроку
+  // конфигурацией "противника" — не источник чести, см. диалог).
 };

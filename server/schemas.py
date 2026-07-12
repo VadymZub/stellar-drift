@@ -133,3 +133,13 @@ class DungeonCompleteRequest(BaseModel):
     key: str
     dayKey: str
     memberUsernames: list[str] = []
+
+
+class MiningBaseSaveRequest(BaseModel):
+    baseId: str
+    sector: str
+    state: dict[str, Any]
+
+
+class MiningBaseSectorResponse(BaseModel):
+    bases: dict[str, dict[str, Any]] = {}

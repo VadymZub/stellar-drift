@@ -1,6 +1,8 @@
 // Галактика: 3 корпорации + 6 общих данжей (D1-D5 + премиум) + PvP-зоны + босс-карта.
 // Данжи общие для всех корп — доступны через панель на карте (M).
 // sx/sy — позиция на схеме (экран M). map — ключ фоновой текстуры.
+import { getSectorGateMission } from './data/missions.js';
+
 export const SECTORS = {
   // ══════════════════════════════════════════════════════════════════════
   // HELIOS  (sy = 0, данжи sy = -1)
@@ -111,7 +113,8 @@ export function edgeDir(fromKey, toKey) {
 }
 
 // Доступ по уровню пилота. PvP закрыт выше lvlMax+5. Данжи закрыты выше lvlMax+10. Premium — только с подпиской.
-export function sectorAccess(key, pilotLevel, activeShip = 'wisp', premium = false) {
+// missionState/playerCorp (опционально) добавляют проверку обязательной сюжетной миссии-"экзамена".
+export function sectorAccess(key, pilotLevel, activeShip = 'wisp', premium = false, missionState = null, playerCorp = 'helios') {
   const s = SECTORS[key];
 
   if (activeShip === 'argus') {
@@ -123,5 +126,10 @@ export function sectorAccess(key, pilotLevel, activeShip = 'wisp', premium = fal
   if (pilotLevel < s.lvlMin)                    return { ok: false, reason: `нужен ур. ${s.lvlMin}` };
   if (s.pvp     && pilotLevel > s.lvlMax + 5)  return { ok: false, reason: `только до ур. ${s.lvlMax + 5}` };
   if (s.isDungeon && pilotLevel > s.lvlMax) return { ok: false, reason: `только до ур. ${s.lvlMax}` };
+
+  const gate = getSectorGateMission(key, playerCorp);
+  if (gate && missionState?.[gate.id]?.status !== 'completed') {
+    return { ok: false, reason: `нужно выполнить: «${gate.title}»` };
+  }
   return { ok: true };
 }

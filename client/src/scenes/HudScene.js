@@ -1,4 +1,4 @@
-import * as Phaser from 'https://cdn.jsdelivr.net/npm/phaser@4.1.0/dist/phaser.esm.js';
+import * as Phaser from 'https://cdn.jsdelivr.net/npm/phaser@4.2.1/dist/phaser.esm.js';
 import { COLORS, UI_RES, BASE_SCAN_RADIUS, DPR } from '../constants.js';
 import { i18n } from '../i18n.js';
 import { levelInfo, MAX_LEVEL } from '../leveling.js';
@@ -58,6 +58,21 @@ export default class HudScene extends Phaser.Scene {
 
     this.bars = this.add.graphics().setDepth(100);
     this.miniGfx = this.add.graphics().setDepth(101);   // миникарта — векторные блипы
+
+    // Счётчик FPS (SettingsScene → Графика → "Счётчик FPS") — раньше тумблер существовал
+    // только в настройках/localStorage, счётчика не было вообще нигде в коде.
+    this._fpsTxt = this.add.text(8, 2, '', {
+      fontFamily: 'Orbitron, sans-serif', fontSize: '13px', color: '#4de8a0', resolution: UI_RES,
+    }).setDepth(300).setScrollFactor(0).setVisible(_s.showFps === true);
+    this._fpsAccum = 0;
+
+    // Потребление ОЗУ (SettingsScene → Графика → "Потребление ОЗУ") — JS heap этой
+    // вкладки через performance.memory (нестандартный Chrome/Chromium API, в
+    // Firefox/Safari недоступен — скрываем тумблер-текст, если его вообще нет).
+    // Та же строка, что FPS (правее) — раньше стояла ниже и перекрывала полоску щита.
+    this._ramTxt = this.add.text(80, 2, '', {
+      fontFamily: 'Orbitron, sans-serif', fontSize: '13px', color: '#7ec8ff', resolution: UI_RES,
+    }).setDepth(300).setScrollFactor(0).setVisible(_s.showRam === true && !!performance.memory);
 
     const F = (size, color = '#cfe9ee', weight = '600') =>
       ({ fontFamily: 'Inter, sans-serif', fontSize: size, color, fontStyle: weight, resolution: UI_RES });
@@ -650,7 +665,23 @@ export default class HudScene extends Phaser.Scene {
     return h;
   }
 
-  update() {
+  update(time, delta) {
+    // Обновляем счётчик независимо от того, есть ли уже игрок (полезен и на базе/в
+    // меню) — раз в ~0.5с, а не каждый кадр: и число дороже читать при 60 обновлениях/
+    // сек, и не нужно платить текстовую аллокацию (см. тот же принцип у info panel выше).
+    this._fpsAccum = (this._fpsAccum ?? 0) + (delta ?? 16.7);
+    if (this._fpsTxt.visible && this._fpsAccum >= 500) {
+      this._fpsAccum = 0;
+      this._setText(this._fpsTxt, `FPS: ${Math.round(this.game.loop.actualFps)}`);
+    }
+    // Раз в ~2с — heap колеблется на 1-2МБ почти каждый кадр (обычный GC-шум), при
+    // обновлении каждый кадр цифра "мельтешила" визуально без какой-либо пользы.
+    this._ramAccum = (this._ramAccum ?? 0) + (delta ?? 16.7);
+    if (this._ramTxt.visible && this._ramAccum >= 2000) {
+      this._ramAccum = 0;
+      this._setText(this._ramTxt, `RAM: ${Math.round(performance.memory.usedJSHeapSize / 1048576)} MB`);
+    }
+
     const W = this.scale.width, H = this.scale.height;
     const g = this.bars;
     const p = this.gs.player;
@@ -751,19 +782,43 @@ export default class HudScene extends Phaser.Scene {
     }
 
     // ── Info panel: always update (stays current at base + in space) ──
-    this._setText(this.pCredits, `💰 ${(this.gs.credits || 0).toLocaleString()}`);
-    this._setText(this.pStarGold, `⭐ ${this.gs.starGold || 0}`);
-    this._setText(this.pHonor, `⚔️ ${(this.gs.pilotHonor || 0).toLocaleString()}`);
-    this._setText(this.pCorpRep, `🛡 ${Math.round((this.gs.corpRep || 0) * 100)}%`);
-    const info = levelInfo(this.gs.pilotXp || 0);
-    this._setText(this.pPilot, `${i18n.t('hud.pilot')}  ${i18n.t('mob.level')}${info.level}`);
-    this._setText(this.pRank, this.gs.pilotRank ? this.gs.pilotRank.name.toUpperCase() : '');
-    this._ipXpFrac = info.level >= MAX_LEVEL ? 1 : info.frac;
-    this._setText(this.pXpTxt, info.level >= MAX_LEVEL ? 'MAX' : `${Math.floor(info.into)} / ${info.need}`);
+    // Раньше строился набор ФРЕШ-строк (шаблонные литералы + toLocaleString() —
+    // не самый дешёвый built-in) КАЖДЫЙ кадр безусловно, даже когда кредиты/честь/
+    // реп/опыт не менялись между кадрами вообще (99% времени) — на любой карте,
+    // независимо от боя/движения. _setText уже сравнивает готовую строку перед
+    // setText(), но сама СБОРКА строки — это аллокация, которую он не предотвращал.
+    // Сравниваем исходные значения ДО форматирования, чтобы не собирать строку зря.
+    const credits = this.gs.credits || 0, starGold = this.gs.starGold || 0,
+          honor = this.gs.pilotHonor || 0, corpRepPct = Math.round((this.gs.corpRep || 0) * 100),
+          xp = this.gs.pilotXp || 0, rankName = this.gs.pilotRank?.name || '';
+    if (credits !== this._lastIpCredits || starGold !== this._lastIpStarGold
+        || honor !== this._lastIpHonor || corpRepPct !== this._lastIpCorpRepPct
+        || xp !== this._lastIpXp || rankName !== this._lastIpRankName) {
+      this._lastIpCredits = credits; this._lastIpStarGold = starGold; this._lastIpHonor = honor;
+      this._lastIpCorpRepPct = corpRepPct; this._lastIpXp = xp; this._lastIpRankName = rankName;
+      this._setText(this.pCredits, `💰 ${credits.toLocaleString()}`);
+      this._setText(this.pStarGold, `⭐ ${starGold}`);
+      this._setText(this.pHonor, `⚔️ ${honor.toLocaleString()}`);
+      this._setText(this.pCorpRep, `🛡 ${corpRepPct}%`);
+      const info = levelInfo(xp);
+      this._setText(this.pPilot, `${i18n.t('hud.pilot')}  ${i18n.t('mob.level')}${info.level}`);
+      this._setText(this.pRank, rankName ? rankName.toUpperCase() : '');
+      this._ipXpFrac = info.level >= MAX_LEVEL ? 1 : info.frac;
+      this._setText(this.pXpTxt, info.level >= MAX_LEVEL ? 'MAX' : `${Math.floor(info.into)} / ${info.need}`);
+    }
     this._updateInfoPanelContent();
 
     // ── Миникарта (векторные блипы) ──
-    this.drawMinimap();
+    // Graphics.clear()+полная перерисовка (стены/базы/мобы/лут/гейты — десятки draw
+    // call'ов) — дорогая операция (см. комментарий у bar() выше: GraphicsWebGLRenderer),
+    // а тут её раньше гоняли безусловно КАЖДЫЙ кадр на любой карте, даже когда на миникарте
+    // физически нечему было измениться за 16мс. Точки на миникарте не нужно двигать с
+    // точностью до кадра — 15Hz визуально неотличимо от 60Hz на объекте такого размера.
+    this._minimapAccum = (this._minimapAccum || 0) + (delta ?? 16.7);
+    if (this._minimapAccum >= 66) {
+      this._minimapAccum = 0;
+      this.drawMinimap();
+    }
 
     // ── Подписи под миникартой: название сектора + координаты ──
     {
@@ -786,11 +841,13 @@ export default class HudScene extends Phaser.Scene {
 
     // ── Активна підсвітка nav-кнопок ──
     if (this._navBtnItems) {
-      for (const { btn, txt, key } of this._navBtnItems) {
-        const active = this.scene.isActive(key);
-        btn.setFillStyle(active ? 0x0f3040 : 0x081420);
-        btn.setStrokeStyle(1, active ? 0x4dd0e1 : 0x1e3a50, 1);
-        txt.setTint(active ? 0x7ee8f0 : 0x3a8aaa);
+      for (const item of this._navBtnItems) {
+        const active = this.scene.isActive(item.key);
+        if (active === item._lastActive) continue; // меняется редко — не трогаем Shape/tint зря
+        item._lastActive = active;
+        item.btn.setFillStyle(active ? 0x0f3040 : 0x081420);
+        item.btn.setStrokeStyle(1, active ? 0x4dd0e1 : 0x1e3a50, 1);
+        item.txt.setTint(active ? 0x7ee8f0 : 0x3a8aaa);
       }
     }
 
@@ -1003,6 +1060,14 @@ export default class HudScene extends Phaser.Scene {
           g.fillCircle(dpx, dpy, 1.8);
         }
       }
+    }
+
+    // Аномалия — всегда видна на миникарте (не гейтится сканом), мигающая метка
+    if (gs.anomaly?.alive) {
+      const apx = f.ox + gs.anomaly.x * f.s, apy = f.oy + gs.anomaly.y * f.s;
+      const pulse = 0.5 + 0.5 * Math.abs(Math.sin(this.time.now / 260));
+      g.fillStyle(0x9c6bff, 0.5 + 0.4 * pulse); g.fillCircle(apx, apy, 2.5);
+      g.lineStyle(1.5, 0x9c6bff, 0.4 + 0.4 * pulse); g.strokeCircle(apx, apy, 5 + 2 * pulse);
     }
 
     // Лут — только в радиусе скана (или везде при fullScan); jackpot — cyan с кольцом
@@ -1647,6 +1712,28 @@ export default class HudScene extends Phaser.Scene {
     };
     this.pvpClient.onLootRemoved = (lootId) => {
       this.scene.get('GameScene')?._onPvpLootRemoved(lootId);
+    };
+    this.pvpClient.onEscortStarted = () => {
+      const gs = this.scene.get('GameScene');
+      if (gs) gs._escortRoomLockUntil = Date.now() + 30000;
+    };
+    this.pvpClient.onBountyPosted = (msg) => {
+      const gs = this.scene.get('GameScene');
+      if (gs) { gs.wantedPlayers = gs.wantedPlayers || new Map(); gs.wantedPlayers.set(msg.userId, msg.name); }
+    };
+    this.pvpClient.onBountyCleared = (msg) => {
+      this.scene.get('GameScene')?.wantedPlayers?.delete(msg.userId);
+    };
+    this.pvpClient.onBountySnapshot = (msg) => {
+      const gs = this.scene.get('GameScene');
+      if (!gs) return;
+      const list = msg.bounties ?? [];
+      gs.wantedPlayers = new Map(list.map(b => [b.userId, b.name]));
+      // Полный список с online/sector — только для доски розыска в CorpScene
+      // (нейм-плейты используют только gs.wantedPlayers выше).
+      gs.bountyBoard = list;
+      const corpScene = this.scene.get('CorpScene');
+      if (corpScene?.scene.isActive() && corpScene._tab === 2) corpScene._refreshBountyTab(gs);
     };
     this.groupSystem.onGoldReward = (gold) => {
       const gs = this.scene.get('GameScene');

@@ -15,6 +15,7 @@ No build step. Phaser 4.1.0 loads from CDN as an ES module. ES modules require H
 - `0` — level up pilot
 - `9` — +1 000 000 credits + 500 ⭐
 - `8` — switch to Argus ship (max stats); engine speed uses T4 base 27 (matches item nerf)
+- `7` — instantly completes every level-eligible mandatory `story_grad_N` mission — needed because a test profile that starts at a high level (see below) hasn't actually done them, and `sectorAccess()` gates the corp sector ladder on their completion
 
 **Test profile launcher** (DEV_MODE): clicking START GAME on the login screen opens `TestProfileScene` — an HTML overlay to configure level, rank, corp, premium, loot preset, credits, and gold before launching the game. Sets `window.TEST_PROFILE`, consumed once by `GameScene.create()`.
 
@@ -24,7 +25,7 @@ No build step. Phaser 4.1.0 loads from CDN as an ES module. ES modules require H
 
 ### No-build, no bundler
 
-All imports use full CDN URL for Phaser: `import * as Phaser from 'https://cdn.jsdelivr.net/npm/phaser@4.1.0/dist/phaser.esm.js'`. All other imports are relative paths. There is no `package.json` in `client/`.
+All imports use full CDN URL for Phaser: `import * as Phaser from 'https://cdn.jsdelivr.net/npm/phaser@4.2.1/dist/phaser.esm.js'`. All other imports are relative paths. There is no `package.json` in `client/`.
 
 ### Scene graph
 

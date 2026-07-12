@@ -1,4 +1,4 @@
-import * as Phaser from 'https://cdn.jsdelivr.net/npm/phaser@4.1.0/dist/phaser.esm.js';
+import * as Phaser from 'https://cdn.jsdelivr.net/npm/phaser@4.2.1/dist/phaser.esm.js';
 import { ART_ANGLE_OFFSET, COLORS, UI_RES, MOB_REGEN, BOSS } from '../constants.js';
 import { i18n } from '../i18n.js';
 
@@ -35,6 +35,9 @@ export default class Mob {
     this.damage    = scaleStat(template.damage, level);
     if (opts.hpMult  && opts.hpMult  !== 1) { this.maxHull = Math.round(this.maxHull * opts.hpMult); this.maxShield = Math.round(this.maxShield * opts.hpMult); }
     if (opts.dmgMult && opts.dmgMult !== 1) { this.damage   = Math.round(this.damage  * opts.dmgMult); }
+    // Доп. множитель ТОЛЬКО на щит поверх hpMult (напр. модификатор данжа "Бронированный
+    // конвой" — раздельные ×хп/×щит), см. GameScene._dungeonDiff() mobShieldBonus.
+    if (opts.shieldBonusMult && opts.shieldBonusMult !== 1) { this.maxShield = Math.round(this.maxShield * opts.shieldBonusMult); }
     this.hull      = this.maxHull;
     this.shield    = this.maxShield;
 
@@ -60,7 +63,6 @@ export default class Mob {
       fontFamily: 'Inter, sans-serif', fontSize: '12px', color: '#ef5350', resolution: UI_RES,
     }).setOrigin(0.5, 0).setDepth(41);
 
-    this.bar    = scene.add.graphics().setDepth(41);
     this.fireCooldown  = 0;
     this.lastDamageAt  = -100000;
     this.isBoss  = !!template.boss;
@@ -193,7 +195,6 @@ export default class Mob {
     this.alive = false;
     this.sprite.setVisible(false);
     this.label.setVisible(false);
-    this.bar.setVisible(false);
     if (this.leader) {
       const idx = this.leader.group.indexOf(this);
       if (idx !== -1) this.leader.group.splice(idx, 1);
@@ -205,7 +206,6 @@ export default class Mob {
     this.shield = this.maxShield;
     this.sprite.setPosition(this.spawnX, this.spawnY).setVisible(true).clearTint();
     this.label.setVisible(true);
-    this.bar.setVisible(true);
     this.alive   = true;
     this.state   = 'idle';
     this.neutral = this.tpl.neutral || false;
@@ -534,7 +534,8 @@ export default class Mob {
   _updateVisuals() {
     this.sprite.rotation = this.heading + (this.tpl.artAngleOffset ?? ART_ANGLE_OFFSET);
     this.label.setPosition(this.x, this.y + this.sprite.displayHeight * 0.55);
-    this.drawBar();
+    // HP/shield-бар рисуется НЕ здесь — см. GameScene._redrawMobBars(): один общий
+    // Graphics-канвас на ВСЕХ мобов сразу, а не Graphics-объект на каждого моба.
   }
 
   // ── Минный установщик: спавн 1-3 бомб каждые N сек ──────────────────────
@@ -945,38 +946,15 @@ export default class Mob {
     return dist > this.patrolRadius * 0.5 ? this.tpl.speed * 0.4 * speedMult * _rageSpd : 0;
   }
 
-  // ── Полоска HP/Shield ────────────────────────────────────────────────────
-  // Каждый живой моб на карте держит СВОЙ Graphics-объект для HP-бара, и раньше
-  // drawBar() делал clear()+redraw КАЖДЫЙ кадр для КАЖДОГО моба, даже стоящих на
-  // месте с полным здоровьем — на карте с десятками мобов (см. "expanded home map
-  // spawns") это была одна из главных причин GraphicsWebGLRenderer в профилировке.
-  // Позиция моба меняется почти каждый кадр (это ок, setPosition — дешёвая
-  // трансформация), а вот содержимое бара (заливка hull/shield) — только когда
-  // реально меняется хп/щит, поэтому геометрию рисуем в ЛОКАЛЬНЫХ координатах
-  // (относительно (0,0) бара) один раз при изменении, а позиционируем отдельно.
-  drawBar() {
-    const w = 46, h = 4;
-    this.bar.setPosition(this.x, this.y - this.tpl.displaySize * 0.6);
-    const hullFrac   = this.hull / this.maxHull;
-    const shieldFrac = this.maxShield > 0 ? this.shield / this.maxShield : 0;
-    // Числа, не строка — шаблонная строка тут была НОВОЙ аллокацией каждый кадр на
-    // каждого моба просто для сравнения, то есть сама решала "не рисовать" ценой
-    // мусора, который всё равно копился и вызывал частые паузы GC (см. Memory-график
-    // в профилировке — характерная "пила" JS heap).
-    const hSig = Math.round(hullFrac * 1000), sSig = Math.round(shieldFrac * 1000);
-    if (hSig === this._lastHullSig && sSig === this._lastShieldSig) return;
-    this._lastHullSig = hSig; this._lastShieldSig = sSig;
-    this.bar.clear();
-    this.bar.fillStyle(0x000000, 0.5); this.bar.fillRect(-w / 2 - 1, -1, w + 2, h + 2);
-    this.bar.fillStyle(COLORS.danger, 1);
-    this.bar.fillRect(-w / 2, 0, w * hullFrac, h);
-    if (this.maxShield > 0) {
-      this.bar.fillStyle(COLORS.primary, 1);
-      this.bar.fillRect(-w / 2, -3, w * shieldFrac, 2);
-    }
-  }
+  // HP/Shield-бар рисуется НЕ здесь — GameScene._redrawMobBars() рисует бары ВСЕХ
+  // мобов в ОДИН общий Graphics-канвас за кадр. Раньше каждый моб держал СВОЙ
+  // Graphics-объект — редрав пропускался, если хп/щит не менялись, но сам факт
+  // N отдельных видимых Graphics-объектов означал N отдельных вызовов
+  // GraphicsWebGLRenderer.renderWebGLStep КАЖДЫЙ кадр независимо от редрава
+  // (профилировка: 33% времени кадра в этом рендер-степе на карте с десятками
+  // мобов — "экономия на редраве" не помогает, если объект всё равно рендерится).
 
   destroy() {
-    this.sprite.destroy(); this.label.destroy(); this.bar.destroy();
+    this.sprite.destroy(); this.label.destroy();
   }
 }

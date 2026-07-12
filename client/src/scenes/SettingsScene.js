@@ -1,4 +1,4 @@
-import * as Phaser from 'https://cdn.jsdelivr.net/npm/phaser@4.1.0/dist/phaser.esm.js';
+import * as Phaser from 'https://cdn.jsdelivr.net/npm/phaser@4.2.1/dist/phaser.esm.js';
 import { COLORS, UI_RES } from '../constants.js';
 import { loadSettings, saveSettings, resetSettings, DEFAULTS, UI_SCALE_STEPS } from '../settings.js';
 
@@ -164,6 +164,10 @@ export default class SettingsScene extends Phaser.Scene {
 
     this._section('ОТОБРАЖЕНИЕ', T, LX, RX, y); y += 22;
     this._addToggle('Счётчик FPS', 'showFps', T, LX, RX, y); y += 36;
+    this._addToggle('Потребление ОЗУ', 'showRam', T, LX, RX, y); y += 36;
+    // antialias/antialiasGL — свойства WebGL-контекста, Phaser не может поменять их
+    // без пересоздания Game — предупреждаем, что нужна перезагрузка (см. _save()).
+    this._addToggle('Сглаживание (нужна перезагрузка)', 'antialiasing', T, LX, RX, y); y += 36;
 
     y += 16;
     this._track(
@@ -422,14 +426,27 @@ export default class SettingsScene extends Phaser.Scene {
       hud._rebuildGroupWin?.();
       hud._rebuildFriendsWin?.();
       hud._updateSocialBtnStyles?.();
+      hud._fpsTxt?.setVisible(next.showFps === true);
+      hud._ramTxt?.setVisible(next.showRam === true && !!performance.memory);
     }
     if (gs) gs.magnetEnabled        = next.autoLoot;
     if (gs) gs._autoTargetEnabled   = next.autoTarget;
     if (gs) gs.autoCollectEnabled   = next.autoCollect;
+    if (gs) gs.cameraShakeEnabled   = next.cameraShake;
+    if (gs) gs.engineTrailsEnabled  = next.engineTrails;
+    if (gs) gs.bgParallaxEnabled    = next.bgParallax;
 
     if (next.uiScale !== prev.uiScale && hud) {
       this.scene.stop('HudScene');
       this.scene.launch('HudScene');
+    }
+
+    // antialias/antialiasGL — свойства WebGL-контекста, заданные один раз при
+    // создании Phaser.Game в main.js — единственный способ применить смену это
+    // полная перезагрузка страницы (см. комментарий там же).
+    if (next.antialiasing !== prev.antialiasing) {
+      location.reload();
+      return;
     }
 
     this.scene.stop();

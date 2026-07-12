@@ -10,14 +10,14 @@ from sqlalchemy import or_, and_
 from sqlalchemy.orm import Session
 
 from database import engine, get_db, Base
-from models import User, PlayerState, AuditLog, ChatMessage, Friendship, DungeonRun, DungeonLives
+from models import User, PlayerState, AuditLog, ChatMessage, Friendship, DungeonRun, DungeonLives, MiningBaseState
 from schemas import (
     RegisterRequest, LoginRequest, TokenResponse, UserResponse,
     PlayerStateResponse, AuditEntryCreate, AuditEntryResponse,
     DungeonStatusResponse, DungeonEnterRequest, DungeonEnterResponse,
     DungeonMobKilledRequest, DungeonLootDropRequest, DungeonLootCollectedRequest,
     DungeonCorridorStateRequest, DungeonDeathRequest, DungeonDeathResponse,
-    DungeonCompleteRequest,
+    DungeonCompleteRequest, MiningBaseSaveRequest, MiningBaseSectorResponse,
 )
 from auth import hash_password, verify_password, create_token, decode_token
 
@@ -288,6 +288,8 @@ class PvpPlayerState:
         self.user_id  = user_id
         self.username = username
         self.ship_key = str(loadout.get('shipKey', ''))[:40]  # только для рендера у др. клиентов, не участвует в валидации
+        self.corp = str(loadout.get('corp') or 'neutral')[:20]  # для запрета дружественного огня, см. pvp_fire_claim
+        self.level = max(1, int(loadout.get('level') or 1))  # для честного тира чести (PVP_HIGHER/EQUAL/LOWER), см. pvp_fire_claim
         self.x = float(x)
         self.y = float(y)
         self.heading = 0.0
@@ -306,6 +308,7 @@ class PvpPlayerState:
     def to_public(self) -> dict:
         return {
             'userId': self.user_id, 'name': self.username, 'shipKey': self.ship_key,
+            'corp': self.corp, 'level': self.level,
             'x': self.x, 'y': self.y, 'heading': self.heading,
             'hull': self.hull, 'maxHull': self.max_hull,
             'shield': self.shield, 'maxShield': self.max_shield,
@@ -407,6 +410,45 @@ class PvpRoomManager:
 
 pvp_room_manager = PvpRoomManager()
 
+# ── Доска розыска: чисто in-memory, никакой персистентности — реально исчезает
+# при рестарте сервера (так и задумано). killer_user_id → {'name': str, 'corp': str}.
+# Один активный розыск на игрока (без стека, флат-награда): killer_user_id in bounties
+# уже гейтит повторную подачу в pvp_bounty_post ниже, даже от той же жертвы серийно.
+bounties: dict[int, dict] = {}
+
+
+def _bounty_list_detailed() -> list[dict]:
+    # Онлайн/сектор считаются на лету из chat_manager.active (то же поле 'sector',
+    # что обновляет sector_update) — никакого отдельного трекинга по игроку в розыске
+    # не нужно: не в active → офлайн → sector неизвестен (None, не последний известный).
+    uid_info = {m['uid']: m for m in chat_manager.active.values()}
+    out = []
+    for uid, b in bounties.items():
+        info = uid_info.get(uid)
+        out.append({
+            'userId': uid, 'name': b['name'], 'corp': b.get('corp', 'neutral'), 'kills': b.get('kills', 1),
+            'online': info is not None,
+            'sector': (info.get('sector') or None) if info else None,
+        })
+    return out
+
+# Аргус: детерминированное (по wall-clock, time.time()) окно "квантовой фазы" —
+# одно и то же окно у ВСЕХ атакующих клиентов И сервера, без отдельного протокола
+# синхронизации (эпоха общая на всех машинах с точностью до рассинхрона часов).
+# Клиент считает ТУ ЖЕ формулу для визуального мерцания (см.
+# ArgusController._isPhaseInvincible) — иначе разные игроки видели/защищали бы
+# разные окна. Раньше был client-only таймер поверх локального takeDamage — реально
+# блокировал урон только у того клиента, чей таймер сработал (см. диалог).
+ARGUS_FLICKER_PERIOD_NORMAL  = 3.0
+ARGUS_FLICKER_PERIOD_BERSERK = 1.2
+ARGUS_FLICKER_DURATION       = 0.4
+ARGUS_BERSERK_HULL_FRAC      = 0.40
+
+
+def _argus_phase_invincible(hull_frac: float) -> bool:
+    period = ARGUS_FLICKER_PERIOD_BERSERK if hull_frac < ARGUS_BERSERK_HULL_FRAC else ARGUS_FLICKER_PERIOD_NORMAL
+    return (time.time() % period) < ARGUS_FLICKER_DURATION
+
 
 def _apply_pvp_damage(claimed_dmg: float, ceiling: float, penetration: float,
                        victim_hull: float, victim_shield: float,
@@ -463,12 +505,26 @@ def _resolve_pvp_hit(attacker: PvpPlayerState, victim: PvpPlayerState, claimed_d
     victim.hull, victim.shield = r['hull'], r['shield']
     if not r['dodged'] and r['dmg'] > 0:
         victim.damage_by[attacker.user_id] = victim.damage_by.get(attacker.user_id, 0.0) + r['dmg']
+    damage_by_out = None
+    bounty_bonus = None
     if r['killed']:
         # Снапшот "кто бил эту жизнь" для лут-бокса (см. pvp_loot_spawn) — победитель
-        # и все, кто помогал, увидят коробку; сам victim — нет.
+        # и все, кто помогал, увидят коробку; сам victim — нет. Тот же снапшот (уже с
+        # суммами, не только ключами) шлём в pvp_hit_result — каждый атаковавший клиент
+        # сам считает свою долю урона для пропорциональной чести (см. диалог).
         victim.last_death_eligible = list(victim.damage_by.keys())
+        damage_by_out = {str(uid): round(dmg) for uid, dmg in victim.damage_by.items()}
         victim.damage_by = {}
-    return {**r, 'maxHull': victim.max_hull, 'maxShield': victim.max_shield}
+        # Доска розыска: если жертва этой смерти сама была "в розыске" — тройная честь
+        # + 20 золота делятся среди всех атаковавших (тот же damage_by_out), розыск снят.
+        # Серийный убийца (10+ квалифицирующих жертв, накопленных в той же записи —
+        # см. pvp_bounty_post) даёт вдвое больше — награда за поимку "крупной дичи".
+        if victim.user_id in bounties:
+            b = bounties[victim.user_id]
+            mult = 2 if b.get('kills', 1) >= 10 else 1
+            bounty_bonus = {'honorMult': 3 * mult, 'gold': 20 * mult}
+            del bounties[victim.user_id]
+    return {**r, 'maxHull': victim.max_hull, 'maxShield': victim.max_shield, 'damageBy': damage_by_out, 'bountyBonus': bounty_bonus}
 
 
 # ── Friends helpers ───────────────────────────────────────────────────
@@ -822,6 +878,39 @@ def dungeon_complete(
     return {"ok": True}
 
 
+# ── Mining bases (PvP) ───────────────────────────────────────────────
+# Базы делят все игроки в секторе (не user-scoped state) — сервер просто хранит
+# JSON-блоб, который строит клиент (MiningBase._persist()), и отдаёт его целиком
+# всем, кто заходит в сектор. Не разбираем структуру на сервере, ровно как
+# PlayerState.state — источник истины по геймдизайну баз остаётся в клиенте.
+
+@app.get("/mining_base/sector/{sector}", response_model=MiningBaseSectorResponse)
+def mining_base_sector(
+    sector: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    rows = db.query(MiningBaseState).filter(MiningBaseState.sector == sector).all()
+    return MiningBaseSectorResponse(bases={r.base_id: r.state for r in rows})
+
+
+@app.post("/mining_base/save")
+def mining_base_save(
+    body: MiningBaseSaveRequest,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    row = db.query(MiningBaseState).filter(MiningBaseState.base_id == body.baseId).first()
+    if row:
+        row.state = body.state
+        row.sector = body.sector
+    else:
+        row = MiningBaseState(base_id=body.baseId, sector=body.sector, state=body.state)
+        db.add(row)
+    db.commit()
+    return {"ok": True}
+
+
 # ── Chat REST ─────────────────────────────────────────────────────────
 
 @app.get("/chat/history")
@@ -866,6 +955,8 @@ async def chat_ws(
     # Клиент не знает свой числовой user.id (в токене/логине только username) — а он
     # нужен, чтобы сверять msg.targetUserId в pvp_hit_result с "это я" на своей стороне.
     await ws.send_json({'type': 'session_info', 'userId': user.id})
+    if bounties:
+        await ws.send_json({'type': 'pvp_bounty_snapshot', 'bounties': _bounty_list_detailed()})
 
     # Send history for each reachable channel
     history_pairs = [('general', 'general'), (corp_ch, 'corp')]
@@ -1070,6 +1161,10 @@ async def chat_ws(
                     state.max_hull = max(1.0, float(loadout['maxHull']))
                 if loadout.get('maxShield') is not None:
                     state.max_shield = max(0.0, float(loadout['maxShield']))
+                if loadout.get('corp'):
+                    state.corp = str(loadout['corp'])[:20]
+                if loadout.get('level'):
+                    state.level = max(1, int(loadout['level']))
 
             # ── PvP: обновление позиции (throttled клиентом, ~10Hz) ────
             elif msg_type == 'pvp_pos':
@@ -1084,6 +1179,21 @@ async def chat_ws(
                 await chat_manager.broadcast_to_uids(
                     [p.user_id for p in others],
                     {'type': 'pvp_pos_update', 'userId': user.id, 'x': x, 'y': y, 'heading': heading},
+                    exclude_uid=user.id,
+                )
+
+            # ── Эскорт: игрок начал daily_escort — оповещаем остальных в той же
+            # комнате, чтобы их клиент отложил свой (независимый, невидимый чужому
+            # клиенту) старт на 30с — см. GameScene._shouldSpawnEscort. Чисто relay,
+            # сервер не хранит состояние (симметрично pvp_pos).
+            elif msg_type == 'pvp_escort_start':
+                sector = pvp_room_manager.player_sector.get(user.id)
+                if not sector:
+                    continue
+                others = pvp_room_manager.others(sector, user.id)
+                await chat_manager.broadcast_to_uids(
+                    [p.user_id for p in others],
+                    {'type': 'pvp_escort_started', 'userId': user.id},
                     exclude_uid=user.id,
                 )
 
@@ -1116,6 +1226,12 @@ async def chat_ws(
                 victim = pvp_room_manager.get(sector, int(target_id))
                 if not attacker or not victim or victim.user_id == attacker.user_id:
                     continue
+                # Дружественный огонь между игроками одного корпа запрещён — единственное
+                # исключение будет отдельная арена с записью/очередью (дуэли не по
+                # корпам), которой пока нет как отдельного сектора. Проверяем на
+                # сервере (не только скрытие/блок на клиенте), т.к. клиент не авторитетен.
+                if attacker.corp == victim.corp:
+                    continue
                 now_ts = time.time()
                 if now_ts - attacker.last_shot_at < attacker.loadout['cooldown']:
                     continue  # чаще заявленного КД — молча игнорируем (см. план: без ложных банов)
@@ -1140,6 +1256,35 @@ async def chat_ws(
                         'killer': attacker.username, 'victim': victim.username, 'sector': sector,
                     }, sector=sector))
                     db.commit()
+                    if result.get('bountyBonus'):
+                        await chat_manager.broadcast('general', {'type': 'pvp_bounty_cleared', 'userId': victim.user_id})
+
+            # ── Доска розыска: жертва (после своей смерти) вешает розыск на убийцу —
+            # только если убийца оказался выше уровнем (см. клиент _onPvpHitResult).
+            # Сервер не перепроверяет уровни (клиент-доверенная модель, как и весь
+            # остальной прогресс — см. комментарий у DungeonRun), просто хранит/шлёт.
+            # Повторная подача на уже разыскиваемого НЕ создаёт новую запись — просто
+            # инкрементит 'kills' в существующей (см. _resolve_pvp_hit: 10+ даёт ×2 награду).
+            elif msg_type == 'pvp_bounty_post':
+                killer_id = data.get('killerId')
+                killer_name = str(data.get('killerName', '') or '')[:50]
+                if killer_id is None or not killer_name:
+                    continue
+                killer_id = int(killer_id)
+                if killer_id in bounties:
+                    bounties[killer_id]['kills'] = bounties[killer_id].get('kills', 1) + 1
+                    continue
+                killer_corp = str(data.get('killerCorp', '') or 'neutral')[:20]
+                bounties[killer_id] = {'name': killer_name, 'corp': killer_corp, 'kills': 1}
+                await chat_manager.broadcast('general', {
+                    'type': 'pvp_bounty_posted', 'userId': killer_id, 'name': killer_name, 'corp': killer_corp,
+                })
+
+            # ── Доска розыска: клиент запрашивает свежий список при открытии
+            # вкладки РОЗЫСК в CorpScene — online/sector считаются в момент запроса,
+            # не кэшируются (см. _bounty_list_detailed).
+            elif msg_type == 'pvp_bounty_query':
+                await ws.send_json({'type': 'pvp_bounty_snapshot', 'bounties': _bounty_list_detailed()})
 
             # ── PvP: заявка на выстрел по общему мобу сектора — HP шарится
             #    между всеми игроками (см. PvpMobState); движение моба сервер
@@ -1169,10 +1314,15 @@ async def chat_ws(
                 max_shield = max(0.0, float(data.get('maxShield', 0)))
                 mob_state = pvp_room_manager.get_or_create_mob(sector, mob_id, max_hull, max_shield)
                 claimed_dmg = max(0.0, float(data.get('dmg', 0) or 0))
+                # Аргус — реальное окно неуязвимости "квантовой фазы", см. _argus_phase_invincible.
+                evasion = 0.0
+                if mob_id.endswith(':argus'):
+                    hull_frac = mob_state.hull / mob_state.max_hull if mob_state.max_hull > 0 else 1.0
+                    evasion = 1.0 if _argus_phase_invincible(hull_frac) else 0.0
                 result = _apply_pvp_damage(
                     claimed_dmg, attacker.loadout['dmg'], attacker.loadout['penetration'],
                     mob_state.hull, mob_state.shield, mob_state.max_hull, mob_state.max_shield,
-                    attacker.loadout['critChance'], attacker.loadout['critMult'],
+                    attacker.loadout['critChance'], attacker.loadout['critMult'], evasion,
                 )
                 mob_state.hull, mob_state.shield = result['hull'], result['shield']
                 if result['killed']:
@@ -1219,9 +1369,14 @@ async def chat_ws(
                 mob_state = pvp_room_manager.get_or_create_mob(sector, mob_id, max_hull, max_shield)
                 claimed_dmg = max(0.0, float(data.get('dmg', 0) or 0))
                 ceiling = cfg['damage'] * _turret_damage_mult(data.get('pvpTier'))
+                evasion = 0.0
+                if mob_id.endswith(':argus'):
+                    hull_frac = mob_state.hull / mob_state.max_hull if mob_state.max_hull > 0 else 1.0
+                    evasion = 1.0 if _argus_phase_invincible(hull_frac) else 0.0
                 result = _apply_pvp_damage(
                     claimed_dmg, ceiling, 0.0,
                     mob_state.hull, mob_state.shield, mob_state.max_hull, mob_state.max_shield,
+                    0.0, 2.0, evasion,
                 )
                 mob_state.hull, mob_state.shield = result['hull'], result['shield']
                 if result['killed']:
