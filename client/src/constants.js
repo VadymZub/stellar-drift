@@ -96,8 +96,12 @@ export const ARMORED_TRAIN_SECTORS = {
            clanRes: { biomech_fragment: 180, quantum_shard: 100, plasma_strand: 80 }, laserPartChance: 0.03 },
 };
 export const ARMORED_TRAIN_HEAD_MULT   = 3;      // множитель награды головного вагона (кроме laserPartChance)
-export const ARMORED_TRAIN_WAGON_COUNT = 5;      // + голова = 6 сегментов всего
-export const ARMORED_TRAIN_WINDOW_MS   = 15 * 60000;
+export const ARMORED_TRAIN_WAGON_COUNT = 3;      // + голова = 4 сегмента всего
+// Теперь это ИМЕННО время пролёта ВИДИМОЙ карты (mapEnterPos→mapExitPos, "крейсерская"
+// фаза) — см. ArmoredTrain.js конструктор: заграничные approach/exit-буферы едут вдвое
+// быстрее ОТДЕЛЬНО от этого числа и гарантированно не сокращают его. 19 мин — с запасом
+// выше требуемого минимума "не менее 18 минут" на самой карте.
+export const ARMORED_TRAIN_WINDOW_MS   = 19 * 60000;
 export const ARMORED_TRAIN_DRONE_WAVE_SIZE = 8;  // дронов на волну, спавнятся с головного вагона
 // Головной вагон: 3 состояния (целый/частично разрушен/разрушен на 70%) — пороги
 // доли HP, на которых меняется визуал И спавнится волна дронов (2 волны из 2 фаз).

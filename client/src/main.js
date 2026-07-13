@@ -57,13 +57,43 @@ const config = {
     default: 'arcade',
     arcade: { gravity: { x: 0, y: 0 }, debug: false },
   },
+  // Без этого зависшая XHR-загрузка ассета (напр. после сна вкладки/флапающего Wi-Fi при
+  // разворачивании после сворачивания) никогда не завершается ни успехом, ни ошибкой —
+  // очередь Loader'а не добирает 'complete', BootScene._finishCreate() не срабатывает,
+  // сплэш-заставка "STELLAR DRIFT…" (index.html) висит вечно без единого сообщения об
+  // ошибке (см. диалог "должно быть окно — потеряно соединение").
+  loader: { timeout: 20000 },
   scene: [
     BootScene, LoginScene, BackgroundScene, TestProfileScene, GameScene, HudScene,
     InventoryScene, CargoScene, ClanScene, GarageScene, MapScene, MissionsScene, ShopScene, DonateScene, CorpScene, BaseMenuScene, SkillScene, ShadowBattleScene, SettingsScene,
   ],
 };
 
-document.fonts.ready.then(() => {
+// Watchdog: сплэш "STELLAR DRIFT…" (index.html) всё ещё в DOM через 30с после старта
+// страницы — оба таймаута ниже (4с шрифты + 20с Loader, см. config.loader.timeout выше)
+// уже должны были истечь и пропустить дальше, значит что-то совсем не задалось (например
+// необработанное исключение до первого Phaser.Game). Раньше в этом случае пользователь
+// видел зависший сплэш без единого сообщения об ошибке и без способа выйти из этого
+// состояния (см. диалог "должно быть окно — потеряно соединение").
+setTimeout(() => {
+  const el = document.getElementById('loading');
+  if (!el) return; // уже убран BootScene._finishCreate() — загрузка прошла нормально
+  el.style.pointerEvents = 'auto';
+  el.style.cursor = 'pointer';
+  el.innerHTML = '<span>Загрузка зависла</span>'
+    + '<span style="font-size:12px;margin-top:14px;color:#88bbaa;letter-spacing:1px;">Нажмите, чтобы перезагрузить страницу</span>';
+  el.addEventListener('click', () => location.reload());
+}, 30000);
+
+// document.fonts.ready ждёт и внешний Google Fonts CSS (index.html) — если этот запрос
+// подвиснет (тот же сценарий: разворачивание вкладки после сна/флапающая сеть), игра
+// НИКОГДА даже не создаётся (Phaser.Game ни разу не вызывается), сплэш "STELLAR DRIFT…"
+// висит вечно. Гонка с таймаутом — шрифты не критичны для старта, максимум чуть кривой
+// первый кадр текста до их фактической подгрузки.
+Promise.race([
+  document.fonts.ready,
+  new Promise(resolve => setTimeout(resolve, 4000)),
+]).catch(() => {}).then(() => {
   const game = new Phaser.Game(config);
 
   function fitCanvas() {

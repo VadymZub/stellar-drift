@@ -475,6 +475,14 @@ export default class ArgusController {
 
     this.mob = new Mob(gs, MOBS.argus_boss, level, cx + 800, cy, {
       behavior: 'roam', patrolRadius: 600, leash: Infinity,
+      // Прямая правка: фиксированные 5%/сек от maxShield (shieldRegenFullSec=20 → 100%/20с
+      // = 5%/с, не зависит от абсолютного размера пула — раньше был shieldRegenFullSec=4
+      // (25%/с), но задержка 2с почти никогда не успевала набежать под непрерывным огнём
+      // нескольких игроков, реген фактически не срабатывал вообще, ощущалось как "щит
+      // восстанавливается неимоверно долго" (видно было только периодическое +30% раз в
+      // 180с, см. _updateSelfHeal). Короткая задержка 500мс — реген реально тикает почти
+      // в любой паузе между выстрелами разных атакующих, а не только в полном затишье.
+      shieldRegenDelay: 500, shieldRegenFullSec: 20,
     });
     // Аргус — мобовский босс, бой и награды как у босса в групповом данже: реальный
     // общий (не per-client-local) HP/урон через тот же pvpMobId-леджер, что и
@@ -781,6 +789,11 @@ export default class ArgusController {
     const p  = this.scene.player;
     const gs = this.scene;
     if (!m?.alive || !p) return;
+
+    // Квантовый прыжок сбивает прицел, если Аргус был текущей целью — телепорт "за
+    // спину" уводит его из-под удержанного лока, автоатака не должна тупо продолжать
+    // стрелять в пустоту на старой позиции; повторный лок — заново вручную.
+    if (gs.target === m) { gs.target = null; gs.isFiring = false; }
 
     const layers = [m.sprite, this._layerBlue, this._layerViolet, this._layerWhite].filter(Boolean);
 

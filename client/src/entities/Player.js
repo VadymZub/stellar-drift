@@ -107,6 +107,12 @@ export default class Player {
     this.fireCooldown = 0;
     this.alive = true;
     this.lockedRotation = false; // флаг для блокировки вращения (при прыжке)
+    // Грейс-период неуязвимости после ремонта НА МЕСТЕ (см. GameScene.finishRespawn) —
+    // timestamp (scene.time.now), НЕ boolean-флаг this.invulnerable (тот же занят
+    // короткими скилловыми окнами вроде Phase Jump, см. GameScene._doShipDrifterJump) —
+    // отдельное поле, чтобы открытие своего огня (firePlayerWeapon) могло досрочно снять
+    // именно эту защиту, не трогая другие механики неуязвимости.
+    this.spawnGraceEndTime = 0;
 
     // Дебаффы от снарядов мобов
     this.dotTimer   = 0;    // кислота: секунд осталось
@@ -455,6 +461,7 @@ export default class Player {
   takeDamage(amount, penetration = 0, optsOrIgnoreEvasion = false) {
     if (!this.alive) return { shieldHit: 0, hullHit: 0, brokeShield: false };
     if (this.invulnerable) return { shieldHit: 0, hullHit: 0, brokeShield: false };
+    if (this.spawnGraceEndTime > this.scene.time.now) return { shieldHit: 0, hullHit: 0, brokeShield: false };
 
     const opts        = (typeof optsOrIgnoreEvasion === 'object' && optsOrIgnoreEvasion !== null) ? optsOrIgnoreEvasion : {};
     const ignoreEvasion = optsOrIgnoreEvasion === true || !!opts.ignoreMovEvasion;

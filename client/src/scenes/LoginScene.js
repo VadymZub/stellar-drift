@@ -59,7 +59,12 @@ export default class LoginScene extends Phaser.Scene {
       pointerEvents: 'none',
     });
 
-    const box = document.createElement('div');
+    // <form> (не <div>) — убирает браузерное DOM-предупреждение "Password field is not
+    // contained in a form" (менеджеры паролей/автозаполнение ищут именно тег form).
+    // preventDefault на submit — иначе Enter в поле пароля дал бы нативную отправку формы
+    // (перезагрузку страницы); вся логика входа и так уже на btnAction 'click' ниже.
+    const box = document.createElement('form');
+    box.addEventListener('submit', (e) => e.preventDefault());
     Object.assign(box.style, {
       pointerEvents: 'all',
       background:    'rgba(5,10,25,0.92)',
@@ -88,6 +93,7 @@ export default class LoginScene extends Phaser.Scene {
 
     // Кнопка действия
     const btnAction = document.createElement('button');
+    btnAction.type = 'button'; // box теперь <form> — без явного type кнопка по умолчанию submit
     btnAction.textContent = 'ВОЙТИ';
     Object.assign(btnAction.style, this._btnStyle('#4dd0e1', '#03070f'));
 
@@ -235,6 +241,7 @@ export default class LoginScene extends Phaser.Scene {
 
     const inp = document.createElement('input');
     inp.type = type; inp.id = id;
+    inp.autocomplete = type === 'password' ? 'current-password' : 'username';
     Object.assign(inp.style, {
       background:   '#080d1c',
       border:       '1px solid #1e3a4a',

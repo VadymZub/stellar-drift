@@ -507,9 +507,10 @@ export default class MiningBase {
         .setDisplaySize(tsz, tsz).setDepth(6).setVisible(false)
     );
 
-    // DEV-only: перетаскивание турелей мышью для визуальной калибровки offsets —
-    // вместо угадывания смещений по скриншотам. После расстановки жми 'L' (см.
-    // GameScene DEV-хоткеи) — выведет готовый массив слотов этого корпа в консоль.
+    // DEV-only: перетаскивание турелей мышью для визуальной калибровки offsets — временно
+    // отключено по просьбе. Раскомментировать для следующей калибровочной сессии (жми 'L'
+    // — см. GameScene DEV-хоткеи — выведет готовый массив слотов этого корпа в консоль).
+    /*
     if (this.scene.devMode) {
       this._turretSprites.forEach((spr, i) => {
         spr.setInteractive({ useHandCursor: true });
@@ -520,6 +521,7 @@ export default class MiningBase {
         });
       });
     }
+    */
 
     // HP/shield-бары базы и турелей рисуются НЕ здесь — раньше каждая база держала
     // ~21 отдельных Rectangle-объекта (свой бар ×3 + 6 турелей ×3), и Phaser платит
@@ -677,7 +679,10 @@ export default class MiningBase {
       // candidate here (if hostile) — turrets pick whichever is closest.
       let nearest = null, nearestDist = range;
       for (const mob of mobs) {
-        if (!mob.alive) continue;
+        // Дроны охраны бронепоезда — цель игроков (событие завязано на игроков,
+        // убивающих их вручную ради волны/наград), не еда для турелей баз — иначе
+        // база бесплатно фармит волну дронов раньше, чем игроки успевают до них дойти.
+        if (!mob.alive || mob.isArmoredTrainDrone) continue;
         const d = Phaser.Math.Distance.Between(tx, ty, mob.x, mob.y);
         if (d < nearestDist) { nearest = mob; nearestDist = d; }
       }

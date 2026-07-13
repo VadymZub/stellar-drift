@@ -17,16 +17,16 @@ export default class RemotePlayer {
     this.alive  = true;
     this.isRemotePlayer = true; // отличаем от Mob/Player в таргетинге/огне GameScene без instanceof
 
+    this._shipKey = data.shipKey;
     const shipDef = SHIP_BY_KEY[data.shipKey] || SHIPS[0];
     this.sprite = scene.add.image(data.x, data.y, shipDef.key).setDepth(50);
     const src = scene.textures.get(shipDef.key).getSourceImage();
     const scale = shipDef.displaySize / Math.max(src.width, src.height);
     this.sprite.setDisplaySize(Math.round(src.width * scale), Math.round(src.height * scale));
     this._artAngleOffset = shipDef.artAngleOffset ?? ART_ANGLE_OFFSET;
-    // Тинт — враждебный красный в реальном PvP, дружелюбный голубой везде ещё
-    // (домашняя карта/PvE/групповой данж — атаковать их нельзя, см. _isPvpSector).
-    const tint = isHostile ? 0xff7a7a : 0x7ad4ff;
-    this.sprite.setTint(tint);
+    // Корабль показывается в СВОИХ цветах (без тинта) — враждебность/принадлежность
+    // читается по нику под кораблём (см. this._baseColor/label ниже), не по перекраске
+    // спрайта, которая раньше скрывала реальный вид/скин корабля игрока.
 
     this._baseColor = isHostile ? '#ff8a8a' : '#8ad8ff';
     this.label = scene.add.text(data.x, data.y, this.name, {
@@ -52,9 +52,39 @@ export default class RemotePlayer {
   get y() { return this.sprite.y; }
 
   applyPos(x, y, heading) {
+    // Возобновление pvp_pos_update после смерти = респавн реально произошёл — сервер
+    // получает эти пакеты, только пока GameScene.update() шлёт их (sendPos гейтится
+    // this.player.alive), т.е. пока сам игрок жив. Значит первый пакет ПОСЛЕ die() —
+    // надёжный сигнал "уже респавнулся", без отдельного pvp_player_respawned от сервера.
+    const wasDead = !this.alive;
+    if (wasDead) this.revive();
     this._targetX = x;
     this._targetY = y;
     if (heading !== undefined) this._targetHeading = heading;
+    // Респавн обычно телепортирует далеко (домашняя база и т.п.) — плавный лерп через
+    // всю карту выглядел бы как проскок сквозь сектор. Спавним сразу на месте.
+    if (wasDead) {
+      this.sprite.setPosition(x, y);
+      if (heading !== undefined) this.heading = heading;
+    }
+  }
+
+  // Визуально "мёртв" до фактического респавна (диалог ремонта на СТОРОНЕ жертвы) —
+  // сервер уже восстановил hull/shield в своей бухгалтерии в момент килла (см. комментарий
+  // в GameScene._onPvpHitResult), но для наблюдателей корабль должен выглядеть
+  // уничтоженным, а не полностью здоровым и живым, до реального возвращения игрока.
+  die() {
+    this.alive = false;
+    this.sprite.setVisible(false);
+    this.label.setVisible(false);
+    this.bar.setVisible(false);
+  }
+
+  revive() {
+    this.alive = true;
+    this.sprite.setVisible(true);
+    this.label.setVisible(true);
+    this.bar.setVisible(true);
   }
 
   // Полное состояние (используется на pvp_room_snapshot/pvp_player_joined, а
@@ -65,6 +95,29 @@ export default class RemotePlayer {
     if (data.maxHull !== undefined) this.maxHull = data.maxHull;
     if (data.shield !== undefined) this.shield = data.shield;
     if (data.maxShield !== undefined) this.maxShield = data.maxShield;
+  }
+
+  // pvp_player_updated (см. PvpClient.js) — другой игрок сменил корабль/корпус/
+  // уровень/макс. HP ПОСЛЕ джойна комнаты (напр. DEV-хоткей 8: переключение на
+  // Аргуса). Раньше это никуда не долетало — RemotePlayer строится один раз в
+  // конструкторе и никогда не перечитывал shipKey, так что уже заспавненные
+  // наблюдатели вечно видели старый корабль, даже после смерти/респавна жертвы.
+  applyPublicState(data) {
+    if (data.corp !== undefined) this.corp = data.corp;
+    if (data.level !== undefined) this.level = data.level;
+    if (data.maxHull !== undefined) this.maxHull = data.maxHull;
+    if (data.maxShield !== undefined) this.maxShield = data.maxShield;
+    if (data.shipKey && data.shipKey !== this._shipKey) this.applyShip(data.shipKey);
+  }
+
+  applyShip(shipKey) {
+    this._shipKey = shipKey;
+    const shipDef = SHIP_BY_KEY[shipKey] || SHIPS[0];
+    this.sprite.setTexture(shipDef.key);
+    const src = this.scene.textures.get(shipDef.key).getSourceImage();
+    const scale = shipDef.displaySize / Math.max(src.width, src.height);
+    this.sprite.setDisplaySize(Math.round(src.width * scale), Math.round(src.height * scale));
+    this._artAngleOffset = shipDef.artAngleOffset ?? ART_ANGLE_OFFSET;
   }
 
   update(dt) {

@@ -109,6 +109,17 @@ export class PvpClient {
         this._send({ type: 'pvp_loot_claim', lootId });
     }
 
+    /** Лутбокс с уничтоженного вагона бронепоезда (см. GameScene._spawnWagonLoot) —
+     * отправляется ТОЛЬКО добившим клиентом. eligible — явный список uid, в отличие от
+     * spawnLoot выше (там сервер сам берёт last_death_eligible жертвы — тут нет игрока-
+     * жертвы, вагон, поэтому список контрибьюторов шлём прямо, взят из damageBy того же
+     * pvp_mob_hit_result, что уже дал денежную долю за вагон). Пикап — тот же
+     * pvp_loot_claim/claimLoot, что и обычный лут с игрока. */
+    wagonLootSpawn(x, y, item, eligible) {
+        if (!this.sector) return;
+        this._send({ type: 'pvp_wagon_loot_spawn', x, y, item, eligible });
+    }
+
     leaveSector() {
         if (!this.sector) return;
         this._send({ type: 'pvp_leave' });
@@ -143,6 +154,15 @@ export class PvpClient {
         this._send({ type: 'pvp_train_query', trainKey });
     }
 
+    /** DEV-хоткей T (GameScene): бронепоезд запущен с произвольным startAt=Date.now(),
+     * не детерминированным wall-clock расписанием — остальные клиенты сектора сами до
+     * него не додумаются, без этого поезд был виден только тому, кто нажал T. Сервер
+     * (pvp_train_force_spawn) ретранслирует startAt остальным в комнате. */
+    trainForceSpawn(startAt) {
+        if (!this.sector) return;
+        this._send({ type: 'pvp_train_force_spawn', startAt });
+    }
+
     // ── Incoming (call from WS onmessage handler, routed by HudScene) ────────
 
     handleMessage(msg) {
@@ -166,6 +186,16 @@ export class PvpClient {
             case 'pvp_pos_update': {
                 const rp = this.players.get(msg.userId);
                 rp?.applyPos(msg.x, msg.y, msg.heading);
+                break;
+            }
+
+            // Другой игрок сменил корабль/корпус/уровень/макс. HP (см. server
+            // pvp_update_loadout) уже ПОСЛЕ джойна комнаты — раньше это никак не
+            // долетало до уже созданных RemotePlayer (баг "враг на Аргусе, а вижу
+            // старый корабль" — переживало даже респавн жертвы).
+            case 'pvp_player_updated': {
+                const rp = this.players.get(msg.userId);
+                rp?.applyPublicState(msg);
                 break;
             }
 
@@ -211,6 +241,10 @@ export class PvpClient {
 
             case 'pvp_train_snapshot':
                 this.onTrainSnapshot?.(msg);
+                break;
+
+            case 'pvp_train_force_spawn':
+                this.onTrainForceSpawn?.(msg);
                 break;
         }
     }

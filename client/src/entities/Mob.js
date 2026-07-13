@@ -40,6 +40,13 @@ export default class Mob {
     if (opts.shieldBonusMult && opts.shieldBonusMult !== 1) { this.maxShield = Math.round(this.maxShield * opts.shieldBonusMult); }
     this.hull      = this.maxHull;
     this.shield    = this.maxShield;
+    // Реген щита индивидуален для боя (см. GameScene._updateArgusController /
+    // ArgusController._spawn — щит Аргуса скейлится по уровню в разы сильнее, чем
+    // рассчитан дефолтный MOB_REGEN, и почти всё время под непрерывным огнём во время
+    // ивента, так что дефолтные shieldDelay/shieldFullSec ощущались "щит большой, а
+    // регенерирует очень медленно").
+    this.shieldRegenDelay   = opts.shieldRegenDelay   ?? MOB_REGEN.shieldDelay;
+    this.shieldRegenFullSec = opts.shieldRegenFullSec ?? MOB_REGEN.shieldFullSec;
 
     const mobTexKey = template._prerenderKey || template.key;
     this.sprite = template.anim
@@ -66,7 +73,7 @@ export default class Mob {
     this.fireCooldown  = 0;
     this.lastDamageAt  = -100000;
     this.isBoss  = !!template.boss;
-    this.neutral = template.neutral || false;
+    this.neutral = opts.neutral ?? (template.neutral || false);
     // passive: не агрится на игрока (даже при атаке не переходит в aggro)
     this.passive = opts.passive || false;
     this._basePassive = this.passive;
@@ -246,8 +253,8 @@ export default class Mob {
     const sinceDmg = now - this.lastDamageAt;
 
     // Реген щита и корпуса
-    if (this.maxShield > 0 && sinceDmg > MOB_REGEN.shieldDelay && this.shield < this.maxShield) {
-      this.shield = Math.min(this.maxShield, this.shield + (this.maxShield / MOB_REGEN.shieldFullSec) * dt);
+    if (this.maxShield > 0 && sinceDmg > this.shieldRegenDelay && this.shield < this.maxShield) {
+      this.shield = Math.min(this.maxShield, this.shield + (this.maxShield / this.shieldRegenFullSec) * dt);
     }
     if (this.isBoss && sinceDmg > MOB_REGEN.bossHullDelay && this.hull < this.maxHull) {
       this.hull = Math.min(this.maxHull, this.hull + this.maxHull * MOB_REGEN.bossHullPctPerSec * dt);

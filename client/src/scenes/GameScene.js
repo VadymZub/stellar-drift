@@ -20,7 +20,9 @@ import { calculateRating, getRank } from '../ranking.js';
 import VFXManager from '../systems/VFXManager.js';
 import SoundManager from '../systems/SoundManager.js';
 import MiningBase, { TBAR_W, TBAR_H } from '../entities/MiningBase.js';
-import ArmoredTrain from '../entities/ArmoredTrain.js';
+import ArmoredTrain, {
+  WAGON_TURRET_OFFSETS, HEAD_TURRET_OFFSETS, TETHER_L_FRAC, TETHER_R_FRAC, TETHER_LENGTH_MULT, WAGON_GAP,
+} from '../entities/ArmoredTrain.js';
 import { BASE_CONFIG } from '../bases.js';
 import HomeBase from '../entities/HomeBase.js';
 import ArgusController from '../systems/ArgusController.js';
@@ -217,12 +219,14 @@ export default class GameScene extends Phaser.Scene {
 
     // Realtime-присутствие (позиции живых игроков) — везде, кроме соло-данжа/босс-карты
     // (там больше некому быть) и Shadow Arena (бой с ботом). Бой между игроками
-    // (fire_claim) — только в реальных PvP-секторах, см. _isPvpSector.
-    if (this._realtimeRoomKey) {
-      this.pvpClient?.enterSector(this._realtimeRoomKey, this.player.x, this.player.y, this._pvpLoadoutSnapshot());
-    } else {
-      this.pvpClient?.leaveSector();
-    }
+    // (fire_claim) — только в реальных PvP-секторах, см. _isPvpSector. ПЕРЕНЕСЕНО ниже,
+    // после восстановления activeShip (см. комментарий там) — раньше отправлялось прямо
+    // тут, пока this.player ещё свежесозданный Player со стартовым PLAYER.shipKey
+    // ('wisp'), а не с реально активным (persisted) кораблём игрока: другие клиенты в
+    // комнате получали ПЕРВЫЙ (и для тех, кто уже был в комнате — единственный, пока не
+    // прилетит следующий recomputeStats) снапшот с shipKey='wisp', даже если игрок
+    // реально всё время летал на Аргусе/любом другом не-wisp корабле (баг "враг всё
+    // время на Аргусе, а после его килла/своего респавна я вижу у него Wisp").
 
     this.cameras.main.startFollow(this.player.sprite, false, 0.35, 0.35);
     this.cameras.main.setZoom(DPR);
@@ -361,6 +365,17 @@ export default class GameScene extends Phaser.Scene {
     if (this.activeShip !== 'wisp' && SHIP_BY_KEY[this.activeShip]) {
       this.player.applyShip(SHIP_BY_KEY[this.activeShip]);
       this.player.hull = this.player.maxHull; this.player.shield = this.player.maxShield;
+    }
+
+    // Realtime-присутствие (позиции живых игроков) — везде, кроме соло-данжа/босс-карты
+    // (там больше некому быть) и Shadow Arena (бой с ботом). Бой между игроками
+    // (fire_claim) — только в реальных PvP-секторах, см. _isPvpSector. Именно ЗДЕСЬ (не
+    // сразу после new Player()) — this.player уже несёт реально активный корабль, см.
+    // комментарий на старом месте этого блока.
+    if (this._realtimeRoomKey) {
+      this.pvpClient?.enterSector(this._realtimeRoomKey, this.player.x, this.player.y, this._pvpLoadoutSnapshot());
+    } else {
+      this.pvpClient?.leaveSector();
     }
 
     // Derive corp from active prestige ship first, then any owned prestige ship, else neutral.
@@ -846,9 +861,15 @@ export default class GameScene extends Phaser.Scene {
     if (!sec?.pvp || !cfg) return;
     const startAt = this._armoredTrainTodayStart(galaxy.current);
     const now = Date.now();
-    if (now < startAt || now >= startAt + ARMORED_TRAIN_WINDOW_MS) return; // not today's live window
+    // ARMORED_TRAIN_WINDOW_MS — только время "крейсерского" пролёта видимой карты (см.
+    // ArmoredTrain конструктор — _approachMs/_exitMs добавляют время сверху, но зависят от
+    // геометрии сектора/heading, не известны здесь заранее). +10 мин запаса, чтобы это
+    // грубое окно не закрывалось раньше, чем реально построенный ArmoredTrain (finished
+    // по his собственному _totalMs) — иначе игрок, зашедший под конец, не подхватил бы
+    // ещё живой поезд.
+    if (now < startAt || now >= startAt + ARMORED_TRAIN_WINDOW_MS + 10 * 60000) return; // not today's live window
     this.armoredTrain = new ArmoredTrain(this, galaxy.current, startAt);
-    this.log(`🚂 ${sec.name}: бронепоезд на маршруте!`);
+    this.log(`🚂 ${sec.name}: бронепоезд на маршруте! Вагоны уничтожаются строго с хвоста — но турели на любом сегменте (включая голову) можно атаковать сразу.`);
     // Подхватить реальное состояние (кто уже уничтожен/hull живых), если зашли в
     // сектор ПОСЛЕ начала события — см. ArmoredTrain.applySnapshot. Если pvpClient
     // ещё не готов (WS переподключается), HudScene.ws.onopen пошлёт тот же запрос
@@ -2200,6 +2221,14 @@ export default class GameScene extends Phaser.Scene {
       // модалки не ОДНОВРЕМЕННО уводил корабль в точку клика.
       if (this._modalBlockingClicks) return;
       if (this.atBase) return;
+      // DEV-калибровка: ручки тросов (см. ArmoredTrain._makeTetherHandle) — ЧИСТО
+      // калибровочные объекты без своего combat-хит-теста, клик по ним раньше ЕЩЁ и
+      // уводил корабль в точку клика (эта функция не знает про Phaser-интерактивные
+      // объекты сама по себе). Турели (поезда И баз) сюда НЕ включены — они draggable
+      // ТОЖЕ, но для них клик обязан пройти дальше к trainTurretAt/turretAt ниже (это и
+      // есть их обычный боевой таргетинг, не только калибровка) — блокировать бы это
+      // сломало наводку на турель вообще (см. диалог "фокусировка не работает").
+      if (this.input.hitTestPointer(pointer).some(o => o.isDevCalibHandle)) return;
 
       const now = this.time.now;
       const isDouble = (now - lastClickTime < 350);
@@ -2284,8 +2313,23 @@ export default class GameScene extends Phaser.Scene {
         if (isDouble) this.isFiring = true;
         return;
       }
+      // Турели поезда — независимые от вагона цели (см. ArmoredTrain.TrainTurretTarget),
+      // проверяются раньше самого вагона (та же логика "точнее — раньше", что у
+      // turretAt/baseAt выше). В отличие от вагона турели не гейтятся очередью "с
+      // хвоста" — можно выбить турель на любом сегменте, включая голову, сразу же.
+      const trainTurret = this.trainTurretAt(wx, wy);
+      if (trainTurret?.canBeAttacked) {
+        this.cancelCollect(); this.selectTarget(trainTurret);
+        if (isDouble) this.isFiring = true;
+        return;
+      }
+      // Лочить (выбрать целью) можно ЛЮБОЙ живой вагон, не только текущий уязвимый
+      // "хвостовой" — раньше клик по невулнерабельному вагону вообще не давал прицелиться
+      // (падал молча дальше в движение/сбор). canBeAttacked теперь проверяется только в
+      // момент ВЫСТРЕЛА (_fireCannon/_fireLaser) — там же и сообщение "уничтожьте сначала
+      // хвостовой", не на этапе селекта.
       const wagon = this.trainWagonAt(wx, wy);
-      if (wagon?.canBeAttacked) {
+      if (wagon) {
         this.cancelCollect(); this.selectTarget(wagon);
         if (isDouble) this.isFiring = true;
         return;
@@ -2409,8 +2453,31 @@ export default class GameScene extends Phaser.Scene {
         this.log(`DEV: ${n} обязательных сюжетных миссий выполнены — сектора разблокированы.`);
       });
       // DEV: дамп TURRET_SLOTS ближайшей базы после ручной перетаскиванием калибровки
-      // (турели становятся draggable в MiningBase._createVisuals(), см. там же).
+      // (турели становятся draggable в MiningBase._createVisuals(), см. там же). Если
+      // активен бронепоезд — тем же нажатием дампим offsets ОБОИХ сегментов + текущий
+      // масштаб (WAGON_TARGET_LEN/HEAD_TARGET_LEN — их сама rescale() не экспортирует,
+      // читаем по факту через dispLen живых сегментов) и копируем готовый JS-сниппет в
+      // буфер обмена — раньше только логировалось, приходилось перепечатывать вручную.
       this.input.keyboard.on('keydown-L', () => {
+        /* Дамп калибровки поезда (масштаб/офсеты турелей/тросов) — временно отключён
+           вместе с остальной калибровкой (см. keydown-T выше). Раскомментировать вместе
+           с драг-калибровкой в ArmoredTrain.js для следующей сессии.
+        if (this.armoredTrain) {
+          const wagonLen = Math.round(this.armoredTrain.wagons.find(w => !w.isHead)?.dispLen ?? 0);
+          const headLen = Math.round(this.armoredTrain.head?.dispLen ?? 0);
+          const snippet = `// WAGON_TARGET_LEN=${wagonLen}, HEAD_TARGET_LEN=${headLen}, WAGON_GAP=${WAGON_GAP}\n`
+            + `const WAGON_TURRET_OFFSETS = ${JSON.stringify(WAGON_TURRET_OFFSETS)};\n`
+            + `const HEAD_TURRET_OFFSETS = ${JSON.stringify(HEAD_TURRET_OFFSETS)};\n`
+            + `let TETHER_L_FRAC = ${TETHER_L_FRAC};\n`
+            + `let TETHER_R_FRAC = ${TETHER_R_FRAC};\n`
+            + `let TETHER_LENGTH_MULT = ${TETHER_LENGTH_MULT};`;
+          this.log(`DEV: 🚂 масштаб вагон=${wagonLen}px голова=${headLen}px + офсеты турелей/тросов/зазор — скопировано в буфер обмена`);
+          console.log(snippet);
+          navigator.clipboard?.writeText(snippet).catch(() => {
+            this.log('DEV: буфер обмена недоступен (нет разрешения/не HTTPS) — бери из консоли (F12)');
+          });
+        }
+        */
         const b = this._nearestMiningBase();
         b?.dumpTurretSlots();
       });
@@ -2437,6 +2504,66 @@ export default class GameScene extends Phaser.Scene {
         b._onDestroyed();
         this.log('DEV: ближайшая база сброшена в "разрушено" — можно строить');
       });
+      // DEV: принудительно запускает бронепоезд прямо сейчас (startAt=Date.now() →
+      // ArmoredTrain.progress=0, т.е. поезд только входит в сектор) — не ждём
+      // детерминированное wall-clock окно (_armoredTrainTodayStart). Сервер не проверяет
+      // расписание сам, только трекает destroyed по trainKey="sector:startAt" (см.
+      // ArmoredTrainManager в main.py), так что произвольный startAt от клиента — ОК.
+      this.input.keyboard.on('keydown-T', () => {
+        const sec = SECTORS[galaxy.current];
+        const cfg = ARMORED_TRAIN_SECTORS[galaxy.current];
+        if (!sec?.pvp || !cfg) {
+          this.log('DEV: бронепоезд доступен только в PvP-секторах (pvp_1..pvp_5)');
+          return;
+        }
+        const startAt = Date.now();
+        this.armoredTrain?.destroy();
+        // Полноценный запуск — едет с прогресса 0 (реальная точка входа в сектор, см.
+        // конструктор), турели стреляют сразу, ничего не заморожено/не телепортировано.
+        // Калибровка (масштаб/турели/тросы) отключена — см. закомментированный блок ниже,
+        // раскомментировать при следующей калибровочной сессии.
+        this.armoredTrain = new ArmoredTrain(this, galaxy.current, startAt);
+        this.pvpClient?.trainQuery(this.armoredTrain.trainKey);
+        // startAt — Date.now() (не детерминированный wall-clock, как у обычного
+        // расписания, см. _armoredTrainTodayStart), поэтому остальные клиенты в секторе
+        // сами до него никак не додумаются — раньше поезд видел ТОЛЬКО тот, кто нажал T.
+        // Ретранслируем через сервер (main.py pvp_train_force_spawn), их ArmoredTrain.js
+        // строит идентичный маршрут детерминированно от (sector, startAt).
+        this.pvpClient?.trainForceSpawn(startAt);
+        this.log(`DEV: 🚂 бронепоезд запущен в ${sec.name}. Вагоны — строго с хвоста, турели — на любом сегменте сразу.`);
+      });
+      /* DEV-калибровка поезда (заморозка/масштаб/зазор/длина троса) — временно отключена
+         по просьбе, T теперь просто полноценно запускает поезд. Раскомментировать этот
+         блок для следующей калибровочной сессии (турели/тросы вживую мышью + хоткеи).
+      this.input.keyboard.on('keydown-J', () => {
+        if (!this.armoredTrain) { this.log('DEV: нет активного бронепоезда — сначала T'); return; }
+        this.armoredTrain.frozen = !this.armoredTrain.frozen;
+        this.log(`DEV: 🚂 поезд ${this.armoredTrain.frozen ? 'заморожен' : 'едет'}`);
+      });
+      const _rescaleTrain = (mult) => {
+        if (!this.armoredTrain) { this.log('DEV: нет активного бронепоезда — сначала T'); return; }
+        this.armoredTrain.rescale(mult);
+        const wagonLen = Math.round(this.armoredTrain.wagons.find(w => !w.isHead)?.dispLen ?? 0);
+        const headLen = Math.round(this.armoredTrain.head?.dispLen ?? 0);
+        this.log(`DEV: 🚂 размер вагона=${wagonLen}px, головы=${headLen}px (запиши эти числа, если устроит)`);
+      };
+      this.input.keyboard.on('keydown-COMMA',  () => _rescaleTrain(0.9));
+      this.input.keyboard.on('keydown-PERIOD', () => _rescaleTrain(1.1));
+      const _adjustGap = (mult) => {
+        if (!this.armoredTrain) { this.log('DEV: нет активного бронепоезда — сначала T'); return; }
+        this.armoredTrain.adjustGap(mult);
+        this.log(`DEV: 🚂 расстояние между вагонами (WAGON_GAP) = ${WAGON_GAP}`);
+      };
+      this.input.keyboard.on('keydown-SEMICOLON', () => _adjustGap(0.9));
+      this.input.keyboard.on('keydown-QUOTES',    () => _adjustGap(1.1));
+      const _adjustTetherLen = (mult) => {
+        if (!this.armoredTrain) { this.log('DEV: нет активного бронепоезда — сначала T'); return; }
+        this.armoredTrain.adjustTetherLength(mult);
+        this.log(`DEV: 🚂 множитель длины троса (TETHER_LENGTH_MULT) = ${TETHER_LENGTH_MULT.toFixed(2)}`);
+      };
+      this.input.keyboard.on('keydown-MINUS',  () => _adjustTetherLen(0.9));
+      this.input.keyboard.on('keydown-EQUALS', () => _adjustTetherLen(1.1));
+      */
     }
   }
 
@@ -2896,6 +3023,7 @@ export default class GameScene extends Phaser.Scene {
     if (!this.pvpClient?.players?.size) return null;
     let best = null, bestD = Infinity;
     for (const rp of this.pvpClient.players.values()) {
+      if (!rp.alive) continue; // мёртв до факт. респавна на своей стороне — см. RemotePlayer.die()
       const d = Phaser.Math.Distance.Between(wx, wy, rp.x, rp.y);
       if (d < 70 && d < bestD) { best = rp; bestD = d; }
     }
@@ -2936,6 +3064,22 @@ export default class GameScene extends Phaser.Scene {
       if (!w.alive) continue;
       const d = Phaser.Math.Distance.Between(wx, wy, w.x, w.y);
       if (d < 80 && d < bestD) { best = w; bestD = d; }
+    }
+    return best;
+  }
+  // Турели поезда — независимые от вагона цели (см. ArmoredTrain.TrainTurretTarget) —
+  // в отличие от самого вагона НЕ гейтятся очередью "бить с хвоста", можно выбить
+  // турель на любом сегменте (включая голову) сразу, пока вагон-носитель ещё жив.
+  trainTurretAt(wx, wy) {
+    if (!this.armoredTrain) return null;
+    let best = null, bestD = Infinity;
+    for (const w of this.armoredTrain.wagons) {
+      if (!w.alive) continue;
+      for (const tt of w.turrets) {
+        if (!tt?.alive) continue;
+        const d = Phaser.Math.Distance.Between(wx, wy, tt.x, tt.y);
+        if (d < 50 && d < bestD) { best = tt; bestD = d; }
+      }
     }
     return best;
   }
@@ -2998,6 +3142,9 @@ export default class GameScene extends Phaser.Scene {
     // Импульсная мина Синдиката: оружие полностью глушится на 3с (движки — см. основной update)
     if ((this._playerStunUntil || 0) > this.time.now) return;
     const p = this.player;
+    // Неуязвимость после ремонта на месте (см. finishRespawn) держится 3с, НО
+    // прерывается сразу, как только сам игрок атакует — открытие огня снимает грейс-период.
+    if (p.spawnGraceEndTime > this.time.now) p.spawnGraceEndTime = 0;
     const isOC = this._overchargeActive;
     if (isOC) this._overchargeActive = false;
     const isVolley = this._volleyBlastMult > 0;
@@ -3048,6 +3195,15 @@ export default class GameScene extends Phaser.Scene {
   _fireCannon(skillMult, isOC, cannonCount = 1) {
     const t = this.target, p = this.player;
     if (!t?.alive || !p.alive) return;
+    // Вагон бронепоезда можно ЛОЧИТЬ (выбрать целью) любой живой — но бить строго с
+    // хвоста (см. ArmoredTrainWagon.canBeAttacked). Раньше это гейтилось уже на этапе
+    // клика (нельзя было даже прицелиться); теперь прицел разрешён всегда, а сам выстрел
+    // по ещё неуязвимому вагону молча съедал бы патроны/КД без результата — вместо этого
+    // не стреляем и объясняем, что не так.
+    if (t.isArmoredTrainWagon && !t.canBeAttacked) {
+      this._warnThrottle('train_wagon_order', '🚂 Уничтожьте сначала крайний вагон — бронепоезд бьётся строго с хвоста.');
+      return;
+    }
 
     // PvP: сервер решает урон/крит (см. server main.py:_resolve_pvp_hit) — клиент
     // только заявляет выстрел и рисует визуал, никакого локального takeDamage.
@@ -3161,6 +3317,9 @@ export default class GameScene extends Phaser.Scene {
       this._shakeForHit({ hullHit }, msg.maxHull);
       if (msg.killed && p.alive) {
         p.die(); this.onPlayerKilled(true);
+        // Автолок/автоатака не должны переживать собственную смерть — иначе после
+        // респавна огонь по прежней цели резюмируется сам, без нового клика игрока.
+        this.target = null; this.isFiring = false;
         // Доска розыска: решает сама жертва (см. _promptBountyChoice/_showBountyPrompt),
         // не авто-постится молча.
         this._promptBountyChoice(msg);
@@ -3173,10 +3332,25 @@ export default class GameScene extends Phaser.Scene {
     if (msg.dodged) { this.showDodge(rp.x, rp.y); return; }
     const hullHit   = msg.killed ? rp.hull   : Math.max(0, rp.hull   - msg.hull);
     const shieldHit = msg.killed ? rp.shield : Math.max(0, rp.shield - msg.shield);
-    rp.applyState({ hull: msg.hull, maxHull: msg.maxHull, shield: msg.shield, maxShield: msg.maxShield });
+    // На kill сервер шлёт уже восстановленный (после внутреннего "респавна" в своей
+    // бухгалтерии) hull/shield жертвы — та же ловушка, что в ветке isMe выше (см.
+    // комментарий там): раньше здесь msg.hull/msg.shield применялись как есть, из-за чего
+    // убитый враг выглядел живым и почти полным HP, а не исчезал — можно было продолжать
+    // "убивать" уже мёртвый корабль. Явно показываем 0, не серверное восстановленное значение.
+    rp.applyState({
+      hull: msg.killed ? 0 : msg.hull, maxHull: msg.maxHull,
+      shield: msg.killed ? 0 : msg.shield, maxShield: msg.maxShield,
+    });
     this.hitFlash(rp.x, rp.y, hullHit > 0, rp);
     this.showDamage(rp.x, rp.y, { shieldHit, hullHit, killed: msg.killed }, msg.maxHull, msg.isCrit);
-    if (msg.killed) this.explosion(rp.x, rp.y, 1.1);
+    if (msg.killed) {
+      this.explosion(rp.x, rp.y, 1.1);
+      rp.die();
+      // Автолок/автоатака не должны переживать смерть цели — иначе, стоит жертве
+      // респавнуться (rp.alive снова true, см. RemotePlayer.applyPos), огонь резюмируется
+      // сам собой, без нового клика атакующего ("даже после возрождения автоатака").
+      if (this.target === rp) { this.target = null; this.isFiring = false; }
+    }
     if (msg.attackerUserId === this.myUserId && msg.isCrit) {
       const txt = this.add.text(rp.x, rp.y - 40, 'КРИТ!',
         { fontFamily: 'Orbitron', fontSize: '14px', color: '#ffee44', fontStyle: 'bold', resolution: UI_RES })
@@ -3291,7 +3465,8 @@ export default class GameScene extends Phaser.Scene {
     const mob = this.mobs.find(m => m.pvpMobId === msg.mobId && m.alive)
       || this.miningBases.find(b => b.pvpMobId === msg.mobId && b.alive)
       || this.miningBases.flatMap(b => b.turretTargets).filter(Boolean).find(tt => tt.pvpMobId === msg.mobId && tt.alive)
-      || this.armoredTrain?.wagons.find(w => w.pvpMobId === msg.mobId && w.alive);
+      || this.armoredTrain?.wagons.find(w => w.pvpMobId === msg.mobId && w.alive)
+      || this.armoredTrain?.wagons.flatMap(w => w.turrets).find(tt => tt?.pvpMobId === msg.mobId && tt.alive);
     if (!mob) return;
     if (msg.dodged) { this.showDodge(mob.x, mob.y); return; }
     const hullHit   = msg.killed ? mob.hull   : Math.max(0, mob.hull   - msg.hull);
@@ -3364,8 +3539,15 @@ export default class GameScene extends Phaser.Scene {
         if (mob.isHead && msg.attackerUserId === this.myUserId) {
           this._rollLaserPartDrop(this.armoredTrain?.cfg.laserPartChance);
         }
+        // Только добивающий клиент шлёт спавн лутбокса — иначе каждый клиент комнаты,
+        // видевший этот же килл, создал бы СВОЙ дубликат на один и тот же вагон.
+        if (msg.attackerUserId === this.myUserId) this._spawnWagonLoot(mob, msg.damageBy);
         this.armoredTrain?.onWagonDestroyed(mob);
       }
+      // Турель поезда — свой мини-слот на вагоне (TrainTurretTarget): смерть турели НЕ
+      // разрушает сам вагон, только освобождает точку крепления (onTurretDestroyed) —
+      // тот же контракт, что у TurretTarget/_onTurretDestroyed на базе выше.
+      else if (mob.isTrainTurretTarget) { mob.alive = false; mob.wagon.onTurretDestroyed(mob.idx); }
       else { mob.die(); this.onMobKilled(mob); }
     }
   }
@@ -3404,6 +3586,19 @@ export default class GameScene extends Phaser.Scene {
         if (pool.xp) this.gainXp(pool.xp);
         if (pool.gold) this.starGold = (this.starGold || 0) + pool.gold;
       }
+    } else if (t.isTrainTurretTarget) {
+      // Турель уже сама обработала свою смерть ВНУТРИ takeDamage() (onTurretDestroyed) —
+      // без своей ветки тут упало бы в generic res.killed → onMobKilled(t), который ждёт
+      // t.tpl (обычный Mob) и сломался бы на турели.
+    } else if (t.isArgusBoss) {
+      // Как и в серверной ветке (_onPvpMobHitResult) — НЕ onMobKilled(t): у Аргуса свой
+      // reward-пайплайн (ArgusController._onArgusDied(), топ-8 по _damageBy). Раньше эта
+      // ветка отсутствовала — Mob.takeDamage() уже вызвал die() сам (mob.alive=false), но
+      // код проваливался в generic `else if (res.killed) { this.onMobKilled(t) }` ниже —
+      // тот же моб получал ВТОРУЮ, чужую обработку смерти (mob.tpl.credits/xp у Аргуса
+      // намеренно 0, см. constants.js, так что видимого доп. лута не было, но лишний
+      // вызов onMobKilled на боссовом mob-объекте не задуман и мог давать посторонние
+      // побочные эффекты). ArgusController.update() и так детектит !mob.alive каждый кадр.
     } else if (res.killed) {
       this.onMobKilled(t); // Mob.takeDamage() уже вызвал die() сам, onMobKilled — отдельно
     }
@@ -3415,6 +3610,51 @@ export default class GameScene extends Phaser.Scene {
     if (!chance || Math.random() >= chance) return;
     addConsumableToInventory(this.inventory, 'laser_cannon_part', 1, this._cargoMax());
     this.log('⚡ Получена часть лазерной пушки!');
+  }
+
+  // Лутбокс(ы) с уничтоженного вагона бронепоезда — гарантированный модуль + шанс
+  // патронов/расходников + шанс клан-ресурса (3-10 по тиру сектора). Переиспользует ту
+  // же PvpLootBox-инфраструктуру, что и лут с убитого игрока (см. pvp_wagon_loot_spawn в
+  // main.py) — каждый пункт отдельной коробкой в той же точке, схема item:{type,...}
+  // не меняется, просто несколько независимых спавнов вместо одного составного объекта.
+  // eligible — из damageBy, который сервер прислал в pvp_mob_hit_result на килле (см. там
+  // же) — тот же набор контрибьюторов, что уже получил денежную долю за вагон.
+  _spawnWagonLoot(wagon, damageByRaw) {
+    if (!this.pvpClient || !damageByRaw) return;
+    const eligible = Object.keys(damageByRaw).map(Number).filter(Number.isFinite);
+    if (!eligible.length) return;
+    const cfg = this.armoredTrain?.cfg;
+    const level = cfg?.lvlMax ?? this.pilotLevel ?? 25;
+    const tier = Math.min(4, Math.max(1, this.armoredTrain?.tier ?? 1));
+    const x = wagon.x, y = wagon.y;
+
+    // Гарантированный модуль — разброс 40/30/20/10 пушка/щит/двигатель/броня, тот же, что
+    // и rollLootForMob (та ждёт настоящий Mob с .tpl/.level — у вагона его нет).
+    const r = Phaser.Math.Between(0, 99);
+    const moduleItem = r < 40 ? rollCannon(tier, level)
+      : r < 70 ? rollShield(tier, level)
+      : r < 90 ? rollEngine(tier, level)
+      : rollArmor(tier, level);
+    this.pvpClient.wagonLootSpawn(x, y, moduleItem, eligible);
+
+    // Патроны/расходники — независимый шанс, отдельная коробка.
+    if (Phaser.Math.FloatBetween(0, 1) < 0.35) {
+      const extra = Phaser.Math.FloatBetween(0, 1) < 0.5
+        ? { type: 'ammo_plasma', amount: Phaser.Math.Between(5, 20) }
+        : rollConsumableDrop({ isBoss: true, tpl: {} });
+      if (extra) this.pvpClient.wagonLootSpawn(x, y, extra, eligible);
+    }
+
+    // Клан-ресурс — 3-10 по тиру сектора (pvp_1..pvp_5 → tier 1-5, максимум зажат в 4
+    // выше для модулей, тут используем реальный тир сектора отдельно для диапазона).
+    if (Phaser.Math.FloatBetween(0, 1) < 0.5) {
+      const realTier = Math.min(5, Math.max(1, this.armoredTrain?.tier ?? 1));
+      const TIER_RES_MAX = [3, 5, 7, 8, 10];
+      const CLAN_RES_KEYS = ['biomech_fragment', 'quantum_shard', 'plasma_strand'];
+      const resType = CLAN_RES_KEYS[Phaser.Math.Between(0, CLAN_RES_KEYS.length - 1)];
+      const amount = Phaser.Math.Between(3, TIER_RES_MAX[realTier - 1] ?? 10);
+      this.pvpClient.wagonLootSpawn(x, y, { type: resType, amount }, eligible);
+    }
   }
 
   _nearestMiningBase() {
@@ -3534,6 +3774,11 @@ export default class GameScene extends Phaser.Scene {
   _fireLaser(skillMult = 1, isOC = false) {
     const t = this.target, p = this.player;
     if (!t?.alive || !p.alive) return;
+    // См. _fireCannon — вагон бронепоезда лочится всегда, но бьётся строго с хвоста.
+    if (t.isArmoredTrainWagon && !t.canBeAttacked) {
+      this._warnThrottle('train_wagon_order', '🚂 Уничтожьте сначала крайний вагон — бронепоезд бьётся строго с хвоста.');
+      return;
+    }
 
     // PvP: как в _fireCannon — сервер решает исход, клиент только рисует луч и заявляет
     // выстрел. Вне реальных PvP-секторов И свой корпус — везде союзники (см. комментарий
@@ -4747,6 +4992,14 @@ export default class GameScene extends Phaser.Scene {
         this.player.respawn(rx, ry);
         if (!fullHull) this.player.hull = Math.round(this.player.maxHull * 0.5);
         this._spawnEngineFx();
+        // 3с неуязвимости после ремонта НА МЕСТЕ (не при выбросе на базу — там уже
+        // происходит scene.restart в relative safety своего дома) — прерывается сразу,
+        // как только сам игрок атакует (см. firePlayerWeapon). Локальный урон (мобы/
+        // турели баз) гейтится Player.takeDamage(spawnGraceEndTime); PvP-урон от других
+        // игроков — тем же окном на сервере (см. PvpPlayerState.respawn_grace_until,
+        // main.py _resolve_pvp_hit), выставляется там независимо, автоматически на килле.
+        this.player.spawnGraceEndTime = this.time.now + 3000;
+        this.log('🛡 3с неуязвимости после ремонта — прервётся, если атакуете сами.');
       }
     };
 

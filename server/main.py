@@ -334,6 +334,12 @@ class PvpPlayerState:
         # при килле в last_death_eligible.
         self.damage_by: dict[int, float] = {}
         self.last_death_eligible: list[int] = []
+        # 3с неуязвимости после "ремонта на месте" (см. GameScene.finishRespawn) —
+        # выставляется в _resolve_pvp_hit сразу на килле (сервер и так мгновенно
+        # "респавнит" hull/shield в своей бухгалтерии, см. _apply_pvp_damage). Снимается
+        # досрочно, как только сама жертва атакует (см. pvp_fire_claim/pvp_mob_fire_claim —
+        # открытие огня сбрасывает это поле в 0).
+        self.respawn_grace_until = 0.0
 
     def to_public(self) -> dict:
         return {
@@ -461,7 +467,12 @@ class ArmoredTrainManager:
 
     def is_vulnerable(self, train_key: str, wagon_idx: int) -> bool:
         d = self.destroyed.get(train_key, set())
-        return all(i in d for i in range(wagon_idx))
+        # wagon_idx not in d — раньше отсутствовало: проверялись только МЕНЬШИЕ индексы,
+        # так что уже уничтоженный вагон сам по себе продолжал проходить эту проверку
+        # (все младшие тоже destroyed). Позднее/повторное pvp_mob_fire_claim по тому же
+        # (уже мёртвому) mob_id лениво пересоздавал бы mob_state с полным HP и пустым
+        # damage_by (get_or_create_mob) — тот же вагон убивался и награждался ВТОРОЙ раз.
+        return wagon_idx not in d and all(i in d for i in range(wagon_idx))
 
     def mark_destroyed(self, train_key: str, wagon_idx: int):
         self.destroyed.setdefault(train_key, set()).add(wagon_idx)
@@ -574,6 +585,16 @@ def _apply_pvp_damage(claimed_dmg: float, ceiling: float, penetration: float,
 
 
 def _resolve_pvp_hit(attacker: PvpPlayerState, victim: PvpPlayerState, claimed_dmg: float) -> dict:
+    # Грейс-период после "ремонта на месте" — короткое замыкание ДО _apply_pvp_damage,
+    # тем же контрактом ответа, что дожд ("dodged"), которым уже пользуется клиент
+    # (_onPvpHitResult → showDodge), без урона и без изменения hull/shield жертвы.
+    if victim.respawn_grace_until > time.time():
+        return {
+            'isCrit': False, 'dmg': 0, 'killed': False, 'dodged': True,
+            'hull': victim.hull, 'shield': victim.shield,
+            'maxHull': victim.max_hull, 'maxShield': victim.max_shield,
+            'damageBy': None, 'bountyBonus': None,
+        }
     r = _apply_pvp_damage(claimed_dmg, attacker.loadout['dmg'], attacker.loadout['penetration'],
                            victim.hull, victim.shield, victim.max_hull, victim.max_shield,
                            attacker.loadout['critChance'], attacker.loadout['critMult'],
@@ -584,6 +605,7 @@ def _resolve_pvp_hit(attacker: PvpPlayerState, victim: PvpPlayerState, claimed_d
     damage_by_out = None
     bounty_bonus = None
     if r['killed']:
+        victim.respawn_grace_until = time.time() + 3.0
         # Снапшот "кто бил эту жизнь" для лут-бокса (см. pvp_loot_spawn) — победитель
         # и все, кто помогал, увидят коробку; сам victim — нет. Тот же снапшот (уже с
         # суммами, не только ключами) шлём в pvp_hit_result — каждый атаковавший клиент
@@ -1263,6 +1285,21 @@ async def chat_ws(
                     state.corp = str(loadout['corp'])[:20]
                 if loadout.get('level'):
                     state.level = max(1, int(loadout['level']))
+                # Раньше это обновление было чисто внутренним (только потолок урона на
+                # сервере, см. _clamp_pvp_loadout) — другие клиенты, уже отрендерившие
+                # этого игрока как RemotePlayer, никогда не узнавали о смене
+                # корабля/корпуса/уровня после первого джойна комнаты (баг "враг
+                # переключился на Аргуса, а у меня всё ещё виден старый корабль",
+                # переживает даже респавн — respawn не пересоздаёт RemotePlayer, только
+                # позицию, см. клиент RemotePlayer.applyPos). Раздаём публичные поля.
+                others = pvp_room_manager.others(sector, user.id)
+                if others:
+                    await chat_manager.broadcast_to_uids(
+                        [p.user_id for p in others],
+                        {'type': 'pvp_player_updated', 'userId': user.id, 'shipKey': state.ship_key,
+                         'corp': state.corp, 'level': state.level,
+                         'maxHull': state.max_hull, 'maxShield': state.max_shield},
+                    )
 
             # ── PvP: обновление позиции (throttled клиентом, ~10Hz) ────
             elif msg_type == 'pvp_pos':
@@ -1337,6 +1374,9 @@ async def chat_ws(
                 if dist > attacker.loadout['range']:
                     continue  # вне заявленной дальности — молча игнорируем
                 attacker.last_shot_at = now_ts
+                # Открытие огня самим атакующим снимает ЕГО СОБСТВЕННУЮ грейс-неуязвимость
+                # после ремонта на месте (см. respawn_grace_until) — "если сам не атакуешь".
+                attacker.respawn_grace_until = 0.0
 
                 claimed_dmg = max(0.0, float(data.get('dmg', 0) or 0))
                 result = _resolve_pvp_hit(attacker, victim, claimed_dmg)
@@ -1402,6 +1442,27 @@ async def chat_ws(
                 wagons = {mid: s for mid, s in pvp_room_manager.mob_snapshot(sector).items() if mid.startswith(prefix)}
                 await ws.send_json({'type': 'pvp_train_snapshot', 'trainKey': train_key, 'destroyed': destroyed, 'wagons': wagons})
 
+            # ── DEV: хоткей T (GameScene) принудительно запускает бронепоезд с
+            # произвольным startAt=Date.now(), а не детерминированным
+            # _armoredTrainTodayStart — в отличие от обычного расписания это НЕ
+            # выводится одинаково на всех клиентах самостоятельно, так что раньше поезд
+            # видел только тот, кто нажал T. Просто ретранслируем startAt остальным в
+            # секторе — их ArmoredTrain.js строит маршрут детерминированно от
+            # (sectorKey, startAt), так что все получат идентичный путь/позиции.
+            elif msg_type == 'pvp_train_force_spawn':
+                sector = pvp_room_manager.player_sector.get(user.id)
+                if not sector:
+                    continue
+                start_at = data.get('startAt')
+                if start_at is None:
+                    continue
+                others = pvp_room_manager.others(sector, user.id)
+                if others:
+                    await chat_manager.broadcast_to_uids(
+                        [p.user_id for p in others],
+                        {'type': 'pvp_train_force_spawn', 'startAt': start_at},
+                    )
+
             # ── PvP: заявка на выстрел по общему мобу сектора — HP шарится
             #    между всеми игроками (см. PvpMobState); движение моба сервер
             #    не знает (клиент-локальный AI), поэтому дальность — мягкая
@@ -1424,6 +1485,9 @@ async def chat_ws(
                     if dist > attacker.loadout['range']:
                         continue
                 attacker.last_shot_at = now_ts
+                # Огонь по мобу/базе/турели/бронепоезду — тоже "сам атакуешь", снимает
+                # грейс-неуязвимость после ремонта на месте, как и огонь по игроку выше.
+                attacker.respawn_grace_until = 0.0
 
                 mob_id = str(mob_id)[:80]
                 # Бронепоезд: бить можно только текущий хвостовой вагон — читер не может
@@ -1431,14 +1495,20 @@ async def chat_ws(
                 train_key = wagon_idx = None
                 if mob_id.startswith('train:'):
                     parts = mob_id.split(':')
+                    # Только реальные вагоны (mobId "train:sector:startAt:idx", 4 части)
+                    # проходят очередь "бить строго с хвоста". Дроны охраны головы
+                    # ("train:sector:startAt:drone:phase:i", 6 частей) — обычные мобы,
+                    # без этого gate'а: раньше wagon_idx оставался None для НИХ тоже, и
+                    # continue ниже молча дропал вообще ВСЕ заявки по дронам — дроны были
+                    # неубиваемы (сервер никогда не применял урон к mob_state).
                     if len(parts) == 4:
                         train_key = f"{parts[1]}:{parts[2]}"
                         try:
                             wagon_idx = int(parts[3])
                         except ValueError:
                             wagon_idx = None
-                    if wagon_idx is None or not armored_train_manager.is_vulnerable(train_key, wagon_idx):
-                        continue  # этот вагон ещё неуязвим (или mobId битый) — молча игнорируем
+                        if wagon_idx is None or not armored_train_manager.is_vulnerable(train_key, wagon_idx):
+                            continue  # этот вагон ещё неуязвим (или mobId битый) — молча игнорируем
 
                 max_hull = max(1.0, float(data.get('maxHull', 1)))
                 max_shield = max(0.0, float(data.get('maxShield', 0)))
@@ -1477,6 +1547,12 @@ async def chat_ws(
                     'maxHull': mob_state.max_hull, 'maxShield': mob_state.max_shield,
                     **result,
                 }
+                # damageBy — только на килле вагона поезда, нужен убивающему клиенту, чтобы
+                # определить, кто имеет право на лутбокс с вагона (см. pvp_wagon_loot_spawn
+                # ниже) — раньше этот путь (в отличие от игрок-игрок _resolve_pvp_hit) вообще
+                # не сообщал разбивку урона по атакующим.
+                if result['killed'] and train_key is not None:
+                    out['damageBy'] = {str(uid): round(dmg) for uid, dmg in mob_state.damage_by.items()}
                 room_uids = [attacker.user_id] + [p.user_id for p in pvp_room_manager.others(sector, attacker.user_id)]
                 await chat_manager.broadcast_to_uids(room_uids, out)
 
@@ -1551,6 +1627,34 @@ async def chat_ws(
                 item = data.get('item') or {}
                 x = float(data.get('x', victim.x) or victim.x)
                 y = float(data.get('y', victim.y) or victim.y)
+                pvp_room_manager.spawn_loot(sector, loot_id, x, y, item, eligible)
+                await chat_manager.broadcast_to_uids(eligible, {
+                    'type': 'pvp_loot_spawned', 'lootId': loot_id, 'x': x, 'y': y, 'item': item,
+                })
+
+            # ── Бронепоезд: лутбокс с уничтоженного вагона — переиспользует ту же
+            #    PvpLootBox/spawn_loot инфраструктуру, что и лут с убитого игрока выше, но
+            #    eligible нет откуда взять из PvpPlayerState (нет "жертвы"-игрока) — клиент,
+            #    добивший вагон, шлёт готовый item (тот же паттерн "клиент решает ЧТО, сервер
+            #    решает КОМУ видно", см. pvp_loot_spawn) + список contributor uid'ов из
+            #    damageBy, которую сервер сам прислал ему в pvp_mob_hit_result на килле (см.
+            #    выше в pvp_mob_fire_claim) — не считаем заново, просто доверяем тому же
+            #    множеству, что уже получило денежную долю за вагон.
+            elif msg_type == 'pvp_wagon_loot_spawn':
+                sector = pvp_room_manager.player_sector.get(user.id)
+                if not sector:
+                    continue
+                item = data.get('item')
+                eligible_raw = data.get('eligible') or []
+                try:
+                    eligible = [int(u) for u in eligible_raw]
+                except (TypeError, ValueError):
+                    eligible = []
+                if not isinstance(item, dict) or not item or not eligible:
+                    continue
+                x = float(data.get('x', 0) or 0)
+                y = float(data.get('y', 0) or 0)
+                loot_id = f"wagonloot:{sector}:{int(time.time() * 1000)}:{user.id}"
                 pvp_room_manager.spawn_loot(sector, loot_id, x, y, item, eligible)
                 await chat_manager.broadcast_to_uids(eligible, {
                     'type': 'pvp_loot_spawned', 'lootId': loot_id, 'x': x, 'y': y, 'item': item,

@@ -1,5 +1,5 @@
 import * as Phaser from 'https://cdn.jsdelivr.net/npm/phaser@4.2.1/dist/phaser.esm.js';
-import { COLORS, UI_RES, BASE_SCAN_RADIUS, DPR } from '../constants.js';
+import { COLORS, UI_RES, BASE_SCAN_RADIUS, DPR, ARMORED_TRAIN_SECTORS } from '../constants.js';
 import { i18n } from '../i18n.js';
 import { levelInfo, MAX_LEVEL } from '../leveling.js';
 import { minimapRect, fit } from '../systems/minimap.js';
@@ -10,6 +10,7 @@ import { prerenderTex } from '../utils/prerenderTex.js';
 import { loadSettings, saveSettings, getMinimapDims } from '../settings.js';
 import { GroupSystem } from '../systems/GroupSystem.js';
 import { PvpClient } from '../systems/PvpClient.js';
+import ArmoredTrain from '../entities/ArmoredTrain.js';
 
 const BOOSTER_DEFS = [
   { key: 'boost_damage', icon: '⚔', label: 'Урон +10%',  color: '#ff8c40' },
@@ -1031,24 +1032,45 @@ export default class HudScene extends Phaser.Scene {
     }
 
     // Бронепоезд (только PvP, всегда видим — как база/эскорт, не зависит от скан-радиуса,
-    // это заявленная угроза всему сектору, не спрятанный объект). Пунктир — весь маршрут
-    // (старт→конец), чтобы можно было забежать вперёд и перехватить, не только гнаться
-    // за текущей позицией; ромбики — живые вагоны, голова другим цветом.
+    // это заявленная угроза всему сектору, не спрятанный объект). startPos/endPos лежат
+    // ДАЛЕКО за границей сектора (EDGE_BUFFER, см. ArmoredTrain.js) — рисовать пунктир до
+    // них рисовало бы поезд/маршрут далеко за рамкой миникарты. Вместо этого: пунктир
+    // только между mapEnterPos/mapExitPos (реальные точки пересечения маршрута с границей
+    // сектора, всегда внутри миникарты по построению) + стрелка на точке входа, куда
+    // поезд едет — направление, откуда он появится, даже пока сам ещё не доехал.
     if (sec.pvp && gs.armoredTrain) {
       const tr = gs.armoredTrain;
-      const sx = f.ox + tr.startPos.x * f.s, sy = f.oy + tr.startPos.y * f.s;
-      const ex = f.ox + tr.endPos.x * f.s, ey = f.oy + tr.endPos.y * f.s;
+      const ax = f.ox + tr.mapEnterPos.x * f.s, ay = f.oy + tr.mapEnterPos.y * f.s;
+      const bx = f.ox + tr.mapExitPos.x * f.s, by = f.oy + tr.mapExitPos.y * f.s;
       g.lineStyle(1, 0xffb74d, 0.35);
       const steps = 24;
       for (let i = 0; i < steps; i += 2) {
         const t0 = i / steps, t1 = (i + 1) / steps;
         g.lineBetween(
-          Phaser.Math.Linear(sx, ex, t0), Phaser.Math.Linear(sy, ey, t0),
-          Phaser.Math.Linear(sx, ex, t1), Phaser.Math.Linear(sy, ey, t1),
+          Phaser.Math.Linear(ax, bx, t0), Phaser.Math.Linear(ay, by, t0),
+          Phaser.Math.Linear(ax, bx, t1), Phaser.Math.Linear(ay, by, t1),
         );
       }
+      // Стрелка на точке входа — направление движения (dirX/dirY), не зависит от того,
+      // доехал ли уже поезд до этой точки.
+      const dirX = f.s * tr._dirX, dirY = f.s * tr._dirY; // масштаб не важен, только направление
+      const dlen = Math.hypot(dirX, dirY) || 1;
+      const ndx = dirX / dlen, ndy = dirY / dlen;
+      const ARROW = 7;
+      const tipX = ax + ndx * ARROW, tipY = ay + ndy * ARROW;
+      const perpX = -ndy * ARROW * 0.55, perpY = ndx * ARROW * 0.55;
+      g.fillStyle(0xffee44, 0.9);
+      g.fillPoints([
+        { x: tipX, y: tipY },
+        { x: ax - ndx * ARROW * 0.4 + perpX, y: ay - ndy * ARROW * 0.4 + perpY },
+        { x: ax - ndx * ARROW * 0.4 - perpX, y: ay - ndy * ARROW * 0.4 - perpY },
+      ], true);
+      // Вагоны — ромбиком, ТОЛЬКО пока реально в границах сектора (не за EDGE_BUFFER) —
+      // за пределами карты их и не должно быть видно, маршрут+стрелка выше уже сообщают
+      // "оттуда, в эту сторону".
       for (const w of tr.wagons) {
         if (!w.alive) continue;
+        if (w.x < 0 || w.x > ww || w.y < 0 || w.y > wh) continue;
         const wx = f.ox + w.x * f.s, wy = f.oy + w.y * f.s;
         const c = w.isHead ? 0xffee44 : 0xffb74d;
         const sz = w.isHead ? 4 : 3;
@@ -1779,12 +1801,32 @@ export default class HudScene extends Phaser.Scene {
       if (quantum_shard > 0) addConsumableToInventory(gs.inventory, 'quantum_shard', quantum_shard, cargoMax);
       if (plasma_strand > 0) addConsumableToInventory(gs.inventory, 'plasma_strand', plasma_strand, cargoMax);
       gs.log?.(i18n.t('log.wagon_reward', { credits, xp }));
+      // Раньше эта ветка не сохраняла состояние (в отличие от каждого другого reward-пути
+      // в этом файле — лут-пикап/карго) — держалось только на 60с автосейве
+      // (GameScene._saveState тик). Реконнект/краш/закрытие вкладки в этом окне тихо
+      // терял награду, хотя она на миг мелькала в HUD (см. диалог "не вижу наград").
+      gs._saveState?.();
     };
     // Игрок зашёл в PvP-сектор ПОСЛЕ начала события бронепоезда (или переподключился
     // посреди него) — без этого его клиент показал бы поезд с полным HP вместо
     // реального состояния (см. ArmoredTrain.applySnapshot / pvp_train_query в main.py).
     this.pvpClient.onTrainSnapshot = (msg) => {
       this.scene.get('GameScene')?.armoredTrain?.applySnapshot(msg);
+    };
+    // DEV-хоткей T (GameScene): другой игрок в секторе принудительно запустил бронепоезд
+    // с произвольным startAt (не детерминированным wall-clock расписанием) — раньше это
+    // видел только тот, кто нажал T, т.к. остальные клиенты сами до такого startAt не
+    // додумаются. Сервер (main.py pvp_train_force_spawn) ретранслирует startAt — строим
+    // тот же ArmoredTrain локально, детерминированный маршрут совпадёт у всех.
+    this.pvpClient.onTrainForceSpawn = (msg) => {
+      const gs = this.scene.get('GameScene');
+      if (!gs || !gs.scene.isActive()) return;
+      const sec = SECTORS[galaxy.current];
+      if (!sec?.pvp || !ARMORED_TRAIN_SECTORS[galaxy.current]) return;
+      gs.armoredTrain?.destroy();
+      gs.armoredTrain = new ArmoredTrain(gs, galaxy.current, msg.startAt);
+      this.pvpClient.trainQuery(gs.armoredTrain.trainKey);
+      gs.log?.(`🚂 ${sec.name}: бронепоезд на маршруте (запущен другим игроком)!`);
     };
     this.groupSystem.onGoldReward = (gold, credits, xp) => {
       const gs = this.scene.get('GameScene');
