@@ -37,6 +37,7 @@ export class PvpClient {
         this.onBountySnapshot = null; // (msg) => void — {bounties:[{userId,name}]} при подключении
         this.onWagonReward   = null; // (msg) => void — доля пропорциональной награды за вагон бронепоезда
         this.onTrainSnapshot = null; // (msg) => void — {trainKey, destroyed:[idx], wagons:{mobId:{hull,...}}}
+        this.onMobRoomUpdate = null; // (msg) => void — {roomKey, mobs:[{mobId,targetUserId}]} серверный таргетинг дронов/турелей
     }
 
     // ── Outgoing ─────────────────────────────────────────────────────────────
@@ -163,6 +164,14 @@ export class PvpClient {
         this._send({ type: 'pvp_train_force_spawn', startAt });
     }
 
+    /** Регистрирует дрона/турель как ServerMob для сервер-авторитетного таргетинга
+     * (см. server _tick_room, План Фаза 2+) — идемпотентно на сервере, можно звать с
+     * любого клиента, кто первым увидел детерминированный спавн этого mobId. */
+    registerMob(mobId) {
+        if (!this.sector) return;
+        this._send({ type: 'pvp_mob_register', mobId });
+    }
+
     // ── Incoming (call from WS onmessage handler, routed by HudScene) ────────
 
     handleMessage(msg) {
@@ -245,6 +254,10 @@ export class PvpClient {
 
             case 'pvp_train_force_spawn':
                 this.onTrainForceSpawn?.(msg);
+                break;
+
+            case 'pvp_mob_room_update':
+                this.onMobRoomUpdate?.(msg);
                 break;
         }
     }

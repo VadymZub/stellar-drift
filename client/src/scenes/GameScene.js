@@ -3707,6 +3707,15 @@ export default class GameScene extends Phaser.Scene {
     }
   }
 
+  // Сервер-авторитетный таргетинг (План "server-authoritative mob AI", Фаза 2+):
+  // раз в тик сервер решает, какого игрока комнаты сейчас атакует каждый
+  // зарегистрированный ServerMob (сейчас — дроны бронепоезда), и рассылает это ВСЕМ
+  // клиентам комнаты одинаково. См. использование в GameScene.update() — mobs.forEach.
+  _onPvpMobRoomUpdate(msg) {
+    this._serverMobTargets ??= {};
+    for (const u of msg.mobs ?? []) this._serverMobTargets[u.mobId] = u.targetUserId;
+  }
+
   // ── PvP: общий лут с убитых игроков ────────────────────────────────────────
   // Коробка видна только тем, кому сервер её разослал (победитель + все, кто
   // наносил урон) — сама жертва этот Loot никогда не получает.
@@ -5321,6 +5330,24 @@ export default class GameScene extends Phaser.Scene {
     }
     if (this.player.alive && galaxy.current === 'dungeon_1') this._updateSwarmPack();
     this.mobs.forEach((m) => {
+      // Сервер-авторитетный таргетинг (дроны бронепоезда, План Фаза 2): если сервер
+      // назначил этого дрона ДРУГОМУ игроку комнаты в этот тик, наш локальный игрок
+      // для него — не цель. Раньше (чисто клиент-локальный AI) КАЖДЫЙ клиент в комнате
+      // независимо решал "агрюсь на моего локального игрока", так что двое игроков
+      // рядом с одним роем оба видели "дроны атакуют именно меня" одновременно.
+      // Форсим playerInSafeZone=true — Mob.js уходит в idle-ветку (patrol вокруг
+      // spawnX/Y, который _updateDrones каждый кадр перепривязывает к голове поезда —
+      // готовое "висит роем у головы", ничего изобретать не пришлось) без агро/огня
+      // по нашему локальному игроку. Когда сервер ещё не прислал апдейт (соло/дев,
+      // realtimeRoomKey нет, registerMob никогда не звался) — targetUid остаётся
+      // undefined и мы просто идём по старому пути ниже без изменений.
+      if (m.isArmoredTrainDrone && m.pvpMobId && this._serverMobTargets) {
+        const targetUid = this._serverMobTargets[m.pvpMobId];
+        if (targetUid !== undefined && targetUid !== this.myUserId) {
+          m.update(dt, this.player, true, () => {});
+          return;
+        }
+      }
       const tgt = (m.escortTarget?.alive) ? m.escortTarget : this.player;
       const victim = (m.escortTarget?.alive) ? this.escortTransport : this.player;
       const _fireCb = this.mobAimDisrupted ? () => {} : (mob, tx, ty) => this.fireMobWeapon(mob, tx, ty, victim);

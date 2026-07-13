@@ -64,10 +64,12 @@ class Stats:
         self.disconnected_early = 0
         self.fires_sent = 0
         self.fires_skipped_no_target = 0
+        self.mob_room_updates = 0  # pvp_mob_room_update принято хоть кем-то — см. --drones
         self.error_samples = []  # первые N реальных исключений — для диагностики
 
 
-async def bot_loop(ws_url, username, token, uid_by_name, sector, duration, ramp_delay, stats: Stats):
+async def bot_loop(ws_url, username, token, uid_by_name, sector, duration, ramp_delay, stats: Stats,
+                    bot_index=0, drones=0):
     # ramp_delay — небольшой разброс старта, чтобы не открывать все N соединений
     # в один и тот же миллисекунд (реалистичнее "наплыва", легче искать в логах момент отказов)
     if ramp_delay:
@@ -92,6 +94,8 @@ async def bot_loop(ws_url, username, token, uid_by_name, sector, duration, ramp_
                             continue
                         if msg.get('type') == 'session_info':
                             uid_by_name[username] = msg.get('userId')
+                        elif msg.get('type') == 'pvp_mob_room_update':
+                            stats.mob_room_updates += 1
                 except Exception:
                     pass
 
@@ -109,6 +113,17 @@ async def bot_loop(ws_url, username, token, uid_by_name, sector, duration, ramp_
             }
             await ws.send(json.dumps({'type': 'pvp_enter', 'sector': sector, 'x': x, 'y': y, 'loadout': loadout}))
             stats.sent += 1
+
+            # --drones: симулируем волну дронов бронепоезда (План, Фаза 2 —
+            # server-authoritative таргетинг). В реальности ArmoredTrain.registerMob()
+            # зовёт КАЖДЫЙ клиент в комнате на один и тот же детерминированный mobId
+            # (регистрация идемпотентна на сервере), для нагрузки достаточно одного
+            # отправителя — важно именно поведение _tick_room/broadcast на N ботов.
+            if drones and bot_index == 0:
+                await asyncio.sleep(0.3)  # даём room_manager.enter() долететь на сервере
+                for i in range(drones):
+                    await ws.send(json.dumps({'type': 'pvp_mob_register', 'mobId': f'loadtest_drone_{username}_{i}'}))
+                    stats.sent += 1
 
             end_at = time.monotonic() + duration
             last_fire = time.monotonic()
@@ -168,7 +183,7 @@ async def run(args):
     t0 = time.monotonic()
     tasks = [
         bot_loop(ws_url, username, token, uid_by_name, args.sector, args.duration,
-                 i * args.ramp_ms / 1000.0, stats)
+                 i * args.ramp_ms / 1000.0, stats, bot_index=i, drones=args.drones)
         for i, (username, token) in enumerate(accounts)
     ]
     await asyncio.gather(*tasks, return_exceptions=True)
@@ -184,6 +199,10 @@ async def run(args):
         print(f'Время подключения: среднее {avg_c:.2f}с, макс {max(stats.connect_times):.2f}с')
     print(f'Сообщений отправлено: {stats.sent}, получено: {stats.received}')
     print(f'"Выстрелов" отправлено: {stats.fires_sent} (пропущено из-за отсутствия целей: {stats.fires_skipped_no_target})')
+    if args.drones:
+        expected_ticks = int(args.duration / 0.175)  # MOB_TICK_MS=175 в main.py
+        print(f'pvp_mob_room_update принято (суммарно всеми ботами): {stats.mob_room_updates} '
+              f'(~{expected_ticks} тиков x {stats.connected} ботов = {expected_ticks * stats.connected} в идеале)')
     print(f'Всего ошибок: {stats.errors}')
     if stats.error_samples:
         print('Примеры ошибок:')
@@ -200,5 +219,9 @@ if __name__ == '__main__':
     p.add_argument('--sector', default='pvp_1', help='PvP-сектор для всех ботов (общая комната)')
     p.add_argument('--ramp-ms', type=int, dest='ramp_ms', default=20,
                     help='Задержка между стартом соседних ботов, мс (0 = все разом)')
+    p.add_argument('--drones', type=int, default=0,
+                    help='Симулировать волну дронов бронепоезда: первый бот регистрирует '
+                         'N ServerMob (pvp_mob_register), проверяем broadcast pvp_mob_room_update '
+                         'на всех ботов комнаты (План "server-authoritative mobs", Фаза 2)')
     args = p.parse_args()
     asyncio.run(run(args))

@@ -1818,6 +1818,13 @@ export default class HudScene extends Phaser.Scene {
     // видел только тот, кто нажал T, т.к. остальные клиенты сами до такого startAt не
     // додумаются. Сервер (main.py pvp_train_force_spawn) ретранслирует startAt — строим
     // тот же ArmoredTrain локально, детерминированный маршрут совпадёт у всех.
+    // Сервер-авторитетный таргетинг дронов бронепоезда (План, Фаза 2) — раз в тик
+    // сообщает, какого игрока в комнате КАЖДЫЙ дрон сейчас атакует (круговое
+    // распределение по игрокам, см. server _tick_room), чинит "оба видят, что рой
+    // бьёт именно меня", даже когда рядом двое.
+    this.pvpClient.onMobRoomUpdate = (msg) => {
+      this.scene.get('GameScene')?._onPvpMobRoomUpdate(msg);
+    };
     this.pvpClient.onTrainForceSpawn = (msg) => {
       const gs = this.scene.get('GameScene');
       if (!gs || !gs.scene.isActive()) return;

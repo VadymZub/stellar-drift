@@ -116,10 +116,24 @@ class ChatManager:
                 return
 
     async def broadcast_to_uids(self, uids, data: dict, exclude_uid: int | None = None):
-        for uid in uids:
-            if uid == exclude_uid:
-                continue
-            await self.send_to_uid(uid, data)
+        # Раньше это звало send_to_uid(uid) в цикле — КАЖДЫЙ вызов заново линейно
+        # сканирует self.active (ВСЕ соединения сервера, не только эту комнату),
+        # т.е. O(получателей × всех_соединений) ПОСЛЕДОВАТЕЛЬНЫХ await на один
+        # broadcast. Для редких разовых рассылок (бонус, PM) это было незаметно, но
+        # новый серверный тик мобов (см. _mob_tick_loop, ~6 раз/сек) — первый в
+        # кодовой базе caller, который зовёт это часто и с размером комнаты в
+        # получателях; при ~100 одновременных игроках нагрузочный тест
+        # (loadtest.py --drones) показал реальную деградацию — часть НОВЫХ WS-
+        # хэндшейков не успевала за то время, пока event loop последовательно рассылал
+        # тик всем. Строим uid→ws один раз (O(соединений)) и шлём конкурентно.
+        uid_set = set(uids)
+        if exclude_uid is not None:
+            uid_set.discard(exclude_uid)
+        if not uid_set:
+            return
+        targets = [ws for ws, m in list(self.active.items()) if m.get('uid') in uid_set]
+        if targets:
+            await asyncio.gather(*(self._send(ws, data) for ws in targets))
 
 
 chat_manager = ChatManager()
@@ -482,6 +496,145 @@ class ArmoredTrainManager:
 
 
 armored_train_manager = ArmoredTrainManager()
+
+
+# ── Серверный тик мобов (Фаза 1 плана "server-authoritative shared mobs") ──────
+# Раньше ЛЮБОЙ моб (дроны поезда, турели поезда/баз, групповые боссы) был чисто
+# клиент-локальным — update() каждого клиента видел ТОЛЬКО своего локального игрока,
+# так что двое игроков рядом с одной турелью каждый видел "она бьёт МЕНЯ", хотя
+# турель физически одна (см. диалог). Это первый в кодовой базе фоновый тик-цикл —
+# PvpMobState выше специально НЕ хранит позицию/таргет (см. её докстринг), только
+# hull/shield по факту попаданий; ServerMob — надстройка НАД ней для мобов, которым
+# нужна реальная общая позиция/таргетинг, не только общий HP-леджер.
+#
+# Масштаб (см. план): сервер авторитетен за ТАРГЕТИНГОМ/ТАЙМИНГОМ, не за формулой
+# урона — крит/уклонение/щит-сплит остаются как раньше, урон по игроку/мобу применяется
+# локально тем же клиентом, что и сегодня (Player.takeDamage / pvp_mob_fire_claim).
+# Фаза 2 (дроны бронепоезда) сознательно НЕ реплицирует позицию/движение на сервер —
+# слишком дорого/рискованно для затеи (см. план, открытые вопросы); вместо этого
+# движение остаётся клиент-локальным (Mob.js как и раньше), а сервер решает только
+# КОГО каждый дрон атакует в этот тик (круговое распределение по игрокам комнаты, не
+# "все к ближайшему") — клиент, назначенный НЕ целью в этот тик, просто не агрится
+# локально (drone уходит в idle-патруль у головы поезда), см. GameScene.js
+# _onPvpMobRoomUpdate/mobs.forEach.
+#
+# room_key — тот же неймспейс, что и pvp_room_manager.rooms: PvP-сектор ("pvp_1") ИЛИ
+# групповой данж-инстанс ("group:<instanceId>", см. GroupManager) — единая регистрация,
+# не два отдельных менеджера.
+class ServerMob:
+    def __init__(self, mob_id: str, room_key: str, x: float, y: float,
+                 max_hull: float, max_shield: float, speed: float = 0.0,
+                 aggro_range: float = 0.0, leash: float = 0.0, atk_range: float = 0.0,
+                 damage: float = 0.0, fire_rate: float = 1.0):
+        self.mob_id = mob_id
+        self.room_key = room_key
+        self.x = x
+        self.y = y
+        self.heading = 0.0
+        self.spawn_x = x
+        self.spawn_y = y
+        self.max_hull = max_hull
+        self.max_shield = max_shield
+        self.hull = max_hull
+        self.shield = max_shield
+        self.speed = speed
+        self.aggro_range = aggro_range
+        self.leash = leash
+        self.range = atk_range
+        self.damage = damage
+        self.fire_rate = fire_rate
+        self.target_uid: int | None = None
+        self.state = 'idle'  # idle | aggro
+        self.last_fire_at = 0.0
+        # uid → суммарный урон — тот же контракт, что PvpMobState.damage_by (топ-N на
+        # награду), заполняется по мере переноса реального боевого тика (Фаза 2+).
+        self.damage_by: dict[int, float] = {}
+
+
+class ServerMobManager:
+    """Реестр ServerMob по room_key. Пусто (нет активных серверных мобов нигде) —
+    _mob_tick_loop не делает вообще никакой работы за тик (см. ранний continue)."""
+    def __init__(self):
+        self.rooms: dict[str, dict[str, ServerMob]] = {}
+
+    def spawn(self, mob: ServerMob):
+        """Идемпотентно: несколько клиентов в комнате слышат один и тот же
+        детерминированный спавн (mob_id) и все вызовут это почти одновременно —
+        первый регистрирует, остальные не должны перезатирать уже тикающий объект
+        (иначе target_uid/state сбрасывались бы каждый раз, когда ещё кто-то
+        подключается/переспавнивает свою локальную копию того же дрона)."""
+        self.rooms.setdefault(mob.room_key, {}).setdefault(mob.mob_id, mob)
+
+    def remove(self, room_key: str, mob_id: str):
+        room = self.rooms.get(room_key)
+        if not room:
+            return
+        room.pop(mob_id, None)
+        if not room:
+            del self.rooms[room_key]
+
+    def clear_room(self, room_key: str):
+        self.rooms.pop(room_key, None)
+
+
+server_mob_manager = ServerMobManager()
+
+MOB_TICK_MS = 175  # ~5.7Hz — грубее позиции игрока (100мс/10Hz в pvp_pos), см. план
+
+
+def _players_in_room(room_key: str) -> list["PvpPlayerState"]:
+    """Живые игроки в этой "комнате" — единственный источник целей для тика мобов.
+    room_key — тот же неймспейс, что pvp_room_manager.rooms (PvP-сектор или групповой
+    данж-инстанс), так что для группового данжа нужно будет регистрировать игроков в
+    pvp_room_manager.rooms под ключом "group:<id>" (см. план, Фаза 4) — здесь никакой
+    отдельной логики для секторов/данжей нет, только чтение уже существующего реестра."""
+    return list(pvp_room_manager.rooms.get(room_key, {}).values())
+
+
+async def _tick_room(room_key: str, mobs: dict[str, ServerMob], players: list["PvpPlayerState"]):
+    # Фаза 2 (дроны бронепоезда): круговое распределение по игрокам, а НЕ "все к
+    # ближайшему" — рой в 8 дронов должен реально разойтись по нескольким атакующим
+    # одновременно, а не задавить всех на одного, кто оказался чуть ближе к голове
+    # (см. диалог: "распределяют урон по игрокам если несколько нападающих"). Сортировка
+    # по user_id/mob_id — детерминированный, стабильный между тиками порядок (иначе
+    # назначение "прыгало" бы от произвольного порядка итерации по dict).
+    ordered_players = sorted(players, key=lambda p: p.user_id)
+    ordered_mob_ids = sorted(mobs.keys())
+    updates = []
+    for i, mob_id in enumerate(ordered_mob_ids):
+        mob = mobs[mob_id]
+        target = ordered_players[i % len(ordered_players)]
+        mob.target_uid = target.user_id
+        mob.state = 'aggro'
+        updates.append({'mobId': mob.mob_id, 'targetUserId': mob.target_uid})
+    uids = [p.user_id for p in players]
+    await chat_manager.broadcast_to_uids(uids, {
+        'type': 'pvp_mob_room_update', 'roomKey': room_key, 'mobs': updates,
+    })
+
+
+async def _mob_tick_loop():
+    """Единственный фоновый цикл сервера (первый в кодовой базе — см. план). Тикает
+    ВСЕ активные комнаты с ServerMob раз в MOB_TICK_MS; список копируется (list(...))
+    на случай, если тик одной комнаты меняет server_mob_manager.rooms (спавн/деспавн)."""
+    while True:
+        await asyncio.sleep(MOB_TICK_MS / 1000)
+        for room_key, mobs in list(server_mob_manager.rooms.items()):
+            if not mobs:
+                continue
+            players = _players_in_room(room_key)
+            if not players:
+                # Комната опустела (игроки вышли из сектора/дисконнектнулись) — мобы
+                # могли не почиститься по факту убийства (событие просто закончилось с
+                # выжившими дронами). Не тикаем мёртвый груз вечно.
+                server_mob_manager.clear_room(room_key)
+                continue
+            await _tick_room(room_key, mobs, players)
+
+
+@app.on_event("startup")
+async def _start_mob_tick_loop():
+    asyncio.create_task(_mob_tick_loop())
 
 
 def _split_reward_top5(damage_by: dict[int, float], pools: dict[str, float]) -> dict[int, dict[str, int]]:
@@ -1463,6 +1616,21 @@ async def chat_ws(
                         {'type': 'pvp_train_force_spawn', 'startAt': start_at},
                     )
 
+            # ── Сервер-авторитетный таргетинг для дронов бронепоезда (План, Фаза 2) —
+            # регистрирует ServerMob для mobId, если он ещё не зарегистрирован (см.
+            # ServerMobManager.spawn — идемпотентно, несколько клиентов зовут это почти
+            # одновременно на детерминированный спавн). x/y/hull не используются в текущем
+            # масштабе (см. _tick_room — распределение круговое, не по дистанции), так что
+            # достаточно самого факта регистрации mob_id в комнате. Очистка — либо на килле
+            # (pvp_mob_fire_claim ниже), либо когда комната опустеет (_mob_tick_loop).
+            elif msg_type == 'pvp_mob_register':
+                sector = pvp_room_manager.player_sector.get(user.id)
+                mob_id = data.get('mobId')
+                if not sector or not mob_id:
+                    continue
+                mob_id = str(mob_id)[:80]
+                server_mob_manager.spawn(ServerMob(mob_id, sector, 0.0, 0.0, max_hull=1.0, max_shield=0.0))
+
             # ── PvP: заявка на выстрел по общему мобу сектора — HP шарится
             #    между всеми игроками (см. PvpMobState); движение моба сервер
             #    не знает (клиент-локальный AI), поэтому дальность — мягкая
@@ -1529,6 +1697,7 @@ async def chat_ws(
                     mob_state.damage_by[attacker.user_id] = mob_state.damage_by.get(attacker.user_id, 0.0) + result['dmg']
                 if result['killed']:
                     pvp_room_manager.remove_mob(sector, mob_id)  # следующий, кто попадёт — лениво пересоздаст запись
+                    server_mob_manager.remove(sector, mob_id)  # ServerMob-регистрация (дроны) синхронно с HP-леджером
                     if train_key is not None:
                         armored_train_manager.mark_destroyed(train_key, wagon_idx)
                         # wagonReward — тот же детерминированный (по ARMORED_TRAIN_SECTORS)

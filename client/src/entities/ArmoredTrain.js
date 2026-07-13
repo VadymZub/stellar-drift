@@ -659,7 +659,12 @@ export default class ArmoredTrain {
       const m = new Mob(this.scene, MOBS.sec_drone, lvl, x, y, { neutral: false });
       m.isArmoredTrainDrone = true;
       m.noRespawn = true;
-      if (this.scene._realtimeRoomKey) m.pvpMobId = `train:${this.sectorKey}:${this.startAt}:drone:${phase}:${i}`;
+      if (this.scene._realtimeRoomKey) {
+        m.pvpMobId = `train:${this.sectorKey}:${this.startAt}:drone:${phase}:${i}`;
+        // Сервер-авторитетный таргетинг (План Фаза 2) — регистрация идемпотентна,
+        // все клиенты комнаты зовут это на один и тот же детерминированный mobId.
+        this.scene.pvpClient?.registerMob(m.pvpMobId);
+      }
       this.scene.mobs.push(m);
       this._drones.push(m);
     }
