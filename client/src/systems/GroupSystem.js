@@ -18,7 +18,7 @@ export class GroupSystem {
 
         // Callbacks — assign from HudScene._connectChatWS
         this.onUpdate       = null;   // (members: string[]) => void
-        this.onGoldReward   = null;   // (gold: number) => void
+        this.onGoldReward   = null;   // (gold: number, credits: number, xp: number) => void
         this.onBossHp       = null;   // (ratio: number) => void
         this.onInvite       = null;   // ({from, dungeon}) => void
         this.onError        = null;   // (text: string) => void
@@ -63,10 +63,12 @@ export class GroupSystem {
         this._send({ type: 'group_heal', amount });
     }
 
-    /** Called by leader when boss dies. baseGold = total pool. */
-    bossKilled(baseGold) {
+    /** Called by leader (or any member — whoever's local ghost/real boss dies first)
+     * when the boss dies. baseGold/baseCredits/baseXp = full solo-equivalent reward,
+     * server splits all three by the SAME damage+heal ratio (GroupManager.boss_died). */
+    bossKilled(baseGold, baseCredits = 0, baseXp = 0) {
         if (!this.instanceId) return;
-        this._send({ type: 'group_boss_dead', baseGold });
+        this._send({ type: 'group_boss_dead', baseGold, baseCredits, baseXp });
     }
 
     /** Called by leader when an escort/miniboss dies. id = _groupMobId. */
@@ -125,7 +127,7 @@ export class GroupSystem {
                 break;
 
             case 'group_gold_reward':
-                this.onGoldReward?.(msg.gold);
+                this.onGoldReward?.(msg.gold, msg.credits ?? 0, msg.xp ?? 0);
                 break;
 
             case 'group_boss_hp':

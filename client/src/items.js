@@ -237,6 +237,10 @@ export const CONSUMABLES = {
   biomech_fragment: { category: 'dungeonResource', maxPerSlot: 9999, canBuy: false, price: 0, sell: 0 },
   quantum_shard:    { category: 'dungeonResource', maxPerSlot: 9999, canBuy: false, price: 0, sell: 0 },
   plasma_strand:    { category: 'dungeonResource', maxPerSlot: 9999, canBuy: false, price: 0, sell: 0 },
+  // Часть лазерной пушки — крафт-компонент (см. GarageScene "КРАФТ"), собирается по
+  // одной с головного вагона бронепоезда (3%) и с Апофиса (9%, см. GameScene.onMobKilled) —
+  // LASER_CANNON_PARTS_NEEDED (24) штук на всю пушку.
+  laser_cannon_part: { category: 'craftPart', maxPerSlot: 30, canBuy: false, price: 0, sell: 0 },
   // Boosters — temporary stat multipliers
   damage_booster: { category: 'consumable', maxPerSlot: 10, canBuy: true,  price: 8000,  sell: 500 },
   hull_booster:   { category: 'consumable', maxPerSlot: 10, canBuy: true,  price: 6000,  sell: 500 },
@@ -275,6 +279,10 @@ export const MATERIAL_NAMES = {
   quantum_crystal: 'Фазолит-кристалл',
   plasma_coil:     'Каленит-катушка',
 };
+
+// Крафт лазерной пушки (см. GarageScene "КРАФТ") — собрать LASER_CANNON_PARTS_NEEDED
+// частей (laser_cannon_part), выпадают с головного вагона бронепоезда и с Апофиса.
+export const LASER_CANNON_PARTS_NEEDED = 24;
 
 // Visual info for ammo types (canvas icon generation)
 export const AMMO_ICON = {

@@ -4,7 +4,8 @@ import { i18n } from '../i18n.js';
 import { itemName, itemStats, itemSellPrice, itemIconKey, SLOT_KEY, creditUpgradeCost, starUpgradeCost, modMult,
          normLevelsNeeded, MOD_MAX_STAR_LVL, statRollQuality, STAT_ROLL_QUALITY, statRollStr,
          PLASMATE_GOLD_RATE, PLASMATE_PER_SLOT, totalPlasmateInInventory, removePlasmateFromInventory,
-         AMMO_ICON, CONSUMABLES, addConsumableToInventory } from '../items.js';
+         AMMO_ICON, CONSUMABLES, addConsumableToInventory, countConsumableInInventory, removeConsumableFromInventory,
+         rollLaser, LASER_CANNON_PARTS_NEEDED } from '../items.js';
 import { SHIPS, SHIP_BY_KEY, purchaseState, shipLevelCost, shipLevelCostGold, SHIP_MAX_LEVEL } from '../ships.js';
 import { PERK_MAP, RARITY_COLOR, RARITY_LABEL, rollPerk, perkBonus, creditUpgCost, starUpgCost, PERK_CREDIT_COST, PERK_STAR_COST, PERK_REROLL_BASE,
          generateRoll, rollQualityInfo, refineRoll, REFINE_COST, perkMaxBase, perkMaxUpgraded } from '../perks.js';
@@ -56,15 +57,17 @@ export default class GarageScene extends Phaser.Scene {
     if (this.gs.garageTab === 'upgrade' || this.gs.garageTab === 'perks') this.gs.garageTab = 'upg';
     this.tab = this.gs.garageTab || 'ships';
 
-    const tabSpan = pw / 4;
+    const tabSpan = pw / 5;
     this.tabBtn(px + tabSpan * 0.5, py + 20, 'garage.tab_ships',  'ships');
     this.tabBtn(px + tabSpan * 1.5, py + 20, 'garage.tab_equip',  'equip');
     this.tabBtn(px + tabSpan * 2.5, py + 20, 'garage.upg_tab',    'upg');
     this.tabBtn(px + tabSpan * 3.5, py + 20, 'garage.tab_boards', 'boards');
+    this.tabBtn(px + tabSpan * 4.5, py + 20, 'garage.tab_craft',  'craft');
 
     if      (this.tab === 'ships')  this.renderShipsTab();
     else if (this.tab === 'equip')  this.renderEquipTab();
     else if (this.tab === 'boards') this.renderBoardsTab();
+    else if (this.tab === 'craft')  this.renderCraftTab();
     else                            this.renderUpgradePerksTab();
 
     this.input.keyboard.on('keydown-ESC', () => this.scene.stop());
@@ -2483,6 +2486,54 @@ export default class GarageScene extends Phaser.Scene {
         this._drawBoardList();
       });
       this._connObjs.push(ebg, ebt);
+    }
+  }
+
+  // ════════════════ ТАБ «КРАФТ» — сборка лазерной пушки из частей ════════════════
+  // Части (laser_cannon_part) капают с головного вагона бронепоезда (3%) и с Апофиса
+  // (9%, см. GameScene.onMobKilled/_rollLaserPartDrop) — единственный рецепт пока что,
+  // остальные крафты добавятся сюда же по мере появления новых материалов.
+  renderCraftTab() {
+    const { px, py, pw, ph } = this.box;
+    const gs = this.gs;
+    const contentY = py + 64;
+    const cx = px + pw / 2;
+
+    this.add.text(cx, contentY, 'ЛАЗЕРНАЯ ПУШКА', this.O('18px', '#4dd0e1')).setOrigin(0.5).setDepth(14);
+    this.add.text(cx, contentY + 30,
+      'Собрана из частей — падают с головного вагона бронепоезда и с Апофиса.',
+      this.F('12px', '#7e9398')).setOrigin(0.5).setDepth(14);
+
+    const have = countConsumableInInventory(gs.inventory, 'laser_cannon_part');
+    const need = LASER_CANNON_PARTS_NEEDED;
+    const frac = Math.min(1, have / need);
+
+    const barW = 360, barH = 22, barY = contentY + 80;
+    this.add.rectangle(cx, barY, barW, barH, 0x0d1a26, 1)
+      .setStrokeStyle(1, 0x2a3a4a, 0.8).setDepth(14);
+    if (frac > 0) {
+      this.add.rectangle(cx - barW / 2, barY, barW * frac, barH, frac >= 1 ? 0x66bb6a : 0x4dd0e1, 1)
+        .setOrigin(0, 0.5).setDepth(15);
+    }
+    this.add.text(cx, barY, `${have} / ${need}`, this.O('13px', '#ffffff')).setOrigin(0.5).setDepth(16);
+
+    const btnY = barY + 60;
+    const ready = have >= need;
+    const btn = this.add.rectangle(cx, btnY, 220, 42, ready ? 0x0a2818 : 0x10161f, 1)
+      .setStrokeStyle(1, ready ? COLORS.emerald : 0x2a3540, ready ? 0.9 : 0.5)
+      .setInteractive({ useHandCursor: true }).setDepth(14);
+    const btnTxt = this.add.text(cx, btnY, 'СКРАФТИТЬ', this.O('13px', ready ? '#66cc77' : '#3a4a54'))
+      .setOrigin(0.5).setDepth(15);
+    btn.on('pointerdown', () => {
+      const cur = countConsumableInInventory(gs.inventory, 'laser_cannon_part');
+      if (cur < need) return;
+      removeConsumableFromInventory(gs.inventory, 'laser_cannon_part', need);
+      gs.inventory.push(rollLaser());
+      gs.log?.('⚡ Лазерная пушка собрана!');
+      this.scene.restart();
+    });
+    if (!ready) {
+      this.add.text(cx, btnY + 34, `Не хватает: ${need - have}`, this.F('11px', '#556677')).setOrigin(0.5).setDepth(14);
     }
   }
 }

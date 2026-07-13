@@ -1,0 +1,62 @@
+Обычный вагон — целый (4 платформы, симметричная стыковка с ОБОИХ концов):
+top-down orthographic view, sci-fi armored cargo wagon spaceship, elongated
+rectangular hull, dark gunmetal grey hard-surface plating with lighter
+brushed-steel panel seams, thin glowing pale cyan/light blue accent trim
+lines along the hull edges, EXACTLY 4 octagonal turret platforms arranged
+in a 2x2 grid along the top — same octagonal base-plate shape and size as
+a mining station turret mount (flat octagon socket with a single gun
+barrel), NOT round domes, identical reinforced coupling flange at BOTH the
+front AND the rear end (symmetric — this wagon connects to a neighbor on
+each side, no dead-end stub on either side), industrial security-corp
+cargo transport aesthetic, matte non-reflective metal, nose-down
+orientation, transparent background, clean game-ready sprite for 2D
+top-down space MMO, highly detailed, no text, no logos
+
+Обычный вагон — полуразрушен (2-е состояние):
+same sci-fi armored cargo wagon as before (dark gunmetal grey hull, pale
+cyan accent trim, 4 octagonal turret platforms, coupling flanges on both
+ends), now heavily battle-damaged: cracked and torn hull plating, exposed
+scorched internal framework, at least one turret platform destroyed/blown
+off leaving a jagged socket, small electrical sparks and dim orange fire
+glow leaking from breaches, cyan accent lights flickering/partially dark,
+top-down orthographic view, nose-down orientation, transparent background,
+clean game-ready sprite for 2D top-down space MMO, highly detailed, no
+text, no logos
+
+Головной вагон — целый:
+top-down orthographic view, sci-fi armored train locomotive spaceship,
+angular reinforced plow-like prow at the front, dark gunmetal grey
+hard-surface plating with lighter brushed-steel highlight panels, thin
+glowing pale cyan/light blue accent trim tracing the hull edges and engine
+vents, EXACTLY 4 octagonal turret platforms in a 2x2 grid — SAME octagonal
+platform shape/size as the cargo wagons, just twin-barrel guns instead of
+single-barrel, reinforced coupling flange at the rear connecting toward the
+first cargo wagon, bright engine glow at the very rear, matte
+non-reflective metal, industrial security-corp escort vessel aesthetic,
+nose-down orientation, transparent background, clean game-ready sprite for
+2D top-down space MMO, highly detailed, no text, no logos
+
+Головной вагон — частично разрушен (~50%):
+same armored train locomotive as before, now moderately battle-damaged:
+cracked hull plating near the prow, one twin-barrel turret platform
+destroyed leaving a jagged socket, visible dents and scorch marks along
+the hull, cyan accent lights flickering, small sparks near damaged
+sections, engine glow dimmer than normal, top-down orthographic view,
+nose-down orientation, transparent background, clean game-ready sprite,
+highly detailed, no text, no logos
+
+Головной вагон — разрушен на 70% (критическое состояние):
+same armored train locomotive, now critically damaged and near destruction:
+prow heavily torn open with exposed internal structure, at least two
+turret platforms destroyed, large hull breaches with visible fire and
+heavy smoke, most cyan accent lights dead/dark except a few flickering red
+emergency lights, engine glow barely visible/sputtering, hull plating
+warped and falling apart, top-down orthographic view, nose-down
+orientation, transparent background, clean game-ready sprite, highly
+detailed, no text, no logos
+
+Силовой трос между вагонами (отдельный VFX-элемент):
+thin glowing energy tether cable connecting two spaceship hull segments,
+pale cyan/light blue light beam with subtle pulsing energy nodes, sci-fi
+force-field coupling effect, transparent background, no ship geometry,
+just the glowing link effect, clean VFX asset

@@ -5,7 +5,7 @@ import { levelInfo, MAX_LEVEL } from '../leveling.js';
 import { minimapRect, fit } from '../systems/minimap.js';
 import { SECTORS, galaxy } from '../galaxy.js';
 import { getActiveMissionSectorTargets } from '../data/missions.js';
-import { countConsumableInInventory } from '../items.js';
+import { countConsumableInInventory, addConsumableToInventory } from '../items.js';
 import { prerenderTex } from '../utils/prerenderTex.js';
 import { loadSettings, saveSettings, getMinimapDims } from '../settings.js';
 import { GroupSystem } from '../systems/GroupSystem.js';
@@ -1030,6 +1030,33 @@ export default class HudScene extends Phaser.Scene {
       }
     }
 
+    // Бронепоезд (только PvP, всегда видим — как база/эскорт, не зависит от скан-радиуса,
+    // это заявленная угроза всему сектору, не спрятанный объект). Пунктир — весь маршрут
+    // (старт→конец), чтобы можно было забежать вперёд и перехватить, не только гнаться
+    // за текущей позицией; ромбики — живые вагоны, голова другим цветом.
+    if (sec.pvp && gs.armoredTrain) {
+      const tr = gs.armoredTrain;
+      const sx = f.ox + tr.startPos.x * f.s, sy = f.oy + tr.startPos.y * f.s;
+      const ex = f.ox + tr.endPos.x * f.s, ey = f.oy + tr.endPos.y * f.s;
+      g.lineStyle(1, 0xffb74d, 0.35);
+      const steps = 24;
+      for (let i = 0; i < steps; i += 2) {
+        const t0 = i / steps, t1 = (i + 1) / steps;
+        g.lineBetween(
+          Phaser.Math.Linear(sx, ex, t0), Phaser.Math.Linear(sy, ey, t0),
+          Phaser.Math.Linear(sx, ex, t1), Phaser.Math.Linear(sy, ey, t1),
+        );
+      }
+      for (const w of tr.wagons) {
+        if (!w.alive) continue;
+        const wx = f.ox + w.x * f.s, wy = f.oy + w.y * f.s;
+        const c = w.isHead ? 0xffee44 : 0xffb74d;
+        const sz = w.isHead ? 4 : 3;
+        g.fillStyle(c, 0.9);
+        g.fillPoints([{ x: wx, y: wy - sz }, { x: wx + sz, y: wy }, { x: wx, y: wy + sz }, { x: wx - sz, y: wy }], true);
+      }
+    }
+
     // Скан-радиус: враги/лут видны только в радиусе сканирования
     const sr = gs.scanRadius ?? BASE_SCAN_RADIUS;
     const px2 = gs.player?.x ?? ww / 2, py2 = gs.player?.y ?? wh / 2;
@@ -1737,9 +1764,35 @@ export default class HudScene extends Phaser.Scene {
       const corpScene = this.scene.get('CorpScene');
       if (corpScene?.scene.isActive() && corpScene._tab === 2) corpScene._refreshBountyTab(gs);
     };
-    this.groupSystem.onGoldReward = (gold) => {
+    // Доля пропорциональной награды за уничтоженный вагон бронепоезда (топ-5 по
+    // урону, см. ArmoredTrainManager/_split_reward_top5 в server/main.py) — сервер
+    // шлёт это ТОЛЬКО получателю, не бродкастом, поэтому просто применяем как есть.
+    this.pvpClient.onWagonReward = (msg) => {
       const gs = this.scene.get('GameScene');
-      if (gs) { gs.starGold = (gs.starGold || 0) + gold; }
+      if (!gs) return;
+      const { credits = 0, xp = 0, gold = 0, biomech_fragment = 0, quantum_shard = 0, plasma_strand = 0 } = msg;
+      if (credits > 0) gs.credits = (gs.credits || 0) + credits;
+      if (xp > 0) gs.gainXp(xp);
+      if (gold > 0) gs.starGold = (gs.starGold || 0) + gold;
+      const cargoMax = gs._cargoMax?.() ?? 999;
+      if (biomech_fragment > 0) addConsumableToInventory(gs.inventory, 'biomech_fragment', biomech_fragment, cargoMax);
+      if (quantum_shard > 0) addConsumableToInventory(gs.inventory, 'quantum_shard', quantum_shard, cargoMax);
+      if (plasma_strand > 0) addConsumableToInventory(gs.inventory, 'plasma_strand', plasma_strand, cargoMax);
+      gs.log?.(i18n.t('log.wagon_reward', { credits, xp }));
+    };
+    // Игрок зашёл в PvP-сектор ПОСЛЕ начала события бронепоезда (или переподключился
+    // посреди него) — без этого его клиент показал бы поезд с полным HP вместо
+    // реального состояния (см. ArmoredTrain.applySnapshot / pvp_train_query в main.py).
+    this.pvpClient.onTrainSnapshot = (msg) => {
+      this.scene.get('GameScene')?.armoredTrain?.applySnapshot(msg);
+    };
+    this.groupSystem.onGoldReward = (gold, credits, xp) => {
+      const gs = this.scene.get('GameScene');
+      if (!gs) return;
+      if (gold > 0) gs.starGold = (gs.starGold || 0) + gold;
+      if (credits > 0) gs.credits = (gs.credits || 0) + credits;
+      if (xp > 0) gs.gainXp(xp);
+      if (credits > 0 || xp > 0) gs.log?.(i18n.t('log.reward', { credits, xp }));
     };
     this.groupSystem.onError = (text) => {
       this.pushChatMessage('general', 'System', text, {});
@@ -1843,6 +1896,10 @@ export default class HudScene extends Phaser.Scene {
       if (roomKey) {
         this.pvpClient?.enterSector(roomKey, gs.player.x, gs.player.y, gs._pvpLoadoutSnapshot());
       }
+      // Та же самолечащаяся логика — бронепоезд мог быть построен локально ДО того,
+      // как pvpClient/WS были готовы (см. GameScene._initArmoredTrain), без этого
+      // запрос состояния (pvp_train_query) терялся бы навсегда для этой сессии.
+      if (gs?.armoredTrain) this.pvpClient?.trainQuery(gs.armoredTrain.trainKey);
     };
 
     ws.onmessage = evt => {

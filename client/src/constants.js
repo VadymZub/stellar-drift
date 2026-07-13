@@ -74,6 +74,36 @@ export const WORLD_EVENT_WAVE1_FRAC   = 0.6;
 export const WORLD_EVENT_WAVE2_DELAY_MS = 5  * 60000;
 export const WORLD_EVENT_WINDOW_MS      = 15 * 60000;
 
+// Бронепоезд ("armored train"): раз в сутки на PvP-сектор, детерминированное время
+// (тот же паттерн хэша, что у нашествия — GameScene._worldEventHash/_armoredTrainTodayStart —
+// но с другим seed-суффиксом, чтобы не совпадать по времени с нашествием в тот же день).
+// Проезжает сектор насквозь за ARMORED_TRAIN_WINDOW_MS, бьётся строго с хвоста (см.
+// ArmoredTrainManager на сервере) — награда КАЖДОГО вагона выплачивается независимо
+// сразу по факту его уничтожения (топ-5 по урону делят пропорционально), поезд не
+// обязательно уничтожать целиком. wagonReward ≈ награда с босса данжа (normal) для
+// уровня сектора; laserPartChance — шанс части лазерной пушки С ГОЛОВНОГО вагона,
+// только сектора 40+ уровня (см. также ancient_12/Апофис — 9%, main.py).
+export const ARMORED_TRAIN_SECTORS = {
+  pvp_1: { lvlMin: 15, lvlMax: 25, wagonReward: { credits: 700,  xp: 220,  gold: 6  },
+           clanRes: { biomech_fragment: 40,  quantum_shard: 0,   plasma_strand: 0  } },
+  pvp_2: { lvlMin: 25, lvlMax: 35, wagonReward: { credits: 1400, xp: 450,  gold: 12 },
+           clanRes: { biomech_fragment: 70,  quantum_shard: 20,  plasma_strand: 0  } },
+  pvp_3: { lvlMin: 35, lvlMax: 45, wagonReward: { credits: 2600, xp: 900,  gold: 18 },
+           clanRes: { biomech_fragment: 100, quantum_shard: 40,  plasma_strand: 20 } },
+  pvp_4: { lvlMin: 41, lvlMax: 50, wagonReward: { credits: 4200, xp: 1600, gold: 28 },
+           clanRes: { biomech_fragment: 140, quantum_shard: 70,  plasma_strand: 50 }, laserPartChance: 0.03 },
+  pvp_5: { lvlMin: 45, lvlMax: 50, wagonReward: { credits: 7000, xp: 2800, gold: 45 },
+           clanRes: { biomech_fragment: 180, quantum_shard: 100, plasma_strand: 80 }, laserPartChance: 0.03 },
+};
+export const ARMORED_TRAIN_HEAD_MULT   = 3;      // множитель награды головного вагона (кроме laserPartChance)
+export const ARMORED_TRAIN_WAGON_COUNT = 5;      // + голова = 6 сегментов всего
+export const ARMORED_TRAIN_WINDOW_MS   = 15 * 60000;
+export const ARMORED_TRAIN_DRONE_WAVE_SIZE = 8;  // дронов на волну, спавнятся с головного вагона
+// Головной вагон: 3 состояния (целый/частично разрушен/разрушен на 70%) — пороги
+// доли HP, на которых меняется визуал И спавнится волна дронов (2 волны из 2 фаз).
+export const ARMORED_TRAIN_HEAD_PHASES = [0.5, 0.2];
+export const ARMORED_TRAIN_WAGON_DAMAGED_AT = 0.5; // обычный вагон: 2 состояния (целый/полуразрушен)
+
 // Контракты-модификаторы данжа: опциональные переключаемые риск/награда тумблеры,
 // выбираются в модалке сложности (можно несколько сразу), стакуются мультипликативно
 // поверх DUNGEON_DIFF (см. GameScene._dungeonDiff()). Недоступны в R-1-boss (та карта
@@ -249,7 +279,7 @@ export const MOBS = {
   confed_09: { key: 'syndicate_11',     nameKey: 'mob.confed_09', faction: 'confed', artAngleOffset: -Math.PI / 2, displaySize: 140, hull: 1100, shield: 650, damage: 14, speed: 155, aggro: 700,  range: 585, fireRate: 0.6,  credits: 2800, xp: 680, patrolRadius: 200, leash: 500, boss: true, bossType: 'static', starGold: { min: 12, max: 28, chance: 1 }, projectileType: 'grav', aiClass: 'berserker' },
 
   // ── Частная Безопасность (corporate) — ур. 20-50 ──
-  sec_drone:     { key: 'guard_drone', nameKey: 'mob.sec_drone',     faction: 'security', artAngleOffset: -Math.PI / 2, displaySize: 75,  hull: 220,  shield: 350, damage: 6,  speed: 205, aggro: 650,  range: 530, fireRate: 1.0, credits: 380,  xp: 95,   patrolRadius: 250, leash: 700, neutral: true, projectileType: 'ion',  aiClass: 'gunner' },
+  sec_drone:     { key: 'guard_drone', nameKey: 'mob.sec_drone',     faction: 'security', artAngleOffset: -Math.PI / 2, displaySize: 38,  hull: 220,  shield: 350, damage: 6,  speed: 205, aggro: 650,  range: 530, fireRate: 1.0, credits: 380,  xp: 95,   patrolRadius: 250, leash: 700, neutral: true, projectileType: 'ion',  aiClass: 'gunner' },
   sec_destroyer: { key: 'guard_main', nameKey: 'mob.sec_destroyer', faction: 'security', artAngleOffset: -Math.PI / 2, displaySize: 180, hull: 1400, shield: 750, damage: 17, speed: 135, aggro: 700,  range: 585, fireRate: 0.5, credits: 4500, xp: 1100, patrolRadius: 200, leash: 480, boss: true, bossType: 'static', neutral: true, starGold: { min: 15, max: 35, chance: 1 }, projectileType: 'grav' },
 
   // ── Охрана нейтральных баз (PvP-секторы, пассивны до атаки) ──

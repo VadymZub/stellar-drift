@@ -35,6 +35,8 @@ export class PvpClient {
         this.onBountyPosted  = null; // (msg) => void — {userId,name} поставлен в розыск
         this.onBountyCleared = null; // (msg) => void — {userId} розыск снят (убит)
         this.onBountySnapshot = null; // (msg) => void — {bounties:[{userId,name}]} при подключении
+        this.onWagonReward   = null; // (msg) => void — доля пропорциональной награды за вагон бронепоезда
+        this.onTrainSnapshot = null; // (msg) => void — {trainKey, destroyed:[idx], wagons:{mobId:{hull,...}}}
     }
 
     // ── Outgoing ─────────────────────────────────────────────────────────────
@@ -73,10 +75,15 @@ export class PvpClient {
 
     /** maxHull/maxShield — сервер лениво создаёт HP-запись мобa по этим значениям при
      * первом попадании кого угодно; mobX/mobY — для мягкой проверки дальности на сервере
-     * (движение моба клиент-локальное, сервер не знает его позицию иначе); dmg — см. fireClaim. */
-    mobFireClaim(mobId, maxHull, maxShield, mobX, mobY, weaponType, dmg) {
+     * (движение моба клиент-локальное, сервер не знает его позицию иначе); dmg — см. fireClaim.
+     * wagonReward — ТОЛЬКО для вагонов бронепоезда (mobId вида "train:..."): детерминированный
+     * (по ARMORED_TRAIN_SECTORS, одинаковый у всех атакующих) пул {credits,xp,gold,...} —
+     * сервер использует его, только если ИМЕННО этот выстрел добивает вагон (см. main.py). */
+    mobFireClaim(mobId, maxHull, maxShield, mobX, mobY, weaponType, dmg, wagonReward) {
         if (!this.sector) return;
-        this._send({ type: 'pvp_mob_fire_claim', mobId, maxHull, maxShield, mobX, mobY, weaponType, dmg });
+        const payload = { type: 'pvp_mob_fire_claim', mobId, maxHull, maxShield, mobX, mobY, weaponType, dmg };
+        if (wagonReward) payload.wagonReward = wagonReward;
+        this._send(payload);
     }
 
     /** Залп турели добывающей базы — НЕ личное оружие игрока (сервер валидирует
@@ -128,6 +135,14 @@ export class PvpClient {
         this._send({ type: 'pvp_bounty_query' });
     }
 
+    /** Запрашивает текущее состояние бронепоезда (какие вагоны уже уничтожены, hull/
+     * shield живых) — вызывается сразу после локального построения ArmoredTrain, чтобы
+     * не показывать полное HP игроку, зашедшему в сектор после начала события. */
+    trainQuery(trainKey) {
+        if (!this.sector) return;
+        this._send({ type: 'pvp_train_query', trainKey });
+    }
+
     // ── Incoming (call from WS onmessage handler, routed by HudScene) ────────
 
     handleMessage(msg) {
@@ -162,6 +177,10 @@ export class PvpClient {
                 this.onMobHitResult?.(msg);
                 break;
 
+            case 'pvp_wagon_reward':
+                this.onWagonReward?.(msg);
+                break;
+
             case 'pvp_loot_spawned':
                 this.onLootSpawned?.(msg);
                 break;
@@ -188,6 +207,10 @@ export class PvpClient {
 
             case 'pvp_bounty_snapshot':
                 this.onBountySnapshot?.(msg);
+                break;
+
+            case 'pvp_train_snapshot':
+                this.onTrainSnapshot?.(msg);
                 break;
         }
     }

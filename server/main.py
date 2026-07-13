@@ -205,21 +205,32 @@ class GroupManager:
         if inst and player in inst.members:
             inst.members[player]['heal'] += amount
 
-    # ── босс убит → пропорциональное распределение золота ────────────
-    def boss_died(self, player: str, base_gold: int) -> dict[str, int]:
+    # ── босс убит → пропорциональное распределение золота/credits/xp ─
+    # Раньше делилось только золото — credits/xp каждый член группы начислял себе
+    # ПОЛНОСТЬЮ и независимо на клиенте (баг: группа из N игроков получала ×N
+    # суммарной награды за один и тот же килл). Теперь все три пула делятся
+    # ОДНИМ и тем же соотношением урон+хил, как и было для золота.
+    def boss_died(self, player: str, base_gold: int, base_credits: int = 0, base_xp: int = 0) -> dict[str, dict[str, int]]:
         inst = self.get_instance(player)
         if not inst:
-            return {player: base_gold}
+            return {player: {'gold': base_gold, 'credits': base_credits, 'xp': base_xp}}
         inst.boss_alive = False
         inst.locked = True
         pool = {n: (v['damage'] + v['heal']) for n, v in inst.members.items()}
         total = sum(pool.values())
         if total == 0:
             share = 1.0 / len(pool)
-            pool = {n: share for n in pool}
+            ratios = {n: share for n in pool}
         else:
-            pool = {n: v / total for n, v in pool.items()}
-        return {n: max(1, round(base_gold * r)) for n, r in pool.items()}
+            ratios = {n: v / total for n, v in pool.items()}
+        return {
+            n: {
+                'gold': max(1, round(base_gold * r)) if base_gold > 0 else 0,
+                'credits': max(1, round(base_credits * r)) if base_credits > 0 else 0,
+                'xp': max(1, round(base_xp * r)) if base_xp > 0 else 0,
+            }
+            for n, r in ratios.items()
+        }
 
     # ── список участников для UI ──────────────────────────────────────
     def members_list(self, player: str) -> list[str]:
@@ -348,6 +359,11 @@ class PvpMobState:
         self.max_shield = max_shield
         self.hull = max_hull
         self.shield = max_shield
+        # uid → суммарный урон за жизнь ЭТОГО моба — не используется для обычных мобов
+        # (просто накапливается и выкидывается вместе с состоянием), но нужно для
+        # пропорциональной раздачи награды с вагонов бронепоезда (см. ArmoredTrainManager
+        # и pvp_mob_fire_claim ниже: топ-5 по damage_by получают долю пула).
+        self.damage_by: dict[int, float] = {}
 
 
 class PvpLootBox:
@@ -428,6 +444,47 @@ class PvpRoomManager:
 
 
 pvp_room_manager = PvpRoomManager()
+
+
+# ── Бронепоезд: серверная гарантия порядка уничтожения (бьют строго с хвоста) ──
+# Клиент-локальный AI/позиция поезда (как и у обычных мобов — см. PvpMobState),
+# но "какой вагон сейчас можно бить" ДОЛЖНА быть авторитетна на сервере, иначе
+# читерский клиент мог бы просто слать pvp_mob_fire_claim по mobId головы/середины
+# вагона напрямую, игнорируя очередь. mob_id вагона = "train:{sector}:{startAt}:{idx}",
+# idx 0 = хвост (бьётся первым) … 4 = ближайший к голове, 5 = голова (бьётся последней).
+# Уничтоженные indices переживают remove_mob() состояния самого PvpMobState (то
+# состояние удаляется на килле) — без этого набора повторный fire_claim по тому же
+# mobId лениво пересоздал бы вагон с полным HP (см. get_or_create_mob).
+class ArmoredTrainManager:
+    def __init__(self):
+        self.destroyed: dict[str, set[int]] = {}  # train_key ("sector:startAt") → уничтоженные idx
+
+    def is_vulnerable(self, train_key: str, wagon_idx: int) -> bool:
+        d = self.destroyed.get(train_key, set())
+        return all(i in d for i in range(wagon_idx))
+
+    def mark_destroyed(self, train_key: str, wagon_idx: int):
+        self.destroyed.setdefault(train_key, set()).add(wagon_idx)
+
+    def cleanup(self, train_key: str):
+        self.destroyed.pop(train_key, None)
+
+
+armored_train_manager = ArmoredTrainManager()
+
+
+def _split_reward_top5(damage_by: dict[int, float], pools: dict[str, float]) -> dict[int, dict[str, int]]:
+    """Топ-5 по урону получают долю КАЖДОГО пула (credits/xp/gold/...) пропорционально
+    их вкладу СРЕДИ ЭТИХ ПЯТИ (не всех атаковавших) — см. обсуждение дизайна бронепоезда."""
+    top5 = sorted(damage_by.items(), key=lambda kv: kv[1], reverse=True)[:5]
+    total = sum(dmg for _, dmg in top5)
+    if total <= 0:
+        return {}
+    return {
+        uid: {k: max(1, round(v * (dmg / total))) if v > 0 else 0 for k, v in pools.items()}
+        for uid, dmg in top5
+    }
+
 
 # ── Доска розыска: чисто in-memory, никакой персистентности — реально исчезает
 # при рестарте сервера (так и задумано). killer_user_id → {'name': str, 'corp': str}.
@@ -1109,16 +1166,19 @@ async def chat_ws(
             elif msg_type == 'group_heal':
                 group_manager.record_heal(user.username, float(data.get('amount', 0)))
 
-            # ── Группа: босс убит → распределить золото ───────────────
+            # ── Группа: босс убит → распределить золото/credits/xp ────
             elif msg_type == 'group_boss_dead':
-                base_gold = int(data.get('baseGold', 0))
-                rewards   = group_manager.boss_died(user.username, base_gold)
+                base_gold    = int(data.get('baseGold', 0))
+                base_credits = int(data.get('baseCredits', 0))
+                base_xp      = int(data.get('baseXp', 0))
+                rewards      = group_manager.boss_died(user.username, base_gold, base_credits, base_xp)
                 # Отправить каждому его долю + уведомить о смерти босса
-                for name, gold in rewards.items():
+                for name, share in rewards.items():
+                    payload = {'type': 'group_gold_reward', **share}
                     if name == user.username:
-                        await ws.send_json({'type': 'group_gold_reward', 'gold': gold})
+                        await ws.send_json(payload)
                     else:
-                        await chat_manager.send_pm(name, {'type': 'group_gold_reward', 'gold': gold})
+                        await chat_manager.send_pm(name, payload)
                         await chat_manager.send_pm(name, {'type': 'group_boss_killed'})
 
             # ── Группа: охранник/минибосс убит лидером → relay всем участникам
@@ -1325,6 +1385,23 @@ async def chat_ws(
             elif msg_type == 'pvp_bounty_query':
                 await ws.send_json({'type': 'pvp_bounty_snapshot', 'bounties': _bounty_list_detailed()})
 
+            # ── Бронепоезд: клиент запрашивает текущее состояние ПОСЛЕ того, как сам
+            # локально построил ArmoredTrain (знает sectorKey+startAt из детерминированного
+            # расписания — см. ArmoredTrain.js/_armoredTrainTodayStart) — без этого игрок,
+            # зашедший в сектор ПОСЛЕ начала события, видел бы поезд с полным HP вместо
+            # реального состояния (уничтоженные другими вагоны/текущий hull остальных).
+            # trainKey = "sector:startAt" (без mobId-префикса "train:") — совпадает с
+            # ключом ArmoredTrainManager.destroyed на сервере.
+            elif msg_type == 'pvp_train_query':
+                sector = pvp_room_manager.player_sector.get(user.id)
+                train_key = str(data.get('trainKey', ''))[:80]
+                if not sector or not train_key:
+                    continue
+                destroyed = list(armored_train_manager.destroyed.get(train_key, set()))
+                prefix = f'train:{train_key}:'
+                wagons = {mid: s for mid, s in pvp_room_manager.mob_snapshot(sector).items() if mid.startswith(prefix)}
+                await ws.send_json({'type': 'pvp_train_snapshot', 'trainKey': train_key, 'destroyed': destroyed, 'wagons': wagons})
+
             # ── PvP: заявка на выстрел по общему мобу сектора — HP шарится
             #    между всеми игроками (см. PvpMobState); движение моба сервер
             #    не знает (клиент-локальный AI), поэтому дальность — мягкая
@@ -1349,6 +1426,20 @@ async def chat_ws(
                 attacker.last_shot_at = now_ts
 
                 mob_id = str(mob_id)[:80]
+                # Бронепоезд: бить можно только текущий хвостовой вагон — читер не может
+                # пропустить очередь, отправив fire_claim по mobId середины/головы напрямую.
+                train_key = wagon_idx = None
+                if mob_id.startswith('train:'):
+                    parts = mob_id.split(':')
+                    if len(parts) == 4:
+                        train_key = f"{parts[1]}:{parts[2]}"
+                        try:
+                            wagon_idx = int(parts[3])
+                        except ValueError:
+                            wagon_idx = None
+                    if wagon_idx is None or not armored_train_manager.is_vulnerable(train_key, wagon_idx):
+                        continue  # этот вагон ещё неуязвим (или mobId битый) — молча игнорируем
+
                 max_hull = max(1.0, float(data.get('maxHull', 1)))
                 max_shield = max(0.0, float(data.get('maxShield', 0)))
                 mob_state = pvp_room_manager.get_or_create_mob(sector, mob_id, max_hull, max_shield)
@@ -1364,8 +1455,21 @@ async def chat_ws(
                     attacker.loadout['critChance'], attacker.loadout['critMult'], evasion,
                 )
                 mob_state.hull, mob_state.shield = result['hull'], result['shield']
+                if result['dmg'] > 0:
+                    mob_state.damage_by[attacker.user_id] = mob_state.damage_by.get(attacker.user_id, 0.0) + result['dmg']
                 if result['killed']:
                     pvp_room_manager.remove_mob(sector, mob_id)  # следующий, кто попадёт — лениво пересоздаст запись
+                    if train_key is not None:
+                        armored_train_manager.mark_destroyed(train_key, wagon_idx)
+                        # wagonReward — тот же детерминированный (по ARMORED_TRAIN_SECTORS)
+                        # пул у ВСЕХ атакующих клиентов, неважно чья заявка убила вагон.
+                        pools = data.get('wagonReward') or {}
+                        if isinstance(pools, dict) and pools:
+                            shares = _split_reward_top5(mob_state.damage_by, {
+                                k: float(v) for k, v in pools.items() if k in ('credits', 'xp', 'gold', 'biomech_fragment', 'quantum_shard', 'plasma_strand')
+                            })
+                            for uid, share in shares.items():
+                                await chat_manager.send_to_uid(uid, {'type': 'pvp_wagon_reward', 'mobId': mob_id, **share})
 
                 out = {
                     'type': 'pvp_mob_hit_result', 'mobId': mob_id, 'attackerUserId': attacker.user_id,

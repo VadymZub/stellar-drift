@@ -1,5 +1,5 @@
 import * as Phaser from 'https://cdn.jsdelivr.net/npm/phaser@4.2.1/dist/phaser.esm.js';
-import { COLORS, BASE_WORLD, PVP_WORLD_SCALE, PLAYER, MOBS, PROJECTILE, PROJ_TYPES, RESPAWN_MS, UI_RES, BOSS, DPR, HANDLING, ART_ANGLE_OFFSET, RANKS, BASE_SCAN_RADIUS, HONOR, DUNGEON_DIFF, DUNGEON_MODIFIERS, DUNGEON_BOSS_DROPS, DUNGEON_STAR_GOLD, dungeonLootNorm, WORLD_EVENT_SECTORS, WORLD_EVENT_STRENGTH_MULT, WORLD_EVENT_WAVE1_FRAC, WORLD_EVENT_WAVE2_DELAY_MS, WORLD_EVENT_WINDOW_MS } from '../constants.js';
+import { COLORS, BASE_WORLD, PVP_WORLD_SCALE, PLAYER, MOBS, PROJECTILE, PROJ_TYPES, RESPAWN_MS, UI_RES, BOSS, DPR, HANDLING, ART_ANGLE_OFFSET, RANKS, BASE_SCAN_RADIUS, HONOR, DUNGEON_DIFF, DUNGEON_MODIFIERS, DUNGEON_BOSS_DROPS, DUNGEON_STAR_GOLD, dungeonLootNorm, WORLD_EVENT_SECTORS, WORLD_EVENT_STRENGTH_MULT, WORLD_EVENT_WAVE1_FRAC, WORLD_EVENT_WAVE2_DELAY_MS, WORLD_EVENT_WINDOW_MS, ARMORED_TRAIN_SECTORS, ARMORED_TRAIN_WINDOW_MS } from '../constants.js';
 import { minimapRect, minimapToWorld } from '../systems/minimap.js';
 import { i18n } from '../i18n.js';
 import Player from '../entities/Player.js';
@@ -20,6 +20,7 @@ import { calculateRating, getRank } from '../ranking.js';
 import VFXManager from '../systems/VFXManager.js';
 import SoundManager from '../systems/SoundManager.js';
 import MiningBase, { TBAR_W, TBAR_H } from '../entities/MiningBase.js';
+import ArmoredTrain from '../entities/ArmoredTrain.js';
 import { BASE_CONFIG } from '../bases.js';
 import HomeBase from '../entities/HomeBase.js';
 import ArgusController from '../systems/ArgusController.js';
@@ -295,16 +296,13 @@ export default class GameScene extends Phaser.Scene {
       this.input.keyboard.on('keydown-EIGHT', () => {
         this.ownedShips.add('argus');
         this.activeShip = 'argus';
+        // wSlots:15/sSlots:0/eSlots:0 (см. ships.js) — Аргус целиком заточен под урон,
+        // щиты/броня (тот же слот, см. Player.js:197-198) и двигатели ему не положены,
+        // скорость идёт только от baseSpeed(450) корабля, без бонуса от модуля.
         const maxCannon = { type: 'cannon', tier: 4, damage: 210, penetration: 0.20, fireRate: 1.0, starLvl: 5 };
-        const maxShield = { type: 'shield', tier: 4, durability: 1500, regen: 100, evasion: 0.10, starLvl: 5 };
-        const maxArmor  = { type: 'armor',  tier: 4, hullBonus: 1350, starLvl: 5 };
-        const maxEngine = { type: 'engine', tier: 4, speed: 27, starLvl: 5 };
-        this.equipped.weapon = Array(10).fill(null).map(() => ({...maxCannon}));
-        this.equipped.shield = [
-          ...Array(6).fill(null).map(() => ({...maxShield})),
-          ...Array(4).fill(null).map(() => ({...maxArmor})),
-        ];
-        this.equipped.engine = Array(6).fill(null).map(() => ({...maxEngine}));
+        this.equipped.weapon = Array(15).fill(null).map(() => ({...maxCannon}));
+        this.equipped.shield = [];
+        this.equipped.engine = [];
         this.player.applyShip(SHIP_BY_KEY['argus']);
         this.player.hull = this.player.maxHull;
         this.player.shield = this.player.maxShield;
@@ -539,6 +537,7 @@ export default class GameScene extends Phaser.Scene {
     this.spawnDungeonDeposits();
     this._initAnomaly();
     this._initWorldEvent();
+    this._initArmoredTrain();
     this.setupInput();
     this.keyJ = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.J);
     this.keyCtrl = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.CTRL);
@@ -829,6 +828,44 @@ export default class GameScene extends Phaser.Scene {
     }
   }
 
+  // Бронепоезд — тот же детерминированный wall-clock паттерн, что "нашествие"
+  // (_worldEventHash), но с суффиксом ":train" в seed, чтобы не всегда совпадать по
+  // времени с нашествием в один день (иначе оба ивента одновременно на одной карте).
+  _armoredTrainTodayStart(sectorKey) {
+    const now = new Date();
+    const dateStr = `${now.getFullYear()}-${now.getMonth()}-${now.getDate()}`;
+    const hour = this._worldEventHash(`${dateStr}:${sectorKey}:train`) % 24;
+    return new Date(now.getFullYear(), now.getMonth(), now.getDate(), hour, 0, 0, 0).getTime();
+  }
+
+  _initArmoredTrain() {
+    this.armoredTrain?.destroy();
+    this.armoredTrain = null;
+    const sec = SECTORS[galaxy.current];
+    const cfg = ARMORED_TRAIN_SECTORS[galaxy.current];
+    if (!sec?.pvp || !cfg) return;
+    const startAt = this._armoredTrainTodayStart(galaxy.current);
+    const now = Date.now();
+    if (now < startAt || now >= startAt + ARMORED_TRAIN_WINDOW_MS) return; // not today's live window
+    this.armoredTrain = new ArmoredTrain(this, galaxy.current, startAt);
+    this.log(`🚂 ${sec.name}: бронепоезд на маршруте!`);
+    // Подхватить реальное состояние (кто уже уничтожен/hull живых), если зашли в
+    // сектор ПОСЛЕ начала события — см. ArmoredTrain.applySnapshot. Если pvpClient
+    // ещё не готов (WS переподключается), HudScene.ws.onopen пошлёт тот же запрос
+    // самолечащимся catch-up'ом (тот же паттерн, что у enterSector).
+    this.pvpClient?.trainQuery(this.armoredTrain.trainKey);
+  }
+
+  _updateArmoredTrain(dt) {
+    if (!this.armoredTrain) return;
+    this.armoredTrain.update(dt);
+    if (this.armoredTrain.finished) {
+      if (this.target && this.armoredTrain.wagons.includes(this.target)) this.selectTarget(null);
+      this.armoredTrain.destroy();
+      this.armoredTrain = null;
+    }
+  }
+
   // idx-seeded deterministic mob pick/level/position — every client spawning "mob idx N"
   // for the same (sector, startAt) independently arrives at the identical template/level,
   // so the shared pvpMobId HP ledger (lazily created on first hit) is consistent for all.
@@ -979,6 +1016,8 @@ export default class GameScene extends Phaser.Scene {
     this.miningBases = [];
     for (const b of this.homeBases) b.destroy();
     this.homeBases = [];
+    this.armoredTrain?.destroy();
+    this.armoredTrain = null;
     // Незавершённая очередь амбиентных мобов из ПРЕДЫДУЩЕГО сектора — this.mobs уже
     // пересоздан ниже, а замыкания в очереди ссылались бы на протухшие pool/rnd/add
     // того сектора (scene.restart() не обнуляет обычные instance-поля сам по себе).
@@ -2245,6 +2284,12 @@ export default class GameScene extends Phaser.Scene {
         if (isDouble) this.isFiring = true;
         return;
       }
+      const wagon = this.trainWagonAt(wx, wy);
+      if (wagon?.canBeAttacked) {
+        this.cancelCollect(); this.selectTarget(wagon);
+        if (isDouble) this.isFiring = true;
+        return;
+      }
 
       const box = this.lootAt(wx, wy);
       if (box) {
@@ -2883,6 +2928,17 @@ export default class GameScene extends Phaser.Scene {
     }
     return best;
   }
+  // Вагоны бронепоезда — тот же клик-контракт, что turretAt/baseAt (см. ArmoredTrain.js).
+  trainWagonAt(wx, wy) {
+    if (!this.armoredTrain) return null;
+    let best = null, bestD = Infinity;
+    for (const w of this.armoredTrain.wagons) {
+      if (!w.alive) continue;
+      const d = Phaser.Math.Distance.Between(wx, wy, w.x, w.y);
+      if (d < 80 && d < bestD) { best = w; bestD = d; }
+    }
+    return best;
+  }
   cancelCollect() { this.collectTarget = null; this.collectTimer = 0; }
 
   dropItemAtPlayer(item) {
@@ -3028,7 +3084,7 @@ export default class GameScene extends Phaser.Scene {
       this.muzzleFlash(p.x, p.y, isOC ? 0xff8800 : 0x8fe6ff, p);
       this.sfx?.play('sfx_cannon_fire', { cooldownMs: 60 });
       if (this.pvpClient) {
-        this.pvpClient.mobFireClaim(t.pvpMobId, t.maxHull, t.maxShield, t.x, t.y, 'cannon', dmg);
+        this.pvpClient.mobFireClaim(t.pvpMobId, t.maxHull, t.maxShield, t.x, t.y, 'cannon', dmg, t.wagonReward);
       } else {
         // DEV-фоллбэк без сервера — крит здесь ЛОКАЛЬНЫЙ (обычно его роллит сервер по
         // loadout, см. ветку выше), не критично для одиночного DEV-теста без логина.
@@ -3234,7 +3290,8 @@ export default class GameScene extends Phaser.Scene {
   _onPvpMobHitResult(msg) {
     const mob = this.mobs.find(m => m.pvpMobId === msg.mobId && m.alive)
       || this.miningBases.find(b => b.pvpMobId === msg.mobId && b.alive)
-      || this.miningBases.flatMap(b => b.turretTargets).filter(Boolean).find(tt => tt.pvpMobId === msg.mobId && tt.alive);
+      || this.miningBases.flatMap(b => b.turretTargets).filter(Boolean).find(tt => tt.pvpMobId === msg.mobId && tt.alive)
+      || this.armoredTrain?.wagons.find(w => w.pvpMobId === msg.mobId && w.alive);
     if (!mob) return;
     if (msg.dodged) { this.showDodge(mob.x, mob.y); return; }
     const hullHit   = msg.killed ? mob.hull   : Math.max(0, mob.hull   - msg.hull);
@@ -3299,6 +3356,16 @@ export default class GameScene extends Phaser.Scene {
       // делах — mob.tpl.credits/xp у Аргуса нарочно 0, см. constants.js). die() не
       // вызываем — ArgusController.update() сам детектит !mob.alive и разбирает мертвого.
       else if (mob.isArgusBoss) { mob.alive = false; }
+      // Вагон бронепоезда — свой отдельный reward-пайплайн (pvp_wagon_reward с сервера,
+      // топ-5 по урону пропорционально, см. HudScene.onWagonReward), НЕ onMobKilled().
+      // Часть лазерной пушки — личный шанс ТОЛЬКО добивающему (не делится, в отличие
+      // от общего пула) — см. ARMORED_TRAIN_SECTORS[sector].laserPartChance.
+      else if (mob.isArmoredTrainWagon) {
+        if (mob.isHead && msg.attackerUserId === this.myUserId) {
+          this._rollLaserPartDrop(this.armoredTrain?.cfg.laserPartChance);
+        }
+        this.armoredTrain?.onWagonDestroyed(mob);
+      }
       else { mob.die(); this.onMobKilled(mob); }
     }
   }
@@ -3326,9 +3393,28 @@ export default class GameScene extends Phaser.Scene {
       // База/турель уже сами обработали смерть ВНУТРИ takeDamage() (_onDestroyed/
       // _onTurretDestroyed) — здесь только уведомление владельца в лог.
       this._notifyBaseAttack(t, res.killed);
+    } else if (t.isArmoredTrainWagon) {
+      // DEV-фоллбэк без сервера: наградa за вагон некому делить пропорционально —
+      // отдаём весь пул соло-игроку напрямую (см. серверную версию в HudScene.onWagonReward).
+      if (res.killed) {
+        if (t.isHead) this._rollLaserPartDrop(this.armoredTrain?.cfg.laserPartChance);
+        this.armoredTrain?.onWagonDestroyed(t);
+        const pool = t.wagonReward || {};
+        if (pool.credits) this.credits = (this.credits || 0) + pool.credits;
+        if (pool.xp) this.gainXp(pool.xp);
+        if (pool.gold) this.starGold = (this.starGold || 0) + pool.gold;
+      }
     } else if (res.killed) {
       this.onMobKilled(t); // Mob.takeDamage() уже вызвал die() сам, onMobKilled — отдельно
     }
+  }
+
+  // Часть лазерной пушки (см. items.js LASER_CANNON_PARTS_NEEDED/GarageScene "КРАФТ") —
+  // личный шанс за килл, не общий пул: голова бронепоезда (3%) и Апофис (9%).
+  _rollLaserPartDrop(chance) {
+    if (!chance || Math.random() >= chance) return;
+    addConsumableToInventory(this.inventory, 'laser_cannon_part', 1, this._cargoMax());
+    this.log('⚡ Получена часть лазерной пушки!');
   }
 
   _nearestMiningBase() {
@@ -3476,7 +3562,7 @@ export default class GameScene extends Phaser.Scene {
       this.sfx?.play('sfx_laser_fire', { cooldownMs: 60 });
       this._consumeAmmo('laser');
       if (this.pvpClient) {
-        this.pvpClient.mobFireClaim(t.pvpMobId, t.maxHull, t.maxShield, t.x, t.y, 'laser', dmg);
+        this.pvpClient.mobFireClaim(t.pvpMobId, t.maxHull, t.maxShield, t.x, t.y, 'laser', dmg, t.wagonReward);
       } else {
         // DEV-фоллбэк без сервера — см. _fireCannon выше.
         const isCrit = p.critChance > 0 && Math.random() < p.critChance;
@@ -3904,8 +3990,20 @@ export default class GameScene extends Phaser.Scene {
       ? dungeonLootNorm(galaxy.current) : 1;
     const credits = Math.round(mob.tpl.credits * lvlScale * _credMult * lootNorm / 5);
     const xp = Math.round(mob.tpl.xp * lvlScale * (diff?.xpMult ?? 1) * lootNorm / 60);
-    this.log(i18n.t('log.killed', { name, lvl })); this.log(i18n.t('log.reward', { credits, xp }));
-    this.credits = (this.credits || 0) + credits; this.gainXp(xp);
+    this.log(i18n.t('log.killed', { name, lvl }));
+    // Данж-босс в группе: сервер делит credits/xp/золото пропорционально урону+хилу
+    // каждого участника (см. GroupManager.boss_died) — раньше тут начислялась ПОЛНАЯ
+    // solo-награда КАЖДОМУ члену группы независимо (баг: группа из 5 генерила ×5
+    // кредитов/опыта/лута за один и тот же килл). Дальше в функции не начисляем
+    // credits/xp локально, если это групповой килл — их пришлёт group_gold_reward.
+    const _grpKill = this.groupSystem;
+    const _isGroupBossKill = isDung && mob.isDungeonBoss && _grpKill?.inGroup;
+    if (_isGroupBossKill) {
+      this.log(i18n.t('log.reward_group_pending'));
+    } else {
+      this.log(i18n.t('log.reward', { credits, xp }));
+      this.credits = (this.credits || 0) + credits; this.gainXp(xp);
+    }
     if (this.target === mob) {
       this.target = null; this.isFiring = false;
       if (this._targetFx?.active) { this.vfx?.stopLoop(this._targetFx); this._targetFx = null; }
@@ -3938,10 +4036,10 @@ export default class GameScene extends Phaser.Scene {
         sg = 0;
       }
     }
-    // Данж-босс в группе: сервер распределяет золото, не начисляем локально
-    const _grpKill = this.groupSystem;
-    if (isDung && mob.isDungeonBoss && _grpKill?.inGroup) {
-      _grpKill.bossKilled(sg);
+    // Данж-босс в группе: сервер распределяет золото/credits/xp пропорционально
+    // урону+хилу (см. блок credits/xp выше — там же уже объявлен _grpKill/_isGroupBossKill)
+    if (_isGroupBossKill) {
+      _grpKill.bossKilled(sg, credits, xp);
       sg = 0;
     }
     // Охранник/минибосс в группе: лидер уведомляет остальных участников
@@ -4100,6 +4198,9 @@ export default class GameScene extends Phaser.Scene {
     })();
     if (mob.tpl.key === 'ancient_12') {
       this.gainHonor(Math.round(HONOR.APOPHYSIS * honorShare));
+      // Часть лазерной пушки — Апофис существенно сложнее/реже, чем бронепоезд
+      // (3% с головного вагона), поэтому шанс выше — см. items.js LASER_CANNON_PARTS_NEEDED.
+      this._rollLaserPartDrop(0.09);
     } else if (mob.isDungeonBoss) {
       const pl = this.pilotLevel || 1;
       const bH = mob.level > pl ? HONOR.BOSS_HIGHER : mob.level === pl ? HONOR.BOSS_EQUAL : HONOR.BOSS_LOWER;
@@ -5003,6 +5104,7 @@ export default class GameScene extends Phaser.Scene {
     this.updateLoot(dt); this.updateGates(dt);
     this._updateAnomaly(dt);
     this._updateWorldEvent(dt);
+    this._updateArmoredTrain(dt);
     this._updateAttachedFx();
     this._updateTrackedBeams();
     this._updateLowHpVignette(dt);

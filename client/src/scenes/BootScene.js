@@ -148,6 +148,14 @@ export default class BootScene extends Phaser.Scene {
       this.load.image(`cannon2_${corp}`, `assets/bases/cannon2_${corp}.png`);
     }
 
+    // Бронепоезд (см. ArmoredTrain.js): вагон 2 состояния, голова 3, + трос-разъём.
+    this.load.image('train_wagon_1', 'assets/train/train1_1.png');
+    this.load.image('train_wagon_2', 'assets/train/train1_2.png');
+    this.load.image('train_head_1',  'assets/train/train2_1.png');
+    this.load.image('train_head_2',  'assets/train/train2_2.png');
+    this.load.image('train_head_3',  'assets/train/train2_3.png');
+    this.load.image('train_cable',   'assets/train/cable.png');
+
     // Skill tree icons (20 skills, 128×128)
     const SKILL_KEYS = [
       'sharpshooter', 'heavy_caliber', 'penetrating_rounds', 'overcharge_shot',
