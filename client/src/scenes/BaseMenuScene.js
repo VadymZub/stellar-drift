@@ -323,12 +323,17 @@ export default class BaseMenuScene extends Phaser.Scene {
   _stateText() {
     const b = this.base;
     if (b.state === 'building') {
-      const rem = Math.ceil(BASE_CONFIG.buildTimeSec - b._buildTimer);
+      // b._buildEndsAt — абсолютный timestamp (см. MiningBase._buildEndsAtFromSaved),
+      // не накопительный таймер, отражает реально прошедшее время даже после дисконнекта.
+      const rem = Math.ceil(Math.max(0, b._buildEndsAt - Date.now()) / 1000);
       const m = Math.floor(rem / 60), s = rem % 60;
       return `СТРОИТСЯ — ${m}:${String(s).padStart(2, '0')} до завершения`;
     }
     if (b.corp === 'neutral') {
-      return b._neutralPhase === 'immune' ? 'НЕЙТРАЛЬНА  ·  иммунитет' : 'НЕЙТРАЛЬНА  ·  открыта для захвата';
+      const remSec = Math.max(0, Math.ceil((b._neutralPhaseEndsAt - Date.now()) / 1000));
+      const mm = Math.floor(remSec / 60), ss = remSec % 60;
+      const timeStr = `${mm}:${String(ss).padStart(2, '0')}`;
+      return b._neutralPhase === 'immune' ? `НЕЙТРАЛЬНА  ·  иммунитет — ${timeStr}` : `НЕЙТРАЛЬНА  ·  открыта для захвата — ${timeStr}`;
     }
     return 'АКТИВНА';
   }

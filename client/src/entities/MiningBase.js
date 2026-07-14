@@ -139,8 +139,8 @@ export default class MiningBase {
       this.turrets       = saved.turrets.slice();
       this._turretState  = (saved.turretState || Array(BASE_CONFIG.turretSlots).fill(null)).slice();
       this._neutralPhase = saved.neutralPhase || 'open';
-      this._neutralTimer = saved.neutralTimer || 0;
-      this._buildTimer   = saved.buildTimer || 0;
+      this._neutralPhaseEndsAt = this._neutralEndsAtFromSaved(saved);
+      this._buildEndsAt  = this._buildEndsAtFromSaved(saved);
     } else {
       this.corp          = 'neutral';
       this.state         = 'destroyed';
@@ -153,8 +153,8 @@ export default class MiningBase {
       this.turrets       = Array(BASE_CONFIG.turretSlots).fill(null);
       this._turretState  = Array(BASE_CONFIG.turretSlots).fill(null);
       this._neutralPhase = 'open';
-      this._neutralTimer = 0;
-      this._buildTimer   = 0;
+      this._neutralPhaseEndsAt = Date.now() + BASE_CONFIG.neutralOpenSec * 1000;
+      this._buildEndsAt  = 0;
     }
 
     // Боевые прокси турелей — отдельно от this.turrets (голые строки типа, которые
@@ -183,6 +183,30 @@ export default class MiningBase {
 
     this._createVisuals();
     this._persist();
+  }
+
+  // Таймеры базы (иммунитет/строительство) раньше хранились как "сколько секунд УЖЕ
+  // прошло в этой фазе" (neutralTimer/buildTimer), и продвигались только внутри
+  // update(dt) — т.е. ТОЛЬКО пока клиент реально в игре и рендерит кадры. Дисконнект/
+  // закрытая вкладка полностью останавливали отсчёт, так что реальный час простоя
+  // засчитывался как секунды факт. игрового времени (баг из диалога: "было 48 минут,
+  // переподключился через час — 47"). Теперь это абсолютные timestamp'ы конца фазы
+  // (Date.now() + остаток), которые не нужно "тикать" — сравнение с Date.now() само
+  // отражает реально прошедшее время независимо от того, была ли вкладка открыта.
+  // Миграция старых сохранений (только neutralTimer/buildTimer, без EndsAt) —
+  // пересчитываем остаток ОТ ТЕКУЩЕГО момента, лучшее доступное приближение.
+  _neutralEndsAtFromSaved(saved) {
+    if (saved.neutralPhaseEndsAt) return saved.neutralPhaseEndsAt;
+    const phase = saved.neutralPhase || 'open';
+    const limit = phase === 'immune' ? BASE_CONFIG.neutralImmuneSec : BASE_CONFIG.neutralOpenSec;
+    const elapsed = saved.neutralTimer || 0;
+    return Date.now() + Math.max(0, limit - elapsed) * 1000;
+  }
+
+  _buildEndsAtFromSaved(saved) {
+    if (saved.buildEndsAt) return saved.buildEndsAt;
+    const elapsed = saved.buildTimer || 0;
+    return Date.now() + Math.max(0, BASE_CONFIG.buildTimeSec - elapsed) * 1000;
   }
 
   // ── Public API ──────────────────────────────────────────────────────────────
@@ -254,7 +278,7 @@ export default class MiningBase {
     this.state = 'active';
     this.hull   = this.maxHull;
     this.shield = this.maxShield;
-    this._buildTimer = BASE_CONFIG.buildTimeSec;
+    this._buildEndsAt = Date.now();
     this._labelTick  = 0;
     this._refreshVisuals();
     this._persist();
@@ -281,7 +305,7 @@ export default class MiningBase {
     this._damageBy = {};
     this.turrets = Array(BASE_CONFIG.turretSlots).fill(null);
     this.turretTargets = Array(BASE_CONFIG.turretSlots).fill(null);
-    this._buildTimer = 0;
+    this._buildEndsAt = Date.now() + BASE_CONFIG.buildTimeSec * 1000;
     this._refreshVisuals();
     this._persist();
     gs.gainCorpRep?.(0.05);
@@ -355,12 +379,15 @@ export default class MiningBase {
     const now = gs.time.now;
 
     if (this.state === 'building') {
-      this._buildTimer += dt;
-      const frac = Math.min(1, this._buildTimer / BASE_CONFIG.buildTimeSec);
+      // Абсолютный timestamp конца стройки (см. _buildEndsAtFromSaved) вместо
+      // накопительного таймера — не "зависает", если вкладка была закрыта/в фоне
+      // часть из 15 мин стройки (см. диалог про серверное/клиентское время).
+      const remainMs = this._buildEndsAt - Date.now();
+      const frac = Math.min(1, 1 - Math.max(0, remainMs) / (BASE_CONFIG.buildTimeSec * 1000));
       this.hull = Math.round(this.maxHull * frac);
       this._labelTick += dt;
       if (this._labelTick >= 1) { this._labelTick = 0; this._refreshStateLabel(); }
-      if (this._buildTimer >= BASE_CONFIG.buildTimeSec) {
+      if (remainMs <= 0) {
         this.state  = 'active';
         this.hull   = this.maxHull;
         this.shield = this.maxShield;
@@ -399,19 +426,24 @@ export default class MiningBase {
         }
         this._persist();
         this._refreshOwnerLabel();
+        // Обратный отсчёт иммунитета/открытости (_refreshStateLabel) для АКТИВНОЙ базы
+        // раньше не обновлялся вообще — _labelTick тикает только в состоянии 'building'
+        // (см. выше), а для 'active' _refreshStateLabel звался только РАЗ на смену фазы
+        // (см. ниже), т.е. цифра рисовалась один раз и висела статично весь цикл (30-60
+        // мин) — выглядело как "таймер завис" (диалог). Переиспользуем уже существующий
+        // посекундный тик earnTimer вместо отдельного таймера.
+        if (this.corp === 'neutral') this._refreshStateLabel();
       }
     }
 
     if (this.state === 'active') {
-      // Neutral immunity cycle
+      // Neutral immunity cycle — абсолютный timestamp конца фазы, не накопительный
+      // таймер (см. комментарий у _neutralEndsAtFromSaved/buyBase выше).
       if (this.corp === 'neutral') {
-        this._neutralTimer += dt;
-        const limit = this._neutralPhase === 'open'
-          ? BASE_CONFIG.neutralOpenSec
-          : BASE_CONFIG.neutralImmuneSec;
-        if (this._neutralTimer >= limit) {
-          this._neutralTimer = 0;
+        if (Date.now() >= this._neutralPhaseEndsAt) {
           this._neutralPhase = this._neutralPhase === 'open' ? 'immune' : 'open';
+          const nextLimit = this._neutralPhase === 'open' ? BASE_CONFIG.neutralOpenSec : BASE_CONFIG.neutralImmuneSec;
+          this._neutralPhaseEndsAt = Date.now() + nextLimit * 1000;
           this._refreshStateLabel();
           this._persist();
         }
@@ -629,15 +661,14 @@ export default class MiningBase {
     if (this.state === 'destroyed') {
       this._stateLabel.setText('[ РАЗРУШЕНА ]');
     } else if (this.state === 'building') {
-      const rem = Math.ceil(BASE_CONFIG.buildTimeSec - this._buildTimer);
+      const rem = Math.ceil(Math.max(0, this._buildEndsAt - Date.now()) / 1000);
       const m = Math.floor(rem / 60), s = rem % 60;
       this._stateLabel.setText(`СТРОИТСЯ — ${m}:${String(s).padStart(2, '0')}`);
     } else if (this.corp === 'neutral') {
       // Обратный отсчёт до смены фазы (открыта↔иммунитет, см. update()) — раньше
       // фаза была видна, но НЕ было понятно, сколько осталось до открытия/закрытия,
       // выглядело как "непонятно, застряло это или нет" (см. диалог).
-      const limit = this._neutralPhase === 'immune' ? BASE_CONFIG.neutralImmuneSec : BASE_CONFIG.neutralOpenSec;
-      const remSec = Math.max(0, Math.ceil(limit - (this._neutralTimer || 0)));
+      const remSec = Math.max(0, Math.ceil((this._neutralPhaseEndsAt - Date.now()) / 1000));
       const mm = Math.floor(remSec / 60), ss = remSec % 60;
       const timeStr = `${mm}:${String(ss).padStart(2, '0')}`;
       this._stateLabel.setText(
@@ -849,7 +880,7 @@ export default class MiningBase {
     this.turrets = Array(BASE_CONFIG.turretSlots).fill(null);
     this.turretTargets = Array(BASE_CONFIG.turretSlots).fill(null);
     this._neutralPhase = 'open';
-    this._neutralTimer = 0;
+    this._neutralPhaseEndsAt = Date.now() + BASE_CONFIG.neutralOpenSec * 1000;
     this._refreshVisuals();
     this._persist();
     if (gs.scene.isActive('BaseMenuScene')) gs.scene.stop('BaseMenuScene');
@@ -871,8 +902,8 @@ export default class MiningBase {
     this.turrets       = Array(BASE_CONFIG.turretSlots).fill(null);
     this.turretTargets = Array(BASE_CONFIG.turretSlots).fill(null);
     this._neutralPhase = 'open';
-    this._neutralTimer = 0;
-    this._buildTimer   = 0;
+    this._neutralPhaseEndsAt = Date.now() + BASE_CONFIG.neutralOpenSec * 1000;
+    this._buildEndsAt  = 0;
     this._refreshVisuals();
     this._persist();
   }
@@ -890,9 +921,9 @@ export default class MiningBase {
     const gs = this.scene;
     this.owners = (corp === (gs.playerCorp || 'neutral')) ? [{ name: playerName, points: 0, gold: 0 }] : [];
     this.turrets = ['cannon1', 'cannon1', 'cannon1', 'cannon2', 'cannon2', 'cannon2'];
-    this._buildTimer   = 0;
+    this._buildEndsAt  = 0;
     this._neutralPhase = 'open';
-    this._neutralTimer = 0;
+    this._neutralPhaseEndsAt = Date.now() + BASE_CONFIG.neutralOpenSec * 1000;
     this.hull   = this.maxHull;
     this.shield = this.maxShield;
     this.turretTargets = this.turrets.map((type, i) => type ? new TurretTarget(this, i, type) : null);
@@ -932,8 +963,8 @@ export default class MiningBase {
         ? { hull: tt.hull, shield: tt.shield, lastDamageAt: tt.lastDamageAt }
         : null),
       neutralPhase: this._neutralPhase,
-      neutralTimer: this._neutralTimer,
-      buildTimer:   this._buildTimer,
+      neutralPhaseEndsAt: this._neutralPhaseEndsAt,
+      buildEndsAt:  this._buildEndsAt,
     });
     this._scheduleServerSave();
   }
@@ -968,8 +999,8 @@ export default class MiningBase {
     this.turrets       = (saved.turrets || Array(BASE_CONFIG.turretSlots).fill(null)).slice();
     this._turretState  = (saved.turretState || Array(BASE_CONFIG.turretSlots).fill(null)).slice();
     this._neutralPhase = saved.neutralPhase || 'open';
-    this._neutralTimer = saved.neutralTimer || 0;
-    this._buildTimer   = saved.buildTimer || 0;
+    this._neutralPhaseEndsAt = this._neutralEndsAtFromSaved(saved);
+    this._buildEndsAt  = this._buildEndsAtFromSaved(saved);
 
     this.turretTargets.forEach(tt => tt && (tt.alive = false));
     this.turretTargets = this.turrets.map((type, i) => {
