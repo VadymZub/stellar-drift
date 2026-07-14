@@ -254,7 +254,12 @@ export default class Player {
       if (!w.perk) continue;
       const pb = perkBonus(w.perk);
       if (w.perk.key === 'perk_steady_aim')    cannonPerkPct  += 0.10 * (1 + pb);
-      if (w.perk.key === 'perk_critical_edge') critPerkAdd    += 0.12 * (1 + pb);
+      // Не суммируем по всем пушкам с этим перком (как остальные ниже) — крит и так
+      // общий на весь корабль (this.critChance одна цифра на все орудия, не по пушке),
+      // так что раньше несколько копий на разных пушках складывались в один и тот же
+      // общий крит-шанс, эффективно давая перку эффект "на весь корабль" ×N копий вместо
+      // одной. Берём лучшую ОДНУ копию — по просьбе, слишком сильно иначе (диалог).
+      if (w.perk.key === 'perk_critical_edge') critPerkAdd    = Math.max(critPerkAdd, 0.12 * (1 + pb));
       if (w.perk.key === 'perk_hull_breaker')  hullBreakerPen += 0.05 * (1 + pb);
       if (w.perk.key === 'perk_anti_armor')    antiArmorPct   += 0.20 * (1 + pb);
       if (w.perk.key === 'perk_marksman')      marksmanPct    += 0.15 * (1 + pb);
@@ -364,9 +369,14 @@ export default class Player {
     const rawEvasion = shieldItems.reduce((a,s) => a + s.evasion * modMult(s), 0);
     this.evasion = Math.min(0.30, rawEvasion + evasionPerkAdd + BF('evasion'));
 
-    // Crit: additive from BASE=0
-    this.critChance = Math.min(0.65, critPerkAdd + sl('sharpshooter') * 0.04 + BF('critChance'));
-    this.critMult   = BF('critMult') ? Math.min(4.0, 2.0 + 2.0 * BF('critMult')) : 2.0;
+    // Crit: additive from BASE=0. Потолки понижены с 65%/×4.0 до 45%/×3.0 — при 65%
+    // шанса крит становился ЧАЩЕ обычного попадания, а ×4.0 плюс остальные бонусы урона
+    // (перки/скиллы/борды/бустеры) в сумме давали слишком волатильный и завышенный DPS
+    // (диалог: "имба и это слишком"). Коэффициент critMult тоже пересчитан (2.0→1.0), не
+    // только потолок — иначе верхняя половина вложений в борд critMult просто обрезалась
+    // бы потолком без эффекта, вместо гладкой кривой до 3.0 при полном вложении.
+    this.critChance = Math.min(0.45, critPerkAdd + sl('sharpshooter') * 0.04 + BF('critChance'));
+    this.critMult   = BF('critMult') ? Math.min(3.0, 2.0 + 1.0 * BF('critMult')) : 2.0;
 
     // Reduction stats: 1.0 - Σ(all reductions) — board, skill, perk all additive
     this.damageResistMod   = Math.max(0.10, 1.0 - BF('piercingRes') - sl('damage_resist') * 0.05 - piercingResPerkRed);

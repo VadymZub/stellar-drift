@@ -15,6 +15,10 @@ const STAR_PACKS = [
   { id: 'stars_admiral',  label: 'АДМИРАЛ', stars: 6000, price: '$39.99', badge: '+20%' },
 ];
 
+// Недельный бустер опыта/чести — тот же мок-паттерн, что и весь DonateScene
+// (кнопка → _showComingSoon), реальной активации/оплаты нет.
+const WEEKLY_BOOSTER = { id: 'boost_xp_honor_7d', label: '+10% ОПЫТ  ·  +10% ЧЕСТЬ', desc: '7 дней', price: '$2.99' };
+
 const PREMIUM_BENEFITS = [
   '+8 слотов трюма',
   '+8 слотов склада',
@@ -168,6 +172,31 @@ export default class DonateScene extends Phaser.Scene {
       const cy  = y + 30 + row * (ch + gap);
       this._drawStarCard(cx, cy, cw, ch, pack, gs, refreshBal);
     });
+
+    // Недельный бустер — под сеткой звёзд, есть запас по высоте в этой колонке
+    // (левая с premium-планами заполнена почти до низа панели, эта — нет).
+    const rows = Math.ceil(STAR_PACKS.length / 2);
+    const boosterY = y + 30 + rows * (ch + gap) + 16;
+    this._drawWeeklyBoosterCard(x, boosterY, w - 10);
+  }
+
+  _drawWeeklyBoosterCard(x, y, w) {
+    const bh = 74;
+    const g = this.add.graphics();
+    g.fillStyle(0x1a1400, 0.95); g.fillRoundedRect(x, y, w, bh, 10);
+    g.lineStyle(1.5, 0xffd54f, 0.85); g.strokeRoundedRect(x, y, w, bh, 10);
+
+    this.add.text(x + 16, y + 14, WEEKLY_BOOSTER.label, this.O('12px', '#ffd54f'));
+    this.add.text(x + 16, y + 36, WEEKLY_BOOSTER.desc, this.F('11px', '#c9a04a'));
+
+    const btnW = 90, btnH = 44, btnX = x + w - btnW - 14, btnY = y + (bh - btnH) / 2;
+    const btn = this.add.rectangle(btnX + btnW / 2, btnY + btnH / 2, btnW, btnH, 0x2a1a00)
+      .setStrokeStyle(1.5, 0xffd54f, 0.85).setInteractive({ useHandCursor: true });
+    this.add.text(btnX + btnW / 2, btnY + btnH / 2, WEEKLY_BOOSTER.price, this.O('13px', '#ffd54f')).setOrigin(0.5);
+
+    btn.on('pointerover', () => btn.setFillStyle(0x4a2a00));
+    btn.on('pointerout',  () => btn.setFillStyle(0x2a1a00));
+    btn.on('pointerdown', () => this._showComingSoon(btnX + btnW / 2, btnY));
   }
 
   _drawStarCard(cx, cy, cw, ch, pack, gs, refreshBal) {

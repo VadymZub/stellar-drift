@@ -53,6 +53,32 @@ export default class HudScene extends Phaser.Scene {
   create() {
     this.gs = this.scene.get('GameScene');
 
+    // Смена ширины/высоты окна (main.js: window resize → game.scale.resize())
+    // меняет this.scale.width/height, но НЕ трогает уже созданные объекты —
+    // все элементы HUD посчитаны от W/H ОДИН раз здесь, в create(), и застревают
+    // на старых координатах (см. диалог со скриншотом: кнопка бустеров и
+    // экшн-бар "плавают" не там, где должны, после изменения ширины окна).
+    // Полный restart() пересчитывает всё заново от актуального this.scale.*,
+    // включая позиции, восстановленные из localStorage (уже клэмпятся под
+    // текущий W/H на месте создания) — надёжнее, чем point-fix каждого элемента.
+    // ДЕБАУНС обязателен — активное перетаскивание края окна шлёт 'resize'
+    // десятки раз/сек, а restart() рвёт и переоткрывает чат-WS (см. _connectChatWS)
+    // на КАЖДЫЙ такой вызов; итог — модалка "Соединение потеряно" бешено мерцает
+    // всё время перетаскивания (баг из диалога: "мерцает, глаза болят"), плюс
+    // реальная гонка ("WebSocket is closed before the connection is established"
+    // в консоли). Ждём 400мс тишины после ПОСЛЕДНЕГО resize, прежде чем реально
+    // рестартовать — во время активного драга restart() не срабатывает вовсе.
+    let _resizeTimer = null;
+    const _onResize = () => {
+      if (_resizeTimer) clearTimeout(_resizeTimer);
+      _resizeTimer = setTimeout(() => this.scene.restart(), 400);
+    };
+    this.scale.on('resize', _onResize);
+    this.events.once('shutdown', () => {
+      this.scale.off('resize', _onResize);
+      if (_resizeTimer) clearTimeout(_resizeTimer);
+    });
+
     // Apply UI Scale from settings
     const _s = loadSettings();
     this.cameras.main.setZoom(_s.uiScale / 100);
@@ -85,6 +111,10 @@ export default class HudScene extends Phaser.Scene {
       .setStroke('#060f18', 4);
     this._mmCoordTxt  = this.add.text(0, 0, '', O('10px', '#4dd0e1')).setOrigin(0.5, 0).setDepth(102)
       .setStroke('#060f18', 4);
+    // Обратный отсчёт до ивента (нашествие/бронепоезд) на ТЕКУЩЕЙ карте — см.
+    // GameScene._initEventCountdown/_mmEventNotice, только если старт в пределах 15 мин.
+    this._mmEventTxt  = this.add.text(0, 0, '', O('11px', '#ffb300')).setOrigin(0.5, 0).setDepth(102)
+      .setStroke('#060f18', 4).setVisible(false);
 
     // Панель игрока (лев-верх) — фиксированный вертикальный layout
     // Bar rows: icon (left) + bar (center, 155px) + value (right of bar, white)
@@ -101,6 +131,13 @@ export default class HudScene extends Phaser.Scene {
     this.pPilot    = this.add.text(0, 0, '', O('12px', '#b39ddb')).setDepth(101).setVisible(false);
     this.pRank     = this.add.text(0, 0, '', O('12px', '#ffcc80')).setDepth(101).setVisible(false);
     this.pXpTxt    = this.add.text(0, 0, '', F('10px', '#9fb3b8')).setOrigin(1, 0).setDepth(101).setVisible(false);
+    // Кэш "последнее показанное значение" (см. update() ниже — пропускает setText,
+    // если статы не менялись) переживает scene.restart() как обычное поле сцены, а
+    // сами Text-объекты выше — нет (Phaser уничтожает их при restart и создаёт заново
+    // пустыми). Без сброса кэша здесь панель информации оставалась пустой после
+    // ресайза до первого РЕАЛЬНОГО изменения кредитов/опыта/etc (баг из диалога).
+    this._lastIpCredits = this._lastIpStarGold = this._lastIpHonor = undefined;
+    this._lastIpCorpRepPct = this._lastIpXp = this._lastIpRankName = undefined;
 
     // Панель цели (центр-верх)
     this.tName = this.add.text(0, 16, '', O('16px', '#ef5350')).setOrigin(0.5, 0).setDepth(101);
@@ -114,8 +151,20 @@ export default class HudScene extends Phaser.Scene {
     this.hint = this.add.text(0, 0, i18n.t('hud.controls'), F('11px', '#7e9398'))
       .setOrigin(0.5, 1).setDepth(101);
 
-    // Лог событий (лев-низ)
-    this.logEntries = [];
+    // Лог событий (лев-низ) — logEntries хранит {t: Text, born} и Text-объекты не
+    // переживают scene.restart() (Phaser уничтожает все display-объекты сцены), но сам
+    // текст сообщений должен — иначе лог визуально пустел после ресайза (баг из диалога,
+    // тот же класс проблемы, что и у инфо-панели выше). _logHistory — параллельное
+    // хранилище только СЫРЫХ данных (текст+время), переживает restart через ||, как и
+    // остальные поля этой сцены; отсюда пересобираем Text-объекты заново.
+    this._logHistory = this._logHistory || [];
+    this.logEntries = this._logHistory.map(e => ({
+      t: this.add.text(0, 0, e.text, {
+        fontFamily: 'Inter, sans-serif', fontSize: '12px', color: '#cfe9ee', resolution: UI_RES,
+        wordWrap: { width: 276 },
+      }).setDepth(101),
+      born: e.born,
+    }));
     this.game.events.on('hud-log', this.pushLog, this);
     this.events.once('shutdown', () => this.game.events.off('hud-log', this.pushLog, this));
 
@@ -651,12 +700,15 @@ export default class HudScene extends Phaser.Scene {
   }
 
   pushLog(text) {
+    const born = this.time.now;
     const t = this.add.text(0, 0, text, {
       fontFamily: 'Inter, sans-serif', fontSize: '12px', color: '#cfe9ee', resolution: UI_RES,
       wordWrap: { width: 276 },
     }).setDepth(101);
-    this.logEntries.push({ t, born: this.time.now });
+    this.logEntries.push({ t, born });
+    this._logHistory.push({ text, born });
     while (this.logEntries.length > 7) this.logEntries.shift().t.destroy();
+    while (this._logHistory.length > 7) this._logHistory.shift();
     this._refreshLogPanel();
   }
 
@@ -834,9 +886,22 @@ export default class HudScene extends Phaser.Scene {
         this._setText(this._mmSectorTxt, SECTORS[galaxy.current]?.name ?? '');
         this._mmCoordTxt.setPosition(_cx, _labelY + 14).setVisible(true);
         this._setText(this._mmCoordTxt, `${_cx2}  ·  ${_cy2}`);
+
+        const ev = gs._mmEventNotice;
+        const evLeftMs = ev ? ev.startAt - Date.now() : -1;
+        if (ev && evLeftMs > 0) {
+          const secLeft = Math.ceil(evLeftMs / 1000);
+          const mm = String(Math.floor(secLeft / 60)).padStart(2, '0');
+          const ss = String(secLeft % 60).padStart(2, '0');
+          this._mmEventTxt.setPosition(_cx, _labelY + 28).setVisible(true);
+          this._setText(this._mmEventTxt, `⚠ ${ev.label} через ${mm}:${ss}`);
+        } else {
+          this._mmEventTxt.setVisible(false);
+        }
       } else {
         this._mmSectorTxt.setVisible(false);
         this._mmCoordTxt.setVisible(false);
+        this._mmEventTxt.setVisible(false);
       }
     }
 
@@ -1312,6 +1377,10 @@ export default class HudScene extends Phaser.Scene {
 
     // XP bar graphics (redrawn every frame)
     this._ipXpGfx = this.add.graphics().setDepth(100);
+    // Тот же сброс кэша, что и у _lastIpCredits выше — _updateInfoPanelContent
+    // пропускает перерисовку Graphics, если barX/barY/fillW не изменились с
+    // прошлого раза, а после restart() эта Graphics пустая (см. этот же баг).
+    this._lastIpCollapsed = this._lastIpBarX = this._lastIpBarY = this._lastIpFillW = undefined;
 
     // Toggle/drag button (always visible)
     const BW = 52, BH = 24;
@@ -1992,6 +2061,12 @@ export default class HudScene extends Phaser.Scene {
     };
 
     ws.onclose = (evt) => {
+      // Защита от гонки: если этот сокет уже был заменён более новым (см. _connectChatWS
+      // вызванный повторно, напр. из-за resize-рестарта HudScene выше) — его onclose может
+      // сработать ПОЗЖЕ, чем this._chatWS уже указывает на новый, живой сокет. Без этой
+      // проверки устаревший onclose затирал бы ссылку на новый сокет null'ом и показывал
+      // модалку "соединение потеряно" поверх реально работающего соединения.
+      if (this._chatWS !== ws) return;
       this._chatWS = null;
       this.groupSystem = null;
       this.pvpClient?.leaveSector(); // destroy any RemotePlayer sprites before dropping the reference
@@ -2655,7 +2730,8 @@ export default class HudScene extends Phaser.Scene {
     const bx = saved.x ?? (W - WW - 12);
     const by = saved.y ?? 120;
 
-    this._bstClosed   = saved.closed || false;
+    this._bstClosed    = saved.closed || false;
+    this._bstForceOpen = false;
     this._bstDrag     = { active: false, ox: 0, oy: 0 };
     this._bstPrevActive = {};
     this._bstLastVisCount = -1;
@@ -2684,6 +2760,7 @@ export default class HudScene extends Phaser.Scene {
     closeBtn.on('pointerout',  () => closeBtn.setColor('#557788'));
     closeBtn.on('pointerdown', () => {
       this._bstClosed = true;
+      this._bstForceOpen = false;
       this._bstSavePos();
       c.setVisible(false);
     });
@@ -2698,12 +2775,65 @@ export default class HudScene extends Phaser.Scene {
       return { key: def.key, icon, label, timer };
     });
 
+    // Пустой ряд — показывается вместо перечня, когда плашку принудительно
+    // вызвали (см. _bstToggleBtn), но активных бустеров нет: "всегда можно
+    // вызвать и проверить" должно означать именно ПРОВЕРИТЬ (в т.ч. увидеть, что
+    // ничего не активно), а не молчаливое отсутствие реакции на клик.
+    this._bstEmptyTxt = this.add.text(8, hdrH + rowH / 2, 'нет активных бустеров', F('10px', '#5a7a8a'));
+    c.add(this._bstEmptyTxt);
+
     c.setVisible(false);
+
+    // Постоянная кнопка-раскрывашка — НЕ часть контейнера плашки (тот целиком
+    // прячется при !anyActive/_bstClosed), живёт отдельно и видна всегда, иначе
+    // закрытую крестиком (или свернувшуюся из-за отсутствия активных бустеров)
+    // плашку было решительно нечем открыть обратно, кроме как ждать активации
+    // НОВОГО бустера (см. диалог — раньше это был единственный путь).
+    const tbSize = 26;
+    const tbX = W - tbSize - 10, tbY = 10;
+    this._bstToggleBtn = this.add.rectangle(tbX, tbY, tbSize, tbSize, 0x0c1a2e, 0.9)
+      .setOrigin(0).setStrokeStyle(1.5, 0xffd54f, 0.7).setInteractive({ useHandCursor: true }).setDepth(106);
+    this._bstToggleTxt = this.add.text(tbX + tbSize / 2, tbY + tbSize / 2, '⚡', { fontSize: '14px', resolution: UI_RES }).setOrigin(0.5).setDepth(107);
+    this._bstToggleBtn.on('pointerover', () => this._bstToggleBtn.setFillStyle(0x1a2a3e, 0.95));
+    this._bstToggleBtn.on('pointerout',  () => this._bstToggleBtn.setFillStyle(0x0c1a2e, 0.9));
+    this._bstToggleBtn.on('pointerdown', () => {
+      this._bstClosed = false;
+      this._bstForceOpen = true;
+      this._bstSavePos();
+    });
   }
 
   _bstSavePos() {
     const c = this._bstCon;
     try { localStorage.setItem('sd_booster_win', JSON.stringify({ x: Math.round(c.x), y: Math.round(c.y), closed: this._bstClosed })); } catch {}
+  }
+
+  // Бегущая строка вверху экрана — важные ивенты (нашествие/бронепоезд) за 15/5
+  // мин до старта, см. GameScene._checkEventNotices. Хорошо читаемый крупный
+  // шрифт, умеренная скорость (TICKER_SPEED_PX_PER_SEC), 3 прохода насквозь
+  // (repeat:2 = 1 первый + 2 повтора), затем самоуничтожается. Новый вызов во
+  // время уже идущей бегущей строки обрывает предыдущую — новый алерт важнее.
+  showEventTicker(text) {
+    const TICKER_SPEED_PX_PER_SEC = 150;
+    this._tickerObjs?.forEach(o => { try { o.destroy(); } catch (_) {} });
+    this._tickerTween?.stop();
+    const W = this.scale.width;
+    const barH = 34;
+    const bg = this.add.rectangle(W / 2, barH / 2, W, barH, 0x0a0a14, 0.88)
+      .setDepth(400).setScrollFactor(0).setStrokeStyle(1, 0xffd54f, 0.5);
+    const txt = this.add.text(W, barH / 2, text, {
+      fontFamily: 'Orbitron, sans-serif', fontSize: '18px', color: '#ffd54f', resolution: UI_RES,
+    }).setOrigin(0, 0.5).setDepth(401).setScrollFactor(0);
+    this._tickerObjs = [bg, txt];
+    const distance = W + txt.width;
+    const duration = (distance / TICKER_SPEED_PX_PER_SEC) * 1000;
+    this._tickerTween = this.tweens.add({
+      targets: txt, x: -txt.width, duration, repeat: 2, ease: 'Linear',
+      onComplete: () => {
+        bg.destroy(); txt.destroy();
+        this._tickerObjs = null; this._tickerTween = null;
+      },
+    });
   }
 
   // Раньше строило Set (map+filter) и разворачивало его в массив через [...] КАЖДЫЙ
@@ -2731,7 +2861,11 @@ export default class HudScene extends Phaser.Scene {
     }
 
     const c = this._bstCon;
-    if (!anyActive || this._bstClosed) { c.setVisible(false); return; }
+    // _bstForceOpen — плашку вызвали кнопкой ⚡ (см. _createBoosterWidget) — держим
+    // видимой, даже если активных бустеров нет (показываем пустое состояние ниже),
+    // до тех пор, пока её явно не закроют крестиком (_bstClosed=true сбрасывает и
+    // это). Без forceOpen поведение как раньше: видна только пока anyActive.
+    if (this._bstClosed || (!anyActive && !this._bstForceOpen)) { c.setVisible(false); return; }
     c.setVisible(true);
 
     let visCount = 0;
@@ -2745,12 +2879,13 @@ export default class HudScene extends Phaser.Scene {
         visCount++;
       }
     }
+    this._bstEmptyTxt.setVisible(visCount === 0);
 
     // Redraw background only when visible row count changes
     if (visCount !== this._bstLastVisCount) {
       this._bstLastVisCount = visCount;
       const WW = this._bstWW, hdrH = this._bstHdrH, rowH = this._bstRowH;
-      const totalH = hdrH + visCount * rowH;
+      const totalH = hdrH + (visCount || 1) * rowH;
       this._bstBg.clear();
       this._bstBg.fillStyle(0x060e1a, 0.93); this._bstBg.fillRoundedRect(0, 0, WW, totalH, 6);
       this._bstBg.lineStyle(1, 0x2a5a7a, 0.8); this._bstBg.strokeRoundedRect(0, 0, WW, totalH, 6);

@@ -80,7 +80,10 @@ export const PERK_DEFS = [
   { key: 'perk_critical_edge', imgFile: 'Critical Edge.png',      name: 'Critical Edge',
     slot: 'weapon', rarity: 'rare',
     effect: '+12% шанс критического удара',
-    desc: (b, r = 1) => `+${+(12 * r * (1 + b)).toFixed(1)}% крит. шанс · к кораблю` },
+    // Не суммируется с другими копиями (см. Player.js critPerkAdd — раньше все копии
+    // складывались, эффективно давая слишком сильный крит-шанс на весь корабль при
+    // нескольких пушках; теперь берётся лучшая копия, см. "к кораблю (макс.)" выше).
+    desc: (b, r = 1) => `+${+(12 * r * (1 + b)).toFixed(1)}% крит. шанс · к кораблю (макс.)` },
 
   { key: 'perk_hull_breaker',  imgFile: 'Hull-breaker.png',       name: 'Hull-Breaker',
     slot: 'weapon', rarity: 'uncommon',

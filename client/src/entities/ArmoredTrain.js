@@ -117,9 +117,12 @@ class TrainTurretTarget {
     this.idx = idx;
     this.isTrainTurretTarget = true;
 
+    // Головной вагон — турели "2-го уровня" (cannon2 — вдвое прочнее cannon1 в
+    // BASE_CONFIG, см. bases.js), обычные вагоны — cannon1, как и раньше.
     const mult = pvpTierMult(wagon.train.tier);
-    this.maxHull   = BASE_CONFIG.turretHullMax.cannon1   * mult;
-    this.maxShield = BASE_CONFIG.turretShieldMax.cannon1 * mult;
+    const wKey = wagon.isHead ? 'cannon2' : 'cannon1';
+    this.maxHull   = BASE_CONFIG.turretHullMax[wKey]   * mult;
+    this.maxShield = BASE_CONFIG.turretShieldMax[wKey] * mult;
     this.hull   = this.maxHull;
     this.shield = this.maxShield;
     this.lastDamageAt = -1e9;
@@ -163,12 +166,13 @@ class ArmoredTrainWagon {
     this.isHead = isHead;
     this.isArmoredTrainWagon = true;
 
-    // Прочность вагона — фиксированная (150 000 щит + 150 000 корпус), не завязана на
-    // pvpTierMult/BASE_CONFIG.hullMax базы, как было раньше (при tier=1 mult=0.3 давало
-    // всего 30 000 — по прямой правке нужно кратно больше, независимо от тира сектора).
-    // Голова — та же пропорция ×2.5, что и раньше, от нового фиксированного значения.
-    this.maxHull   = isHead ? WAGON_HULL   * 2.5 : WAGON_HULL;
-    this.maxShield = isHead ? WAGON_SHIELD * 2.5 : WAGON_SHIELD;
+    // Прочность вагона — теперь тирована по pvpTierMult (тот же коэффициент, что у баз
+    // и турелей поезда, см. bases.js): WAGON_HULL/WAGON_SHIELD — референс для tier 4/5
+    // (mult=1.0), тир 1-3 пропорционально слабее. Раньше было зафиксировано без тира по
+    // сектору намеренно (см. историю) — пересмотрено по прямой просьбе (диалог).
+    const wMult = pvpTierMult(this.train.tier);
+    this.maxHull   = (isHead ? WAGON_HULL   * 2.5 : WAGON_HULL)   * wMult;
+    this.maxShield = (isHead ? WAGON_SHIELD * 2.5 : WAGON_SHIELD) * wMult;
     this.hull = this.maxHull;
     this.shield = this.maxShield;
     this.alive = true;
@@ -585,10 +589,14 @@ export default class ArmoredTrain {
   // же угол, что и корпус сегмента.
   _updateTurrets(dt, player) {
     if (!player?.alive) return;
-    const range = BASE_CONFIG.cannon1Range, damage = BASE_CONFIG.cannon1Damage * pvpTierMult(this.tier);
-    const rateInv = 1 / BASE_CONFIG.cannon1Rate;
     for (const w of this.wagons) {
       if (!w.alive) continue;
+      // Головной вагон — турели "2-го уровня" (cannon2: вдвое прочнее/сильнее cannon1,
+      // см. BASE_CONFIG в bases.js и TrainTurretTarget выше) — сильнее защищён, раз
+      // именно он спавнит волны дронов и завершает поезд (см. диалог).
+      const range   = w.isHead ? BASE_CONFIG.cannon2Range  : BASE_CONFIG.cannon1Range;
+      const damage  = (w.isHead ? BASE_CONFIG.cannon2Damage : BASE_CONFIG.cannon1Damage) * pvpTierMult(this.tier);
+      const rateInv = 1 / (w.isHead ? BASE_CONFIG.cannon2Rate : BASE_CONFIG.cannon1Rate);
       // Свой угол на вагон (не общий this.heading+π/2) — голова развёрнута доп. на π
       // относительно корпуса (см. _wagonRot), иначе её турельные сокеты остались бы
       // рассчитаны по старому углу и разъехались бы с уже перевёрнутым спрайтом.

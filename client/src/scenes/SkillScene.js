@@ -227,7 +227,7 @@ export default class SkillScene extends Phaser.Scene {
 
   // ── SP helpers ────────────────────────────────────────────────────────────
 
-  _spTotal()  { return (this._gs.pilotLevel || 1) + (this._gs.skillAchievementSP || 0); }
+  _spTotal()  { return this._gs.skillSpTotal(); }
   _spSpent()  { return Object.values(this._gs.skillLevels).reduce((a, v) => a + v, 0); }
   _spAvail()  { return this._spTotal() - this._spSpent(); }
   _lvl(key)   { return this._gs.skillLevels[key] || 0; }

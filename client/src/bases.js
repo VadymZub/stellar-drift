@@ -4,10 +4,15 @@ export const CORPS = ['neutral', 'helios', 'karax', 'tides'];
 export const BASE_CONFIG = {
   // Базовые значения для pvp4/pvp5 (коэф. 1.0) — см. pvpTierMult ниже, масштабирует
   // и это, и урон турелей (cannon1Damage/cannon2Damage) одним и тем же коэффициентом.
-  hullMax:          100000,
-  shieldMax:        100000,
-  turretHullMax:    { cannon1: 10000, cannon2: 20000 },
-  turretShieldMax:  { cannon1: 10000, cannon2: 20000 },
+  // Прочность базы/турелей удвоена (было 100к/100к базы, 10к/20к турелей) — коэффициенты
+  // pvpTierMult ниже не трогали, так что удвоение автоматически применяется на ВСЕХ
+  // тирах пропорционально (см. диалог). Турели бронепоезда берут ЭТИ ЖЕ константы
+  // (см. ArmoredTrain.js TrainTurretTarget) — удвоились вместе с базовыми, отдельно
+  // трогать не пришлось.
+  hullMax:          200000,
+  shieldMax:        200000,
+  turretHullMax:    { cannon1: 20000, cannon2: 40000 },
+  turretShieldMax:  { cannon1: 20000, cannon2: 40000 },
   displaySize:      460,   // active / building sprite px
   displayDestroyed: 340,   // destroyed sprite (smaller, dimmed)
   captureRadius:    180,   // F-key interact range

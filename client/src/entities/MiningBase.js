@@ -633,8 +633,15 @@ export default class MiningBase {
       const m = Math.floor(rem / 60), s = rem % 60;
       this._stateLabel.setText(`СТРОИТСЯ — ${m}:${String(s).padStart(2, '0')}`);
     } else if (this.corp === 'neutral') {
+      // Обратный отсчёт до смены фазы (открыта↔иммунитет, см. update()) — раньше
+      // фаза была видна, но НЕ было понятно, сколько осталось до открытия/закрытия,
+      // выглядело как "непонятно, застряло это или нет" (см. диалог).
+      const limit = this._neutralPhase === 'immune' ? BASE_CONFIG.neutralImmuneSec : BASE_CONFIG.neutralOpenSec;
+      const remSec = Math.max(0, Math.ceil(limit - (this._neutralTimer || 0)));
+      const mm = Math.floor(remSec / 60), ss = remSec % 60;
+      const timeStr = `${mm}:${String(ss).padStart(2, '0')}`;
       this._stateLabel.setText(
-        this._neutralPhase === 'immune' ? 'НЕЙТРАЛЬНА (иммунитет)' : 'НЕЙТРАЛЬНА (открыта)'
+        this._neutralPhase === 'immune' ? `НЕЙТРАЛЬНА (иммунитет) — ${timeStr}` : `НЕЙТРАЛЬНА (открыта) — ${timeStr}`
       );
     } else {
       this._stateLabel.setText(`АКТИВНА · ${this.corp.toUpperCase()}`);

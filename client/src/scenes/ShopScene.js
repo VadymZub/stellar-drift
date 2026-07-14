@@ -4,6 +4,19 @@ import { i18n } from '../i18n.js';
 import { CONSUMABLES, addConsumableToInventory, countConsumableInInventory, AMMO_ICON } from '../items.js';
 import { prerenderTex } from '../utils/prerenderTex.js';
 
+// Обмен золота на опыт — 3× дороже фарма (типичный данж-килл: ~100 XP за ~3 ⭐,
+// см. GameScene.onMobKilled/rollStarGold — курс не константа, варьируется по
+// мобу/данжу, это калиброванный якорь) ⇒ 100 XP из магазина стоит 9 ⭐.
+const XP_GOLD_PER_100XP = 9;
+const XP_PRESETS = [1000, 5000, 20000];
+
+// Обмен золота на кредиты — курс взят из уже существующего паритета цен в
+// магазине (см. AMMO_ITEMS ниже: ammo_plasma 1000шт/10000кр vs ammo_plasma_elite
+// 1000шт/10⭐ — тот же товар, та же цена ⇒ 1⭐ ≈ 1000кр). Без ограничения по сумме
+// (в отличие от опыта — там верхняя граница 40 уровня) — только по балансу.
+const GOLD_TO_CREDITS_RATE = 1000;
+const GOLD_EXCHANGE_STEPS = [1, 10, 100];
+
 const GOLD_PACK = 10;
 
 const BOOSTERS = [
@@ -71,7 +84,7 @@ export default class ShopScene extends Phaser.Scene {
     this._refresh();
 
     // ── Tab strip ────────────────────────────────────────────────────────────
-    const TABS = ['РАСХОДНИКИ И БОЕПРИПАСЫ', 'БУСТЕРЫ', 'ВООРУЖЕНИЕ'];
+    const TABS = ['РАСХОДНИКИ И БОЕПРИПАСЫ', 'БУСТЕРЫ', 'ОБМЕН', 'ВООРУЖЕНИЕ'];
     const tabY = py + 46, tabH = 30;
     // Tabs occupy left portion, donate button occupies right ~320px
     const tabAreaW = pw - 340;
@@ -97,7 +110,8 @@ export default class ShopScene extends Phaser.Scene {
       this._tabObjects = [];
       if (idx === 0) this._renderConsumables();
       if (idx === 1) this._renderBoosters();
-      if (idx === 2) this._renderWeapons();
+      if (idx === 2) this._renderExchangeTab();
+      if (idx === 3) this._renderWeapons();
     };
 
     TABS.forEach((label, i) => {
@@ -180,6 +194,225 @@ export default class ShopScene extends Phaser.Scene {
 
     BOOSTERS.forEach((b, i) => {
       this._drawBoosterCard(gx + i * (CW + GAP), cardsY, CW, CH, b, gs);
+    });
+  }
+
+  // ── Tab: ОБМЕН (золото → опыт / золото → кредиты) ────────────────────────
+  _renderExchangeTab() {
+    const bottomY = this._renderXpExchange();
+    this._renderCreditsExchange(bottomY + 26);
+  }
+
+  // Обмен золота на опыт — возвращает нижнюю границу занятой области (нужно
+  // разделу обмена на кредиты ниже, чтобы не наложиться).
+  _renderXpExchange() {
+    const { _px: px, _pw: pw, _gs: gs } = this;
+    const ob = this._tabObjects;
+    const cy0 = this._cy0();
+    const cap = gs.xpBuyCap();
+
+    ob.push(this.add.text(px + 34, cy0 + 4, 'ОБМЕН ЗОЛОТА НА ОПЫТ', this.O('12px', '#4dd0e1')));
+
+    if (cap.locked) {
+      ob.push(this.add.text(px + 34, cy0 + 26,
+        `Доступно только до 40 уровня пилота (сейчас ${gs.pilotLevel}) — обмен закрыт`,
+        this.F('12px', '#5a4030')));
+      return cy0 + 26;
+    }
+    ob.push(this.add.text(px + 34, cy0 + 26,
+      `До 40 уровня можно докупить ещё ${cap.remaining.toLocaleString()} XP · курс ×3 от типичного фарма`,
+      this.F('12px', '#4a7a90')));
+
+    const CW = 220, CH = 270, GAP = 18;
+    const xpItems = [...XP_PRESETS, 'max'];
+    const gridW = xpItems.length * CW + (xpItems.length - 1) * GAP;
+    const gx = px + (pw - gridW) / 2;
+    const cardsY = cy0 + 48;
+    xpItems.forEach((preset, i) => {
+      this._drawXpCard(gx + i * (CW + GAP), cardsY, CW, CH, preset, cap, gs);
+    });
+    return cardsY + CH;
+  }
+
+  // Обмен золота на кредиты — без верхней границы (в отличие от опыта), сумма
+  // набирается степпером +/- и подтверждается диалогом (см. _showConfirm)
+  // КАЖДЫЙ раз перед списанием, как и было явно запрошено.
+  _renderCreditsExchange(y) {
+    const { _px: px, _pw: pw, _gs: gs } = this;
+    const ob = this._tabObjects;
+
+    ob.push(this.add.text(px + 34, y, 'ОБМЕН ЗОЛОТА НА КРЕДИТЫ', this.O('12px', '#4dd0e1')));
+    ob.push(this.add.text(px + 34, y + 22,
+      `Курс: 1 ⭐ = ${GOLD_TO_CREDITS_RATE.toLocaleString()} кр. · без ограничения по сумме (кроме баланса)`,
+      this.F('12px', '#4a7a90')));
+
+    const gold = gs.starGold || 0;
+    if (this._goldExchangeAmount === undefined) this._goldExchangeAmount = Math.min(10, gold);
+    this._goldExchangeAmount = Math.max(0, Math.min(this._goldExchangeAmount, gold));
+    const amt = this._goldExchangeAmount;
+
+    const panelY = y + 46, panelH = 96, panelW = Math.min(560, pw - 68);
+    const panelX = px + (pw - panelW) / 2;
+    const gfx = this.add.graphics();
+    gfx.fillStyle(0x0c1a2e, 0.97); gfx.fillRoundedRect(panelX, panelY, panelW, panelH, 10);
+    gfx.lineStyle(2, 0xffd54f, 0.7); gfx.strokeRoundedRect(panelX, panelY, panelW, panelH, 10);
+    ob.push(gfx);
+
+    const rowY = panelY + 18;
+    const amtTxt = this.add.text(panelX + panelW / 2, rowY, `${amt.toLocaleString()} ⭐`, this.O('16px', '#ffd54f')).setOrigin(0.5);
+    ob.push(amtTxt);
+
+    const previewTxt = this.add.text(panelX + panelW / 2, rowY + 24,
+      `Получите: ${(amt * GOLD_TO_CREDITS_RATE).toLocaleString()} кр.`, this.F('12px', '#6aacb8')).setOrigin(0.5);
+    ob.push(previewTxt);
+
+    const refreshAmt = () => {
+      this._goldExchangeAmount = Math.max(0, Math.min(this._goldExchangeAmount, gs.starGold || 0));
+      amtTxt.setText(`${this._goldExchangeAmount.toLocaleString()} ⭐`);
+      previewTxt.setText(`Получите: ${(this._goldExchangeAmount * GOLD_TO_CREDITS_RATE).toLocaleString()} кр.`);
+      exBtnTxt.setText(this._goldExchangeAmount > 0 ? `ОБМЕНЯТЬ — ${(this._goldExchangeAmount * GOLD_TO_CREDITS_RATE).toLocaleString()} кр.` : 'ОБМЕНЯТЬ');
+    };
+
+    // Степпер: -100/-10/-1 слева, +1/+10/+100 справа, MAX крайним справа
+    const stepY = rowY + 46;
+    const steps = [-100, -10, -1];
+    steps.forEach((s, i) => {
+      this._stepBtn(panelX + 24 + i * 44, stepY, 40, 26, `${s}`, () => {
+        this._goldExchangeAmount = Math.max(0, Math.min((gs.starGold || 0), this._goldExchangeAmount + s));
+        refreshAmt();
+      });
+    });
+    GOLD_EXCHANGE_STEPS.forEach((s, i) => {
+      this._stepBtn(panelX + panelW - 24 - (GOLD_EXCHANGE_STEPS.length - i) * 44 - 60, stepY, 40, 26, `+${s}`, () => {
+        this._goldExchangeAmount = Math.max(0, Math.min((gs.starGold || 0), this._goldExchangeAmount + s));
+        refreshAmt();
+      });
+    });
+    this._stepBtn(panelX + panelW - 24 - 52, stepY, 60, 26, 'MAX', () => {
+      this._goldExchangeAmount = gs.starGold || 0;
+      refreshAmt();
+    }, 0x1a2a3e, 0x4dd0e1);
+
+    const btnW = 220, btnH = 34, btnX = panelX + panelW / 2, btnY = panelY + panelH + 18;
+    const exBtn = this.add.rectangle(btnX, btnY, btnW, btnH, 0x2a1a00)
+      .setStrokeStyle(1.5, 0xffd54f, 0.85).setInteractive({ useHandCursor: true });
+    const exBtnTxt = this.add.text(btnX, btnY, '', this.O('11px', '#ffd54f')).setOrigin(0.5);
+    ob.push(exBtn, exBtnTxt);
+    refreshAmt();
+
+    exBtn.on('pointerover', () => exBtn.setFillStyle(0x4a2a00));
+    exBtn.on('pointerout',  () => exBtn.setFillStyle(0x2a1a00));
+    exBtn.on('pointerdown', () => {
+      const a = this._goldExchangeAmount;
+      if (a <= 0 || a > (gs.starGold || 0)) return;
+      const credits = a * GOLD_TO_CREDITS_RATE;
+      this._showConfirm(`Обменять ${a.toLocaleString()} ⭐ на ${credits.toLocaleString()} кредитов?`, () => {
+        gs.starGold -= a;
+        gs.credits = (gs.credits || 0) + credits;
+        gs._saveState?.();
+        gs.log?.(`Обмен: −${a.toLocaleString()} ⭐  +${credits.toLocaleString()} кр.`);
+        this._refresh();
+        this._tabObjects.forEach(o => { try { o.destroy(); } catch (_) {} });
+        this._tabObjects = [];
+        this._renderExchangeTab();
+      });
+    });
+  }
+
+  // Маленькая кнопка степпера (+/-N, MAX)
+  _stepBtn(cx, cy, w, h, label, onClick, bg = 0x1a1000, stroke = 0xffb74d) {
+    const ob = this._tabObjects;
+    const btn = this.add.rectangle(cx + w / 2, cy + h / 2, w, h, bg)
+      .setStrokeStyle(1, stroke, 0.8).setInteractive({ useHandCursor: true });
+    const txt = this.add.text(cx + w / 2, cy + h / 2, label, this.F('11px', '#e0c080')).setOrigin(0.5);
+    ob.push(btn, txt);
+    btn.on('pointerover', () => btn.setFillStyle(0x2e2000));
+    btn.on('pointerout',  () => btn.setFillStyle(bg));
+    btn.on('pointerdown', onClick);
+    return btn;
+  }
+
+  // ── Подтверждение (обмен золота, необратимые операции) — тот же паттерн,
+  // что и GarageScene._showConfirm, скопирован сюда: у ShopScene своего не было,
+  // а обмен на кредиты явно должен спрашивать подтверждение КАЖДЫЙ раз.
+  _showConfirm(message, onConfirm) {
+    (this._confirmObjs || []).forEach(o => o?.destroy());
+    this._confirmObjs = [];
+    const W = this.scale.width, H = this.scale.height;
+    const dw = 380, dh = 120;
+    const dx = W / 2, dy = H / 2;
+    const _close = () => {
+      (this._confirmObjs || []).forEach(o => o?.destroy());
+      this._confirmObjs = [];
+    };
+    const overlay = this.add.rectangle(W / 2, H / 2, W, H, 0x000000, 0.55)
+      .setDepth(149).setInteractive();
+    const dlg = this.add.rectangle(dx, dy, dw, dh, 0x060e1c, 1)
+      .setStrokeStyle(1, 0xffd54f, 1).setDepth(150);
+    const msg = this.add.text(dx, dy - dh / 2 + 16, message,
+      { ...this.F('12px', '#e0f0ff'), wordWrap: { width: dw - 28 }, align: 'center' })
+      .setOrigin(0.5, 0).setDepth(151);
+    const btnW = 130, btnH = 30;
+    const cfmBg = this.add.rectangle(dx - 78, dy + 34, btnW, btnH, 0x0a2010, 1)
+      .setStrokeStyle(1, 0x44bb66, 1).setDepth(150).setInteractive({ useHandCursor: true });
+    const cfmT = this.add.text(dx - 78, dy + 34, 'Подтвердить',
+      this.F('12px', '#44bb66')).setOrigin(0.5).setDepth(151);
+    cfmBg.on('pointerover', () => cfmBg.setAlpha(0.7));
+    cfmBg.on('pointerout',  () => cfmBg.setAlpha(1));
+    cfmBg.on('pointerdown', () => { _close(); onConfirm(); });
+    const cnlBg = this.add.rectangle(dx + 78, dy + 34, btnW, btnH, 0x18060a, 1)
+      .setStrokeStyle(1, 0x995544, 1).setDepth(150).setInteractive({ useHandCursor: true });
+    const cnlT = this.add.text(dx + 78, dy + 34, 'Отмена',
+      this.F('12px', '#aa6655')).setOrigin(0.5).setDepth(151);
+    cnlBg.on('pointerover', () => cnlBg.setAlpha(0.7));
+    cnlBg.on('pointerout',  () => cnlBg.setAlpha(1));
+    cnlBg.on('pointerdown', _close);
+    this._confirmObjs.push(overlay, dlg, msg, cfmBg, cfmT, cnlBg, cnlT);
+  }
+
+  // ── XP-за-золото card (preset === 'max' ⇒ покупает весь остаток до 40 ур.) ──
+  _drawXpCard(cx, cy, cw, ch, preset, cap, gs) {
+    const ob = this._tabObjects;
+    const buyXp = Math.max(0, Math.min(preset === 'max' ? cap.remaining : preset, cap.remaining));
+    const price = Math.max(1, Math.ceil(buyXp * XP_GOLD_PER_100XP / 100));
+
+    const gfx = this.add.graphics();
+    gfx.fillStyle(0x0c1a2e, 0.97); gfx.fillRoundedRect(cx, cy, cw, ch, 10);
+    gfx.lineStyle(2, 0xffd54f, 0.7); gfx.strokeRoundedRect(cx, cy, cw, ch, 10);
+    ob.push(gfx);
+
+    ob.push(this.add.text(cx + cw / 2, cy + 60, '⚡', { ...this.O('56px', '#ffd54f') }).setOrigin(0.5));
+    ob.push(this.add.text(cx + cw / 2, cy + 132,
+      preset === 'max' ? 'ВЕСЬ ОСТАТОК' : `${preset.toLocaleString()} XP`,
+      { ...this.O('14px', '#e0f0ff'), wordWrap: { width: cw - 20 }, align: 'center' }).setOrigin(0.5, 0));
+    ob.push(this.add.text(cx + cw / 2, cy + 158,
+      preset === 'max' ? `${buyXp.toLocaleString()} XP` : 'до 40 уровня',
+      this.F('12px', '#6aacb8')).setOrigin(0.5, 0));
+
+    const btnH = 38, btnY = cy + ch - 48;
+    const disabled = buyXp <= 0;
+    const btn = this.add.rectangle(cx + cw / 2, btnY + btnH / 2, cw - 28, btnH, disabled ? 0x1a1a1a : 0x2a1a00)
+      .setStrokeStyle(1.5, disabled ? 0x3a3a3a : 0xffd54f, 0.85);
+    const btnTxt = this.add.text(cx + cw / 2, btnY + btnH / 2,
+      disabled ? 'НЕДОСТУПНО' : `КУПИТЬ — ${price} ⭐`, this.O('10px', disabled ? '#5a5a5a' : '#ffd54f')).setOrigin(0.5);
+    ob.push(btn, btnTxt);
+    if (disabled) return;
+
+    btn.setInteractive({ useHandCursor: true });
+    btn.on('pointerover', () => btn.setFillStyle(0x4a2a00));
+    btn.on('pointerout',  () => btn.setFillStyle(0x2a1a00));
+    btn.on('pointerdown', () => {
+      if ((gs.starGold || 0) < price) {
+        btn.setFillStyle(0x5a1010); this.time.delayedCall(300, () => btn.setFillStyle(0x2a1a00)); return;
+      }
+      gs.starGold -= price;
+      gs._applyRawXp(buyXp);
+      gs._saveState?.();
+      gs.log?.(`Куплено: ${buyXp.toLocaleString()} XP −${price} ⭐`);
+      this._refresh();
+      this._tabObjects.forEach(o => { try { o.destroy(); } catch (_) {} });
+      this._tabObjects = [];
+      this._renderExchangeTab();
     });
   }
 

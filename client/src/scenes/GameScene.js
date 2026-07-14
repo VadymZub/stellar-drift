@@ -45,7 +45,7 @@ const BOUNTY_LEVEL_GAP = 3;
 const DEV_MODE = true;
 const MOCK_CORP_RATINGS = [0.95, 0.92, 0.88, 0.85, 0.82, 0.78, 0.75, 0.72, 0.68, 0.65, 0.62, 0.58, 0.55, 0.52, 0.48];
 
-function xpForLevel(L) {
+export function xpForLevel(L) {
   let total = 0;
   for (let i = 1; i < L; i++) total += xpToNext(i);
   return total;
@@ -393,6 +393,12 @@ export default class GameScene extends Phaser.Scene {
     this.actionBar   = this.actionBar   || Array(10).fill(null);
     this.respeckCount     = this.respeckCount     || 0;
     this.skillAchievementSP = this.skillAchievementSP || 0;
+    // Потолок доступных SP — см. skillSpTotal(): монотонный, никогда не падает,
+    // даже если баланс кривой опыта (leveling.js) в будущем patch'е сделает 40+
+    // уровни ещё дороже и уже посчитанный pilotLevel игрока пересчитается ниже
+    // задним числом (см. диалог: юзер словил "потрачено 47 / 42" именно из-за
+    // такого прошлого patch'а — "harder endgame leveling").
+    this.skillSpHighWater = this.skillSpHighWater || 0;
 
     // Ammo slots: N generic slots (any ammo or consumable), count = ship's aSlots
     const _aSlotCount = SHIP_BY_KEY[this.activeShip]?.aSlots || 3;
@@ -553,6 +559,7 @@ export default class GameScene extends Phaser.Scene {
     this._initAnomaly();
     this._initWorldEvent();
     this._initArmoredTrain();
+    this._initEventCountdown();
     this.setupInput();
     this.keyJ = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.J);
     this.keyCtrl = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.CTRL);
@@ -875,6 +882,69 @@ export default class GameScene extends Phaser.Scene {
     // ещё не готов (WS переподключается), HudScene.ws.onopen пошлёт тот же запрос
     // самолечащимся catch-up'ом (тот же паттерн, что у enterSector).
     this.pvpClient?.trainQuery(this.armoredTrain.trainKey);
+  }
+
+  // Ближайший ивент (нашествие/бронепоезд) НА ТЕКУЩЕЙ карте, ещё не начавшийся,
+  // но стартующий в пределах 15 мин — для обратного отсчёта под миникартой
+  // (см. HudScene, отрисовка рядом с _mmCoordTxt). Пересчитывается заново на
+  // каждый scene.restart() (прыжок в сектор), не персистится — актуален только
+  // для карты, на которой игрок сейчас находится.
+  _initEventCountdown() {
+    this._mmEventNotice = null;
+    const now = Date.now();
+    const cands = [];
+    if (WORLD_EVENT_SECTORS[galaxy.current]) {
+      const startAt = this._worldEventTodayStart(galaxy.current);
+      if (startAt > now && startAt - now <= 15 * 60000) cands.push({ label: 'Нашествие', startAt });
+    }
+    if (ARMORED_TRAIN_SECTORS[galaxy.current]) {
+      const startAt = this._armoredTrainTodayStart(galaxy.current);
+      if (startAt > now && startAt - now <= 15 * 60000) cands.push({ label: 'Бронепоезд', startAt });
+    }
+    if (cands.length) this._mmEventNotice = cands.sort((a, b) => a.startAt - b.startAt)[0];
+  }
+
+  // Ближайшие (сегодня, ещё не начавшиеся) ивенты по ВСЕМ PvP-секторам с
+  // расписанием — не только по текущему, чтобы игрок мог узнать заранее и
+  // успеть долететь на нужную карту (см. диалог: "ивенты через 15 мин и через
+  // 5 мин ... на какой карте").
+  _upcomingScheduledEvents() {
+    const now = Date.now();
+    const list = [];
+    for (const sectorKey of Object.keys(WORLD_EVENT_SECTORS)) {
+      const startAt = this._worldEventTodayStart(sectorKey);
+      if (startAt > now && startAt - now <= 15 * 60000 + 1000) {
+        list.push({ sectorKey, label: 'Нашествие', startAt });
+      }
+    }
+    for (const sectorKey of Object.keys(ARMORED_TRAIN_SECTORS)) {
+      const startAt = this._armoredTrainTodayStart(sectorKey);
+      if (startAt > now && startAt - now <= 15 * 60000 + 1000) {
+        list.push({ sectorKey, label: 'Бронепоезд', startAt });
+      }
+    }
+    return list;
+  }
+
+  // Триггерит бегущую строку (HudScene.showEventTicker) ровно один раз на
+  // каждую пару (ивент, порог 15/5 мин) — _announcedEventMarks переживает
+  // scene.restart() (см. || ниже, тот же приём, что и у остального состояния
+  // GameScene), но не персистится в сохранение (актуально только на сессию).
+  _checkEventNotices() {
+    this._announcedEventMarks = this._announcedEventMarks || new Set();
+    const now = Date.now();
+    for (const ev of this._upcomingScheduledEvents()) {
+      const minLeft = (ev.startAt - now) / 60000;
+      for (const mark of [15, 5]) {
+        const key = `${ev.sectorKey}:${ev.label}:${ev.startAt}:${mark}`;
+        if (minLeft <= mark && minLeft > mark - 0.5 && !this._announcedEventMarks.has(key)) {
+          this._announcedEventMarks.add(key);
+          const mapName = (SECTORS[ev.sectorKey]?.name || ev.sectorKey).toUpperCase();
+          const text = `⚠ ЧЕРЕЗ ${mark} МИН: ${ev.label.toUpperCase()} — КАРТА "${mapName}"  ⚠`;
+          this.scene.get('HudScene')?.showEventTicker(text);
+        }
+      }
+    }
   }
 
   _updateArmoredTrain(dt) {
@@ -2308,7 +2378,12 @@ export default class GameScene extends Phaser.Scene {
         return;
       }
       const base = this.baseAt(wx, wy);
-      if (base?.canBeAttacked) {
+      if (base?.alive) {
+        // Локать можно ВСЕГДА (даже нейтральную базу в фазе иммунитета — см.
+        // MiningBase._neutralPhase), сам огонь блокируется позже в _fireCannon/
+        // _fireLaser с объяснением в лог — тот же паттерн, что и у "бить строго с
+        // хвоста" на вагонах бронепоезда. Раньше !canBeAttacked молча не давал
+        // выбрать цель вообще — выглядело как "прицел не цепляется" без причины.
         this.cancelCollect(); this.selectTarget(base);
         if (isDouble) this.isFiring = true;
         return;
@@ -2983,7 +3058,17 @@ export default class GameScene extends Phaser.Scene {
     if (this.pilotLevel >= MAX_LEVEL || amount <= 0) return;
     const _premiumXp = this.premium ? 1.10 : 1.0;
     const _mapXp = 1 + (this.player?.mapXpBonus ?? 0);
-    this.pilotXp += Math.round(amount * (this.player?.xpBonusMod ?? 1) * _premiumXp * _mapXp);
+    this._applyRawXp(amount * (this.player?.xpBonusMod ?? 1) * _premiumXp * _mapXp);
+  }
+
+  // Начисление XP БЕЗ бонусных множителей (perks/premium/карта) — общая логика
+  // левелапа/разблокировки миссий, вынесенная из gainXp() для покупки опыта за
+  // золото в магазине (ShopScene): игрок платит золотом за КОНКРЕТНОЕ количество
+  // XP, применять сверху ещё и бонусы было бы нечестным удешевлением для premium/
+  // перк-билдов (тот же эффект дешевле именно через прямой фарм).
+  _applyRawXp(amount) {
+    if (this.pilotLevel >= MAX_LEVEL || amount <= 0) return;
+    this.pilotXp += Math.round(amount);
     const newLevel = levelInfo(this.pilotXp).level;
     while (newLevel > this.pilotLevel && this.pilotLevel < MAX_LEVEL) {
       this.pilotLevel++;
@@ -2999,6 +3084,33 @@ export default class GameScene extends Phaser.Scene {
         }
       }
     }
+  }
+
+  // Покупка опыта за золото (ShopScene) разрешена строго до 40 уровня — после
+  // 40-го кривая опыта намеренно круче (см. leveling.js, ×4.5/×6 "эндгейм-плато"
+  // введено ИМЕННО чтобы растянуть финальный гринд), пропускать его золотом было
+  // бы обходом того самого замедления. remaining — сколько XP ещё можно купить,
+  // не переступив порог 40 уровня (0, если уже 40+).
+  xpBuyCap() {
+    const cap = xpForLevel(40);
+    return { capXp: cap, remaining: Math.max(0, cap - this.pilotXp), locked: this.pilotLevel >= 40 };
+  }
+
+  // Потолок SP для дерева умений (SkillScene) — НЕ просто "pilotLevel +
+  // skillAchievementSP" напрямую: та формула однажды уже дала игроку минус
+  // ("потрачено 47 / 42") после патча, ужесточившего кривую опыта для 40+
+  // уровней (см. leveling.js) — тот же pilotXp после патча пересчитывается в
+  // МЕНЬШИЙ pilotLevel, задним числом обесценивая уже потраченные очки. Здесь —
+  // монотонный потолок: растёт вместе с уровнем/ачивками, но никогда не падает,
+  // и самовосстанавливается, если уже накопленный перерасход (эта самая
+  // прошлая ошибка) всё ещё сидит в сохранении — не отбираем игроку уже
+  // распределённые очки, а поднимаем потолок под них.
+  skillSpTotal() {
+    const live = this.pilotLevel + (this.skillAchievementSP || 0);
+    this.skillSpHighWater = Math.max(this.skillSpHighWater || 0, live);
+    const spent = Object.values(this.skillLevels || {}).reduce((a, v) => a + v, 0);
+    if (spent > this.skillSpHighWater) this.skillSpHighWater = spent;
+    return this.skillSpHighWater;
   }
 
   gainHonor(amount) {
@@ -3202,6 +3314,14 @@ export default class GameScene extends Phaser.Scene {
     // не стреляем и объясняем, что не так.
     if (t.isArmoredTrainWagon && !t.canBeAttacked) {
       this._warnThrottle('train_wagon_order', '🚂 Уничтожьте сначала крайний вагон — бронепоезд бьётся строго с хвоста.');
+      return;
+    }
+    // Нейтральная база в фазе иммунитета (см. MiningBase._neutralPhase/canBeAttacked) —
+    // локать можно всегда (см. клик-хендлер выше), но огонь по факту заблокирован на
+    // время цикла. Раньше клик молча не давал выбрать цель вообще — выглядело как
+    // "прицел не цепляется" без объяснения (см. диалог).
+    if (t.isMiningBase && !t.canBeAttacked) {
+      this._warnThrottle('base_neutral_immune', '🛡 База неуязвима — сейчас фаза иммунитета нейтральной базы.');
       return;
     }
 
@@ -3786,6 +3906,11 @@ export default class GameScene extends Phaser.Scene {
     // См. _fireCannon — вагон бронепоезда лочится всегда, но бьётся строго с хвоста.
     if (t.isArmoredTrainWagon && !t.canBeAttacked) {
       this._warnThrottle('train_wagon_order', '🚂 Уничтожьте сначала крайний вагон — бронепоезд бьётся строго с хвоста.');
+      return;
+    }
+    // См. _fireCannon — нейтральная база лочится всегда, но не бьётся в фазе иммунитета.
+    if (t.isMiningBase && !t.canBeAttacked) {
+      this._warnThrottle('base_neutral_immune', '🛡 База неуязвима — сейчас фаза иммунитета нейтральной базы.');
       return;
     }
 
@@ -5385,6 +5510,9 @@ export default class GameScene extends Phaser.Scene {
     this._updateAnomaly(dt);
     this._updateWorldEvent(dt);
     this._updateArmoredTrain(dt);
+    // Раз в ~3с, не каждый кадр — минутные пороги не нуждаются в кадровой точности.
+    this._eventNoticeAccum = (this._eventNoticeAccum || 0) + dt;
+    if (this._eventNoticeAccum >= 3) { this._eventNoticeAccum = 0; this._checkEventNotices(); }
     this._updateAttachedFx();
     this._updateTrackedBeams();
     this._updateLowHpVignette(dt);
@@ -7698,6 +7826,7 @@ export default class GameScene extends Phaser.Scene {
       ammoSlots:           this.ammoSlots   || [],
       respeckCount:        this.respeckCount        || 0,
       skillAchievementSP:  this.skillAchievementSP  || 0,
+      skillSpHighWater:    this.skillSpHighWater    || 0,
       currentSector:       galaxy.current === 'shadow_arena' ? (this._shadowPrevSector || 'helios_1') : galaxy.current,
       playerCorp:          this.playerCorp          || 'neutral',
       lootBySector:        this._serializeLoot(),
@@ -7737,6 +7866,7 @@ export default class GameScene extends Phaser.Scene {
     if (s.ammoSlots          != null) this.ammoSlots          = s.ammoSlots;
     if (s.respeckCount       != null) this.respeckCount       = s.respeckCount;
     if (s.skillAchievementSP != null) this.skillAchievementSP = s.skillAchievementSP;
+    if (s.skillSpHighWater   != null) this.skillSpHighWater   = s.skillSpHighWater;
     if (s.currentSector != null && SECTORS[s.currentSector]) {
       const restoredSec = SECTORS[s.currentSector];
       if (s.currentSector === 'R-1-boss' || s.currentSector === 'shadow_arena') {
