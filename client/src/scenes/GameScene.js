@@ -3240,7 +3240,7 @@ export default class GameScene extends Phaser.Scene {
       this.muzzleFlash(p.x, p.y, isOC ? 0xff8800 : 0x8fe6ff, p);
       this.sfx?.play('sfx_cannon_fire', { cooldownMs: 60 });
       if (this.pvpClient) {
-        this.pvpClient.mobFireClaim(t.pvpMobId, t.maxHull, t.maxShield, t.x, t.y, 'cannon', dmg, t.wagonReward);
+        this.pvpClient.mobFireClaim(t.pvpMobId, t.maxHull, t.maxShield, t.x, t.y, 'cannon', dmg, t.wagonReward, t.isDungeonBoss);
       } else {
         // DEV-фоллбэк без сервера — крит здесь ЛОКАЛЬНЫЙ (обычно его роллит сервер по
         // loadout, см. ветку выше), не критично для одиночного DEV-теста без логина.
@@ -3816,7 +3816,7 @@ export default class GameScene extends Phaser.Scene {
       this.sfx?.play('sfx_laser_fire', { cooldownMs: 60 });
       this._consumeAmmo('laser');
       if (this.pvpClient) {
-        this.pvpClient.mobFireClaim(t.pvpMobId, t.maxHull, t.maxShield, t.x, t.y, 'laser', dmg, t.wagonReward);
+        this.pvpClient.mobFireClaim(t.pvpMobId, t.maxHull, t.maxShield, t.x, t.y, 'laser', dmg, t.wagonReward, t.isDungeonBoss);
       } else {
         // DEV-фоллбэк без сервера — см. _fireCannon выше.
         const isCrit = p.critChance > 0 && Math.random() < p.critChance;

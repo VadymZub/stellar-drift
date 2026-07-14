@@ -79,11 +79,16 @@ export class PvpClient {
      * (движение моба клиент-локальное, сервер не знает его позицию иначе); dmg — см. fireClaim.
      * wagonReward — ТОЛЬКО для вагонов бронепоезда (mobId вида "train:..."): детерминированный
      * (по ARMORED_TRAIN_SECTORS, одинаковый у всех атакующих) пул {credits,xp,gold,...} —
-     * сервер использует его, только если ИМЕННО этот выстрел добивает вагон (см. main.py). */
-    mobFireClaim(mobId, maxHull, maxShield, mobX, mobY, weaponType, dmg, wagonReward) {
+     * сервер использует его, только если ИМЕННО этот выстрел добивает вагон (см. main.py).
+     * isDungeonBoss — ТОЛЬКО для данж-босса в группе (mobId вида "group:..."): сервер снимает
+     * "фото" mob_state.damage_by в GroupManager ИМЕННО на килле этого флага (см. main.py
+     * pvp_mob_fire_claim) — без него сплит награды деградирует до "только хил" (см. память
+     * server_authoritative_mobs_status). */
+    mobFireClaim(mobId, maxHull, maxShield, mobX, mobY, weaponType, dmg, wagonReward, isDungeonBoss) {
         if (!this.sector) return;
         const payload = { type: 'pvp_mob_fire_claim', mobId, maxHull, maxShield, mobX, mobY, weaponType, dmg };
         if (wagonReward) payload.wagonReward = wagonReward;
+        if (isDungeonBoss) payload.isDungeonBoss = true;
         this._send(payload);
     }
 

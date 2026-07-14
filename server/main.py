@@ -1372,6 +1372,15 @@ async def chat_ws(
 
             # ── Группа: босс убит → распределить золото/credits/xp ────
             elif msg_type == 'group_boss_dead':
+                # Идемпотентность: сервер транслирует общий pvp_mob_hit_result ВСЕМ
+                # участникам комнаты (см. pvp_mob_fire_claim), так что КАЖДЫЙ клиент
+                # независимо детектирует килл локально и посылает своё group_boss_dead —
+                # раньше это пересчитывало и рассылало полную награду заново на КАЖДОЕ
+                # такое сообщение (баг: группа из N получала ×N суммарной награды).
+                # inst.locked выставляется внутри boss_died() при первом успешном вызове.
+                inst = group_manager.get_instance(user.username)
+                if not inst or inst.locked:
+                    continue
                 base_gold    = int(data.get('baseGold', 0))
                 base_credits = int(data.get('baseCredits', 0))
                 base_xp      = int(data.get('baseXp', 0))
@@ -1740,6 +1749,26 @@ async def chat_ws(
                             })
                             for uid, share in shares.items():
                                 await chat_manager.send_to_uid(uid, {'type': 'pvp_wagon_reward', 'mobId': mob_id, **share})
+                    elif sector.startswith('group:') and data.get('isDungeonBoss'):
+                        # Данж-босс в группе (Фаза 4): урон уже общий (mob_state.damage_by,
+                        # обычный PvpMobState-леджер — ничего дополнительного делать не нужно),
+                        # но раньше сплит награды (GroupManager.boss_died) читал СТАРЫЙ relay-
+                        # протокол group_damage/inst.members[...]['damage'], который перестал
+                        # вызываться вообще, как только эти мобы получили pvpMobId (см. комментарий
+                        # у DungeonInstance/GroupManager) — split деградировал до "только хил".
+                        # "Фотографируем" реальный вклад ПРЯМО СЕЙЧАС: mob_state будет удалён из
+                        # реестра (remove_mob выше) раньше, чем долетит отдельное group_boss_dead
+                        # от клиента, заметившего килл — ждать его для чтения damage_by нельзя.
+                        # uid→username — через живых участников той же комнаты (room_players),
+                        # damage_by ключуется по uid, inst.members — по username (унаследовано
+                        # от старого relay-протокола, трогать шире этого фикса не стал).
+                        inst = group_manager.get_instance(attacker.username)
+                        if inst and not inst.locked:
+                            room_players = pvp_room_manager.rooms.get(sector, {})
+                            for uid, dmg in mob_state.damage_by.items():
+                                p = room_players.get(uid)
+                                if p and p.username in inst.members:
+                                    inst.members[p.username]['damage'] = dmg
 
                 out = {
                     'type': 'pvp_mob_hit_result', 'mobId': mob_id, 'attackerUserId': attacker.user_id,
