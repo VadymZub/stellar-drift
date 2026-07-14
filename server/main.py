@@ -280,6 +280,15 @@ PVP_BURST_MULT = 3.0
 PVP_CRIT_CHANCE_CAP = 0.45   # потолок — тот же, что у клиента (Player.js:critChance)
 PVP_CRIT_MULT_CAP   = 3.0    # потолок — тот же, что у клиента (Player.js:critMult)
 
+# План Фаза 3.1 (offline-ship): PvpPlayerState.hull/maxHull/shield/maxShield сегодня
+# сознательно НЕ валидируются на входе (см. _clamp_pvp_loadout ниже — там только боевые
+# статы) — приемлемо для живого, постоянно переподтверждаемого соединения, но не для
+# значения, которое дальше часами будет авторитетным в OfflineShipManager без клиента
+# рядом, который мог бы его исправить. Потолок — выше топового легитимного (admin
+# Аргус 500k щита, см. CLAUDE.md) с запасом, тот же принцип, что и у PVP_MAX_DAMAGE.
+PVP_MAX_HULL   = 700000.0
+PVP_MAX_SHIELD = 700000.0
+
 # Турели добывающих баз — залп НЕ привязан к личному оружию/лоадауту конкретного
 # игрока (иначе конфликтовал бы с cooldown/range того игрока, чей клиент случайно
 # первым отправил заявку). Каждый игрок, видящий базу, крутит свою локальную копию
@@ -327,6 +336,15 @@ def _clamp_pvp_loadout(loadout: dict) -> dict:
     }
 
 
+def _clamp_offline_hp(hull: float, max_hull: float, shield: float, max_shield: float) -> tuple[float, float, float, float]:
+    """План Фаза 3.1 — потолок HP-снапшота при уходе в офлайн, см. PVP_MAX_HULL/SHIELD выше."""
+    max_hull   = max(1.0, min(float(max_hull), PVP_MAX_HULL))
+    max_shield = max(0.0, min(float(max_shield), PVP_MAX_SHIELD))
+    hull   = max(0.0, min(float(hull), max_hull))
+    shield = max(0.0, min(float(shield), max_shield))
+    return hull, max_hull, shield, max_shield
+
+
 class PvpPlayerState:
     def __init__(self, user_id: int, username: str, x: float, y: float, loadout: dict):
         self.user_id  = user_id
@@ -337,6 +355,13 @@ class PvpPlayerState:
         self.x = float(x)
         self.y = float(y)
         self.heading = 0.0
+        # План Фаза 3.1 (offline-ship): waypoint/speed нужны, чтобы на дисконнекте было,
+        # от чего продолжать полёт — раньше сервер знал только последнюю позицию/heading
+        # (см. update_pos), сам курс/скорость были чисто клиент-локальными (Movement.js).
+        # None пока клиент ни разу не прислал pvp_pos с активным курсом.
+        self.waypoint_x: float | None = None
+        self.waypoint_y: float | None = None
+        self.speed = 0.0
         self.hull        = float(loadout.get('hull', 1))
         self.max_hull    = max(1.0, float(loadout.get('maxHull', 1)))
         self.shield      = float(loadout.get('shield', 0))
@@ -431,10 +456,16 @@ class PvpRoomManager:
     def get(self, sector: str, user_id: int) -> "PvpPlayerState | None":
         return self.rooms.get(sector, {}).get(user_id)
 
-    def update_pos(self, sector: str, user_id: int, x: float, y: float, heading: float):
+    def update_pos(self, sector: str, user_id: int, x: float, y: float, heading: float,
+                    waypoint_x: float | None = None, waypoint_y: float | None = None, speed: float = 0.0):
         p = self.get(sector, user_id)
         if p:
             p.x, p.y, p.heading = float(x), float(y), float(heading)
+            # План Фаза 3.1: см. PvpPlayerState.waypoint_x/y/speed — снапшот на дисконнекте
+            # берёт эти поля, чтобы OfflineShipManager знал, куда продолжать лететь.
+            p.waypoint_x = float(waypoint_x) if waypoint_x is not None else None
+            p.waypoint_y = float(waypoint_y) if waypoint_y is not None else None
+            p.speed = float(speed)
 
     def get_or_create_mob(self, sector: str, mob_id: str, max_hull: float, max_shield: float) -> PvpMobState:
         room = self.mob_rooms.setdefault(sector, {})
@@ -594,6 +625,127 @@ class ServerMobManager:
 
 server_mob_manager = ServerMobManager()
 
+
+# ── Офлайн-корабли (План Фаза 3, шаг 3.1: "server-authoritative travel/regen переживают
+# закрытую вкладку") ────────────────────────────────────────────────────────────────
+# Раньше дисконнект молча удалял PvpPlayerState (см. except-блок ниже) — другие игроки
+# в той же комнате видели, что корабль просто исчезает/замирает, а на реконнект сервер
+# верил заявленным клиентом x/y/hull/shield как на первом входе. Вместо удаления —
+# снимаем снапшот сюда: позиция продолжает тикать реальным временем (см.
+# _offline_ship_tick_loop), (а) так что другие видят полёт, (б) на pvp_enter сервер
+# знает актуальную позицию/HP сам, а не то, что заявит клиент. НЕ путать с
+# PvpPlayerState — та живёт только пока сокет открыт, OfflineShip — именно НА ВРЕМЯ
+# отсутствия соединения. Не персистится в БД (то же допущение, что и у остальных PvP-
+# структур в этом классе — не переживает перезапуск сервера).
+OFFLINE_SHIP_MAX_AGE_SEC = 24 * 60 * 60  # план: 24ч потолок — дальше клиент сам догоняет (Фаза 2)
+OFFLINE_SHIP_ARRIVAL_PX  = 16.0          # то же значение, что client Movement.js arrivalThreshold
+
+
+class OfflineShip:
+    def __init__(self, sector: str, user_id: int, username: str, state: "PvpPlayerState"):
+        self.sector = sector
+        self.user_id = user_id
+        self.username = username
+        self.x = state.x
+        self.y = state.y
+        self.heading = state.heading
+        self.waypoint_x = state.waypoint_x
+        self.waypoint_y = state.waypoint_y
+        self.speed = max(0.0, state.speed)
+        self.hull, self.max_hull, self.shield, self.max_shield = _clamp_offline_hp(
+            state.hull, state.max_hull, state.shield, state.max_shield)
+        self.ship_key = state.ship_key
+        self.corp = state.corp
+        self.level = state.level
+        self.loadout = state.loadout
+        self.entered_offline_at = time.time()
+
+
+class OfflineShipManager:
+    """Реестр OfflineShip по (sector, user_id) — та же форма, что ServerMobManager выше."""
+    def __init__(self):
+        self.rooms: dict[str, dict[int, OfflineShip]] = {}
+
+    def snapshot(self, sector: str, user_id: int, username: str, state: "PvpPlayerState") -> OfflineShip:
+        ship = OfflineShip(sector, user_id, username, state)
+        self.rooms.setdefault(sector, {})[user_id] = ship
+        return ship
+
+    def pop(self, sector: str, user_id: int) -> "OfflineShip | None":
+        room = self.rooms.get(sector)
+        if not room:
+            return None
+        ship = room.pop(user_id, None)
+        if not room:
+            self.rooms.pop(sector, None)
+        return ship
+
+    def find(self, user_id: int) -> tuple[str, "OfflineShip"] | tuple[None, None]:
+        """Для pvp_enter — ищем по всем секторам, не только целевому: сектор мог
+        поменяться между дисконнектом/реконнектом (см. GameScene._reconnectPvpCorp)."""
+        for sector, room in self.rooms.items():
+            if user_id in room:
+                return sector, room[user_id]
+        return None, None
+
+
+offline_ship_manager = OfflineShipManager()
+
+
+def _advance_offline_ship(ship: OfflineShip, dt: float):
+    """Та же арифметика клиент-катчапа (Фаза 2, GameScene.create()'s travelCatchup) —
+    здесь тикается непрерывно раз в OFFLINE_SHIP_TICK_MS, а не одним прыжком на логине."""
+    if ship.waypoint_x is None or ship.waypoint_y is None or dt <= 0:
+        return
+    dx = ship.waypoint_x - ship.x
+    dy = ship.waypoint_y - ship.y
+    dist = math.hypot(dx, dy)
+    traveled = min(dist, ship.speed * dt)
+    if dist - traveled <= OFFLINE_SHIP_ARRIVAL_PX:
+        ship.x, ship.y = ship.waypoint_x, ship.waypoint_y
+        ship.waypoint_x = ship.waypoint_y = None
+    else:
+        bearing = math.atan2(dy, dx)
+        ship.heading = bearing
+        ship.x += math.cos(bearing) * traveled
+        ship.y += math.sin(bearing) * traveled
+
+
+OFFLINE_SHIP_TICK_MS = 1000  # ~1Гц — точность плана Фазы 2 (клиентский catch-up), не боевая (175мс)
+
+
+async def _offline_ship_tick_loop():
+    """Второй фоновый цикл сервера (первый — _mob_tick_loop). Продолжает движение
+    офлайн-кораблей реальным временем, пока их владелец отключён, и рассылает позицию
+    живым игрокам комнаты — иначе корабль просто замер бы у них на экране. Список
+    комнат копируется (list(...)) на случай мутации во время тика (реконнект/экспайр)."""
+    last_tick = time.time()
+    while True:
+        await asyncio.sleep(OFFLINE_SHIP_TICK_MS / 1000)
+        now = time.time()
+        dt = now - last_tick
+        last_tick = now
+        for sector, room in list(offline_ship_manager.rooms.items()):
+            if not room:
+                continue
+            expired = [uid for uid, ship in room.items()
+                       if now - ship.entered_offline_at > OFFLINE_SHIP_MAX_AGE_SEC]
+            for uid in expired:
+                offline_ship_manager.pop(sector, uid)
+            if not room:
+                continue
+            updates = []
+            for ship in room.values():
+                _advance_offline_ship(ship, dt)
+                updates.append({'userId': ship.user_id, 'x': ship.x, 'y': ship.y, 'heading': ship.heading})
+            live_players = _players_in_room(sector)
+            if live_players and updates:
+                await chat_manager.broadcast_to_uids(
+                    [p.user_id for p in live_players],
+                    {'type': 'pvp_offline_ship_update', 'sector': sector, 'ships': updates},
+                )
+
+
 MOB_TICK_MS = 175  # ~5.7Hz — грубее позиции игрока (100мс/10Hz в pvp_pos), см. план
 
 
@@ -664,6 +816,7 @@ async def _mob_tick_loop():
 @app.on_event("startup")
 async def _start_mob_tick_loop():
     asyncio.create_task(_mob_tick_loop())
+    asyncio.create_task(_offline_ship_tick_loop())
 
 
 def _split_reward_top5(damage_by: dict[int, float], pools: dict[str, float]) -> dict[int, dict[str, int]]:
@@ -1440,7 +1593,26 @@ async def chat_ws(
                 loadout = data.get('loadout') or {}
                 if not sector:
                     continue
-                pvp_room_manager.enter(sector, user.id, user.username, x, y, loadout)
+                # План Фаза 3.1: если этот игрок улетал офлайн (см. except-блок дисконнекта
+                # выше и OfflineShipManager), сервер уже знает актуальную позицию/HP —
+                # подменяем ими то, что заявляет клиент (сервер авторитетнее собственного
+                # клиентского catch-up'а из Фазы 2). Ищем по ВСЕМ секторам, не только
+                # целевому — сектор мог смениться между дисконнектом/реконнектом.
+                _off_sector, _off_ship = offline_ship_manager.find(user.id)
+                if _off_ship:
+                    offline_ship_manager.pop(_off_sector, user.id)
+                    x, y = _off_ship.x, _off_ship.y
+                    loadout = {
+                        **loadout,
+                        'hull': _off_ship.hull, 'maxHull': _off_ship.max_hull,
+                        'shield': _off_ship.shield, 'maxShield': _off_ship.max_shield,
+                    }
+                state = pvp_room_manager.enter(sector, user.id, user.username, x, y, loadout)
+                if _off_ship:
+                    state.heading = _off_ship.heading
+                    state.waypoint_x = _off_ship.waypoint_x
+                    state.waypoint_y = _off_ship.waypoint_y
+                    state.speed = _off_ship.speed
                 others = pvp_room_manager.others(sector, user.id)
                 await ws.send_json({
                     'type': 'pvp_room_snapshot',
@@ -1500,7 +1672,16 @@ async def chat_ws(
                 x = float(data.get('x', 0) or 0)
                 y = float(data.get('y', 0) or 0)
                 heading = float(data.get('heading', 0) or 0)
-                pvp_room_manager.update_pos(sector, user.id, x, y, heading)
+                # План Фаза 3.1: waypoint/speed — см. PvpPlayerState.waypoint_x/y/speed.
+                wp_x = data.get('waypointX')
+                wp_y = data.get('waypointY')
+                speed = float(data.get('speed', 0) or 0)
+                pvp_room_manager.update_pos(
+                    sector, user.id, x, y, heading,
+                    float(wp_x) if wp_x is not None else None,
+                    float(wp_y) if wp_y is not None else None,
+                    speed,
+                )
                 others = pvp_room_manager.others(sector, user.id)
                 await chat_manager.broadcast_to_uids(
                     [p.user_id for p in others],
@@ -2013,15 +2194,29 @@ async def chat_ws(
         except Exception:
             pass
         group_manager.leave(user.username)
-        pvp_sector = pvp_room_manager.leave(user.id)
-        if pvp_sector:
-            others = pvp_room_manager.others(pvp_sector, user.id)
-            try:
-                await chat_manager.broadcast_to_uids(
-                    [p.user_id for p in others],
-                    {'type': 'pvp_player_left', 'userId': user.id},
-                    exclude_uid=user.id,
-                )
-            except Exception:
-                pass
+        # План Фаза 3.1 (offline-ship): раньше дисконнект просто удалял PvpPlayerState и
+        # broadcast'ил pvp_player_left — остальные в комнате видели, что корабль исчезает.
+        # Теперь снимаем снапшот в OfflineShipManager ПЕРЕД удалением: RemotePlayer у
+        # остальных клиентов не деспавнится, а продолжает получать позицию из
+        # pvp_offline_ship_update (см. _offline_ship_tick_loop) вместо pvp_pos_update —
+        # никакого отдельного события для этого перехода не нужно, клиент не различает
+        # источник. pvp_player_left остаётся как fallback на маловероятный случай
+        # player_sector/rooms рассинхрона (defensive, не должно случаться).
+        pending_sector = pvp_room_manager.player_sector.get(user.id)
+        pending_state = pvp_room_manager.get(pending_sector, user.id) if pending_sector else None
+        if pending_state:
+            offline_ship_manager.snapshot(pending_sector, user.id, user.username, pending_state)
+            pvp_room_manager.leave(user.id)
+        else:
+            pvp_sector = pvp_room_manager.leave(user.id)
+            if pvp_sector:
+                others = pvp_room_manager.others(pvp_sector, user.id)
+                try:
+                    await chat_manager.broadcast_to_uids(
+                        [p.user_id for p in others],
+                        {'type': 'pvp_player_left', 'userId': user.id},
+                        exclude_uid=user.id,
+                    )
+                except Exception:
+                    pass
         chat_manager.disconnect(ws)

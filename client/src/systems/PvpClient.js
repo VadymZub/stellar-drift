@@ -56,13 +56,17 @@ export class PvpClient {
         this._send({ type: 'pvp_update_loadout', loadout });
     }
 
-    /** Throttled internally — safe to call every frame from GameScene.update(). */
-    sendPos(x, y, heading, dtMs) {
+    /** Throttled internally — safe to call every frame from GameScene.update().
+     * waypointX/waypointY/speed (План Фаза 3.1) — курс/скорость, а не только текущая
+     * точка: сервер хранит их в PvpPlayerState, чтобы на дисконнект было от чего
+     * продолжать полёт офлайн-корабля (см. server OfflineShipManager). null-waypoint
+     * (не летим никуда) — валидное значение, отправляем как есть. */
+    sendPos(x, y, heading, dtMs, waypointX = null, waypointY = null, speed = 0) {
         if (!this.sector) return;
         this._posAccum += dtMs;
         if (this._posAccum < this._posIntervalMs) return;
         this._posAccum = 0;
-        this._send({ type: 'pvp_pos', x, y, heading });
+        this._send({ type: 'pvp_pos', x, y, heading, waypointX, waypointY, speed });
     }
 
     /** dmg — реально посчитанный урон ЭТОГО выстрела (скилл-баффы/перки/патроны уже
@@ -209,6 +213,16 @@ export class PvpClient {
                 rp?.applyPos(msg.x, msg.y, msg.heading);
                 break;
             }
+
+            // План Фаза 3.1: позиция офлайн-корабля (владелец отключён, сервер продолжает
+            // тикать его курс, см. server _offline_ship_tick_loop) — тот же RemotePlayer,
+            // тот же applyPos, просто источник координат сменился с pvp_pos_update на
+            // это; клиенту не нужно знать/различать, что владелец сейчас не в сети.
+            case 'pvp_offline_ship_update':
+                for (const s of msg.ships ?? []) {
+                    this.players.get(s.userId)?.applyPos(s.x, s.y, s.heading);
+                }
+                break;
 
             // Другой игрок сменил корабль/корпус/уровень/макс. HP (см. server
             // pvp_update_loadout) уже ПОСЛЕ джойна комнаты — раньше это никак не

@@ -227,9 +227,17 @@ export default class Player {
     const BASE_shield  = Math.round(shieldTotal * m.shield);
     const speedTotal   = this.shipBaseSpeed + rawSpdSum;
     const BASE_speed   = Math.round(speedTotal * m.speed);
+    // Раньше admin-ветка (корабль Argus, sSlots:0 — щитовых модулей физически нет)
+    // давала ФИКСИРОВАННЫЕ 500/сек независимо от размера щита — на обычном корабле
+    // это разумная величина, но у Argus щит 500 000+ (см. ships.js shieldBase), и
+    // те же 500/сек означали ~1000+ секунд (>16 мин) на полный реген вместо разумных
+    // ~33с — воспринималось как "щит Аргуса восстанавливается очень медленно" (баг
+    // из диалога, был найден не там — сначала чинил ArgusController/боссовый моб,
+    // реальная причина была здесь, в стате ИГРОКА на корабле Argus). Теперь и админ-
+    // ветка масштабируется от BASE_shield, как обычная — та же логика, тот же процент.
     const BASE_regen   = shieldItems.length
       ? rawRegenSum
-      : (isAdmin ? 500 : Math.round(BASE_shield * 0.03));
+      : Math.round(BASE_shield * 0.03);
 
     // ── Step 3: Upgrade % from modMult — expressed relative to BASE ──────────
     // Each source is a %, summed with skills/perks/board before applying to BASE once.

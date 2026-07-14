@@ -35,6 +35,7 @@ import EscortTransport, { ESCORT_SPEED, ESCORT_WAVE_AT } from '../entities/Escor
 import { loadSettings, getMinimapDims } from '../settings.js';
 import SettingsScene from './SettingsScene.js';
 import { startAfkGuard } from '../systems/afkGuard.js';
+import { startBgFallbackTick } from '../systems/bgFallbackTick.js';
 
 const PICKUP_RADIUS = 95;
 const PICKUP_TIME = 2000;
@@ -142,6 +143,21 @@ export default class GameScene extends Phaser.Scene {
     // client/src/systems/afkGuard.js. Idempotent, безопасно дёргать на каждом
     // scene.restart() (переход между секторами).
     startAfkGuard();
+    // Фаза 1 (план: travel/regen переживают свёрнутую вкладку) — фоллбек-тик на
+    // setInterval, толкает курс+реген реальным временем, пока document.hidden.
+    // Idempotent, как и startAfkGuard — обновляет sceneRef на каждом restart().
+    startBgFallbackTick(this);
+    // Фаза 2: без немедленного флаша при уходе в фон/закрытии сохранённый снапшот
+    // (x/y/waypoint/hull/shield/savedAt) мог отставать до ~5-7с (периодический save
+    // в update() + 2с дебаунс) — на этот момент и опирается кэтчап при следующем логине.
+    // visibilitychange→hidden надёжнее beforeunload (не блокируется браузером при закрытии).
+    // this — тот же объект GameScene на каждом restart(), флаг предотвращает дубли листенера.
+    if (!this._visFlushBound) {
+      this._visFlushBound = true;
+      document.addEventListener('visibilitychange', () => {
+        if (document.hidden) this._flushSaveState();
+      });
+    }
 
     // Apply persisted player state on first session start (not on sector restarts)
     if (window.PLAYER_STATE) {
@@ -205,17 +221,68 @@ export default class GameScene extends Phaser.Scene {
     const cx = this.worldWidth / 2, cy = this.worldHeight / 2;
     let startX = data?.startX ?? cx;
     let startY = data?.startY ?? (cy - 40);
-    if (galaxy.current === 'shadow_arena') { startX = Math.round(this.worldWidth * 0.2); startY = Math.round(cy); }
+
+    // Фаза 2 (план: travel/regen переживают закрытую вкладку) — только на настоящем
+    // логине/релогине (не на scene.restart() смены сектора — там data.startX уже задан).
+    // Считаем, где корабль оказался бы, если бы курс/реген продолжались реальным
+    // временем с момента сохранения (тот же приём, что и _worldEventHash/wave-2 catch-up
+    // для мировых событий — «что должно быть сейчас» вместо накопленного тика).
+    let travelCatchup = null;
+    if (this._pendingTravelCatchup && !data?.startX) {
+      const tc = this._pendingTravelCatchup;
+      const elapsedSec = Math.max(0, (Date.now() - tc.savedAt) / 1000);
+      let px = tc.x, py = tc.y, heading = tc.heading, resumeWaypoint = false;
+      if (tc.waypointX != null && tc.waypointY != null) {
+        const dx = tc.waypointX - tc.x, dy = tc.waypointY - tc.y;
+        const dist = Math.hypot(dx, dy);
+        const traveled = Math.min(dist, Math.max(0, tc.speed) * elapsedSec);
+        if (dist - traveled > 16) { // Movement.arrivalThreshold
+          const bearing = Math.atan2(dy, dx);
+          heading = bearing;
+          px = tc.x + Math.cos(bearing) * traveled;
+          py = tc.y + Math.sin(bearing) * traveled;
+          resumeWaypoint = true;
+        }
+        // else: долетели, пока не было соединения — просто ставим в точку прибытия,
+        // waypoint не восстанавливаем.
+      }
+      travelCatchup = {
+        px, py, heading, resumeWaypoint,
+        waypointX: tc.waypointX, waypointY: tc.waypointY, elapsedSec,
+        hull: tc.hull, shield: tc.shield, msSinceLastDamage: tc.msSinceLastDamage,
+      };
+      startX = px; startY = py;
+    }
+    this._pendingTravelCatchup = null;
+
+    if (galaxy.current === 'shadow_arena') {
+      startX = Math.round(this.worldWidth * 0.2); startY = Math.round(cy);
+      if (travelCatchup) travelCatchup.resumeWaypoint = false;
+    }
     if (galaxy.current === 'R-1-boss' && !data?.startX) {
       startX = this.worldWidth - 400; startY = cy;  // near entry gate at right edge
+      if (travelCatchup) travelCatchup.resumeWaypoint = false;
     }
     if (this._reconnectPvpCorp) {
       const pos = this.homeBasePositions?.[this._reconnectPvpCorp];
       if (pos) { startX = pos.x; startY = pos.y + 80; }
       this._reconnectPvpCorp = null;
+      if (travelCatchup) travelCatchup.resumeWaypoint = false;
     }
     this.player = new Player(this, startX, startY, this.objScale);
     this.movement = new Movement(this, this.player);
+
+    if (travelCatchup) {
+      const p = this.player;
+      p.heading = travelCatchup.heading;
+      p.facing = travelCatchup.heading;
+      if (travelCatchup.resumeWaypoint) {
+        this.movement.setWaypoint(travelCatchup.waypointX, travelCatchup.waypointY, false);
+      }
+      // Реген щита/корпуса применяется НИЖЕ, после восстановления activeShip (~строка 441
+      // ниже сбрасывает hull/shield на max при применении сохранённого корабля) — здесь,
+      // сразу на стартовом 'wisp', maxHull/maxShield/regen-статы были бы ещё не те.
+    }
 
     // Realtime-присутствие (позиции живых игроков) — везде, кроме соло-данжа/босс-карты
     // (там больше некому быть) и Shadow Arena (бой с ботом). Бой между игроками
@@ -365,6 +432,32 @@ export default class GameScene extends Phaser.Scene {
     if (this.activeShip !== 'wisp' && SHIP_BY_KEY[this.activeShip]) {
       this.player.applyShip(SHIP_BY_KEY[this.activeShip]);
       this.player.hull = this.player.maxHull; this.player.shield = this.player.maxShield;
+    }
+
+    // Фаза 2 (план: travel/regen переживают закрытую вкладку) — реген щита/корпуса по
+    // факту прошедшего времени с момента сохранения. Только теперь, после реального
+    // activeShip выше (иначе maxHull/maxShield/regen ещё от стартового 'wisp').
+    if (travelCatchup?.hull != null && travelCatchup?.shield != null) {
+      const p = this.player;
+      // Та же формула, что и в Player.update() для реген щита/корпуса, но одним прыжком
+      // на elapsedSec вместо dt — плюс учёт остатка задержки после урона на момент
+      // сохранения (shieldRegenDelaySec/hullRepairDelay).
+      const sinceDamageAtSaveSec = (travelCatchup.msSinceLastDamage ?? 999999) / 1000;
+      const regenDelaySec = p.shieldRegenDelaySec ?? 6;
+      const remainingShieldDelay = Math.max(0, regenDelaySec - sinceDamageAtSaveSec);
+      const shieldRegenSec = Math.max(0, travelCatchup.elapsedSec - remainingShieldDelay);
+      p.shield = Math.min(p.maxShield, travelCatchup.shield + p.shieldRegenPerSec * shieldRegenSec);
+
+      const repairDelaySec = (p.cfg.hullRepairDelay ?? 10000) / 1000;
+      const remainingRepairDelay = Math.max(0, repairDelaySec - sinceDamageAtSaveSec);
+      const hullRepairSec = Math.max(0, travelCatchup.elapsedSec - remainingRepairDelay);
+      const hullFromRepair = p.maxHull * (p.cfg.hullRepairPctPerSec ?? 0) * hullRepairSec;
+      const hullFromPassive = (p.hullRegenPerSec ?? 0) * travelCatchup.elapsedSec;
+      p.hull = Math.min(p.maxHull, travelCatchup.hull + hullFromRepair + hullFromPassive);
+
+      // Сдвигаем lastDamageAt в прошлое на реально прошедшее время, чтобы обычный
+      // per-frame update() дальше продолжал (не перезапускал) уже текущую задержку.
+      p.lastDamageAt = this.time.now - (sinceDamageAtSaveSec + travelCatchup.elapsedSec) * 1000;
     }
 
     // Realtime-присутствие (позиции живых игроков) — везде, кроме соло-данжа/босс-карты
@@ -5351,6 +5444,14 @@ export default class GameScene extends Phaser.Scene {
   update(time, delta) {
     const dt = delta / 1000;
 
+    // Фаза 2 (план: travel/regen переживают закрытую вкладку) — позиция/курс/щит/корпус
+    // меняются каждый кадр без отдельного «дискретного» события (в отличие от лута/
+    // покупок), так что без этого чистый крейсерский полёт никогда не попадал бы в
+    // сохранённый стейт. _saveState() сам дебаунсит (см. комментарий на месте
+    // определения), так что раз в 5с реального времени достаточно.
+    this._posSaveAccum = (this._posSaveAccum || 0) + dt;
+    if (this._posSaveAccum > 5) { this._posSaveAccum = 0; this._saveState(); }
+
     // Phaser's Camera.startFollow() lerp (0.35 set in create()) is applied as a FIXED
     // FRACTION PER CALL, not scaled by dt — it implicitly assumes a constant ~60fps
     // call rate. Any frame-timing jitter (GC pause, a heavier frame, browser hiccup —
@@ -5486,7 +5587,12 @@ export default class GameScene extends Phaser.Scene {
     // Сами по себе никогда не наносят урона — бой идёт через pvpClient.fireClaim (шаг 4).
     if (this.pvpClient?.sector) {
       this.pvpClient.update(dt);
-      if (this.player.alive) this.pvpClient.sendPos(this.player.x, this.player.y, this.player.facing, dt * 1000);
+      if (this.player.alive) {
+        this.pvpClient.sendPos(
+          this.player.x, this.player.y, this.player.facing, dt * 1000,
+          this.player.waypoint?.x ?? null, this.player.waypoint?.y ?? null, this.player.speed ?? 0,
+        );
+      }
     }
     if (this.player.alive && galaxy.current === 'dungeon_3') this._updateSyndicateEMP(dt);
 
@@ -7842,6 +7948,21 @@ export default class GameScene extends Phaser.Scene {
       shadowBattleDayReset: this.shadowBattleDayReset  || 0,
       clan:                this.clan                  ?? null,
       lastGuardReset:      this.lastGuardReset         || {},
+      // Фаза 2 (план: travel/regen переживают закрытую вкладку) — снапшот курса и
+      // щита/корпуса + реальное время сохранения, чтобы на следующем логине долитать/
+      // регенерировать по факту прошедшего времени, а не мгновенно телепортироваться/
+      // восстанавливаться. msSinceLastDamage — ДЛИТЕЛЬНОСТЬ (не абсолютная метка: у
+      // player.lastDamageAt относительные Phaser scene-часы, не переживающие релогин).
+      x:                 this.player?.x               ?? null,
+      y:                 this.player?.y                ?? null,
+      heading:           this.player?.heading          ?? null,
+      waypointX:         this.player?.waypoint?.x      ?? null,
+      waypointY:         this.player?.waypoint?.y      ?? null,
+      speed:             this.player?.speed            ?? 0,
+      hull:              this.player?.hull             ?? null,
+      shield:            this.player?.shield           ?? null,
+      msSinceLastDamage: this.player ? Math.max(0, this.time.now - this.player.lastDamageAt) : null,
+      savedAt:           Date.now(),
     };
   }
 
@@ -7897,6 +8018,18 @@ export default class GameScene extends Phaser.Scene {
     if (s.shadowBattleDayReset != null) this.shadowBattleDayReset = s.shadowBattleDayReset;
     if (s.clan               !== undefined) this.clan         = s.clan;
     if (s.lastGuardReset     != null) this.lastGuardReset    = s.lastGuardReset;
+    // Фаза 2: this.player ещё не существует на этом этапе create() — сохраняем сырой
+    // снапшот, фактическая догонка позиции/курса/щита-корпуса делается ниже в create(),
+    // сразу после конструирования this.player (нужны его maxHull/maxShield/regen-статы).
+    if (s.x != null && s.y != null) {
+      this._pendingTravelCatchup = {
+        x: s.x, y: s.y, heading: s.heading ?? -Math.PI / 2,
+        waypointX: s.waypointX ?? null, waypointY: s.waypointY ?? null,
+        speed: s.speed ?? 0, hull: s.hull, shield: s.shield,
+        msSinceLastDamage: s.msSinceLastDamage ?? 999999,
+        savedAt: s.savedAt ?? Date.now(),
+      };
+    }
   }
 
   // Схлопываем частые вызовы (магнит подряд подбирает пачку лута за доли секунды,
