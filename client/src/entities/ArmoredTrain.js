@@ -179,6 +179,12 @@ class ArmoredTrainWagon {
     // Турели — независимые цели (см. TrainTurretTarget) вдобавок к боевому пулу самого
     // вагона: убить их можно ПОРОЗНЬ, не разрушая вагон (тот же контракт, что у базы).
     this.turrets = Array.from({ length: WAGON_TURRET_COUNT }, (_, i) => new TrainTurretTarget(this, i));
+    // Сервер-авторитетный таргетинг (План Фаза 3) — без ownerCorp: поезд нейтральная
+    // угроза, бьёт любого присутствующего в комнате, не только вражеские корпуса
+    // (в отличие от турелей баз, см. MiningBase._createVisuals).
+    if (train.scene._realtimeRoomKey) {
+      for (const tt of this.turrets) train.scene.pvpClient?.registerMob(tt.pvpMobId);
+    }
     this.dispW = isHead ? HEAD_TARGET_LEN * 0.78 : WAGON_TARGET_LEN * 0.68; // уточнится в _buildWagonVisual
     this.dispLen = isHead ? HEAD_TARGET_LEN : WAGON_TARGET_LEN;
 
@@ -606,6 +612,17 @@ export default class ArmoredTrain {
         // реально ближе. Чуть смещаем depth по мировому Y (стандартный top-down приём) —
         // множитель крошечный, не выходит за пределы соседнего слоя (42).
         spr.setDepth(41 + oy * 0.0001);
+        // Сервер-авторитетный таргетинг (План Фаза 3): если сервер в этот тик назначил
+        // эту турель ДРУГОМУ игроку комнаты — не наводимся и не стреляем в локального
+        // игрока (тот же паттерн, что и у дронов, см. GameScene.js mobs.forEach) —
+        // ствол просто замирает на месте до своей очереди, вместо того чтобы визуально
+        // довернуться на нас и не выстрелить (что и было исходной жалобой). Фоллбэк на
+        // старое поведение, если сервер ещё не прислал апдейт (соло/дев).
+        const targets = this.scene._serverMobTargets;
+        if (tt.pvpMobId && targets) {
+          const targetUid = targets[tt.pvpMobId];
+          if (targetUid !== undefined && targetUid !== this.scene.myUserId) return;
+        }
         w._turretCooldowns[i] -= dt;
         const d = Phaser.Math.Distance.Between(ox, oy, player.x, player.y);
         const inRange = d < range;

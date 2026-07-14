@@ -659,6 +659,17 @@ export default class MiningBase {
 
     this.turrets.forEach((type, i) => {
       if (!type || !this.turretTargets[i]?.alive) return;
+      const tt = this.turretTargets[i];
+      // Сервер-авторитетный таргетинг (План Фаза 3) — регистрируем/обновляем ownerCorp
+      // лениво ЗДЕСЬ, а не в конструкторе TurretTarget: base.pvpMobId ещё не готов на
+      // момент создания турели (см. TurretTarget.pvpMobId), да и corp базы может
+      // смениться при перезахвате — шлём заново, только когда реально изменилось (не
+      // каждый кадр), сервер обновит фильтр кандидатов на месте (см.
+      // ServerMobManager.spawn на сервере).
+      if (tt.pvpMobId && tt._registeredCorp !== this.corp) {
+        gs.pvpClient?.registerMob(tt.pvpMobId, this.corp);
+        tt._registeredCorp = this.corp;
+      }
 
       const range   = type === 'cannon2' ? BASE_CONFIG.cannon2Range  : BASE_CONFIG.cannon1Range;
       const damage  = (type === 'cannon2' ? BASE_CONFIG.cannon2Damage : BASE_CONFIG.cannon1Damage)
@@ -689,6 +700,20 @@ export default class MiningBase {
       if (playerHostile) {
         const d = Phaser.Math.Distance.Between(tx, ty, player.x, player.y);
         if (d < nearestDist) { nearest = player; nearestDist = d; }
+      }
+
+      // Сервер-авторитетный таргетинг (План Фаза 3): если сервер в этот тик назначил
+      // ЭТУ турель другому игроку комнаты — локальный игрок не валидная цель, турель
+      // просто бездействует эту турель в этот тик (тот же паттерн, что у дронов/турелей
+      // поезда, см. ArmoredTrain._updateTurrets), вместо "довернулась на меня, но не
+      // выстрелила" — исходная жалоба. Обычных мобов (nearest !== player) не касается —
+      // их HP уже общий (PvpMobState), отдельного таргетинга по игрокам там нет.
+      if (nearest === player) {
+        const targets = gs._serverMobTargets;
+        if (tt.pvpMobId && targets) {
+          const targetUid = targets[tt.pvpMobId];
+          if (targetUid !== undefined && targetUid !== gs.myUserId) nearest = null;
+        }
       }
 
       // Turn turret art toward target gradually (sprites drawn nose-up → +π/2

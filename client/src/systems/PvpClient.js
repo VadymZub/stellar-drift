@@ -166,10 +166,17 @@ export class PvpClient {
 
     /** Регистрирует дрона/турель как ServerMob для сервер-авторитетного таргетинга
      * (см. server _tick_room, План Фаза 2+) — идемпотентно на сервере, можно звать с
-     * любого клиента, кто первым увидел детерминированный спавн этого mobId. */
-    registerMob(mobId) {
+     * любого клиента, кто первым увидел детерминированный спавн этого mobId.
+     * ownerCorp — ТОЛЬКО для турелей добывающих баз (см. MiningBase._updateTurrets):
+     * сервер фильтрует кандидатов на таргетинг, исключая игроков ЭТОГО корпуса (база не
+     * атакует своих). Без ownerCorp (дроны/турели поезда — нейтральная угроза) — любой
+     * игрок комнаты валиден. Можно звать повторно с новым ownerCorp при смене владельца
+     * базы — сервер обновит фильтр на месте (см. ServerMobManager.spawn). */
+    registerMob(mobId, ownerCorp) {
         if (!this.sector) return;
-        this._send({ type: 'pvp_mob_register', mobId });
+        const payload = { type: 'pvp_mob_register', mobId };
+        if (ownerCorp) payload.ownerCorp = ownerCorp;
+        this._send(payload);
     }
 
     // ── Incoming (call from WS onmessage handler, routed by HudScene) ────────

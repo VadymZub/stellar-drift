@@ -525,9 +525,15 @@ class ServerMob:
     def __init__(self, mob_id: str, room_key: str, x: float, y: float,
                  max_hull: float, max_shield: float, speed: float = 0.0,
                  aggro_range: float = 0.0, leash: float = 0.0, atk_range: float = 0.0,
-                 damage: float = 0.0, fire_rate: float = 1.0):
+                 damage: float = 0.0, fire_rate: float = 1.0, owner_corp: str | None = None):
         self.mob_id = mob_id
         self.room_key = room_key
+        # owner_corp — ТОЛЬКО для турелей добывающих баз (см. Фаза 3): база не может
+        # атаковать игроков своего же корпуса, так что кандидатов на таргетинг для неё
+        # нужно фильтровать ПО КОРПУСУ, а не брать всех присутствующих в комнате (в
+        # отличие от дронов/турелей бронепоезда — нейтральная угроза, бьёт любого,
+        # owner_corp=None ⇒ все игроки комнаты валидны). См. _tick_room.
+        self.owner_corp = owner_corp
         self.x = x
         self.y = y
         self.heading = 0.0
@@ -562,8 +568,17 @@ class ServerMobManager:
         детерминированный спавн (mob_id) и все вызовут это почти одновременно —
         первый регистрирует, остальные не должны перезатирать уже тикающий объект
         (иначе target_uid/state сбрасывались бы каждый раз, когда ещё кто-то
-        подключается/переспавнивает свою локальную копию того же дрона)."""
-        self.rooms.setdefault(mob.room_key, {}).setdefault(mob.mob_id, mob)
+        подключается/переспавнивает свою локальную копию того же дрона).
+        Исключение — owner_corp турели базы: тот же mob_id (база+слот) переживает
+        смену владельца (уничтожили/перекупили) без переспавна id, но кандидатов на
+        таргетинг нужно фильтровать уже ПО НОВОМУ корпу — обновляем на месте, не трогая
+        остальное состояние (target_uid и т.п.), см. MiningBase._updateTurrets."""
+        room = self.rooms.setdefault(mob.room_key, {})
+        existing = room.get(mob.mob_id)
+        if existing is None:
+            room[mob.mob_id] = mob
+        elif existing.owner_corp != mob.owner_corp:
+            existing.owner_corp = mob.owner_corp
 
     def remove(self, room_key: str, mob_id: str):
         room = self.rooms.get(room_key)
@@ -592,20 +607,34 @@ def _players_in_room(room_key: str) -> list["PvpPlayerState"]:
 
 
 async def _tick_room(room_key: str, mobs: dict[str, ServerMob], players: list["PvpPlayerState"]):
-    # Фаза 2 (дроны бронепоезда): круговое распределение по игрокам, а НЕ "все к
-    # ближайшему" — рой в 8 дронов должен реально разойтись по нескольким атакующим
-    # одновременно, а не задавить всех на одного, кто оказался чуть ближе к голове
-    # (см. диалог: "распределяют урон по игрокам если несколько нападающих"). Сортировка
-    # по user_id/mob_id — детерминированный, стабильный между тиками порядок (иначе
-    # назначение "прыгало" бы от произвольного порядка итерации по dict).
+    # Круговое распределение по игрокам, а НЕ "все к ближайшему" — рой/турели должны
+    # реально разойтись по нескольким атакующим одновременно, а не задавить всех на
+    # одного, кто оказался чуть ближе (см. диалог: "распределяют урон по игрокам если
+    # несколько нападающих"). Сортировка по user_id/mob_id — детерминированный,
+    # стабильный между тиками порядок (иначе назначение "прыгало" бы от произвольного
+    # порядка итерации по dict).
+    #
+    # owner_corp (Фаза 3, турели баз): своя база не может выбрать союзника-кандидата
+    # (визитёр своего корпуса) целью — фильтруем пул кандидатов ПЕРЕД распределением,
+    # не после. Отдельный счётчик ротации НА КАЖДЫЙ уникальный пул кандидатов (ключ —
+    # owner_corp, None у дронов/турелей поезда = "все игроки комнаты валидны") — общий
+    # индекс по списку мобов означал бы, что турель без валидных целей (все в комнате —
+    # свои) "съедает" номер очереди у следующей, кому кандидаты как раз есть.
     ordered_players = sorted(players, key=lambda p: p.user_id)
     ordered_mob_ids = sorted(mobs.keys())
+    rotation: dict[str | None, int] = {}
     updates = []
-    for i, mob_id in enumerate(ordered_mob_ids):
+    for mob_id in ordered_mob_ids:
         mob = mobs[mob_id]
-        target = ordered_players[i % len(ordered_players)]
-        mob.target_uid = target.user_id
-        mob.state = 'aggro'
+        candidates = [p for p in ordered_players if mob.owner_corp is None or p.corp != mob.owner_corp]
+        if not candidates:
+            mob.target_uid = None
+            mob.state = 'idle'
+        else:
+            idx = rotation.get(mob.owner_corp, 0)
+            rotation[mob.owner_corp] = idx + 1
+            mob.target_uid = candidates[idx % len(candidates)].user_id
+            mob.state = 'aggro'
         updates.append({'mobId': mob.mob_id, 'targetUserId': mob.target_uid})
     uids = [p.user_id for p in players]
     await chat_manager.broadcast_to_uids(uids, {
@@ -1629,7 +1658,9 @@ async def chat_ws(
                 if not sector or not mob_id:
                     continue
                 mob_id = str(mob_id)[:80]
-                server_mob_manager.spawn(ServerMob(mob_id, sector, 0.0, 0.0, max_hull=1.0, max_shield=0.0))
+                owner_corp = data.get('ownerCorp')
+                owner_corp = str(owner_corp)[:20] if owner_corp else None
+                server_mob_manager.spawn(ServerMob(mob_id, sector, 0.0, 0.0, max_hull=1.0, max_shield=0.0, owner_corp=owner_corp))
 
             # ── PvP: заявка на выстрел по общему мобу сектора — HP шарится
             #    между всеми игроками (см. PvpMobState); движение моба сервер
