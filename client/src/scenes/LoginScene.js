@@ -1,7 +1,7 @@
 import * as Phaser from 'https://cdn.jsdelivr.net/npm/phaser@4.2.1/dist/phaser.esm.js';
 import { COLORS, UI_RES } from '../constants.js';
 import { i18n } from '../i18n.js';
-import { apiPost, apiGet, setSession, clearSession, getToken, getUsername } from '../api.js';
+import { apiPost, apiGet, setSession, clearSession, getToken, getUsername, verifyEmail, resendVerification, changeEmail } from '../api.js';
 import { galaxy, SECTORS } from '../galaxy.js';
 
 // Determine the sector the player should start in from their saved state.
@@ -49,6 +49,12 @@ export default class LoginScene extends Phaser.Scene {
     // (баг из диалога: "смена размера страницы входа — элементы разъезжаются, налазят
     // один на другой"). Пересчитываем на resize — тот же приём, что и в
     // BackgroundScene.createBackground().
+    // this.scale — глобальный ScaleManager (общий на всю игру, не привязан к этому
+    // экземпляру сцены), поэтому слушатель обязательно снимаем сами: без .off() при
+    // повторном create() (напр. возврат на экран логина) старые замыкания с уже
+    // уничтоженными dim/bg/title/subtitle продолжают висеть и падают на следующий resize
+    // ("Cannot read properties of null (reading 'setSize')" внутри Rectangle.setSize).
+    this.scale.off('resize', this._onResize);
     this._onResize = (gs) => {
       bg.setPosition(gs.width / 2, gs.height / 2)
         .setScale(Math.max(gs.width / bg.width, gs.height / bg.height));
@@ -57,6 +63,7 @@ export default class LoginScene extends Phaser.Scene {
       subtitle.setPosition(gs.width / 2, gs.height * 0.32);
     };
     this.scale.on('resize', this._onResize);
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => this.scale.off('resize', this._onResize));
 
     this._buildOverlay(W, H);
   }
@@ -65,13 +72,20 @@ export default class LoginScene extends Phaser.Scene {
     // DOM-оверлей — поверх canvas
     const wrap = document.createElement('div');
     wrap.id = 'login-overlay';
+    // justifyContent: 'flex-start' + paddingTop (не 'center') — форма регистрации на
+    // 1 поле (email) выше формы входа; при вертикальном центрировании её верх "уезжал"
+    // выше и налезал на заголовок/подзаголовок (те стоят на фиксированных 0.22H/0.32H,
+    // см. create()). paddingTop в vh — та же система координат, что и H-доли заголовка,
+    // подстраивается под любой размер окна без отдельного resize-пересчёта.
     Object.assign(wrap.style, {
       position:  'absolute',
       top:       '0', left: '0',
       width:     '100%', height: '100%',
       display:   'flex',
+      flexDirection: 'column',
       alignItems: 'center',
-      justifyContent: 'center',
+      justifyContent: 'flex-start',
+      paddingTop: '36vh',
       pointerEvents: 'none',
     });
 
@@ -104,8 +118,10 @@ export default class LoginScene extends Phaser.Scene {
     tabBar.append(tabLogin, tabReg);
 
     // Поля
-    const fldUser = this._makeField('Имя игрока', 'text', 'sd-username');
-    const fldPass = this._makeField('Пароль', 'password', 'sd-password');
+    const fldUser  = this._makeField('Имя игрока', 'text', 'sd-username');
+    const fldEmail = this._makeField('Email', 'email', 'sd-email');
+    const fldPass  = this._makeField('Пароль', 'password', 'sd-password');
+    fldEmail.style.display = 'none'; // виден только в режиме регистрации, см. setMode
 
     // Кнопка действия
     const btnAction = document.createElement('button');
@@ -151,6 +167,7 @@ export default class LoginScene extends Phaser.Scene {
       tabReg.style.borderBottom   = isLogin ? '2px solid transparent' : '2px solid #4dd0e1';
       tabReg.style.color          = isLogin ? '#607d8b' : '#4dd0e1';
       btnAction.textContent = isLogin ? 'ВОЙТИ' : 'СОЗДАТЬ АККАУНТ';
+      fldEmail.style.display = isLogin ? 'none' : 'flex';
       errMsg.textContent = '';
     };
 
@@ -159,8 +176,14 @@ export default class LoginScene extends Phaser.Scene {
 
     btnAction.addEventListener('click', async () => {
       const username = fldUser.querySelector('input').value.trim();
+      const email    = fldEmail.querySelector('input').value.trim();
       const password = fldPass.querySelector('input').value;
-      if (!username || !password) { errMsg.textContent = 'Заполните все поля'; return; }
+      if (!username || !password || (mode === 'register' && !email)) {
+        errMsg.textContent = 'Заполните все поля'; return;
+      }
+      if (mode === 'register' && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        errMsg.textContent = 'Некорректный email'; return;
+      }
 
       btnAction.disabled = true;
       btnAction.textContent = '…';
@@ -168,42 +191,18 @@ export default class LoginScene extends Phaser.Scene {
 
       try {
         const endpoint = mode === 'login' ? '/auth/login' : '/auth/register';
-        const data = await apiPost(endpoint, { username, password });
+        const payload = mode === 'login' ? { username, password } : { username, email, password };
+        const data = await apiPost(endpoint, payload);
         setSession(data.access_token, data.username);
 
-        // Preload player state so GameScene can apply it synchronously
-        const _lsKey = 'stellar_drift_state_' + data.username;
-        try {
-          const r = await apiGet('/player/state');
-          window.PLAYER_STATE = r.state || {};
-          // Server returned empty — fall back to local save if available
-          if (!Object.keys(window.PLAYER_STATE).length) {
-            const local = localStorage.getItem(_lsKey);
-            if (local) try { window.PLAYER_STATE = JSON.parse(local); } catch (_e) {}
-          }
-        } catch (_) {
-          const local = localStorage.getItem(_lsKey);
-          window.PLAYER_STATE = local ? (() => { try { return JSON.parse(local); } catch (_e) { return {}; } })() : {};
+        if (data.email_verified === false) {
+          this._removeOverlay();
+          this._showVerificationGate(password);
+          return;
         }
-
         window.TEST_PROFILE = null; // clear any leftover dev session data
         this._removeOverlay();
-        // Set galaxy.current now so BackgroundScene.create() gets the right sector.
-        galaxy.current = _resolveStartSector(window.PLAYER_STATE);
-        const _mapKey = SECTORS[galaxy.current].map;
-        const _launch = () => {
-          document.getElementById('scene-overlay')?.classList.add('active');
-          this.scene.start('GameScene');
-          this.scene.launch('BackgroundScene');
-          this.scene.launch('HudScene');
-        };
-        if (this.textures.exists(_mapKey)) {
-          _launch();
-        } else {
-          this.load.image(_mapKey, `assets/maps/${_mapKey}.jpg`);
-          this.load.once('complete', _launch);
-          this.load.start();
-        }
+        await this._proceedIntoGame();
       } catch (e) {
         errMsg.textContent = e.message || 'Ошибка сервера';
       } finally {
@@ -213,13 +212,13 @@ export default class LoginScene extends Phaser.Scene {
     });
 
     // Enter → submit
-    [fldUser, fldPass].forEach(f =>
+    [fldUser, fldEmail, fldPass].forEach(f =>
       f.querySelector('input').addEventListener('keydown', e => {
         if (e.key === 'Enter') btnAction.click();
       })
     );
 
-    box.append(tabBar, fldUser, fldPass, btnAction, errMsg);
+    box.append(tabBar, fldUser, fldEmail, fldPass, btnAction, errMsg);
     if (devLink) box.append(devLink);
     wrap.append(box);
     document.body.appendChild(wrap);
@@ -227,6 +226,175 @@ export default class LoginScene extends Phaser.Scene {
 
     // Фокус на первое поле
     setTimeout(() => fldUser.querySelector('input').focus(), 50);
+  }
+
+  // Общий "вход в игру" — используется и сразу после логина (email уже подтверждён/не
+  // требует подтверждения), и после успешной верификации кода (см. _showVerificationGate).
+  async _proceedIntoGame() {
+    const username = getUsername();
+    const _lsKey = 'stellar_drift_state_' + username;
+    try {
+      const r = await apiGet('/player/state');
+      window.PLAYER_STATE = r.state || {};
+      if (!Object.keys(window.PLAYER_STATE).length) {
+        const local = localStorage.getItem(_lsKey);
+        if (local) try { window.PLAYER_STATE = JSON.parse(local); } catch (_e) {}
+      }
+    } catch (_) {
+      const local = localStorage.getItem(_lsKey);
+      window.PLAYER_STATE = local ? (() => { try { return JSON.parse(local); } catch (_e) { return {}; } })() : {};
+    }
+
+    galaxy.current = _resolveStartSector(window.PLAYER_STATE);
+    const _mapKey = SECTORS[galaxy.current].map;
+    const _launch = () => {
+      document.getElementById('scene-overlay')?.classList.add('active');
+      this.scene.start('GameScene');
+      this.scene.launch('BackgroundScene');
+      this.scene.launch('HudScene');
+    };
+    if (this.textures.exists(_mapKey)) {
+      _launch();
+    } else {
+      this.load.image(_mapKey, `assets/maps/${_mapKey}.jpg`);
+      this.load.once('complete', _launch);
+      this.load.start();
+    }
+  }
+
+  // Гейт "подтвердите email" — показывается вместо запуска игры, если сервер вернул
+  // email_verified:false (см. диалог: почта должна проверяться уже на регистрации,
+  // иначе игрок вводит недоступный адрес и просто никогда не получит письма — код,
+  // ожидающий ввода, это и есть тот сигнал "адрес не работает", который клиент может
+  // показать пользователю вместо того чтобы молча пустить его в игру).
+  async _showVerificationGate(currentPassword) {
+    let email = '';
+    try { email = (await apiGet('/auth/me')).email || ''; } catch (_e) {}
+
+    const wrap = document.createElement('div');
+    wrap.id = 'login-overlay';
+    Object.assign(wrap.style, {
+      position: 'absolute', top: '0', left: '0', width: '100%', height: '100%',
+      display: 'flex', flexDirection: 'column', alignItems: 'center',
+      justifyContent: 'flex-start', paddingTop: '30vh', pointerEvents: 'none',
+    });
+
+    const box = document.createElement('form');
+    box.addEventListener('submit', e => e.preventDefault());
+    Object.assign(box.style, {
+      pointerEvents: 'all', background: 'rgba(5,10,25,0.92)',
+      border: '1px solid rgba(77,208,225,0.25)', borderRadius: '8px',
+      padding: '32px 40px', width: '360px', display: 'flex', flexDirection: 'column',
+      gap: '12px', fontFamily: "'Segoe UI', system-ui, sans-serif", color: '#cfd8dc',
+    });
+
+    const title = document.createElement('div');
+    title.textContent = 'ПОДТВЕРДИТЕ EMAIL';
+    Object.assign(title.style, { fontSize: '14px', letterSpacing: '2px', color: '#4dd0e1', textAlign: 'center' });
+
+    const emailTxt = document.createElement('div');
+    Object.assign(emailTxt.style, { fontSize: '12px', color: '#78909c', textAlign: 'center' });
+    const setEmailTxt = () => { emailTxt.textContent = email ? `Код отправлен на ${email}` : 'Код отправлен на вашу почту'; };
+    setEmailTxt();
+
+    const fldCode = this._makeField('Код из письма', 'text', 'sd-verify-code');
+    fldCode.querySelector('input').maxLength = 6;
+
+    const btnVerify = document.createElement('button');
+    btnVerify.type = 'button';
+    btnVerify.textContent = 'ПОДТВЕРДИТЬ';
+    Object.assign(btnVerify.style, this._btnStyle('#4dd0e1', '#03070f'));
+
+    const errMsg = document.createElement('div');
+    Object.assign(errMsg.style, { fontSize: '12px', color: '#ef5350', minHeight: '18px', textAlign: 'center' });
+    const okMsg = document.createElement('div');
+    Object.assign(okMsg.style, { fontSize: '11px', color: '#66bb6a', minHeight: '16px', textAlign: 'center' });
+
+    const linkRow = document.createElement('div');
+    Object.assign(linkRow.style, { display: 'flex', justifyContent: 'space-between', fontSize: '11px', marginTop: '2px' });
+    const resendLink = document.createElement('span');
+    resendLink.textContent = 'Отправить код повторно';
+    Object.assign(resendLink.style, { color: '#607d8b', cursor: 'pointer' });
+    const changeEmailLink = document.createElement('span');
+    changeEmailLink.textContent = 'Другой email?';
+    Object.assign(changeEmailLink.style, { color: '#607d8b', cursor: 'pointer' });
+    linkRow.append(resendLink, changeEmailLink);
+
+    // Скрытая по умолчанию форма смены email (нужна current_password — берём из уже
+    // введённого при регистрации/логине пароля, чтобы не спрашивать второй раз).
+    const fldNewEmail = this._makeField('Новый email', 'email', 'sd-new-email');
+    fldNewEmail.style.display = 'none';
+    const btnSaveEmail = document.createElement('button');
+    btnSaveEmail.type = 'button';
+    btnSaveEmail.textContent = 'СОХРАНИТЬ EMAIL';
+    Object.assign(btnSaveEmail.style, this._btnStyle('#3a7090', '#03070f'));
+    btnSaveEmail.style.display = 'none';
+
+    const logoutLink = document.createElement('div');
+    logoutLink.textContent = 'Выйти';
+    Object.assign(logoutLink.style, { fontSize: '11px', color: '#607d8b', textAlign: 'center', cursor: 'pointer', marginTop: '6px' });
+
+    resendLink.addEventListener('click', async () => {
+      errMsg.textContent = ''; okMsg.textContent = '';
+      try { await resendVerification(); okMsg.textContent = 'Код отправлен повторно'; }
+      catch (e) { errMsg.textContent = e.message || 'Ошибка'; }
+    });
+
+    changeEmailLink.addEventListener('click', () => {
+      const showing = fldNewEmail.style.display !== 'none';
+      fldNewEmail.style.display = showing ? 'none' : 'flex';
+      btnSaveEmail.style.display = showing ? 'none' : 'block';
+    });
+
+    btnSaveEmail.addEventListener('click', async () => {
+      const newEmail = fldNewEmail.querySelector('input').value.trim();
+      if (!newEmail) return;
+      errMsg.textContent = ''; okMsg.textContent = '';
+      btnSaveEmail.disabled = true;
+      try {
+        const data = await changeEmail(currentPassword, newEmail);
+        setSession(data.access_token, data.username);
+        email = newEmail; setEmailTxt();
+        fldNewEmail.style.display = 'none'; btnSaveEmail.style.display = 'none';
+        okMsg.textContent = 'Email изменён — новый код отправлен';
+      } catch (e) {
+        errMsg.textContent = e.message || 'Ошибка';
+      } finally {
+        btnSaveEmail.disabled = false;
+      }
+    });
+
+    logoutLink.addEventListener('click', () => {
+      clearSession();
+      window.PLAYER_STATE = null;
+      wrap.remove();
+      this.scene.restart();
+    });
+
+    btnVerify.addEventListener('click', async () => {
+      const code = fldCode.querySelector('input').value.trim();
+      if (!code) { errMsg.textContent = 'Введите код'; return; }
+      btnVerify.disabled = true; btnVerify.textContent = '…'; errMsg.textContent = '';
+      try {
+        await verifyEmail(code);
+        wrap.remove();
+        window.TEST_PROFILE = null;
+        await this._proceedIntoGame();
+      } catch (e) {
+        errMsg.textContent = e.message || 'Неверный код';
+      } finally {
+        btnVerify.disabled = false; btnVerify.textContent = 'ПОДТВЕРДИТЬ';
+      }
+    });
+
+    fldCode.querySelector('input').addEventListener('keydown', e => { if (e.key === 'Enter') btnVerify.click(); });
+    fldNewEmail.querySelector('input').addEventListener('keydown', e => { if (e.key === 'Enter') btnSaveEmail.click(); });
+
+    box.append(title, emailTxt, fldCode, btnVerify, errMsg, okMsg, linkRow, fldNewEmail, btnSaveEmail, logoutLink);
+    wrap.append(box);
+    document.body.appendChild(wrap);
+    this._overlay = wrap;
+    setTimeout(() => fldCode.querySelector('input').focus(), 50);
   }
 
   _makeTab(label, active) {

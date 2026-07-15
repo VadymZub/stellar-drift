@@ -48,7 +48,9 @@ async function apiFetch(path, opts = {}) {
     const msg = Array.isArray(d)
       ? d.map(e => e.msg?.replace(/^Value error, /, '') ?? e.message).join('; ')
       : (d || `HTTP ${res.status}`);
-    throw new Error(msg);
+    const err = new Error(msg);
+    err.status = res.status;
+    throw err;
   }
   return body;
 }
@@ -56,6 +58,8 @@ async function apiFetch(path, opts = {}) {
 export function apiPost(path, data)  { return apiFetch(path, { method: 'POST',  body: JSON.stringify(data) }); }
 export function apiGet(path)         { return apiFetch(path, { method: 'GET' }); }
 export function apiPut(path, data)   { return apiFetch(path, { method: 'PUT',   body: JSON.stringify(data) }); }
+export function apiPatch(path, data) { return apiFetch(path, { method: 'PATCH', body: JSON.stringify(data) }); }
+export function apiDelete(path)      { return apiFetch(path, { method: 'DELETE' }); }
 
 // ── Данж-инстансы (жизни, прогресс) ─────────────────────────────────────
 export function dungeonStatus(key, dayKey) {
@@ -78,3 +82,34 @@ export function miningBaseSector(sector) {
 export function miningBaseSave(baseId, sector, state) {
   return apiPost('/mining_base/save', { baseId, sector, state });
 }
+
+// ── Профиль игрока (Milestone 2+) ───────────────────────────────────────
+export function profileGetMine()        { return apiGet('/player/profile'); }
+export function profileGet(username)    { return apiGet(`/player/profile/${encodeURIComponent(username)}`); }
+export function profileUpdate(patch)    { return apiPatch('/player/profile', patch); }
+
+// ── Личные сообщения (Milestone 5) ──────────────────────────────────────
+export function mailInbox(withUser, opts = {}) {
+  const params = new URLSearchParams({ with_user: withUser });
+  if (opts.limit)    params.set('limit', opts.limit);
+  if (opts.beforeId) params.set('before_id', opts.beforeId);
+  return apiGet(`/player/pm/history?${params}`);
+}
+export function mailUnreadSummary()     { return apiGet('/player/pm/unread-summary'); }
+export function mailMarkRead(messageIds) { return apiPost('/player/pm/mark-read', { message_ids: messageIds }); }
+export function mailThreads()           { return apiGet('/player/pm/threads'); }
+
+// ── Верификация email / смена пароля-почты ───────────────────────────────
+export function verifyEmail(code)           { return apiPost('/auth/verify-email', { code }); }
+export function resendVerification()        { return apiPost('/auth/resend-verification', {}); }
+export function changePassword(currentPassword, newPassword) {
+  return apiPost('/auth/change-password', { current_password: currentPassword, new_password: newPassword });
+}
+export function changeEmail(currentPassword, newEmail) {
+  return apiPost('/auth/change-email', { current_password: currentPassword, new_email: newEmail });
+}
+
+// ── Чёрный список (Milestone 3) ──────────────────────────────────────────
+export function blacklistList()          { return apiGet('/player/blacklist'); }
+export function blacklistAdd(username)   { return apiPost('/player/blacklist', { username }); }
+export function blacklistRemove(username) { return apiDelete(`/player/blacklist/${encodeURIComponent(username)}`); }

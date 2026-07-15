@@ -2,26 +2,52 @@ import asyncio
 import math
 import random
 import time
+from datetime import datetime, timedelta
+from typing import Optional
+
+from dotenv import load_dotenv
+load_dotenv()  # до импорта database/auth ниже — оба читают os.getenv() на уровне модуля
 
 from fastapi import FastAPI, Depends, HTTPException, WebSocket, WebSocketDisconnect, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from sqlalchemy import or_, and_, select, delete
+from sqlalchemy import or_, and_, select, delete, update, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import engine, get_db, SessionLocal, Base
-from models import User, PlayerState, AuditLog, ChatMessage, Friendship, DungeonRun, DungeonLives, MiningBaseState
+from models import User, PlayerState, PlayerProfile, AuditLog, ChatMessage, Friendship, Blacklist, PrivateMessage, EmailVerificationToken, DungeonRun, DungeonLives, MiningBaseState
 from schemas import (
     RegisterRequest, LoginRequest, TokenResponse, UserResponse,
+    VerifyEmailRequest, ChangePasswordRequest, ChangeEmailRequest,
     PlayerStateResponse, AuditEntryCreate, AuditEntryResponse,
+    ProfileUpdateRequest, ProfileSelfResponse, ProfilePublicResponse,
+    BlacklistAddRequest, BlacklistEntryResponse, BlacklistListResponse,
+    PmMessageResponse, PmHistoryResponse, PmMarkReadRequest, PmUnreadSummaryResponse,
+    PmThreadResponse, PmThreadsResponse,
     DungeonStatusResponse, DungeonEnterRequest, DungeonEnterResponse,
     DungeonMobKilledRequest, DungeonLootDropRequest, DungeonLootCollectedRequest,
     DungeonCorridorStateRequest, DungeonDeathRequest, DungeonDeathResponse,
     DungeonCompleteRequest, MiningBaseSaveRequest, MiningBaseSectorResponse,
 )
 from auth import hash_password, verify_password, create_token, decode_token
+from mailer import send_verification_code
 
 app = FastAPI(title="Stellar Drift API", version="0.1.0")
+
+
+async def _migrate_add_email_column():
+    # create_all создаёт таблицы только "если не существует" — не добавляет колонки
+    # к уже существующим (нет Alembic в проекте). PRAGMA table_info — явная проверка,
+    # т.к. повторный ALTER TABLE ADD COLUMN на SQLite падает ошибкой "duplicate column".
+    async with engine.begin() as conn:
+        def _check_and_alter(sync_conn):
+            cols = {r[1] for r in sync_conn.exec_driver_sql("PRAGMA table_info(users)").fetchall()}
+            if "email" not in cols:
+                sync_conn.exec_driver_sql("ALTER TABLE users ADD COLUMN email VARCHAR(255)")
+                sync_conn.exec_driver_sql("CREATE UNIQUE INDEX IF NOT EXISTS ix_users_email ON users(email)")
+            if "email_verified" not in cols:
+                sync_conn.exec_driver_sql("ALTER TABLE users ADD COLUMN email_verified INTEGER NOT NULL DEFAULT 0")
+        await conn.run_sync(_check_and_alter)
 
 
 @app.on_event("startup")
@@ -31,6 +57,7 @@ async def _create_tables():
     # (см. диалог про переход на async SQLAlchemy).
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+    await _migrate_add_email_column()
 
 app.add_middleware(
     CORSMiddleware,
@@ -273,6 +300,24 @@ PVP_MAX_DAMAGE = 6000.0          # потолок БАЗОВОГО урона (l
 # и не доверяет заявке безоговорочно — зажимает потолком в PVP_BURST_MULT раз
 # больше статичного loadout.dmg (щедрый, но конечный допуск на бёрст).
 PVP_BURST_MULT = 3.0
+# Лазер слабее по щиту / сильнее по корпусу — зеркалит client/src/entities/Player.js
+# weaponShieldMult/weaponHullMult (GameScene.js:7612-7613). Раньше эта асимметрия
+# нигде не долетала до сервера (клиент слал только dmg + строку weaponType, которая
+# использовалась исключительно как визуальная метка для VFX) — _apply_pvp_damage
+# бил один и тот же плоский penetration-сплит для лазера и пушки, из-за чего лазер
+# по турелям/вагонам/игрокам в PvP наносил в корпус ровно столько же, сколько в щит
+# (баг из диалога: "лазер наносит одинаково урона что по щиту что по корпусу").
+# Считаем по строке weaponType, присланной клиентом, а НЕ доверяем клиентским
+# множителям напрямую — то же обоснование, что и у остального PvP-урона (заявка
+# только "чем стреляли", величину эффекта решает сервер по фиксированным правилам.
+LASER_SHIELD_MULT = 0.90
+LASER_HULL_MULT   = 1.30
+
+
+def _weapon_mults(weapon_type: str) -> tuple[float, float]:
+    if weapon_type == 'laser':
+        return LASER_SHIELD_MULT, LASER_HULL_MULT
+    return 1.0, 1.0
 # Крит-шанс/множитель — по статам АТАКУЮЩЕГО игрока (loadout.critChance/critMult),
 # а не фиксированные для всех: иначе билд с высоким личным крит-шансом ощущался бы
 # так же, как билд без него вообще. Ролл всё равно решает сервер, не клиент —
@@ -586,9 +631,37 @@ pvp_room_manager = PvpRoomManager()
 # Уничтоженные indices переживают remove_mob() состояния самого PvpMobState (то
 # состояние удаляется на килле) — без этого набора повторный fire_claim по тому же
 # mobId лениво пересоздал бы вагон с полным HP (см. get_or_create_mob).
+# Бронепоезд: ракетный залп/поворотная турель — первый в кодовой базе случай, когда
+# СЕРВЕР сам решает атаковать игрока без входящей client-claim заявки (см. диалог/
+# feedback-память про upfront-вопрос о server-authority для новой PvP-механики —
+# пользователь явно выбрал "Полностью серверное"). mob_id-схема (ArmoredTrain.js):
+# вагон = "train:{sector}:{startAt}:{idx}", турель = "train:{sector}:{startAt}:{wagonIdx}:
+# turret:{turretIdx}", поворотная турель головы = "train:{sector}:{startAt}:{wagonIdx}:core".
+TURRETS_PER_WAGON = 4
+HEAD_WAGON_IDX = 3  # зеркало client/src/constants.js ARMORED_TRAIN_WAGON_COUNT (3 + голова)
+TRAIN_MISSILE_DMG = 3000.0
+TRAIN_MISSILE_DMG_HEAD = 6000.0
+TRAIN_MISSILE_COOLDOWN = 10.0
+TRAIN_MISSILE_PENETRATION = 0.15
+TRAIN_MISSILES_PER_VOLLEY = 8
+TRAIN_CORE_BOLT_DMG = 900.0
+TRAIN_CORE_BOLT_PENETRATION = 0.1
+TRAIN_CORE_BOLTS_PER_VOLLEY = 8
+TRAIN_CORE_VOLLEY_GAP = 1.0
+TRAIN_CORE_BURST_CD = 5.0
+TRAIN_CORE_VOLLEYS_PER_BURST = 3
+TRAIN_WEAPON_TICK_MS = 250
+
+
 class ArmoredTrainManager:
     def __init__(self):
         self.destroyed: dict[str, set[int]] = {}  # train_key ("sector:startAt") → уничтоженные idx
+        # Счётчик убитых турелей вагона — по достижении TURRETS_PER_WAGON вооружает
+        # ракетный залп (missile_ready_at); отдельно от self.destroyed (тот — про
+        # уничтожение самого КОРПУСА вагона, очередь "строго с хвоста", к турелям не относится).
+        self.turret_kills: dict[str, dict[int, int]] = {}
+        self.missile_ready_at: dict[str, dict[int, float]] = {}  # train_key → wagon_idx → следующий разрешённый залп
+        self.core_turret: dict[str, dict] = {}  # train_key → {'burst_step': int, 'next_fire_at': float}
 
     def is_vulnerable(self, train_key: str, wagon_idx: int) -> bool:
         d = self.destroyed.get(train_key, set())
@@ -602,11 +675,43 @@ class ArmoredTrainManager:
     def mark_destroyed(self, train_key: str, wagon_idx: int):
         self.destroyed.setdefault(train_key, set()).add(wagon_idx)
 
+    def note_turret_kill(self, train_key: str, wagon_idx: int) -> bool:
+        """True, только когда эта турель была ПОСЛЕДНЕЙ (4-й) у своего вагона."""
+        counts = self.turret_kills.setdefault(train_key, {})
+        counts[wagon_idx] = counts.get(wagon_idx, 0) + 1
+        return counts[wagon_idx] >= TURRETS_PER_WAGON
+
+    def arm_missiles(self, train_key: str, wagon_idx: int):
+        # +4с задержка перед первым залпом (мирроит клиентский _missileCd=4 из
+        # дореалти-версии) — даёт игроку миг отреагировать, не наказывает добивающий
+        # выстрел по последней турели немедленным ответным огнём.
+        self.missile_ready_at.setdefault(train_key, {})[wagon_idx] = time.time() + 4.0
+
+    def spawn_core_turret(self, train_key: str):
+        self.core_turret[train_key] = {'burst_step': 0, 'next_fire_at': time.time()}
+
+    def despawn_core_turret(self, train_key: str):
+        self.core_turret.pop(train_key, None)
+
     def cleanup(self, train_key: str):
         self.destroyed.pop(train_key, None)
+        self.turret_kills.pop(train_key, None)
+        self.missile_ready_at.pop(train_key, None)
+        self.core_turret.pop(train_key, None)
 
 
 armored_train_manager = ArmoredTrainManager()
+
+# Мировое событие "нашествие" (World Event, GameScene._worldEvent) — общий вклад урона
+# по ВСЕМ мобам одной волны, we_key ("sector:startAt", тот же формат что train_key).
+# mob_id "we:{sector}:{startAt}:{idx}" (4 части после split — та же структурная проверка,
+# что и у вагонов поезда). Живёт ДОЛЬШЕ отдельных PvpMobState — те удаляются на килле
+# КАЖДОГО моба (remove_mob), а нужен честный пропорциональный сплит награды за расчистку
+# ВСЕЙ волны (см. pvp_world_event_clear_claim ниже) — тот же приём "фотографируем вклад
+# сразу", что и у group_boss_died (см. комментарий там). Раньше сплита не было вовсе —
+# каждый клиент, нанёсший хоть какой-то урон, сам себе выдавал ПОЛНУЮ награду локально,
+# без участия сервера (баг класса "самозаявленный reward", тот же, что чинили для турелей).
+world_event_damage: dict[str, dict[int, float]] = {}
 
 
 # ── Серверный тик мобов (Фаза 1 плана "server-authoritative shared mobs") ──────
@@ -874,6 +979,104 @@ async def _tick_room(room_key: str, mobs: dict[str, ServerMob], players: list["P
     })
 
 
+def _sector_pvp_tier(sector: str) -> int:
+    """Зеркало parseInt(sectorKey.split('_').pop(), 10) || 1 (client ArmoredTrain.js)."""
+    try:
+        return int(sector.rsplit('_', 1)[-1])
+    except (ValueError, IndexError):
+        return 1
+
+
+async def _distribute_train_damage(targets: list["PvpPlayerState"], total_shots: int,
+                                    dmg_per_shot: float, penetration: float,
+                                    train_key: str, wagon_idx: int, weapon: str):
+    """Раздаёт total_shots "попаданий" круговым round-robin между targets — суммарный
+    урон залпа не растёт с числом игроков в комнате (один заберёт все total_shots,
+    несколько — поделят), см. AskUserQuestion "распределить суммарный урон (рекомендую)".
+    Один игрок — одна общая заявка _apply_pvp_damage (не по отдельному попаданию) —
+    это статичный хазард без личного крита/уклонения атакующего, отдельные роллы не нужны."""
+    if not targets:
+        return
+    hits: dict[int, int] = {}
+    for i in range(total_shots):
+        p = targets[i % len(targets)]
+        hits[p.user_id] = hits.get(p.user_id, 0) + 1
+    out_hits = []
+    for p in targets:
+        n = hits.get(p.user_id, 0)
+        if n <= 0 or p.respawn_grace_until > time.time():
+            continue
+        dmg = dmg_per_shot * n
+        result = _apply_pvp_damage(dmg, dmg, penetration, p.hull, p.shield, p.max_hull, p.max_shield)
+        p.hull, p.shield = result['hull'], result['shield']
+        if result['killed']:
+            p.respawn_grace_until = time.time() + 3.0
+        out_hits.append({
+            'uid': p.user_id, 'hits': n, 'dmg': result['dmg'],
+            'hull': p.hull, 'shield': p.shield,
+            'maxHull': p.max_hull, 'maxShield': p.max_shield,
+            'killed': result['killed'],
+        })
+    if not out_hits:
+        return
+    await chat_manager.broadcast_to_uids([p.user_id for p in targets], {
+        'type': 'pvp_train_weapon_fire', 'trainKey': train_key, 'wagonIdx': wagon_idx,
+        'weapon': weapon, 'hits': out_hits,
+    })
+
+
+async def _fire_train_missiles(train_key: str, wagon_idx: int, targets: list["PvpPlayerState"]):
+    sector = train_key.split(':', 1)[0]
+    mult = _turret_damage_mult(_sector_pvp_tier(sector))
+    dmg = (TRAIN_MISSILE_DMG_HEAD if wagon_idx == HEAD_WAGON_IDX else TRAIN_MISSILE_DMG) * mult
+    await _distribute_train_damage(targets, TRAIN_MISSILES_PER_VOLLEY, dmg,
+                                    TRAIN_MISSILE_PENETRATION, train_key, wagon_idx, 'missile')
+
+
+async def _fire_core_volley(train_key: str, targets: list["PvpPlayerState"]):
+    sector = train_key.split(':', 1)[0]
+    mult = _turret_damage_mult(_sector_pvp_tier(sector))
+    dmg = TRAIN_CORE_BOLT_DMG * mult
+    await _distribute_train_damage(targets, TRAIN_CORE_BOLTS_PER_VOLLEY, dmg,
+                                    TRAIN_CORE_BOLT_PENETRATION, train_key, HEAD_WAGON_IDX, 'core_bolt')
+
+
+async def _train_weapon_tick_loop():
+    """Первый server-initiated (без входящей client-claim заявки) источник урона по
+    игроку в кодовой базе — ракетный залп бронепоезда и болтовой веер поворотной турели
+    головы (см. диалог "управление турелью серверное, ракеты тоже" + upfront feedback про
+    server-authority). Раздача — _distribute_train_damage; визуал (полёт ракет/болтов)
+    рисует клиент по броадкасту pvp_train_weapon_fire, см. GameScene._onTrainWeaponFire."""
+    while True:
+        await asyncio.sleep(TRAIN_WEAPON_TICK_MS / 1000)
+        now = time.time()
+        for train_key in list(armored_train_manager.missile_ready_at.keys()):
+            sector = train_key.split(':', 1)[0]
+            targets = list(pvp_room_manager.rooms.get(sector, {}).values())
+            if not targets:
+                continue
+            wagons = armored_train_manager.missile_ready_at.get(train_key, {})
+            for wagon_idx, ready_at in list(wagons.items()):
+                if now >= ready_at:
+                    wagons[wagon_idx] = now + TRAIN_MISSILE_COOLDOWN
+                    await _fire_train_missiles(train_key, wagon_idx, targets)
+        for train_key in list(armored_train_manager.core_turret.keys()):
+            sector = train_key.split(':', 1)[0]
+            targets = list(pvp_room_manager.rooms.get(sector, {}).values())
+            if not targets:
+                continue
+            core = armored_train_manager.core_turret.get(train_key)
+            if not core or now < core['next_fire_at']:
+                continue
+            await _fire_core_volley(train_key, targets)
+            core['burst_step'] += 1
+            if core['burst_step'] >= TRAIN_CORE_VOLLEYS_PER_BURST:
+                core['burst_step'] = 0
+                core['next_fire_at'] = now + TRAIN_CORE_BURST_CD
+            else:
+                core['next_fire_at'] = now + TRAIN_CORE_VOLLEY_GAP
+
+
 async def _mob_tick_loop():
     """Единственный фоновый цикл сервера (первый в кодовой базе — см. план). Тикает
     ВСЕ активные комнаты с ServerMob раз в MOB_TICK_MS; список копируется (list(...))
@@ -926,6 +1129,7 @@ async def _start_mob_tick_loop():
     asyncio.create_task(_mob_tick_loop())
     asyncio.create_task(_offline_ship_tick_loop())
     asyncio.create_task(_resource_tick_loop())
+    asyncio.create_task(_train_weapon_tick_loop())
 
 
 def _split_reward_top5(damage_by: dict[int, float], pools: dict[str, float]) -> dict[int, dict[str, int]]:
@@ -985,7 +1189,8 @@ def _apply_pvp_damage(claimed_dmg: float, ceiling: float, penetration: float,
                        victim_hull: float, victim_shield: float,
                        victim_max_hull: float, victim_max_shield: float,
                        crit_chance: float = 0.0, crit_mult: float = 2.0,
-                       victim_evasion: float = 0.0) -> dict:
+                       victim_evasion: float = 0.0,
+                       shield_mult: float = 1.0, hull_mult: float = 1.0) -> dict:
     """Мирроит shield/hull split из Player.takeDamage (client/src/entities/Player.js).
     Урон — заявка клиента (claimed_dmg, реальный посчитанный урон выстрела со всеми
     баффами/перками), зажатая потолком ceiling*PVP_BURST_MULT — не плоское число на
@@ -994,7 +1199,7 @@ def _apply_pvp_damage(claimed_dmg: float, ceiling: float, penetration: float,
     для всех), не заявка клиента. Общий расчёт для игрок→игрок и игрок→моб — обе жертвы
     описываются просто парой hull/shield, дальше не важно, чьи они. victim_evasion=0
     для мобов — их движение клиент-локальное, сервер не знает скорость, чтобы честно
-    её учитывать."""
+    её учитывать. shield_mult/hull_mult — см. _weapon_mults (асимметрия лазера)."""
     if victim_evasion > 0 and random.random() < victim_evasion:
         return {'isCrit': False, 'dmg': 0, 'killed': False, 'dodged': True,
                 'hull': victim_hull, 'shield': victim_shield}
@@ -1005,17 +1210,18 @@ def _apply_pvp_damage(claimed_dmg: float, ceiling: float, penetration: float,
 
     direct = amount * penetration
     to_shield_raw = amount - direct
-    hull_hit = direct
+    hull_hit = direct * hull_mult
 
     shield = victim_shield
     if shield > 0:
-        if to_shield_raw <= shield:
-            shield -= to_shield_raw
+        to_shield = to_shield_raw * shield_mult
+        if to_shield <= shield:
+            shield -= to_shield
         else:
-            hull_hit += (to_shield_raw - shield)
+            hull_hit += (to_shield - shield) * hull_mult
             shield = 0.0
     else:
-        hull_hit = amount
+        hull_hit = amount * hull_mult
 
     hull = max(0.0, victim_hull - hull_hit)
     killed = hull <= 0
@@ -1028,7 +1234,8 @@ def _apply_pvp_damage(claimed_dmg: float, ceiling: float, penetration: float,
     return {'isCrit': is_crit, 'dmg': round(amount), 'killed': killed, 'dodged': False, 'hull': hull, 'shield': shield}
 
 
-def _resolve_pvp_hit(attacker: PvpPlayerState, victim: PvpPlayerState, claimed_dmg: float) -> dict:
+def _resolve_pvp_hit(attacker: PvpPlayerState, victim: PvpPlayerState, claimed_dmg: float,
+                      weapon_type: str = 'cannon') -> dict:
     # Грейс-период после "ремонта на месте" — короткое замыкание ДО _apply_pvp_damage,
     # тем же контрактом ответа, что дожд ("dodged"), которым уже пользуется клиент
     # (_onPvpHitResult → showDodge), без урона и без изменения hull/shield жертвы.
@@ -1039,10 +1246,11 @@ def _resolve_pvp_hit(attacker: PvpPlayerState, victim: PvpPlayerState, claimed_d
             'maxHull': victim.max_hull, 'maxShield': victim.max_shield,
             'damageBy': None, 'bountyBonus': None,
         }
+    shield_mult, hull_mult = _weapon_mults(weapon_type)
     r = _apply_pvp_damage(claimed_dmg, attacker.loadout['dmg'], attacker.loadout['penetration'],
                            victim.hull, victim.shield, victim.max_hull, victim.max_shield,
                            attacker.loadout['critChance'], attacker.loadout['critMult'],
-                           victim.loadout['evasion'])
+                           victim.loadout['evasion'], shield_mult, hull_mult)
     victim.hull, victim.shield = r['hull'], r['shield']
     if not r['dodged'] and r['dmg'] > 0:
         victim.damage_by[attacker.user_id] = victim.damage_by.get(attacker.user_id, 0.0) + r['dmg']
@@ -1141,19 +1349,49 @@ async def get_current_user(
 
 # ── Auth ─────────────────────────────────────────────────────────────
 
+VERIFICATION_CODE_TTL_MIN = 30
+VERIFICATION_RESEND_COOLDOWN_SEC = 60
+
+
+def _gen_verification_code() -> str:
+    return f"{random.randint(0, 999999):06d}"
+
+
+async def _issue_verification_code(user: User, db: AsyncSession):
+    # Один активный код — предыдущий удаляем, а не помечаем использованным (см. models.py).
+    await db.execute(delete(EmailVerificationToken).where(EmailVerificationToken.user_id == user.id))
+    code = _gen_verification_code()
+    db.add(EmailVerificationToken(
+        user_id=user.id, code=code,
+        expires_at=datetime.utcnow() + timedelta(minutes=VERIFICATION_CODE_TTL_MIN),
+    ))
+    await db.commit()
+    # Отправка блокирующая (smtplib) — в тред-пул, тот же приём, что и bcrypt ниже.
+    await asyncio.to_thread(send_verification_code, user.email, code)
+
+
+def _needs_verification(user: User) -> bool:
+    # Аккаунты без email (созданные до Milestone 1) не гейтятся — им нечего верифицировать.
+    return bool(user.email) and not user.email_verified
+
+
 @app.post("/auth/register", response_model=TokenResponse)
 async def register(body: RegisterRequest, db: AsyncSession = Depends(get_db)):
     existing = (await db.execute(select(User).where(User.username == body.username))).scalar_one_or_none()
     if existing:
         raise HTTPException(status_code=400, detail="Username already taken")
+    existing_email = (await db.execute(select(User).where(User.email == body.email))).scalar_one_or_none()
+    if existing_email:
+        raise HTTPException(status_code=400, detail="Email already registered")
     # bcrypt намеренно медленный (CPU-bound) — в тред-пул, иначе блокирует event loop
     # на ~100-300мс на КАЖДУЮ регистрацию (см. диалог про нагрузочный тест).
     password_hash = await asyncio.to_thread(hash_password, body.password)
-    user = User(username=body.username, password_hash=password_hash)
+    user = User(username=body.username, email=body.email, password_hash=password_hash, email_verified=0)
     db.add(user)
     await db.commit()
     await db.refresh(user)
-    return TokenResponse(access_token=create_token(user.id), username=user.username)
+    await _issue_verification_code(user, db)
+    return TokenResponse(access_token=create_token(user.id), username=user.username, email_verified=False)
 
 
 @app.post("/auth/login", response_model=TokenResponse)
@@ -1161,12 +1399,80 @@ async def login(body: LoginRequest, db: AsyncSession = Depends(get_db)):
     user = (await db.execute(select(User).where(User.username == body.username))).scalar_one_or_none()
     if not user or not await asyncio.to_thread(verify_password, body.password, user.password_hash):
         raise HTTPException(status_code=401, detail="Invalid username or password")
-    return TokenResponse(access_token=create_token(user.id), username=user.username)
+    return TokenResponse(access_token=create_token(user.id), username=user.username,
+                          email_verified=not _needs_verification(user))
 
 
 @app.get("/auth/me", response_model=UserResponse)
 def me(user: User = Depends(get_current_user)):
-    return UserResponse(id=user.id, username=user.username)
+    return UserResponse(id=user.id, username=user.username, email=user.email,
+                         email_verified=not _needs_verification(user))
+
+
+@app.post("/auth/verify-email")
+async def verify_email(
+    body: VerifyEmailRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    code = body.code.strip()
+    token = (await db.execute(select(EmailVerificationToken).where(
+        EmailVerificationToken.user_id == user.id, EmailVerificationToken.code == code,
+    ))).scalar_one_or_none()
+    if not token or token.expires_at < datetime.utcnow():
+        raise HTTPException(status_code=400, detail="Неверный или истёкший код")
+    user.email_verified = 1
+    await db.execute(delete(EmailVerificationToken).where(EmailVerificationToken.user_id == user.id))
+    await db.commit()
+    return {"ok": True}
+
+
+@app.post("/auth/resend-verification")
+async def resend_verification(user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    if not user.email:
+        raise HTTPException(status_code=400, detail="У аккаунта не указан email")
+    if user.email_verified:
+        return {"ok": True}
+    existing = (await db.execute(select(EmailVerificationToken).where(
+        EmailVerificationToken.user_id == user.id
+    ))).scalar_one_or_none()
+    if existing and existing.created_at > datetime.utcnow() - timedelta(seconds=VERIFICATION_RESEND_COOLDOWN_SEC):
+        raise HTTPException(status_code=429, detail="Повторная отправка доступна через минуту")
+    await _issue_verification_code(user, db)
+    return {"ok": True}
+
+
+@app.post("/auth/change-password")
+async def change_password(
+    body: ChangePasswordRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    if not await asyncio.to_thread(verify_password, body.current_password, user.password_hash):
+        raise HTTPException(status_code=401, detail="Текущий пароль неверен")
+    user.password_hash = await asyncio.to_thread(hash_password, body.new_password)
+    await db.commit()
+    return {"ok": True}
+
+
+@app.post("/auth/change-email", response_model=TokenResponse)
+async def change_email(
+    body: ChangeEmailRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    if not await asyncio.to_thread(verify_password, body.current_password, user.password_hash):
+        raise HTTPException(status_code=401, detail="Текущий пароль неверен")
+    existing = (await db.execute(select(User).where(
+        User.email == body.new_email, User.id != user.id
+    ))).scalar_one_or_none()
+    if existing:
+        raise HTTPException(status_code=400, detail="Email уже используется")
+    user.email = body.new_email
+    user.email_verified = 0
+    await db.commit()
+    await _issue_verification_code(user, db)
+    return TokenResponse(access_token=create_token(user.id), username=user.username, email_verified=False)
 
 
 # ── Player state ──────────────────────────────────────────────────────
@@ -1192,6 +1498,335 @@ async def save_state(
     else:
         ps = PlayerState(user_id=user.id, state=body)
         db.add(ps)
+    await db.commit()
+    return {"ok": True}
+
+
+# ── Player profile ────────────────────────────────────────────────────
+
+def _profile_to_response(user: User, pp: PlayerProfile | None) -> ProfileSelfResponse:
+    if not pp:
+        return ProfileSelfResponse(username=user.username)
+    effective_ship = pp.favorite_ship_key if pp.favorite_ship_is_manual else pp.favorite_ship_auto
+    return ProfileSelfResponse(
+        username=user.username,
+        display_name=pp.display_name,
+        country=pp.country,
+        city=pp.city,
+        goal=pp.goal,
+        favorite_games=pp.favorite_games,
+        social_links=pp.social_links or {},
+        favorite_ship_key=effective_ship,
+        favorite_ship_is_manual=bool(pp.favorite_ship_is_manual),
+        privacy=pp.privacy,
+        updated_at=pp.updated_at,
+    )
+
+
+async def _owned_ships(user_id: int, db: AsyncSession) -> set:
+    # favorite_ship_key/favorite_ship_auto клиент-заявочны (как и весь остальной прогресс,
+    # см. PlayerState.state) — единственная защита от подмены "у меня корабль, которого нет"
+    # это сверка с ownedShips из того же клиент-доверенного блока при принятии значения.
+    ps = (await db.execute(select(PlayerState).where(PlayerState.user_id == user_id))).scalar_one_or_none()
+    return set((ps.state or {}).get('ownedShips', [])) if ps else set()
+
+
+@app.get("/player/profile", response_model=ProfileSelfResponse)
+async def get_profile(user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    pp = (await db.execute(select(PlayerProfile).where(PlayerProfile.user_id == user.id))).scalar_one_or_none()
+    return _profile_to_response(user, pp)
+
+
+@app.patch("/player/profile", response_model=ProfileSelfResponse)
+async def update_profile(
+    body: ProfileUpdateRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    pp = (await db.execute(select(PlayerProfile).where(PlayerProfile.user_id == user.id))).scalar_one_or_none()
+    if not pp:
+        pp = PlayerProfile(user_id=user.id)
+        db.add(pp)
+
+    data = body.model_dump(exclude_unset=True)
+
+    if 'display_name' in data:     pp.display_name = data['display_name']
+    if 'country' in data:          pp.country = data['country']
+    if 'city' in data:             pp.city = data['city']
+    if 'goal' in data:             pp.goal = data['goal']
+    if 'favorite_games' in data:   pp.favorite_games = data['favorite_games']
+    if 'social_links' in data:     pp.social_links = data['social_links'] or {}
+    if 'privacy' in data:          pp.privacy = data['privacy']
+
+    if 'favorite_ship_auto' in data:
+        auto_key = data['favorite_ship_auto']
+        if auto_key is None or auto_key in await _owned_ships(user.id, db):
+            pp.favorite_ship_auto = auto_key
+
+    if 'favorite_ship_key' in data:
+        manual_key = data['favorite_ship_key']
+        if manual_key is None:
+            pp.favorite_ship_is_manual = 0
+        elif manual_key in await _owned_ships(user.id, db):
+            pp.favorite_ship_key = manual_key
+            pp.favorite_ship_is_manual = 1
+        else:
+            raise HTTPException(status_code=400, detail="You don't own this ship")
+
+    await db.commit()
+    await db.refresh(pp)
+    return _profile_to_response(user, pp)
+
+
+MAX_PILOT_LEVEL = 50
+
+
+def _xp_to_next(level: int) -> float:
+    # Порт xpToNext() из client/src/leveling.js — уровень/честь показываются в чужом
+    # профиле как ЖИВЫЕ данные из PlayerState.state (не дублируются в PlayerProfile),
+    # поэтому формула уровня по XP должна совпадать 1:1 с клиентской.
+    if level >= MAX_PILOT_LEVEL:
+        return float('inf')
+    knee = max(0, level - 25)
+    base = 40 * level * level + 13 * knee ** 3
+    if level >= 46:
+        return base * 6
+    if level >= 40:
+        return base * 4.5
+    return base
+
+
+def _level_from_xp(total_xp: float) -> int:
+    level, acc = 1, 0.0
+    while level < MAX_PILOT_LEVEL:
+        need = _xp_to_next(level)
+        if total_xp < acc + need:
+            break
+        acc += need
+        level += 1
+    return level
+
+
+@app.get("/player/profile/{username}", response_model=ProfilePublicResponse)
+async def get_public_profile(
+    username: str,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    target = (await db.execute(select(User).where(User.username == username))).scalar_one_or_none()
+    if not target:
+        raise HTTPException(status_code=404, detail="Player not found")
+
+    denied = HTTPException(status_code=403, detail="This player's profile is private")
+
+    # Заблокировал ли ЦЕЛЬ смотрящего? (обратное — смотрящий заблокировал цель — НЕ
+    # проверяем: смотреть профиль того, кого сам заблокировал, можно, см. план §6.3.)
+    blocked = (await db.execute(select(Blacklist).where(
+        Blacklist.blocker == target.username, Blacklist.blocked == user.username
+    ))).scalar_one_or_none()
+    if blocked:
+        raise denied
+
+    pp = (await db.execute(select(PlayerProfile).where(PlayerProfile.user_id == target.id))).scalar_one_or_none()
+    privacy = pp.privacy if pp else 'everyone'
+
+    if privacy == 'nobody':
+        raise denied
+    if privacy == 'friends':
+        friendship = (await db.execute(select(Friendship).where(
+            Friendship.status == 'accepted',
+            or_(
+                and_(Friendship.user_a == user.username, Friendship.user_b == target.username),
+                and_(Friendship.user_a == target.username, Friendship.user_b == user.username),
+            )
+        ))).scalar_one_or_none()
+        if not friendship:
+            raise denied
+
+    ps = (await db.execute(select(PlayerState).where(PlayerState.user_id == target.id))).scalar_one_or_none()
+    state = (ps.state or {}) if ps else {}
+    xp    = state.get('pilotXp') or 0
+    honor = state.get('pilotHonor')
+
+    effective_ship = None
+    if pp:
+        effective_ship = pp.favorite_ship_key if pp.favorite_ship_is_manual else pp.favorite_ship_auto
+
+    return ProfilePublicResponse(
+        username=target.username,
+        display_name=pp.display_name if pp else None,
+        country=pp.country if pp else None,
+        city=pp.city if pp else None,
+        goal=pp.goal if pp else None,
+        favorite_games=pp.favorite_games if pp else None,
+        social_links=(pp.social_links or {}) if pp else {},
+        favorite_ship_key=effective_ship,
+        level=_level_from_xp(xp),
+        honor=honor,
+    )
+
+
+# ── Blacklist ─────────────────────────────────────────────────────────
+# REST only — в отличие от Friendship, блокировка однонаправленна и НЕ должна уведомлять
+# заблокированного в реальном времени (тихая блокировка — стандартный UX), поэтому не
+# нужна WS-инфраструктура live-broadcast, которой пользуются friend_add/accept/decline.
+
+def _blacklist_response(rows) -> BlacklistListResponse:
+    # Blacklist.blocked (не .username — такого поля на модели нет) — имя заблокированного.
+    return BlacklistListResponse(blocked=[
+        BlacklistEntryResponse(username=r.blocked, created_at=r.created_at) for r in rows
+    ])
+
+
+@app.post("/player/blacklist", response_model=BlacklistListResponse)
+async def add_blacklist(
+    body: BlacklistAddRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    target_name = body.username.strip()
+    if not target_name or target_name == user.username:
+        raise HTTPException(status_code=400, detail="Invalid username")
+    target = (await db.execute(select(User).where(User.username == target_name))).scalar_one_or_none()
+    if not target:
+        raise HTTPException(status_code=404, detail="Player not found")
+
+    existing = (await db.execute(select(Blacklist).where(
+        Blacklist.blocker == user.username, Blacklist.blocked == target_name
+    ))).scalar_one_or_none()
+    if not existing:
+        db.add(Blacklist(blocker=user.username, blocked=target_name))
+        # Блокировка подразумевает разрыв дружбы — иначе заблокированный "друг" всё ещё
+        # висел бы в списке друзей, при этом не имея возможности написать (см. _resolve_pvp
+        # -style рассуждение в плане: путаница хуже, чем неявный анфренд).
+        await db.execute(delete(Friendship).where(
+            or_(
+                and_(Friendship.user_a == user.username, Friendship.user_b == target_name),
+                and_(Friendship.user_a == target_name,   Friendship.user_b == user.username),
+            )
+        ))
+        await db.commit()
+
+    rows = (await db.execute(select(Blacklist).where(Blacklist.blocker == user.username))).scalars().all()
+    return _blacklist_response(rows)
+
+
+@app.delete("/player/blacklist/{username}", response_model=BlacklistListResponse)
+async def remove_blacklist(
+    username: str,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    await db.execute(delete(Blacklist).where(Blacklist.blocker == user.username, Blacklist.blocked == username))
+    await db.commit()
+    rows = (await db.execute(select(Blacklist).where(Blacklist.blocker == user.username))).scalars().all()
+    return _blacklist_response(rows)
+
+
+@app.get("/player/blacklist", response_model=BlacklistListResponse)
+async def get_blacklist(user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    rows = (await db.execute(select(Blacklist).where(Blacklist.blocker == user.username))).scalars().all()
+    return _blacklist_response(rows)
+
+
+# ── Личные сообщения ──────────────────────────────────────────────────
+# Отправка — только через WS (see msg_type == 'pm' в /ws/chat): клиент всегда на связи
+# во время игры, дублировать REST-эндпоинт отправки означало бы два пути для одной
+# операции. REST здесь — только для истории/непрочитанных/пометки прочитанным
+# (запрос-ответ, не live-push), см. план.
+
+@app.get("/player/pm/history", response_model=PmHistoryResponse)
+async def get_pm_history(
+    with_user: str,
+    limit: int = 50,
+    before_id: Optional[int] = None,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    conditions = [or_(
+        and_(PrivateMessage.from_username == user.username, PrivateMessage.to_username == with_user),
+        and_(PrivateMessage.from_username == with_user, PrivateMessage.to_username == user.username),
+    )]
+    if before_id is not None:
+        conditions.append(PrivateMessage.id < before_id)
+    q = (select(PrivateMessage).where(and_(*conditions))
+         .order_by(PrivateMessage.id.desc()).limit(max(1, min(limit, 200))))
+    rows = (await db.execute(q)).scalars().all()
+
+    unread_count = (await db.execute(
+        select(func.count(PrivateMessage.id)).where(
+            PrivateMessage.to_user_id == user.id,
+            PrivateMessage.from_username == with_user,
+            PrivateMessage.read_at.is_(None),
+        )
+    )).scalar_one()
+
+    return PmHistoryResponse(
+        messages=[PmMessageResponse(
+            id=r.id, from_username=r.from_username, to_username=r.to_username,
+            text=r.text, ts=r.ts, read_at=r.read_at,
+        ) for r in reversed(rows)],
+        unread_count=unread_count,
+    )
+
+
+@app.get("/player/pm/threads", response_model=PmThreadsResponse)
+async def get_pm_threads(user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    # Реальный список переписок (не список друзей — сообщать можно кому угодно, см.
+    # диалог), поэтому строим его из фактических PrivateMessage-строк, где юзер — любая
+    # из сторон. Порядок по ts убывающий → берём первое вхождение на партнёра = последнее
+    # сообщение (dict сохраняет порядок вставки в Python 3.7+).
+    rows = (await db.execute(
+        select(PrivateMessage).where(
+            or_(PrivateMessage.from_user_id == user.id, PrivateMessage.to_user_id == user.id)
+        ).order_by(PrivateMessage.ts.desc())
+    )).scalars().all()
+
+    threads: dict[str, dict] = {}
+    for r in rows:
+        partner = r.to_username if r.from_user_id == user.id else r.from_username
+        if partner not in threads:
+            threads[partner] = {"username": partner, "last_text": r.text, "last_ts": r.ts, "unread_count": 0}
+
+    unread_rows = (await db.execute(
+        select(PrivateMessage.from_username, func.count(PrivateMessage.id))
+        .where(PrivateMessage.to_user_id == user.id, PrivateMessage.read_at.is_(None))
+        .group_by(PrivateMessage.from_username)
+    )).all()
+    for name, cnt in unread_rows:
+        threads.setdefault(name, {"username": name, "last_text": "", "last_ts": 0.0, "unread_count": 0})
+        threads[name]["unread_count"] = cnt
+
+    ordered = sorted(threads.values(), key=lambda t: t["last_ts"], reverse=True)
+    return PmThreadsResponse(threads=[PmThreadResponse(**t) for t in ordered])
+
+
+@app.get("/player/pm/unread-summary", response_model=PmUnreadSummaryResponse)
+async def get_pm_unread_summary(user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    rows = (await db.execute(
+        select(PrivateMessage.from_username, func.count(PrivateMessage.id))
+        .where(PrivateMessage.to_user_id == user.id, PrivateMessage.read_at.is_(None))
+        .group_by(PrivateMessage.from_username)
+    )).all()
+    by_user = {name: cnt for name, cnt in rows}
+    return PmUnreadSummaryResponse(by_user=by_user, total=sum(by_user.values()))
+
+
+@app.post("/player/pm/mark-read")
+async def mark_pm_read(
+    body: PmMarkReadRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    await db.execute(
+        update(PrivateMessage)
+        .where(
+            PrivateMessage.id.in_(body.message_ids),
+            PrivateMessage.to_user_id == user.id,
+            PrivateMessage.read_at.is_(None),
+        )
+        .values(read_at=datetime.utcnow())
+    )
     await db.commit()
     return {"ok": True}
 
@@ -1538,7 +2173,17 @@ async def chat_ws(
 
         # Send friend list on connect; notify online friends that this user came online
         friend_list = await _get_friend_list(user.username, db)
+
+        # Непрочитанные ЛС по каждому отправителю — бейдж сразу на логине, без лишнего
+        # REST-запроса (GET /player/pm/unread-summary остаётся для последующих обновлений).
+        unread_rows = (await db.execute(
+            select(PrivateMessage.from_username, func.count(PrivateMessage.id))
+            .where(PrivateMessage.to_user_id == user.id, PrivateMessage.read_at.is_(None))
+            .group_by(PrivateMessage.from_username)
+        )).all()
+    pm_by_user = {name: cnt for name, cnt in unread_rows}
     await ws.send_json({'type': 'friend_list', 'friends': friend_list})
+    await ws.send_json({'type': 'pm_unread_summary', 'by_user': pm_by_user, 'total': sum(pm_by_user.values())})
     for f in friend_list:
         if f['status'] == 'accepted' and f['online']:
             await chat_manager.send_pm(f['name'], {
@@ -1570,8 +2215,32 @@ async def chat_ws(
                 text = str(data.get('text', '')).strip()[:500]
                 if not text or not to_name:
                     continue
-                ts = time.time()
-                out = {'type': 'pm', 'from': user.username, 'to': to_name, 'text': text, 'time': _fmt_time(ts)}
+                if to_name == user.username:
+                    await ws.send_json({'type': 'pm_error', 'text': 'Нельзя написать самому себе'})
+                    continue
+                async with SessionLocal() as db:
+                    # Получатель — ЛЮБОЙ существующий игрок по нику (не только друзья) —
+                    # см. диалог: "писать можно любому, достаточно знать ник". Блокировка
+                    # остаётся единственным ограничением, той же формы, что и group_invite.
+                    target = (await db.execute(select(User).where(User.username == to_name))).scalar_one_or_none()
+                    if not target:
+                        await ws.send_json({'type': 'pm_error', 'text': 'Игрок не найден'})
+                        continue
+                    blocked = (await db.execute(select(Blacklist).where(
+                        Blacklist.blocker == to_name, Blacklist.blocked == user.username
+                    ))).scalar_one_or_none()
+                    if blocked:
+                        await ws.send_json({'type': 'pm_error', 'text': f'Не удалось отправить сообщение {to_name}'})
+                        continue
+                    ts = time.time()
+                    row = PrivateMessage(from_user_id=user.id, from_username=user.username,
+                                          to_user_id=target.id, to_username=to_name, text=text, ts=ts)
+                    db.add(row)
+                    await db.commit()
+                    await db.refresh(row)
+                out = {'type': 'pm', 'id': row.id, 'from': user.username, 'to': to_name, 'text': text, 'time': _fmt_time(ts)}
+                # Живая доставка, если получатель онлайн (как раньше) — офлайн-получатель
+                # подхватит сообщение через GET /player/pm/history при следующем входе.
                 await chat_manager.send_pm(to_name, out)
                 await ws.send_json(out)  # echo to sender
 
@@ -1589,10 +2258,17 @@ async def chat_ws(
                 if reason:
                     await ws.send_json({'type': 'group_error', 'text': reason})
                 else:
-                    await chat_manager.send_pm(to_name, {
-                        'type': 'group_invite', 'from': user.username,
-                        'dungeon': data.get('dungeon', ''),
-                    })
+                    async with SessionLocal() as db:
+                        blocked = (await db.execute(select(Blacklist).where(
+                            Blacklist.blocker == to_name, Blacklist.blocked == user.username
+                        ))).scalar_one_or_none()
+                    if blocked:
+                        await ws.send_json({'type': 'group_error', 'text': f'Не удалось пригласить {to_name}'})
+                    else:
+                        await chat_manager.send_pm(to_name, {
+                            'type': 'group_invite', 'from': user.username,
+                            'dungeon': data.get('dungeon', ''),
+                        })
 
             # ── Группа: принять приглашение ───────────────────────────
             elif msg_type == 'group_join':
@@ -1939,11 +2615,12 @@ async def chat_ws(
                 attacker.respawn_grace_until = 0.0
 
                 claimed_dmg = max(0.0, float(data.get('dmg', 0) or 0))
-                result = _resolve_pvp_hit(attacker, victim, claimed_dmg)
+                weapon_type = str(data.get('weaponType', 'cannon'))[:20]
+                result = _resolve_pvp_hit(attacker, victim, claimed_dmg, weapon_type)
                 out = {
                     'type': 'pvp_hit_result',
                     'attackerUserId': attacker.user_id, 'targetUserId': victim.user_id,
-                    'weaponType': str(data.get('weaponType', 'cannon'))[:20],
+                    'weaponType': weapon_type,
                     **result,
                 }
                 room_uids = [attacker.user_id] + [p.user_id for p in pvp_room_manager.others(sector, attacker.user_id)]
@@ -2122,15 +2799,34 @@ async def chat_ws(
                 attacker = pvp_room_manager.get(sector, user.id)
                 if not attacker:
                     continue
-                now_ts = time.time()
-                if now_ts - attacker.last_shot_at < attacker.loadout['cooldown']:
+                # Способность (Аргус: pulsar/missiles, см. abilityMobFireClaim) бьёт общего
+                # моба/турель/вагон тем же протоколом, что обычное оружие — НО со своим
+                # потолком урона/кулдауном (ABILITY_DAMAGE_CEILING/COOLDOWN_FLOOR), не
+                # личным лоадаутом атакующего (иначе почти все попадания душил бы общий
+                # гейт обычного оружия — способность бьёт на порядок мощнее и намного чаще,
+                # см. тот же аргумент у pvp_ability_fire_claim). Раньше у способностей
+                # вообще не было пути на турели/вагоны бронепоезда (баг из диалога:
+                # "ракетный залп и квантовый пульсар не наносят урон турелям и вагонам") —
+                # ArgusController бил их локальным takeDamage(), сервер не участвовал вовсе.
+                ability = data.get('ability')
+                ability = str(ability)[:30] if ability else None
+                if ability and ability not in ABILITY_DAMAGE_CEILING:
                     continue
-                mob_x, mob_y = data.get('mobX'), data.get('mobY')
-                if mob_x is not None and mob_y is not None:
-                    dist = math.hypot(float(mob_x) - attacker.x, float(mob_y) - attacker.y)
-                    if dist > attacker.loadout['range']:
+                now_ts = time.time()
+                if ability:
+                    last = attacker.ability_last_fire.get(ability, 0.0)
+                    if now_ts - last < ABILITY_COOLDOWN_FLOOR[ability]:
                         continue
-                attacker.last_shot_at = now_ts
+                    attacker.ability_last_fire[ability] = now_ts
+                else:
+                    if now_ts - attacker.last_shot_at < attacker.loadout['cooldown']:
+                        continue
+                    mob_x, mob_y = data.get('mobX'), data.get('mobY')
+                    if mob_x is not None and mob_y is not None:
+                        dist = math.hypot(float(mob_x) - attacker.x, float(mob_y) - attacker.y)
+                        if dist > attacker.loadout['range']:
+                            continue
+                    attacker.last_shot_at = now_ts
                 # Огонь по мобу/базе/турели/бронепоезду — тоже "сам атакуешь", снимает
                 # грейс-неуязвимость после ремонта на месте, как и огонь по игроку выше.
                 attacker.respawn_grace_until = 0.0
@@ -2165,21 +2861,70 @@ async def chat_ws(
                 if mob_id.endswith(':argus'):
                     hull_frac = mob_state.hull / mob_state.max_hull if mob_state.max_hull > 0 else 1.0
                     evasion = 1.0 if _argus_phase_invincible(hull_frac) else 0.0
+                weapon_type = ability if ability else str(data.get('weaponType', 'cannon'))[:20]
+                shield_mult, hull_mult = _weapon_mults(weapon_type)
+                ceiling = ABILITY_DAMAGE_CEILING[ability] if ability else attacker.loadout['dmg']
+                penetration = 0.0 if ability else attacker.loadout['penetration']
                 result = _apply_pvp_damage(
-                    claimed_dmg, attacker.loadout['dmg'], attacker.loadout['penetration'],
+                    claimed_dmg, ceiling, penetration,
                     mob_state.hull, mob_state.shield, mob_state.max_hull, mob_state.max_shield,
                     attacker.loadout['critChance'], attacker.loadout['critMult'], evasion,
+                    shield_mult, hull_mult,
                 )
                 mob_state.hull, mob_state.shield = result['hull'], result['shield']
                 if result['dmg'] > 0:
                     mob_state.damage_by[attacker.user_id] = mob_state.damage_by.get(attacker.user_id, 0.0) + result['dmg']
+                    # Нашествие: копим вклад на уровне ВСЕЙ волны (world_event_damage),
+                    # не только этого одного моба — mob_state.damage_by (выше) удалится
+                    # вместе с записью на килле ЭТОГО моба (remove_mob ниже), а честный
+                    # сплит награды нужен по сумме урона ПО ВСЕЙ волне (см.
+                    # pvp_world_event_clear_claim). mob_id "we:sector:startAt:idx" — 4 части.
+                    if mob_id.startswith('we:'):
+                        we_parts = mob_id.split(':')
+                        if len(we_parts) == 4:
+                            we_key = f"{we_parts[1]}:{we_parts[2]}"
+                            wed = world_event_damage.setdefault(we_key, {})
+                            wed[attacker.user_id] = wed.get(attacker.user_id, 0.0) + result['dmg']
                 if result['killed']:
                     pvp_room_manager.remove_mob(sector, mob_id)  # следующий, кто попадёт — лениво пересоздаст запись
                     server_mob_manager.remove(sector, mob_id)  # ServerMob-регистрация (дроны) синхронно с HP-леджером
                     if train_key is not None:
                         armored_train_manager.mark_destroyed(train_key, wagon_idx)
-                        # wagonReward — тот же детерминированный (по ARMORED_TRAIN_SECTORS)
-                        # пул у ВСЕХ атакующих клиентов, неважно чья заявка убила вагон.
+                    # Награда (вагон ИЛИ турель — базы или поезда, см. TURRET_REWARD в
+                    # constants.js) — тот же pools/_split_reward_top5/pvp_wagon_reward
+                    # путь, что раньше был только у вагонов (см. wagonReward-геттер,
+                    # который раньше был только у ArmoredTrainWagon, не у турелей —
+                    # баг из диалога: "награда за уничтожение турелей... похоже что её
+                    # нет ни для станций"). ':turret:' — общий суффикс id и у турели базы
+                    # (`<roomKey>:sector_base_idx:turret:slotIdx`), и у турели поезда
+                    # (`train:sector:startAt:wagonIdx:turret:turretIdx`) — не нужно отдельно
+                    # различать базу/поезд. mark_destroyed выше остаётся строго вагонным
+                    # (порядок уничтожения "с хвоста" к турелям не относится).
+                    is_turret = ':turret:' in mob_id
+                    is_core = mob_id.startswith('train:') and mob_id.endswith(':core')
+                    # Ракетный залп/поворотная турель — server-authoritative (см.
+                    # ArmoredTrainManager выше). 4-я убитая турель вагона вооружает залп;
+                    # если это ГОЛОВНОЙ вагон — ещё и спавнит серверную поворотную турель.
+                    # Сама убитая поворотная турель снимается с учёта тем же путём.
+                    if is_turret and mob_id.startswith('train:'):
+                        tparts = mob_id.split(':')
+                        if len(tparts) == 6:  # train:sector:startAt:wagonIdx:turret:turretIdx
+                            t_train_key = f"{tparts[1]}:{tparts[2]}"
+                            try:
+                                t_wagon_idx = int(tparts[3])
+                            except ValueError:
+                                t_wagon_idx = None
+                            if t_wagon_idx is not None and armored_train_manager.note_turret_kill(t_train_key, t_wagon_idx):
+                                armored_train_manager.arm_missiles(t_train_key, t_wagon_idx)
+                                if t_wagon_idx == HEAD_WAGON_IDX:
+                                    armored_train_manager.spawn_core_turret(t_train_key)
+                    elif is_core:
+                        cparts = mob_id.split(':')
+                        if len(cparts) == 5:  # train:sector:startAt:wagonIdx:core
+                            armored_train_manager.despawn_core_turret(f"{cparts[1]}:{cparts[2]}")
+                    if train_key is not None or is_turret or is_core:
+                        # wagonReward — тот же детерминированный (по ARMORED_TRAIN_SECTORS/
+                        # TURRET_REWARD) пул у ВСЕХ атакующих клиентов, неважно чья заявка убила цель.
                         pools = data.get('wagonReward') or {}
                         if isinstance(pools, dict) and pools:
                             shares = _split_reward_top5(mob_state.damage_by, {
@@ -2210,7 +2955,7 @@ async def chat_ws(
 
                 out = {
                     'type': 'pvp_mob_hit_result', 'mobId': mob_id, 'attackerUserId': attacker.user_id,
-                    'weaponType': str(data.get('weaponType', 'cannon'))[:20],
+                    'weaponType': weapon_type,
                     'maxHull': mob_state.max_hull, 'maxShield': mob_state.max_shield,
                     **result,
                 }
@@ -2222,6 +2967,32 @@ async def chat_ws(
                     out['damageBy'] = {str(uid): round(dmg) for uid, dmg in mob_state.damage_by.items()}
                 room_uids = [attacker.user_id] + [p.user_id for p in pvp_room_manager.others(sector, attacker.user_id)]
                 await chat_manager.broadcast_to_uids(room_uids, out)
+
+            # ── Нашествие расчищено — клиент, заметивший это (все мобы волны мертвы),
+            #    просит разослать пропорциональную награду. Раньше сплита не было вовсе —
+            #    каждый клиент с любым уроном по волне сам себе выдавал ПОЛНУЮ награду
+            #    локально, без сервера (баг того же класса, что чинили для турелей). pools —
+            #    тот же детерминированный (по WORLD_EVENT_SECTORS) reward-объект у ВСЕХ
+            #    клиентов комнаты, неважно чей клиент первым заметил расчистку. pop() —
+            #    идемпотентность: если несколько клиентов заметят расчистку одновременно
+            #    и пришлют claim, первый "выигрывает" и потребляет накопленный вклад,
+            #    остальные находят world_event_damage[we_key] уже удалённым — молча no-op.
+            elif msg_type == 'pvp_world_event_clear_claim':
+                sector = pvp_room_manager.player_sector.get(user.id)
+                we_key = str(data.get('weKey', ''))[:80]
+                if not sector or not we_key:
+                    continue
+                pools = data.get('rewards') or {}
+                contrib = world_event_damage.pop(we_key, None)
+                if not contrib or not isinstance(pools, dict) or not pools:
+                    continue
+                # 'stars' — реальное имя поля в WORLD_EVENT_SECTORS.rewards (client
+                # constants.js), не 'gold' (то — только у вагонов/турелей поезда).
+                shares = _split_reward_top5(contrib, {
+                    k: float(v) for k, v in pools.items() if k in ('credits', 'xp', 'stars')
+                })
+                for uid, share in shares.items():
+                    await chat_manager.send_to_uid(uid, {'type': 'pvp_world_event_reward', 'weKey': we_key, **share})
 
             # ── PvP: заявка на выстрел ТУРЕЛИ добывающей базы по общему мобу —
             #    урон/дальность/КД считаем по типу турели (TURRET_WEAPONS), НЕ по

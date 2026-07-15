@@ -1,5 +1,5 @@
 from datetime import datetime
-from sqlalchemy import Column, Integer, String, Float, JSON, DateTime, ForeignKey, func
+from sqlalchemy import Column, Integer, String, Float, JSON, DateTime, ForeignKey, UniqueConstraint, func
 from database import Base
 
 
@@ -8,8 +8,23 @@ class User(Base):
 
     id           = Column(Integer, primary_key=True, index=True)
     username     = Column(String(50), unique=True, nullable=False, index=True)
+    email        = Column(String(255), unique=True, nullable=True, index=True)
+    email_verified = Column(Integer, nullable=False, default=0)  # bool as int (SQLite-friendly, см. DungeonRun.boss_alive)
     password_hash = Column(String(200), nullable=False)
     created_at   = Column(DateTime, default=datetime.utcnow)
+
+
+class EmailVerificationToken(Base):
+    # Один активный код на пользователя — при выпуске нового старый удаляется (см.
+    # _issue_verification_code), а не помечается использованным: код одноразовый по
+    # факту (email/password изменились или верификация прошла), лишнее поле не нужно.
+    __tablename__ = "email_verification_tokens"
+
+    id         = Column(Integer, primary_key=True)
+    user_id    = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    code       = Column(String(6), nullable=False)
+    expires_at = Column(DateTime, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
 
 
 class PlayerState(Base):
@@ -19,6 +34,29 @@ class PlayerState(Base):
     user_id    = Column(Integer, ForeignKey("users.id"), unique=True, nullable=False)
     state      = Column(JSON, nullable=False, default=dict)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class PlayerProfile(Base):
+    # Публичная анкета игрока — отдельная таблица (не часть PlayerState.state), т.к.
+    # это поля с явным белым списком для показа чужому игроку (см. GET /player/profile/{username}),
+    # а PlayerState.state — непрозрачный клиент-доверенный блоб прогресса, который наружу
+    # целиком отдавать нельзя. FK на users.id (как PlayerState), а не username-строкой
+    # (как Friendship) — это данные одного владельца, а не связь между двумя игроками.
+    __tablename__ = "player_profiles"
+
+    id           = Column(Integer, primary_key=True)
+    user_id      = Column(Integer, ForeignKey("users.id"), unique=True, nullable=False, index=True)
+    display_name = Column(String(50), nullable=True)
+    country      = Column(String(2), nullable=True)
+    city         = Column(String(80), nullable=True)
+    goal         = Column(String(300), nullable=True)
+    favorite_games = Column(String(300), nullable=True)
+    social_links = Column(JSON, nullable=False, default=dict)
+    favorite_ship_key      = Column(String(30), nullable=True)   # ручной выбор игрока
+    favorite_ship_auto     = Column(String(30), nullable=True)   # авто-подсказка (клиент считает по shipPlayTimeSec)
+    favorite_ship_is_manual = Column(Integer, nullable=False, default=0)  # bool as int (SQLite-friendly)
+    privacy      = Column(String(10), nullable=False, default='everyone')  # 'everyone' | 'friends' | 'nobody'
+    updated_at   = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
 class AuditLog(Base):
@@ -51,6 +89,38 @@ class Friendship(Base):
     user_b     = Column(String(50), nullable=False, index=True)   # recipient
     status     = Column(String(10), nullable=False, default='pending')  # 'pending' | 'accepted'
     created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class PrivateMessage(Base):
+    # FK-by-id (как ChatMessage), а не username-строкой (как Friendship/Blacklist) — это
+    # лог сообщений с эффективными запросами "моя переписка с X", а не разовая проверка
+    # отношения между парой ников. from_username/to_username денормализованы (та же
+    # причина, что ChatMessage.username) — рендер истории без join.
+    __tablename__ = "private_messages"
+
+    id            = Column(Integer, primary_key=True)
+    from_user_id  = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    from_username = Column(String(50), nullable=False)
+    to_user_id    = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    to_username   = Column(String(50), nullable=False)
+    text          = Column(String(500), nullable=False)
+    ts            = Column(Float, nullable=False)
+    read_at       = Column(DateTime, nullable=True)
+
+
+class Blacklist(Base):
+    # Направленная связь между двумя игроками (как Friendship) — username-строкой, а не
+    # user_id FK, т.к. проверяется в тех же местах, что и Friendship (WS-пейлоады несут
+    # только ники, не id). Блокировка однонаправленна и НЕ уведомляет заблокированного
+    # (в отличие от друзей) — поэтому нет WS-сообщений, только REST CRUD (см. main.py).
+    __tablename__ = "blacklist"
+
+    id         = Column(Integer, primary_key=True)
+    blocker    = Column(String(50), nullable=False, index=True)
+    blocked    = Column(String(50), nullable=False, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    __table_args__ = (UniqueConstraint('blocker', 'blocked', name='uq_blacklist_pair'),)
 
 
 # ── Данж-инстансы ────────────────────────────────────────────────────────

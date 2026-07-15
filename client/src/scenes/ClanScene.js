@@ -439,6 +439,13 @@ export default class ClanScene extends Phaser.Scene {
   }
 
   // ── ЧЛЕНЫ ─────────────────────────────────────────────────────────────────
+  // ProfileViewScene должна открываться поверх ClanScene (не входит в overlays-массив
+  // GameScene.toggleOverlay), stop-then-launch — та же причина, что в HudScene.
+  _openProfileView(name) {
+    if (this.scene.isActive('ProfileViewScene')) this.scene.stop('ProfileViewScene');
+    this.scene.launch('ProfileViewScene', { viewName: name });
+  }
+
   _tabMembers(x, y, w, h, clan) {
     const isOff  = ['Капитан', 'Офицер'].includes(clan.myRole);
     const isCapt = clan.myRole === 'Капитан';
@@ -470,7 +477,11 @@ export default class ClanScene extends Phaser.Scene {
       dot.fillCircle(18, ry + rowH / 2, 5);
 
       const rc = m.role === 'Капитан' ? '#ffb74d' : m.role === 'Офицер' ? '#4dd0e1' : '#3a5a6a';
-      const nameTxt  = this.add.text(34, ry + 9,  m.name, this.O('13px', '#cce8f0'));
+      const nameTxt  = this.add.text(34, ry + 9,  m.name, this.O('13px', '#cce8f0'))
+        .setInteractive({ useHandCursor: true });
+      nameTxt.on('pointerover', () => nameTxt.setColor('#4dd0e1'));
+      nameTxt.on('pointerout',  () => nameTxt.setColor('#cce8f0'));
+      nameTxt.on('pointerdown', () => this._openProfileView(m.name));
       const roleTxt  = this.add.text(34, ry + 28, m.role, this.F('12px', rc));
       const lvlTxt   = this.add.text(w / 2, ry + rowH / 2, 'Ур. ' + (m.level || '?'), this.F('12px', '#2a5a70')).setOrigin(0.5);
 

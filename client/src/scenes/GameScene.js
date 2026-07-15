@@ -1,9 +1,9 @@
 import * as Phaser from 'https://cdn.jsdelivr.net/npm/phaser@4.2.1/dist/phaser.esm.js';
-import { COLORS, BASE_WORLD, PVP_WORLD_SCALE, PLAYER, MOBS, PROJECTILE, PROJ_TYPES, RESPAWN_MS, UI_RES, BOSS, DPR, HANDLING, ART_ANGLE_OFFSET, RANKS, BASE_SCAN_RADIUS, HONOR, DUNGEON_DIFF, DUNGEON_MODIFIERS, DUNGEON_BOSS_DROPS, DUNGEON_STAR_GOLD, dungeonLootNorm, WORLD_EVENT_SECTORS, WORLD_EVENT_STRENGTH_MULT, WORLD_EVENT_WAVE1_FRAC, WORLD_EVENT_WAVE2_DELAY_MS, WORLD_EVENT_WINDOW_MS, ARMORED_TRAIN_SECTORS, ARMORED_TRAIN_WINDOW_MS } from '../constants.js';
+import { COLORS, BASE_WORLD, PVP_WORLD_SCALE, PLAYER, MOBS, PROJECTILE, PROJ_TYPES, RESPAWN_MS, UI_RES, BOSS, DPR, HANDLING, ART_ANGLE_OFFSET, RANKS, BASE_SCAN_RADIUS, HONOR, DUNGEON_DIFF, DUNGEON_MODIFIERS, DUNGEON_BOSS_DROPS, DUNGEON_STAR_GOLD, dungeonLootNorm, WORLD_EVENT_SECTORS, WORLD_EVENT_STRENGTH_MULT, WORLD_EVENT_WAVE1_FRAC, WORLD_EVENT_WAVE2_DELAY_MS, WORLD_EVENT_WINDOW_MS, ARMORED_TRAIN_SECTORS, ARMORED_TRAIN_WINDOW_MS, FACTION_SHIELD_DRONE } from '../constants.js';
 import { minimapRect, minimapToWorld } from '../systems/minimap.js';
 import { i18n } from '../i18n.js';
 import Player from '../entities/Player.js';
-import Mob from '../entities/Mob.js';
+import Mob, { applySeparation } from '../entities/Mob.js';
 import Projectile from '../entities/Projectile.js';
 import Loot from '../entities/Loot.js';       
 import Movement from '../systems/Movement.js';
@@ -408,6 +408,10 @@ export default class GameScene extends Phaser.Scene {
     }
 
     this.shipLevels = this.shipLevels || {};
+    // Наигранное время по кораблям (сек) — единственный источник для авто-подсказки
+    // "любимый корабль" в ProfileScene: сервер ничего подобного не отслеживает, а строить
+    // отдельную серверную телеметрию ради лёгкой подсказки — overkill (см. план профиля).
+    this._shipPlayTimeSec = this._shipPlayTimeSec || {};
     this.pilotXp    = this.pilotXp    || (tp ? xpForLevel(tp.level) : 1829100);
     this.pilotHonor = this.pilotHonor ?? (DEV_MODE ? 420500 : 0);
     this.pilotLevel = levelInfo(this.pilotXp).level;
@@ -1091,7 +1095,16 @@ export default class GameScene extends Phaser.Scene {
         { hpMult: WORLD_EVENT_STRENGTH_MULT, dmgMult: WORLD_EVENT_STRENGTH_MULT });
       m.isWorldEvent = true;
       m.noRespawn = true;
-      if (this._realtimeRoomKey) m.pvpMobId = `we:${we.sectorKey}:${we.startAt}:${idx}`;
+      if (this._realtimeRoomKey) {
+        m.pvpMobId = `we:${we.sectorKey}:${we.startAt}:${idx}`;
+        // Регистрация в ServerMobManager (План "server-authoritative mob AI", Фаза 2+,
+        // тот же путь, что дроны/турели поезда) — без неё каждый клиент независимо решал
+        // "агрюсь на моего локального игрока", так что двое игроков рядом с одним мобом
+        // нашествия оба видели "этот моб атакует именно меня" одновременно (тот же баг,
+        // что был у дронов поезда до фикса). ownerCorp не передаём — нашествие враждебно
+        // ко всем корпам одинаково, как и дроны/турели поезда.
+        this.pvpClient?.registerMob(m.pvpMobId);
+      }
       this.mobs.push(m);
       we.mobs.push(m);
     };
@@ -1128,16 +1141,39 @@ export default class GameScene extends Phaser.Scene {
 
     if (!we.cleared && we.mobs.length && we.mobs.every(m => !m.alive)) {
       we.cleared = true;
-      if (we.damaged && !we.rewardGranted) {
+      if (!we.rewardGranted) {
         we.rewardGranted = true;
         const r = we.cfg.rewards;
-        this.credits = (this.credits || 0) + r.credits;
-        this.gainXp(r.xp);
-        if (r.stars > 0) this.starGold = (this.starGold || 0) + r.stars;
-        this.log(`✅ Нашествие отражено! +${r.credits} кр · +${r.xp} XP${r.stars > 0 ? ` · +${r.stars} ★` : ''}`);
+        if (this._realtimeRoomKey) {
+          // Сервер сам решает пропорциональный сплит по накопленному вкладу (см.
+          // server world_event_damage/pvp_world_event_clear_claim) — реальная награда
+          // придёт асинхронно через _onWorldEventReward. Раньше любой клиент с хоть
+          // каким-то уроном по волне выдавал себе ПОЛНУЮ награду локально, без участия
+          // сервера (баг того же класса, что чинили для наград турелей поезда/баз).
+          this.pvpClient?.worldEventClearClaim(`${we.sectorKey}:${we.startAt}`, r);
+        } else if (we.damaged) {
+          // Соло/дев (нет realtimeRoomKey — делить не с кем) — старое поведение.
+          this.credits = (this.credits || 0) + r.credits;
+          this.gainXp(r.xp);
+          if (r.stars > 0) this.starGold = (this.starGold || 0) + r.stars;
+          this.log(`✅ Нашествие отражено! +${r.credits} кр · +${r.xp} XP${r.stars > 0 ? ` · +${r.stars} ★` : ''}`);
+        }
       }
       this._worldEvent = null;
     }
+  }
+
+  // Моя доля пропорциональной награды за расчистку волны нашествия — сервер уже решил
+  // сплит по накопленному урону (см. worldEventClearClaim/pvp_world_event_clear_claim),
+  // тут только гранить присланное.
+  _onWorldEventReward(msg) {
+    if (msg.credits > 0) this.credits = (this.credits || 0) + msg.credits;
+    if (msg.xp > 0) this.gainXp(msg.xp);
+    if (msg.stars > 0) this.starGold = (this.starGold || 0) + msg.stars;
+    this.log(`✅ Нашествие отражено! +${msg.credits || 0} кр · +${msg.xp || 0} XP${msg.stars > 0 ? ` · +${msg.stars} ★` : ''}`);
+    // Как и у wagon_reward — без немедленного сейва награда терялась при закрытии
+    // вкладки/крэше в окне до следующего автосейва (см. диалог "не вижу наград").
+    this._saveState?.();
   }
 
   _grantDungeonResource(deposit) {
@@ -1619,10 +1655,13 @@ export default class GameScene extends Phaser.Scene {
           // E-зона
           () => add(pool[5%pLen], rnd(Lmin,Lmax),  2400,  -300, { patrolRadius: 440, leash: 980, ...passOpts }),
           () => add(pool[0],      rnd(Lmin,Lmax),  3100,   800, { patrolRadius: 360, leash: 810, ...passOpts }),
-          () => add(pool[1%pLen], rnd(Lmin,Lmax),  2800, -1500, { patrolRadius: 300, leash: 700, ...passOpts }),
+          // Снайпер: держит дистанцию вместо сближения (см. Mob.js aiClass:'sniper')
+          () => add(pool[1%pLen], rnd(Lmin,Lmax),  2800, -1500, { patrolRadius: 300, leash: 700, ...passOpts, aiClass: 'sniper' }),
           // W-зона
-          () => add(pool[6%pLen], rnd(Lmin,Lmax), -2450,   200, { patrolRadius: 440, leash: 980, ...passOpts }),
-          () => add(pool[3%pLen], rnd(Lmin,Lmax), -3000,  -900, { patrolRadius: 360, leash: 810, ...passOpts }),
+          // Пара фланкёров: заходят с разных сторон вместо лобовой атаки (см. Mob.js
+          // aiClass:'flanker' — сторона чередуется автоматически по числу уже живых).
+          () => add(pool[6%pLen], rnd(Lmin,Lmax), -2450,   200, { patrolRadius: 440, leash: 980, ...passOpts, aiClass: 'flanker' }),
+          () => add(pool[3%pLen], rnd(Lmin,Lmax), -3000,  -900, { patrolRadius: 360, leash: 810, ...passOpts, aiClass: 'flanker' }),
           () => add(pool[5%pLen], rnd(Lmin,Lmax), -2700,  1350, { patrolRadius: 300, leash: 700, ...passOpts }),
           // Дальние углы
           () => add(pool[4%pLen], rnd(Lmin,Lmax),  3600, -1800, { patrolRadius: 380, leash: 860, ...passOpts }),
@@ -1636,9 +1675,17 @@ export default class GameScene extends Phaser.Scene {
         const sectorBoss = add(boss, Lmax, gx, gy, { behavior: 'guard', patrolRadius: 180, leash: 480 });
         sectorBoss.isSectorBoss = true;
         if (galaxy.current === 'helios_5') sectorBoss.isConfedBoss = true;
-        for (const [ox, oy] of [[-250, -140], [260, -100], [-120, 260]]) {
-          add(pool[0], rnd(Lmin,Lmax), gx+ox, gy+oy, { patrolRadius: 150, leash: 520, bossRef: sectorBoss });
-        }
+        // Щит-дрон эскорт (см. FACTION_SHIELD_DRONE, Mob.shieldDrone-бонд в takeDamage) —
+        // только для фракций, у которых есть свой арт; иначе обычный эскорт как раньше.
+        const shieldDroneKey = FACTION_SHIELD_DRONE[MOBS[boss]?.faction];
+        if (shieldDroneKey) sectorBoss.shieldBonded = true;
+        [[-250, -140], [260, -100], [-120, 260]].forEach(([ox, oy], i) => {
+          if (i === 0 && shieldDroneKey) {
+            add(shieldDroneKey, Lmax, gx+ox, gy+oy, { behavior: 'guard', patrolRadius: 200, bossRef: sectorBoss });
+          } else {
+            add(pool[0], rnd(Lmin,Lmax), gx+ox, gy+oy, { patrolRadius: 150, leash: 520, bossRef: sectorBoss });
+          }
+        });
 
         // ── Блуждающий одиночный босс (карты 3-5): roam по всей карте, пассивен до атаки ─
         if (isMap345) {
@@ -1653,9 +1700,16 @@ export default class GameScene extends Phaser.Scene {
         const gx = 1800, gy = 1140;
         const sectorBoss = add(boss, Lmax, gx, gy, { behavior: 'guard', patrolRadius: 180, leash: 480 });
         sectorBoss.isSectorBoss = true;
-        for (const [ox, oy] of [[-240,-130],[250,-90],[-110,250]]) {
-          add(pool[0], rnd(Lmin,Lmax), gx+ox, gy+oy, { patrolRadius: 150, leash: 520, bossRef: sectorBoss });
-        }
+        // См. комментарий у первого sectorBoss-эскорта выше (FACTION_SHIELD_DRONE).
+        const shieldDroneKey = FACTION_SHIELD_DRONE[MOBS[boss]?.faction];
+        if (shieldDroneKey) sectorBoss.shieldBonded = true;
+        [[-240,-130],[250,-90],[-110,250]].forEach(([ox, oy], i) => {
+          if (i === 0 && shieldDroneKey) {
+            add(shieldDroneKey, Lmax, gx+ox, gy+oy, { behavior: 'guard', patrolRadius: 200, bossRef: sectorBoss });
+          } else {
+            add(pool[0], rnd(Lmin,Lmax), gx+ox, gy+oy, { patrolRadius: 150, leash: 520, bossRef: sectorBoss });
+          }
+        });
       }
     }
   }
@@ -1931,6 +1985,24 @@ export default class GameScene extends Phaser.Scene {
     if (ph.tint) boss.sprite.setTint(ph.tint);
     if (ph.acid) boss.tpl = { ...boss.tpl, projectileType: 'acid' };
     if (ph.dashOn) boss._kitDashCd = ph.dashOn;
+    // "Двойник" — визуальный клон-приманка на текущей позиции босса (НЕ настоящий
+    // сплит его HP-пула — см. план: полноценный сплит потребовал бы дублировать
+    // completion/loot-детект, завязанный на isDungeonBoss). Клон — тот же tpl, но
+    // БЕЗ isDungeonBoss (isSummon вместо), так что убить его недостаточно для
+    // завершения данжа/лута; настоящий босс на миг неуязвим, чтобы продать подмену.
+    if (ph.decoy) {
+      const off = this._findFreeSpawn(
+        boss.x + Phaser.Math.Between(-500, 500), boss.y + Phaser.Math.Between(-500, 500));
+      const clone = new Mob(this, boss.tpl, boss.level, off.x, off.y, { hpMult: ph.decoy.hpFrac ?? 0.4 });
+      clone.isBossEscort = true;
+      clone.isSummon = true;
+      clone._groupMobId = this._nextGroupMobId++;
+      const grp0 = this.groupSystem;
+      if (grp0?.inGroup && !grp0.isLeader) clone.ghostBoss = true;
+      this.mobs.push(clone);
+      boss._invulTimer = Math.max(boss._invulTimer ?? 0, 1.5);
+      this.log('⚠ Двойник! Отличите настоящего...');
+    }
     const s = ph.summon;
     if (!s) return;
     const diff = this._dungeonDiff();
@@ -1947,6 +2019,21 @@ export default class GameScene extends Phaser.Scene {
       if (grp?.inGroup && !grp.isLeader) m.ghostBoss = true;
       this.mobs.push(m);
     }
+  }
+
+  // "Последний рывок" обычного секторного босса (см. Mob.js phase>=3 проверку,
+  // BOSS.lastStandAt) — не для данж-боссов (у тех свой _bossKit/_updateApophis).
+  // Одна отчаянная AoE-атака в упор (вне обычного кулдауна) + временное окно
+  // сниженного урона по корпусу (_lastStandShieldTimer, см. Mob.takeDamage).
+  onBossLastStand(boss) {
+    if (!boss?.alive) return;
+    this.log(i18n.t('log.boss_last_stand'));
+    this._shake(220, 0.01);
+    this.cameras.main.flash(150, 255, 80, 60, true);
+    this.sfx?.play('sfx_boss_phase', { volume: 0.8 });
+    boss.sprite.setTint(0xb71c1c);
+    boss._lastStandShieldTimer = 4.0;
+    if (this.player?.alive) this.spawnBossAoe(boss, this.player.x, this.player.y);
   }
 
   _spawnHomeBase() {
@@ -2670,6 +2757,8 @@ export default class GameScene extends Phaser.Scene {
     this.input.keyboard.on('keydown-P', () => _openBase('ShopScene',     'Магазин'));
     this.input.keyboard.on('keydown-H', () => _openBase('CorpScene',     'Корпорация'));
     this.input.keyboard.on('keydown-N', () => _openBase('ClanScene',     'Гильдия'));
+    this.input.keyboard.on('keydown-U', () => { this.player.waypoint = null; this.cancelCollect(); this.toggleOverlay('ProfileScene'); });
+    this.input.keyboard.on('keydown-B', () => { this.player.waypoint = null; this.cancelCollect(); this.toggleOverlay('MailScene'); });
     
     this.input.keyboard.on('keydown-CTRL', (e) => {
       e.preventDefault();
@@ -2946,6 +3035,7 @@ export default class GameScene extends Phaser.Scene {
         this.player.hull = Math.min(this.player.maxHull, this.player.hull + heal);
         this.log(`🔧 Ремкомплект: +${heal} HP`);
         this.hitFlash(this.player.x, this.player.y, true, this.player, false);
+        this._attachFx(this.vfx?.play('repair_pulse', this.player.x, this.player.y, { scale: 0.18, depth: 67 }), this.player);
         this.groupSystem?.recordHeal(heal);
         break;
       }
@@ -3031,6 +3121,7 @@ export default class GameScene extends Phaser.Scene {
     this.player.hull = Math.min(this.player.maxHull, this.player.hull + heal);
     this.log(`💉 Ремонт: +${heal} HP`);
     this.hitFlash(this.player.x, this.player.y, true, this.player, false);
+    this._attachFx(this.vfx?.play('repair_pulse', this.player.x, this.player.y, { scale: 0.18, depth: 67 }), this.player);
     this.groupSystem?.recordHeal(heal);
   }
 
@@ -3415,6 +3506,13 @@ export default class GameScene extends Phaser.Scene {
         if (d < 50 && d < bestD) { best = tt; bestD = d; }
       }
     }
+    // Центральная турель головы (см. ArmoredTrain._spawnHeadCoreTurret) — отдельное
+    // поле, не входит в wagon.turrets[] (тот массив жёстко под 4 сокета).
+    const core = this.armoredTrain.coreTurret;
+    if (core?.alive) {
+      const d = Phaser.Math.Distance.Between(wx, wy, core.x, core.y);
+      if (d < 60 && d < bestD) { best = core; bestD = d; }
+    }
     return best;
   }
   cancelCollect() { this.collectTarget = null; this.collectTimer = 0; }
@@ -3444,7 +3542,7 @@ export default class GameScene extends Phaser.Scene {
     this.isFiring = false;
     this.atBase = false;
     if (galaxy.current === 'shadow_arena') { this.exitShadowBattle(); return; }
-    for (const o of ['GarageScene','CargoScene','MapScene','MissionsScene','ShopScene','CorpScene','BaseMenuScene','SkillScene','ClanScene','ShadowBattleScene','SettingsScene'])
+    for (const o of ['GarageScene','CargoScene','MapScene','MissionsScene','ShopScene','CorpScene','BaseMenuScene','SkillScene','ClanScene','ShadowBattleScene','SettingsScene','ProfileScene','MailScene'])
       if (this._sceneExists(o) && this.scene.isActive(o)) this.scene.stop(o);
   }
 
@@ -3455,7 +3553,7 @@ export default class GameScene extends Phaser.Scene {
 
   toggleOverlay(key, data) {
     document.getElementById('sd-guild-search')?.remove(); // always clean up HTML overlay on any scene switch
-    const overlays = ['GarageScene', 'CargoScene', 'MapScene', 'MissionsScene', 'ShopScene', 'CorpScene', 'ClanScene', 'SkillScene', 'ShadowBattleScene', 'SettingsScene'];
+    const overlays = ['GarageScene', 'CargoScene', 'MapScene', 'MissionsScene', 'ShopScene', 'CorpScene', 'ClanScene', 'SkillScene', 'ShadowBattleScene', 'SettingsScene', 'ProfileScene', 'MailScene'];
     for (const o of overlays) { if (o !== key && this._sceneExists(o) && this.scene.isActive(o)) this.scene.stop(o); }
     if (!this._sceneExists(key)) return;
     if (this.scene.isActive(key)) this.scene.stop(key); else this.scene.launch(key, data);
@@ -3573,6 +3671,7 @@ export default class GameScene extends Phaser.Scene {
       const dmg = Math.round(p.cannonDamage * skillMult * ammoMult * perkMult);
       this._fireVisualBolt(p.x, p.y, t.x, t.y, isOC ? 0xff8800 : PROJECTILE.playerColor);
       this.muzzleFlash(p.x, p.y, isOC ? 0xff8800 : 0x8fe6ff, p);
+      this._cannonMuzzleFx(p, t, isOC);
       this.sfx?.play('sfx_cannon_fire', { cooldownMs: 60 });
       this.pvpClient?.fireClaim(t.userId, 'cannon', dmg);
       return;
@@ -3588,6 +3687,7 @@ export default class GameScene extends Phaser.Scene {
       const dmg = Math.round(p.cannonDamage * skillMult * ammoMult * perkMult);
       this._fireVisualBolt(p.x, p.y, t.x, t.y, isOC ? 0xff8800 : PROJECTILE.playerColor);
       this.muzzleFlash(p.x, p.y, isOC ? 0xff8800 : 0x8fe6ff, p);
+      this._cannonMuzzleFx(p, t, isOC);
       this.sfx?.play('sfx_cannon_fire', { cooldownMs: 60 });
       if (this.pvpClient) {
         this.pvpClient.mobFireClaim(t.pvpMobId, t.maxHull, t.maxShield, t.x, t.y, 'cannon', dmg, t.wagonReward, t.isDungeonBoss);
@@ -3602,6 +3702,7 @@ export default class GameScene extends Phaser.Scene {
 
     if (Math.random() >= (p.cannonAccuracy ?? 0.90)) {
       this.muzzleFlash(p.x, p.y, 0x8fe6ff, p);
+      this._cannonMuzzleFx(p, t, isOC);
       this.sfx?.play('sfx_weapon_miss', { volume: 0.4, cooldownMs: 80 });
       return;
     }
@@ -3618,6 +3719,7 @@ export default class GameScene extends Phaser.Scene {
       PROJECTILE.speed);
     this.projectiles.push(new Projectile(this, 'player', p.x, p.y, aimPt.x, aimPt.y, t, dmg, p.weaponPenetration, color, 160 * Math.PI / 180, 'plasma', isCrit));
     this.muzzleFlash(p.x, p.y, isOC ? 0xff8800 : isCrit ? 0xffee44 : 0x8fe6ff, p);
+    this._cannonMuzzleFx(p, t, isOC, isCrit);
     this.sfx?.play('sfx_cannon_fire', { cooldownMs: 60 });
     if (isCrit) this.sfx?.play('sfx_crit', { volume: 0.7 });
     if (isCrit || isOC) {
@@ -3839,7 +3941,8 @@ export default class GameScene extends Phaser.Scene {
       || this.miningBases.find(b => b.pvpMobId === mobId && b.alive)
       || this.miningBases.flatMap(b => b.turretTargets).filter(Boolean).find(tt => tt.pvpMobId === mobId && tt.alive)
       || this.armoredTrain?.wagons.find(w => w.pvpMobId === mobId && w.alive)
-      || this.armoredTrain?.wagons.flatMap(w => w.turrets).find(tt => tt?.pvpMobId === mobId && tt.alive);
+      || this.armoredTrain?.wagons.flatMap(w => w.turrets).find(tt => tt?.pvpMobId === mobId && tt.alive)
+      || (this.armoredTrain?.coreTurret?.pvpMobId === mobId && this.armoredTrain.coreTurret.alive ? this.armoredTrain.coreTurret : undefined);
   }
 
   // Чисто визуальный "призрачный" болт для наблюдателей — обычный Projectile
@@ -3895,6 +3998,45 @@ export default class GameScene extends Phaser.Scene {
     this.hitFlash(rp.x, rp.y, (msg.hullHit || 0) > 0, rp, false); // combatSfx=false — не спамим звуком чужой бой
     this.showDamage(rp.x, rp.y, { shieldHit: msg.shieldHit, hullHit: msg.hullHit, killed: msg.killed }, msg.maxHull, msg.isCrit);
     if (msg.killed) rp.die();
+  }
+
+  // Бронепоезд: ракетный залп/поворотная турель — server-authoritative (см. server
+  // _train_weapon_tick_loop/_distribute_train_damage, план "Полностью серверное" —
+  // первый в кодовой базе случай урона по игроку БЕЗ входящей client-claim заявки,
+  // см. диалог "у нас многопользовательская игра и такие вопросы спрашивай заранее").
+  // Сервер уже применил урон и прислал итоговые hull/shield — здесь только синк
+  // локального состояния (если цель — я) и визуал залпа для всех наблюдателей.
+  _onTrainWeaponFire(msg) {
+    for (const h of msg.hits ?? []) {
+      if (h.uid === this.myUserId) {
+        const p = this.player;
+        const hullHit = h.killed ? p.hull : Math.max(0, p.hull - h.hull);
+        const shieldHit = h.killed ? p.shield : Math.max(0, p.shield - h.shield);
+        p.hull = h.killed ? 0 : h.hull;
+        p.shield = h.killed ? 0 : h.shield;
+        // КРИТИЧНО (как и в _onPvpHitResult) — иначе пассивный реген (гейтится по
+        // sinceDamage) мгновенно откатит щит обратно на следующем же кадре.
+        p.lastDamageAt = this.time.now;
+        this.hitFlash(p.x, p.y, hullHit > 0, p);
+        this.showDamage(p.x, p.y, { shieldHit, hullHit, killed: h.killed }, h.maxHull, false);
+        this._shakeForHit({ hullHit }, h.maxHull);
+        if (h.killed && p.alive) {
+          p.die(); this.onPlayerKilled();
+          this.target = null; this.isFiring = false;
+        }
+      } else {
+        const rp = this.pvpClient?.players?.get(h.uid);
+        if (!rp) continue;
+        const hullHit = h.killed ? rp.hull : Math.max(0, rp.hull - h.hull);
+        const shieldHit = h.killed ? rp.shield : Math.max(0, rp.shield - h.shield);
+        rp.applyState({ hull: h.hull, maxHull: h.maxHull, shield: h.shield, maxShield: h.maxShield });
+        this.hitFlash(rp.x, rp.y, hullHit > 0, rp, false); // combatSfx=false — не спамим звуком чужой бой
+        this.showDamage(rp.x, rp.y, { shieldHit, hullHit, killed: h.killed }, h.maxHull, false);
+        if (h.killed) rp.die();
+      }
+    }
+    if (msg.weapon === 'missile') this.armoredTrain?.playMissileVolleyVfx(msg.wagonIdx, msg.hits);
+    else if (msg.weapon === 'core_bolt') this.armoredTrain?.playCoreVolleyVfx();
   }
 
   _onPvpMobHitResult(msg) {
@@ -3978,7 +4120,10 @@ export default class GameScene extends Phaser.Scene {
       }
       // Турель поезда — свой мини-слот на вагоне (TrainTurretTarget): смерть турели НЕ
       // разрушает сам вагон, только освобождает точку крепления (onTurretDestroyed) —
-      // тот же контракт, что у TurretTarget/_onTurretDestroyed на базе выше.
+      // тот же контракт, что у TurretTarget/_onTurretDestroyed на базе выше. Центральная
+      // турель (TrainCoreTurret, см. ArmoredTrain.js) — не сокет вагона, у нет .idx,
+      // свой путь очистки (_onCoreTurretDestroyed).
+      else if (mob.isTrainCoreTurret) { mob.alive = false; this.armoredTrain?._onCoreTurretDestroyed(); }
       else if (mob.isTrainTurretTarget) { mob.alive = false; mob.wagon.onTurretDestroyed(mob.idx); }
       else { mob.die(); this.onMobKilled(mob); }
     }
@@ -4007,6 +4152,17 @@ export default class GameScene extends Phaser.Scene {
       // База/турель уже сами обработали смерть ВНУТРИ takeDamage() (_onDestroyed/
       // _onTurretDestroyed) — здесь только уведомление владельца в лог.
       this._notifyBaseAttack(t, res.killed);
+      // DEV-фоллбэк без сервера, только турель (не сама база — у базы свой отдельный
+      // owner-payout, _applyCaptureBonus/_payoutTop10 внутри _onDestroyed, это другая
+      // механика, см. диалог) — награда за убийство турели никого не награждала вообще
+      // (баг из диалога: "похоже что её нет ни для станций"), см. серверную версию в
+      // HudScene.onWagonReward / TurretTarget.wagonReward.
+      if (t.isTurretTarget && res.killed) {
+        const pool = t.wagonReward || {};
+        if (pool.credits) this.credits = (this.credits || 0) + pool.credits;
+        if (pool.xp) this.gainXp(pool.xp);
+        if (pool.gold) this.starGold = (this.starGold || 0) + pool.gold;
+      }
     } else if (t.isArmoredTrainWagon) {
       // DEV-фоллбэк без сервера: наградa за вагон некому делить пропорционально —
       // отдаём весь пул соло-игроку напрямую (см. серверную версию в HudScene.onWagonReward).
@@ -4021,7 +4177,14 @@ export default class GameScene extends Phaser.Scene {
     } else if (t.isTrainTurretTarget) {
       // Турель уже сама обработала свою смерть ВНУТРИ takeDamage() (onTurretDestroyed) —
       // без своей ветки тут упало бы в generic res.killed → onMobKilled(t), который ждёт
-      // t.tpl (обычный Mob) и сломался бы на турели.
+      // t.tpl (обычный Mob) и сломался бы на турели. Награда — тот же DEV-фоллбэк, что и
+      // у вагона выше (никого не делить, соло-игрок забирает весь пул turretReward).
+      if (res.killed) {
+        const pool = t.wagonReward || {};
+        if (pool.credits) this.credits = (this.credits || 0) + pool.credits;
+        if (pool.xp) this.gainXp(pool.xp);
+        if (pool.gold) this.starGold = (this.starGold || 0) + pool.gold;
+      }
     } else if (t.isArgusBoss) {
       // Как и в серверной ветке (_onPvpMobHitResult) — НЕ onMobKilled(t): у Аргуса свой
       // reward-пайплайн (ArgusController._onArgusDied(), топ-8 по _damageBy). Раньше эта
@@ -4438,7 +4601,11 @@ export default class GameScene extends Phaser.Scene {
     // Остальные типы: один болт с самонаведением
     const turnRate = mob.isBoss ? (180 * Math.PI / 180) : (90 * Math.PI / 180);
     const pen = cfg.penetration ?? 0.05;
-    this.projectiles.push(new Projectile(this, 'mob', mob.x, mob.y, tx, ty, victim, mob.damage * dmgMult, pen, cfg.color, turnRate, pType, isCrit));
+    // maxTurnRad — опциональный потолок СУММАРНОГО доворота от угла запуска (см.
+    // Projectile.js), не безлимитное самонаведение; сейчас только у sec_drone
+    // (constants.js) — правка по просьбе ("90 градусов наведение" вместо ion-веера).
+    const maxTurnRad = mob.tpl.maxTurnRad ?? Infinity;
+    this.projectiles.push(new Projectile(this, 'mob', mob.x, mob.y, tx, ty, victim, mob.damage * dmgMult, pen, cfg.color, turnRate, pType, isCrit, maxTurnRad));
     // gunner — единственный признак класса был +20% к скорострельности, никак не
     // читаемый на глаз; даём его выстрелу свою, более резкую/яркую вспышку
     const flashColor = isCrit ? 0xffe14d : mob.tpl.aiClass === 'gunner'
@@ -4446,6 +4613,14 @@ export default class GameScene extends Phaser.Scene {
       : ({ plasma: 0xff8a7a, acid: 0x76ff03, grav: 0xffb74d, emp: 0x4dd0e1 }[pType] ?? 0xff8a7a);
     this.muzzleFlash(mob.x, mob.y, flashColor, mob);
     this.sfx?.play('sfx_mob_fire_plasma', { volume: 0.35, cooldownMs: 90 });
+  }
+  // Анимированный залп пушки (plasma_bolt VFX-лист) — тот же приём, что и
+  // laser_beam1 у _fireLaser, только для собственного ассета пушки; раньше этот
+  // лист был загружен и зарегистрирован в BootScene, но нигде не проигрывался.
+  _cannonMuzzleFx(p, t, isOC, isCrit = false) {
+    const scale = isOC ? 0.22 : isCrit ? 0.17 : 0.13;
+    const spr = this.vfx?.play('plasma_bolt', p.x, p.y, { scale, depth: 64 });
+    if (spr) { spr.setRotation(Math.atan2(t.y - p.y, t.x - p.x)); this._attachFx(spr, p); }
   }
   // entity — опционально: живая сущность (Player/Mob), за которой эффект должен
   // следовать все время своей жизни. Без него — прежнее поведение (снимок позиции),
@@ -4592,6 +4767,7 @@ export default class GameScene extends Phaser.Scene {
     }
     if (p.splinterPct > 0) {
       const splashDmg = dmgDealt * p.splinterPct;
+      this.vfx?.play('plasma_burst', mob.x, mob.y, { scale: 0.3, depth: 66 });
       for (const m2 of this.mobs) {
         if (m2 === mob || !m2.alive) continue;
         const d = Phaser.Math.Distance.Between(mob.x, mob.y, m2.x, m2.y);
@@ -4667,6 +4843,7 @@ export default class GameScene extends Phaser.Scene {
       p.empMult  = cfg.slowMult ?? 0.45;
       p.empTimer = cfg.slowSec  ?? 2.0;
       this.log('⚡ ЭМИ-разряд! Скорость снижена.');
+      this._attachFx(this.vfx?.play('emp_strike', hx, hy, { scale: 0.2, depth: 67 }), p);
     } else if (eff === 'push') {
       // Гравпульс: отталкиваем игрока + замедляем
       const ang = Math.atan2(p.y - hy, p.x - hx);
@@ -5534,7 +5711,7 @@ export default class GameScene extends Phaser.Scene {
     this.log(i18n.t('log.boss_aoe'));
   }
   spawnApophisMinions() {
-    const apophis = this.mobs.find(m => m.tpl.key === 'bigboss' && m.alive);
+    const apophis = this.mobs.find(m => m.tpl.key === 'ancient_12' && m.alive);
     if (!apophis) return;
     const cx = apophis.x, cy = apophis.y;
     [0, Math.PI / 2, Math.PI, Math.PI * 1.5].forEach(ang => {
@@ -5699,6 +5876,10 @@ export default class GameScene extends Phaser.Scene {
     this._posSaveAccum = (this._posSaveAccum || 0) + dt;
     if (this._posSaveAccum > 5) { this._posSaveAccum = 0; this._saveState(); }
 
+    if (this.activeShip) {
+      this._shipPlayTimeSec[this.activeShip] = (this._shipPlayTimeSec[this.activeShip] || 0) + dt;
+    }
+
     // Phaser's Camera.startFollow() lerp (0.35 set in create()) is applied as a FIXED
     // FRACTION PER CALL, not scaled by dt — it implicitly assumes a constant ~60fps
     // call rate. Any frame-timing jitter (GC pause, a heavier frame, browser hiccup —
@@ -5803,18 +5984,19 @@ export default class GameScene extends Phaser.Scene {
     }
     if (this.player.alive && galaxy.current === 'dungeon_1') this._updateSwarmPack();
     this.mobs.forEach((m) => {
-      // Сервер-авторитетный таргетинг (дроны бронепоезда, План Фаза 2): если сервер
-      // назначил этого дрона ДРУГОМУ игроку комнаты в этот тик, наш локальный игрок
-      // для него — не цель. Раньше (чисто клиент-локальный AI) КАЖДЫЙ клиент в комнате
-      // независимо решал "агрюсь на моего локального игрока", так что двое игроков
-      // рядом с одним роем оба видели "дроны атакуют именно меня" одновременно.
-      // Форсим playerInSafeZone=true — Mob.js уходит в idle-ветку (patrol вокруг
-      // spawnX/Y, который _updateDrones каждый кадр перепривязывает к голове поезда —
-      // готовое "висит роем у головы", ничего изобретать не пришлось) без агро/огня
-      // по нашему локальному игроку. Когда сервер ещё не прислал апдейт (соло/дев,
-      // realtimeRoomKey нет, registerMob никогда не звался) — targetUid остаётся
-      // undefined и мы просто идём по старому пути ниже без изменений.
-      if (m.isArmoredTrainDrone && m.pvpMobId && this._serverMobTargets) {
+      // Сервер-авторитетный таргетинг (дроны бронепоезда + мобы нашествия, План Фаза 2+):
+      // если сервер назначил этого моба ДРУГОМУ игроку комнаты в этот тик, наш локальный
+      // игрок для него — не цель. Раньше (чисто клиент-локальный AI) КАЖДЫЙ клиент в
+      // комнате независимо решал "агрюсь на моего локального игрока", так что двое
+      // игроков рядом с одним роем/мобом нашествия оба видели "он атакует именно меня"
+      // одновременно. Форсим playerInSafeZone=true — Mob.js уходит в idle-ветку (patrol
+      // вокруг spawnX/Y — у дронов поезда его каждый кадр перепривязывает к голове
+      // _updateDrones, у мобов нашествия spawnX/Y просто фиксированный, патрулируют на
+      // месте, как обычный neutral-моб) без агро/огня по нашему локальному игроку. Когда
+      // сервер ещё не прислал апдейт (соло/дев, realtimeRoomKey нет, registerMob никогда
+      // не звался) — targetUid остаётся undefined и мы просто идём по старому пути ниже
+      // без изменений.
+      if ((m.isArmoredTrainDrone || m.isWorldEvent) && m.pvpMobId && this._serverMobTargets) {
         const targetUid = this._serverMobTargets[m.pvpMobId];
         if (targetUid !== undefined && targetUid !== this.myUserId) {
           m.update(dt, this.player, true, () => {});
@@ -5827,6 +6009,7 @@ export default class GameScene extends Phaser.Scene {
       m.update(dt, tgt, tgt === this.player && inSafe, _fireCb);
       if (m.requestAoe) { this.spawnBossAoe(m, this.player.x, this.player.y); m.requestAoe = false; }
     });
+    this._updateDroneSwarms(dt);
     this._processPendingAmbientSpawns();
     this._redrawMobBars();
     this.updateAoe();
@@ -5939,6 +6122,25 @@ export default class GameScene extends Phaser.Scene {
         const d = Phaser.Math.Distance.Between(aggr.x, aggr.y, nb.x, nb.y);
         if (d < PACK_R && !this._hasWallBetween(aggr.x, aggr.y, nb.x, nb.y)) { nb.state = 'aggro'; nb.neutral = false; }
       }
+    }
+  }
+
+  // Антискученность PvP-патрульных роёв sec_drone (aiClass:'swarmDrone') — раньше
+  // такой логики не было вообще (только у дронов бронепоезда, см. ArmoredTrain.js
+  // _updateDrones), теперь общая applySeparation (Mob.js) на группы, сгруппированные
+  // по leader (тот же leader/orbitLeader, что уже используется для роения при спавне,
+  // GameScene.js ~1381-1401 — группировка "бесплатная", ничего нового не тегируем).
+  // Правка по просьбе: "не толпиться в одном месте".
+  _updateDroneSwarms(dt) {
+    const groups = new Map();
+    for (const m of this.mobs) {
+      if (!m.alive || m.tpl?.aiClass !== 'swarmDrone') continue;
+      const key = m.leader ?? m;
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(m);
+    }
+    for (const group of groups.values()) {
+      if (group.length > 1) applySeparation(group, dt);
     }
   }
 
@@ -8179,6 +8381,7 @@ export default class GameScene extends Phaser.Scene {
       activeShip:          this.activeShip,
       ownedShips:          [...(this.ownedShips || [])],
       shipLevels:          this.shipLevels  || {},
+      shipPlayTimeSec:     this._shipPlayTimeSec || {},
       equipped:            this.equipped    || {},
       inventory:           this.inventory   || [],
       warehouse:           this.warehouse   || [],
@@ -8234,6 +8437,7 @@ export default class GameScene extends Phaser.Scene {
     if (s.activeShip         != null) this.activeShip         = s.activeShip;
     if (s.ownedShips         != null) this.ownedShips         = new Set(s.ownedShips);
     if (s.shipLevels         != null) this.shipLevels         = s.shipLevels;
+    if (s.shipPlayTimeSec    != null) this._shipPlayTimeSec   = s.shipPlayTimeSec;
     if (s.equipped           != null) this.equipped           = s.equipped;
     if (s.inventory          != null) this.inventory          = s.inventory;
     if (s.warehouse          != null) this.warehouse          = s.warehouse;

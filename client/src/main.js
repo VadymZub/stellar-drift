@@ -19,6 +19,9 @@ import SkillScene from './scenes/SkillScene.js';
 import TestProfileScene from './scenes/TestProfileScene.js';
 import ShadowBattleScene from './scenes/ShadowBattleScene.js';
 import SettingsScene from './scenes/SettingsScene.js';
+import ProfileScene from './scenes/ProfileScene.js';
+import ProfileViewScene from './scenes/ProfileViewScene.js';
+import MailScene from './scenes/MailScene.js';
 import { loadSettings } from './settings.js';
 
 // Canvas at physical pixel resolution. CSS canvas element uses image-rendering:pixelated
@@ -65,7 +68,7 @@ const config = {
   loader: { timeout: 20000 },
   scene: [
     BootScene, LoginScene, BackgroundScene, TestProfileScene, GameScene, HudScene,
-    InventoryScene, CargoScene, ClanScene, GarageScene, MapScene, MissionsScene, ShopScene, DonateScene, CorpScene, BaseMenuScene, SkillScene, ShadowBattleScene, SettingsScene,
+    InventoryScene, CargoScene, ClanScene, GarageScene, MapScene, MissionsScene, ShopScene, DonateScene, CorpScene, BaseMenuScene, SkillScene, ShadowBattleScene, SettingsScene, ProfileScene, ProfileViewScene, MailScene,
   ],
 };
 

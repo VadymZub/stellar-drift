@@ -10,6 +10,8 @@ import { prerenderTex } from '../utils/prerenderTex.js';
 import { loadSettings, saveSettings, getMinimapDims } from '../settings.js';
 import { GroupSystem } from '../systems/GroupSystem.js';
 import { PvpClient } from '../systems/PvpClient.js';
+import { blacklistList, blacklistAdd, blacklistRemove } from '../api.js';
+import { MailClient } from '../systems/MailClient.js';
 import ArmoredTrain from '../entities/ArmoredTrain.js';
 
 const BOOSTER_DEFS = [
@@ -251,6 +253,8 @@ export default class HudScene extends Phaser.Scene {
     this._groupWinVisible   = false;
     this._friendsWinVisible = false;
     this._friendsList       = [];
+    this._blacklist         = [];
+    this._frWinTab          = 'friends'; // 'friends' | 'blacklist'
     this._lastSectorSent    = null;
     this._grpWinCollapsed   = _s.grpWinCollapsed  ?? false;
     this._frWinCollapsed    = _s.frWinCollapsed   ?? false;
@@ -268,6 +272,7 @@ export default class HudScene extends Phaser.Scene {
     this._buildHudSocialButtons();
     this._buildGroupWin();
     this._buildFriendsWin();
+    this._loadBlacklist();
     this._initSocialWinDrag();
     this._createBoosterWidget();
 
@@ -1789,6 +1794,11 @@ export default class HudScene extends Phaser.Scene {
         if (name) { this.groupSystem.friendAdd(name); this.pushChatMessage('general', 'System', `[Друзья] Запрос отправлен: ${name}`, {}); }
         return;
       }
+      if (text.startsWith('/чс ')) {
+        const name = text.slice(4).trim();
+        if (name) this._addToBlacklist(name);
+        return;
+      }
     }
     if (this._chatWS?.readyState === WebSocket.OPEN) {
       if (this._chatPmTarget) {
@@ -1821,9 +1831,22 @@ export default class HudScene extends Phaser.Scene {
     } catch { return; }
     this._chatWS = ws;
 
-    // GroupSystem и PvpClient используют этот же WS (см. header-комментарии обоих модулей)
+    // GroupSystem, PvpClient и MailClient используют этот же WS (см. header-комментарии модулей)
     this.groupSystem = new GroupSystem(this.scene.get('GameScene'), ws);
     this.pvpClient   = new PvpClient(this.scene.get('GameScene'), ws);
+    this.mailClient  = new MailClient(this.scene.get('GameScene'), ws);
+    this.mailClient.onUnreadSummary = (_byUser, total) => {
+      this._mailUnread = total;
+      this._updateSocialBtnStyles();
+    };
+    this.mailClient.onNewMail = (msg) => {
+      this.pushChatMessage('general', 'System', `[Почта] Новое сообщение от ${msg.from} — B открыть почту`, {});
+      if (this.scene.isActive('MailScene')) this.scene.get('MailScene').onLiveMessage?.(msg);
+    };
+    this.mailClient.onError = (text) => {
+      if (this.scene.isActive('MailScene')) this.scene.get('MailScene').onMailError?.(text);
+      else this.pushChatMessage('general', 'System', `[Почта] ${text}`, {});
+    };
     this.pvpClient.onHitResult = (msg) => {
       this.scene.get('GameScene')?._onPvpHitResult(msg);
     };
@@ -1921,6 +1944,18 @@ export default class HudScene extends Phaser.Scene {
     // и щит другого игрока не уменьшается").
     this.pvpClient.onMobAttackResult = (msg) => {
       this.scene.get('GameScene')?._onPvpMobAttackResult(msg);
+    };
+    // Бронепоезд: ракетный залп/поворотная турель — server-authoritative (сервер сам
+    // решил, посчитал и уже применил урон, см. server _train_weapon_tick_loop). Клиент
+    // только синкает HP (если цель — я) и рисует визуал залпа для всех наблюдателей.
+    this.pvpClient.onTrainWeaponFire = (msg) => {
+      this.scene.get('GameScene')?._onTrainWeaponFire(msg);
+    };
+    // Моя доля пропорциональной награды за расчистку волны нашествия (см.
+    // GameScene._updateWorldEvent/worldEventClearClaim) — сервер сам решил сплит по
+    // накопленному вкладу, раньше каждый клиент выдавал себе полную награду локально.
+    this.pvpClient.onWorldEventReward = (msg) => {
+      this.scene.get('GameScene')?._onWorldEventReward(msg);
     };
     this.pvpClient.onTrainForceSpawn = (msg) => {
       const gs = this.scene.get('GameScene');
@@ -2086,6 +2121,11 @@ export default class HudScene extends Phaser.Scene {
         } else {
           this.pushChatMessage('general', d.from, d.text, { pmFrom: d.from, _time: d.time });
         }
+        this.mailClient?.handleMessage(d);
+      } else if (d.type === 'pm_unread_summary') {
+        this.mailClient?.handleMessage(d);
+      } else if (d.type === 'pm_error') {
+        this.mailClient?.handleMessage(d);
       }
     };
 
@@ -2100,6 +2140,7 @@ export default class HudScene extends Phaser.Scene {
       this.groupSystem = null;
       this.pvpClient?.leaveSector(); // destroy any RemotePlayer sprites before dropping the reference
       this.pvpClient = null;
+      this.mailClient = null;
       this._friendsList = [];
       this._rebuildFriendsWin();
       this._rebuildGroupWin();
@@ -2174,8 +2215,8 @@ export default class HudScene extends Phaser.Scene {
     const F = (sz, c) => ({ fontFamily: 'Inter, sans-serif', fontSize: sz, color: c, resolution: UI_RES });
     const W = this.scale.width, H = this.scale.height;
     const BH = 22, BW = 26;    // button size
-    const GX = 12, FX = GX + BW + 2;  // button local X positions (after grip)
-    const BAR_W = GX + BW + 2 + BW;   // total bar width = 66px
+    const GX = 12, FX = GX + BW + 2, MX = FX + BW + 2, PX = MX + BW + 2;  // button local X positions (after grip)
+    const BAR_W = PX + BW;   // total bar width
 
     // Restore saved position
     let bx = 8, by = 92;
@@ -2207,6 +2248,18 @@ export default class HudScene extends Phaser.Scene {
     this._frBtnTxt  = mk(this.add.text(FX + BW / 2, BH / 2, '★', F('13px', '#3a7090')).setOrigin(0.5));
     // Badge: pending requests (top-right corner, red)
     this._frBadgeTxt = mk(this.add.text(FX + BW - 1, 1, '', F('7px', '#ef5350')).setOrigin(1, 0));
+
+    // ── ПОЧТА button  ✉ ─────────────────────────────────────────────────────
+    this._mailBtn    = mk(this.add.rectangle(MX, 0, BW, BH, 0x0a1828, 0.92)
+      .setOrigin(0).setStrokeStyle(1, 0x1e4060, 0.8).setInteractive({ useHandCursor: true }));
+    this._mailBtnTxt = mk(this.add.text(MX + BW / 2, BH / 2, '✉', F('13px', '#3a7090')).setOrigin(0.5));
+    // Badge: unread PM count (top-right corner, red)
+    this._mailBadgeTxt = mk(this.add.text(MX + BW - 1, 1, '', F('7px', '#ef5350')).setOrigin(1, 0));
+
+    // ── ПРОФИЛЬ button  🪪 ──────────────────────────────────────────────────
+    this._profBtn    = mk(this.add.rectangle(PX, 0, BW, BH, 0x0a1828, 0.92)
+      .setOrigin(0).setStrokeStyle(1, 0x1e4060, 0.8).setInteractive({ useHandCursor: true }));
+    this._profBtnTxt = mk(this.add.text(PX + BW / 2, BH / 2, '🪪', F('12px', '#3a7090')).setOrigin(0.5));
 
     // ── Tooltip (outside _socialBtnC so it's not clipped) ───────────────────
     this._socialTooltip    = this.add.container(0, 0).setDepth(210).setVisible(false);
@@ -2244,6 +2297,14 @@ export default class HudScene extends Phaser.Scene {
     this._frBtn.on('pointerover', () => { this._frBtn.setFillStyle(0x102840); showTip(FX, 'ДРУЗЬЯ  [F]'); });
     this._frBtn.on('pointerout',  () => { this._hideTip(); this._updateSocialBtnStyles(); });
 
+    this._mailBtn.on('pointerdown', () => { this._hideTip(); this.scene.get('GameScene').toggleOverlay('MailScene'); });
+    this._mailBtn.on('pointerover', () => { this._mailBtn.setFillStyle(0x102840); showTip(MX, 'ПОЧТА  [B]'); });
+    this._mailBtn.on('pointerout',  () => { this._hideTip(); this._updateSocialBtnStyles(); });
+
+    this._profBtn.on('pointerdown', () => { this._hideTip(); this.scene.get('GameScene').toggleOverlay('ProfileScene'); });
+    this._profBtn.on('pointerover', () => { this._profBtn.setFillStyle(0x102840); showTip(PX, 'ПРОФИЛЬ  [U]'); });
+    this._profBtn.on('pointerout',  () => { this._hideTip(); this._updateSocialBtnStyles(); });
+
     this._socialBtnC.setVisible(loadSettings().showSocialBtns !== false);
   }
 
@@ -2269,6 +2330,20 @@ export default class HudScene extends Phaser.Scene {
     this._frBtn.setStrokeStyle(1, frOn ? 0x4dd0e1 : (pending > 0 ? 0x806020 : 0x1e4060), 1);
     this._frBtnTxt.setColor(frOn ? '#4dd0e1' : (pending > 0 ? '#ffb74d' : '#3a7090'));
     this._frBadgeTxt?.setText(pending > 0 ? `${pending}` : '');
+
+    // Mail button
+    const mailOn = this.scene.isActive('MailScene');
+    const unread = this._mailUnread || 0;
+    this._mailBtn?.setFillStyle(mailOn ? 0x0f3040 : 0x0a1828);
+    this._mailBtn?.setStrokeStyle(1, mailOn ? 0x4dd0e1 : (unread > 0 ? 0x806020 : 0x1e4060), 1);
+    this._mailBtnTxt?.setColor(mailOn ? '#4dd0e1' : (unread > 0 ? '#ffb74d' : '#3a7090'));
+    this._mailBadgeTxt?.setText(unread > 0 ? `${unread}` : '');
+
+    // Profile button
+    const profOn = this.scene.isActive('ProfileScene');
+    this._profBtn?.setFillStyle(profOn ? 0x0f3040 : 0x0a1828);
+    this._profBtn?.setStrokeStyle(1, profOn ? 0x4dd0e1 : 0x1e4060, 1);
+    this._profBtnTxt?.setColor(profOn ? '#4dd0e1' : '#3a7090');
   }
 
   _toggleGroupWin()   { this._groupWinVisible   = !this._groupWinVisible;   this._rebuildGroupWin();   this._updateSocialBtnStyles(); }
@@ -2630,6 +2705,43 @@ export default class HudScene extends Phaser.Scene {
 
   // ── Окно ДРУЗЬЯ ──────────────────────────────────────────────────────────
 
+  // ── Чёрный список ────────────────────────────────────────────────────
+  // REST, не WS — блокировка однонаправленна и не должна уведомлять заблокированного
+  // в реальном времени (см. server/main.py, комментарий у /player/blacklist).
+  async _loadBlacklist() {
+    try {
+      const r = await blacklistList();
+      this._blacklist = r.blocked || [];
+      this._rebuildFriendsWin();
+    } catch (_) { /* DEV-профиль без реальной сессии — молча оставляем пустым */ }
+  }
+
+  _isBlocked(name) { return (this._blacklist || []).some(b => b.username === name); }
+
+  // ProfileViewScene должна каждый раз стартовать с чистыми данными для нового ника —
+  // stop-then-launch, а не голый launch() поверх уже открытой (см. паттерн toggleOverlay).
+  _openProfileView(name) {
+    if (this.scene.isActive('ProfileViewScene')) this.scene.stop('ProfileViewScene');
+    this.scene.launch('ProfileViewScene', { viewName: name });
+  }
+
+  async _addToBlacklist(name) {
+    try {
+      const r = await blacklistAdd(name);
+      this._blacklist = r.blocked || [];
+      this.pushChatMessage('general', 'System', `[ЧС] ${name} добавлен в чёрный список`, {});
+      this._rebuildFriendsWin();
+    } catch (e) { this.pushChatMessage('general', 'System', `[ЧС] Ошибка: ${e.message}`, {}); }
+  }
+
+  async _removeFromBlacklist(name) {
+    try {
+      const r = await blacklistRemove(name);
+      this._blacklist = r.blocked || [];
+      this._rebuildFriendsWin();
+    } catch (_) {}
+  }
+
   _buildFriendsWin() {
     const W = this.scale.width;
     const _ws = loadSettings();
@@ -2656,12 +2768,19 @@ export default class HudScene extends Phaser.Scene {
     const online    = accepted.filter(f =>  f.online).sort((a, b) => a.name.localeCompare(b.name));
     const offline   = accepted.filter(f => !f.online).sort((a, b) => a.name.localeCompare(b.name));
     const onlineCnt = online.length;
+    const blocked   = this._blacklist || [];
+    const tab       = this._frWinTab || 'friends';
+    const TAB_H     = 22;
 
     // ── Полная высота ──
     let contentH = 0;
     if (!collapsed) {
-      const pendingH = pending.length > 0 ? 22 + pending.length * 24 + 1 : 0;
-      contentH = 1 + pendingH + online.length * 24 + offline.length * 20 + 1 + 34;
+      if (tab === 'blacklist') {
+        contentH = TAB_H + 1 + Math.max(blocked.length, 1) * 20 + 1 + 34;
+      } else {
+        const pendingH = pending.length > 0 ? 22 + pending.length * 24 + 1 : 0;
+        contentH = TAB_H + 1 + pendingH + online.length * 24 + offline.length * 20 + 1 + 34;
+      }
     }
     const totalH = HDR + contentH;
 
@@ -2696,10 +2815,54 @@ export default class HudScene extends Phaser.Scene {
 
     if (collapsed) return;
 
-    // ── Контент ──
+    // ── Табы: Друзья | ЧС ──
     let y = HDR;
+    const tabW = PW / 2;
+    const frTabBg = add(this.add.rectangle(0, y, tabW, TAB_H, tab === 'friends' ? 0x0d2035 : 0x050d18, 1)
+      .setOrigin(0).setInteractive({ useHandCursor: true }));
+    add(this.add.text(tabW / 2, y + TAB_H / 2, 'ДРУЗЬЯ', F('9px', tab === 'friends' ? '#4dd0e1' : '#4a8899')).setOrigin(0.5));
+    frTabBg.on('pointerdown', () => { this._frWinTab = 'friends'; this._rebuildFriendsWin(); });
+    const blTabBg = add(this.add.rectangle(tabW, y, tabW, TAB_H, tab === 'blacklist' ? 0x0d2035 : 0x050d18, 1)
+      .setOrigin(0).setInteractive({ useHandCursor: true }));
+    add(this.add.text(tabW + tabW / 2, y + TAB_H / 2, `🚫 ЧС${blocked.length ? ` (${blocked.length})` : ''}`, F('9px', tab === 'blacklist' ? '#4dd0e1' : '#4a8899')).setOrigin(0.5));
+    blTabBg.on('pointerdown', () => { this._frWinTab = 'blacklist'; this._rebuildFriendsWin(); });
+    y += TAB_H;
     add(this.add.rectangle(0, y, PW, 1, 0x1a4060, 0.5).setOrigin(0));
     y += 1;
+
+    if (tab === 'blacklist') {
+      if (blocked.length === 0) {
+        add(this.add.text(PAD, y + 4, 'Чёрный список пуст', F('10px', '#607d8b')));
+        y += 20;
+      } else {
+        for (const b of blocked) {
+          add(this.add.text(PAD, y + 3, '🚫', F('10px', '#ef5350')));
+          add(this.add.text(PAD + 16, y + 3, b.username, F('11px', '#cfd8dc')));
+          const remBtn = add(this.add.rectangle(PW - PAD - 46, y + 1, 46, 16, 0x100008, 0.8).setOrigin(0)
+            .setStrokeStyle(1, 0x280010, 0.6).setInteractive({ useHandCursor: true }));
+          add(this.add.text(PW - PAD - 23, y + 9, 'убрать', F('9px', '#78909c')).setOrigin(0.5));
+          remBtn.on('pointerdown', () => this._removeFromBlacklist(b.username));
+          y += 20;
+        }
+      }
+
+      add(this.add.rectangle(0, y, PW, 1, 0x1a4060, 0.4).setOrigin(0));
+      y += 1;
+      const addBlBtn = add(this.add.rectangle(PAD, y + 5, PW - PAD * 2, 24, 0x0a1828, 1).setOrigin(0)
+        .setStrokeStyle(1, 0x1e4060, 0.5).setInteractive({ useHandCursor: true }));
+      add(this.add.text(PW / 2, y + 17, '+ Добавить в ЧС  /чс [ник]', F('9px', '#4dd0e1')).setOrigin(0.5));
+      addBlBtn.on('pointerover', () => addBlBtn.setFillStyle(0x0d2e40));
+      addBlBtn.on('pointerout',  () => addBlBtn.setFillStyle(0x0a1828));
+      addBlBtn.on('pointerdown', () => {
+        if (this._chatInputEl) {
+          this._chatInputEl.value = '/чс ';
+          this._chatVisible = true;
+          this._rebuildChatPanel();
+          this._chatInputEl.focus();
+        }
+      });
+      return;
+    }
 
     // Входящие запросы
     if (pending.length > 0) {
@@ -2727,28 +2890,36 @@ export default class HudScene extends Phaser.Scene {
 
     // Онлайн-друзья
     for (const f of online) {
+      const isBlocked = this._isBlocked(f.name);
       add(this.add.text(PAD,      y + 4, '●', F('10px', '#4CAF50')));
-      add(this.add.text(PAD + 14, y + 4, f.name, F('11px', '#c8f0d0')));
+      const nameTxt = add(this.add.text(PAD + 14, y + 4, f.name, F('11px', '#c8f0d0'))
+        .setInteractive({ useHandCursor: true }));
+      nameTxt.on('pointerover', () => nameTxt.setColor('#4dd0e1'));
+      nameTxt.on('pointerout',  () => nameTxt.setColor('#c8f0d0'));
+      nameTxt.on('pointerdown', () => this._openProfileView(f.name));
       if (f.sector) add(this.add.text(PAD + 14, y + 15, f.sector, F('8px', '#3a6858')));
 
-      const invBtn = add(this.add.rectangle(PW - PAD - 56, y + 2, 30, 18, 0x0a2030, 1).setOrigin(0)
-        .setStrokeStyle(1, 0x1a4060, 0.8).setInteractive({ useHandCursor: true }));
-      add(this.add.text(PW - PAD - 41, y + 11, '→Гр', F('9px', '#4dd0e1')).setOrigin(0.5));
-      invBtn.on('pointerover', () => invBtn.setFillStyle(0x0d2e40));
-      invBtn.on('pointerout',  () => invBtn.setFillStyle(0x0a2030));
-      invBtn.on('pointerdown', () => {
-        const grp = this.groupSystem;
-        if (!grp) return;
-        if (!grp.inGroup) {
-          grp.create(galaxy.current, false);
-          this._groupLog('Группа создана');
-          this._updateSocialBtnStyles();
-        }
-        grp.invite(f.name, galaxy.current);
-        this._groupPendingInvites?.set(f.name, 'pending');
-        this._groupLog(`Приглашение → ${f.name}`);
-        this._rebuildGroupWin();
-      });
+      const invBtn = add(this.add.rectangle(PW - PAD - 56, y + 2, 30, 18, 0x0a2030, isBlocked ? 0.4 : 1).setOrigin(0)
+        .setStrokeStyle(1, 0x1a4060, isBlocked ? 0.3 : 0.8));
+      add(this.add.text(PW - PAD - 41, y + 11, '→Гр', F('9px', isBlocked ? '#3a4a55' : '#4dd0e1')).setOrigin(0.5));
+      if (!isBlocked) {
+        invBtn.setInteractive({ useHandCursor: true });
+        invBtn.on('pointerover', () => invBtn.setFillStyle(0x0d2e40));
+        invBtn.on('pointerout',  () => invBtn.setFillStyle(0x0a2030));
+        invBtn.on('pointerdown', () => {
+          const grp = this.groupSystem;
+          if (!grp) return;
+          if (!grp.inGroup) {
+            grp.create(galaxy.current, false);
+            this._groupLog('Группа создана');
+            this._updateSocialBtnStyles();
+          }
+          grp.invite(f.name, galaxy.current);
+          this._groupPendingInvites?.set(f.name, 'pending');
+          this._groupLog(`Приглашение → ${f.name}`);
+          this._rebuildGroupWin();
+        });
+      }
 
       const remBtn = add(this.add.rectangle(PW - PAD - 22, y + 2, 24, 18, 0x180008, 0.9).setOrigin(0)
         .setStrokeStyle(1, 0x380015, 0.7).setInteractive({ useHandCursor: true }));
@@ -2760,7 +2931,11 @@ export default class HudScene extends Phaser.Scene {
     // Офлайн-друзья
     for (const f of offline) {
       add(this.add.text(PAD,      y + 3, '○', F('10px', '#455a64')));
-      add(this.add.text(PAD + 14, y + 3, f.name, F('11px', '#607d8b')));
+      const nameTxt = add(this.add.text(PAD + 14, y + 3, f.name, F('11px', '#607d8b'))
+        .setInteractive({ useHandCursor: true }));
+      nameTxt.on('pointerover', () => nameTxt.setColor('#4dd0e1'));
+      nameTxt.on('pointerout',  () => nameTxt.setColor('#607d8b'));
+      nameTxt.on('pointerdown', () => this._openProfileView(f.name));
       const remBtn = add(this.add.rectangle(PW - PAD - 22, y + 1, 24, 16, 0x100008, 0.8).setOrigin(0)
         .setStrokeStyle(1, 0x280010, 0.6).setInteractive({ useHandCursor: true }));
       add(this.add.text(PW - PAD - 10, y + 9, '✕', F('10px', '#78909c')).setOrigin(0.5));
