@@ -1839,6 +1839,15 @@ export default class HudScene extends Phaser.Scene {
     this.pvpClient.onLootRemoved = (lootId) => {
       this.scene.get('GameScene')?._onPvpLootRemoved(lootId);
     };
+    this.pvpClient.onResourceResult = (msg) => {
+      this.scene.get('GameScene')?._onPvpResourceResult(msg);
+    };
+    this.pvpClient.onResourceCollected = (resourceId) => {
+      this.scene.get('GameScene')?._onPvpResourceCollected(resourceId);
+    };
+    this.pvpClient.onResourceRespawned = (msg) => {
+      this.scene.get('GameScene')?._onPvpResourceRespawned(msg);
+    };
     this.pvpClient.onEscortStarted = () => {
       const gs = this.scene.get('GameScene');
       if (gs) gs._escortRoomLockUntil = Date.now() + 30000;
@@ -2032,7 +2041,7 @@ export default class HudScene extends Phaser.Scene {
       const gs = this.scene.get('GameScene');
       const roomKey = gs?.player?.alive ? gs._currentRealtimeRoomKey?.() : null;
       if (roomKey) {
-        this.pvpClient?.enterSector(roomKey, gs.player.x, gs.player.y, gs._pvpLoadoutSnapshot());
+        this.pvpClient?.enterSector(roomKey, gs.player.x, gs.player.y, gs._pvpLoadoutSnapshot(), gs._pendingResourceProposal ?? []);
       }
       // Та же самолечащаяся логика — бронепоезд мог быть построен локально ДО того,
       // как pvpClient/WS были готовы (см. GameScene._initArmoredTrain), без этого

@@ -181,6 +181,12 @@ export default class GameScene extends Phaser.Scene {
     // Shadow Arena (бой с ботом) — см. _currentRealtimeRoomKey().
     this._isPvpSector    = isPvp;
     this._realtimeRoomKey = this._currentRealtimeRoomKey();
+    // Предложенная раскладка общих депозитов ресурса (см. spawnPlasmateDeposits/
+    // spawnDungeonDeposits ниже) — заполняется ТОЛЬКО для комнат, где депозиты должны
+    // быть общими (PvP-сектор/групповой данж), отправляется на сервер вместе с
+    // enterSector после того, как сами депозиты рассчитаны (см. ниже в create()).
+    this._pendingResourceProposal = [];
+    this._pendingResourceClaims = new Map(); // resourceId → deposit, пока ждём pvp_resource_result
 
     const worldScale = galaxy.current === 'shadow_arena' ? 0.5 : galaxy.current === 'R-1-boss' ? 2.5 : scale;
     this.worldWidth = BASE_WORLD.width * worldScale;
@@ -460,17 +466,6 @@ export default class GameScene extends Phaser.Scene {
       p.lastDamageAt = this.time.now - (sinceDamageAtSaveSec + travelCatchup.elapsedSec) * 1000;
     }
 
-    // Realtime-присутствие (позиции живых игроков) — везде, кроме соло-данжа/босс-карты
-    // (там больше некому быть) и Shadow Arena (бой с ботом). Бой между игроками
-    // (fire_claim) — только в реальных PvP-секторах, см. _isPvpSector. Именно ЗДЕСЬ (не
-    // сразу после new Player()) — this.player уже несёт реально активный корабль, см.
-    // комментарий на старом месте этого блока.
-    if (this._realtimeRoomKey) {
-      this.pvpClient?.enterSector(this._realtimeRoomKey, this.player.x, this.player.y, this._pvpLoadoutSnapshot());
-    } else {
-      this.pvpClient?.leaveSector();
-    }
-
     // Derive corp from active prestige ship first, then any owned prestige ship, else neutral.
     // This means Helios pilots build Helios bases regardless of which ship they fly now.
     this.playerCorp = this.playerCorp ||
@@ -649,6 +644,21 @@ export default class GameScene extends Phaser.Scene {
 
     this.spawnPlasmateDeposits();
     this.spawnDungeonDeposits();
+
+    // Realtime-присутствие (позиции живых игроков) — везде, кроме соло-данжа/босс-карты
+    // (там больше некому быть) и Shadow Arena (бой с ботом). Бой между игроками
+    // (fire_claim) — только в реальных PvP-секторах, см. _isPvpSector. ЗДЕСЬ (после
+    // депозитов, не сразу после new Player()) — this.player уже несёт реально активный
+    // корабль, И _pendingResourceProposal (см. spawnPlasmateDeposits/spawnDungeonDeposits
+    // выше) уже посчитан и готов уехать на сервер вместе с этим же join'ом комнаты —
+    // мобы (pvpMobId) от этого порядка не зависят, они тегируются по _realtimeRoomKey
+    // напрямую, а не по факту вызова enterSector.
+    if (this._realtimeRoomKey) {
+      this.pvpClient?.enterSector(this._realtimeRoomKey, this.player.x, this.player.y, this._pvpLoadoutSnapshot(), this._pendingResourceProposal);
+    } else {
+      this.pvpClient?.leaveSector();
+    }
+
     this._initAnomaly();
     this._initWorldEvent();
     this._initArmoredTrain();
@@ -846,6 +856,12 @@ export default class GameScene extends Phaser.Scene {
 
     const ww = this.worldWidth, wh = this.worldHeight;
     const zone = { xMin: 200, xMax: ww - 200, yMin: 200, yMax: wh - 200 };
+    // PvP-депозиты должны быть общими на комнату (см. диалог "каждый видит свой
+    // ресурс") — вместо немедленного локального спавна складываем предложение в
+    // _pendingResourceProposal, оно уедет на сервер вместе с enterSector() (см.
+    // create()); реальные PlasmateDeposit создаст _applyPvpResourcesSnapshot() из
+    // авторитетного ответа сервера. Домашние сектора — не в скоупе, остаются как есть.
+    const shared = isPvp && !!this._realtimeRoomKey;
     for (let i = 0; i < count; i++) {
       let x, y, tries = 0;
       do {
@@ -856,7 +872,11 @@ export default class GameScene extends Phaser.Scene {
         isPvp && this.miningBases.some(b => Phaser.Math.Distance.Between(x, y, b.x, b.y) < 600)
       );
       const amount = Phaser.Math.Between(aMin, aMax);
-      this.plasmateDeposits.push(new PlasmateDeposit(this, x, y, amount, zone, respawnMs));
+      if (shared) {
+        this._pendingResourceProposal.push({ id: `p:${i}`, x, y, resourceType: 'plasmate', amount, respawnMs });
+      } else {
+        this.plasmateDeposits.push(new PlasmateDeposit(this, x, y, amount, zone, respawnMs));
+      }
     }
   }
 
@@ -1120,7 +1140,7 @@ export default class GameScene extends Phaser.Scene {
     }
   }
 
-  _collectDungeonResource(deposit) {
+  _grantDungeonResource(deposit) {
     const whMax = 8 + ([0,3,8,16][this.skillLevels?.cargo_expand||0]||0) + (this.premium ? 8 : 0);
     this.warehouse = this.warehouse || [];
     const leftover = addConsumableToInventory(this.warehouse, deposit.resourceType, deposit.amount, whMax);
@@ -1133,8 +1153,7 @@ export default class GameScene extends Phaser.Scene {
     deposit.collect();
   }
 
-  _collectPlasmateDeposit(deposit) {
-    if (deposit.isDungeonResource) { this._collectDungeonResource(deposit); return; }
+  _grantPlasmateDeposit(deposit) {
     // Daily limit check
     if ((this.plasmateToday || 0) >= PLASMATE_DAILY_MAX) {
       this.log(i18n.t('log.plasmate_limit'));
@@ -1163,6 +1182,81 @@ export default class GameScene extends Phaser.Scene {
 
     if (leftover > 0) this.log(i18n.t('log.plasmate_cargo_full'));
     if (this.plasmateToday >= PLASMATE_DAILY_MAX) this.log(i18n.t('log.plasmate_limit'));
+  }
+
+  // Реально начисляет ресурс/плазмит и гасит депозит локально — вызывается либо сразу
+  // (не общий депозит, deposit.resourceId нет), либо после granted:true от сервера
+  // (см. _onPvpResourceResult) для общих депозитов PvP-сектора/группового данжа.
+  _grantResourceLocally(deposit) {
+    if (deposit.isDungeonResource) this._grantDungeonResource(deposit);
+    else this._grantPlasmateDeposit(deposit);
+  }
+
+  // Общий депозит комнаты (PvP-сектор/групповой данж) — не гранится локально сразу,
+  // ждём авторитетного pvp_resource_result: могли не успеть первыми (тот же паттерн,
+  // что _claimPvpLoot/_onPvpLootResult).
+  _claimSharedResource(deposit) {
+    if (deposit._claimPending) return;
+    deposit._claimPending = true;
+    this._pendingResourceClaims.set(deposit.resourceId, deposit);
+    this.pvpClient?.claimResource(deposit.resourceId);
+  }
+
+  _collectPlasmateDeposit(deposit) {
+    if (deposit.resourceId) { this._claimSharedResource(deposit); return; }
+    this._grantResourceLocally(deposit);
+  }
+
+  _onPvpResourceResult(msg) {
+    const deposit = this._pendingResourceClaims.get(msg.resourceId);
+    this._pendingResourceClaims.delete(msg.resourceId);
+    if (!deposit) return;
+    if (msg.granted) {
+      this._grantResourceLocally(deposit);
+    } else {
+      this.log('⛏ Ресурс уже собран.');
+      if (deposit.alive) deposit.collect();
+    }
+  }
+
+  // Кто-то другой в комнате собрал этот общий депозит раньше нас — убираем локально,
+  // если мы ещё не долетели/не успели (аналогично _onPvpLootRemoved).
+  _onPvpResourceCollected(resourceId) {
+    const deposit = this.plasmateDeposits.find(d => d.resourceId === resourceId);
+    if (deposit?.alive) deposit.collect();
+  }
+
+  // Сервер — единственный источник времени/позиции респавна для общих депозитов
+  // (см. PlasmateDeposit.forceRespawn) — если у нас уже есть локальный объект (был
+  // жив/собран нами или кем-то ещё, пока мы были в комнате), просто показываем его
+  // снова; если нет (зашли в комнату уже после того, как узел умер) — создаём заново.
+  _onPvpResourceRespawned(msg) {
+    const existing = this.plasmateDeposits.find(d => d.resourceId === msg.resourceId);
+    if (existing) {
+      existing.forceRespawn(msg.x, msg.y);
+      return;
+    }
+    const ww = this.worldWidth, wh = this.worldHeight;
+    const zone = { xMin: 200, xMax: ww - 200, yMin: 200, yMax: wh - 200 };
+    const deposit = new PlasmateDeposit(this, msg.x, msg.y, msg.amount, zone, msg.respawnMs, msg.resourceType);
+    deposit.resourceId = msg.resourceId;
+    this.plasmateDeposits.push(deposit);
+  }
+
+  // Авторитетная раскладка общих депозитов комнаты (PvP-сектор/групповой данж) — либо
+  // эхо нашего же предложения (мы первые в комнате), либо чужая, уже сохранённая
+  // сервером раскладка (см. server get_or_create_resources). Мёртвые на момент входа
+  // узлы не создаём — они прилетят по pvp_resource_respawned, когда оживут.
+  _applyPvpResourcesSnapshot(resources) {
+    const ww = this.worldWidth, wh = this.worldHeight;
+    const zone = { xMin: 200, xMax: ww - 200, yMin: 200, yMax: wh - 200 };
+    for (const entry of resources ?? []) {
+      if (entry.alive === false) continue;
+      const deposit = new PlasmateDeposit(this, entry.x, entry.y, entry.amount, zone, entry.respawnMs, entry.resourceType);
+      deposit.resourceId = entry.id;
+      this.plasmateDeposits.push(deposit);
+    }
+    this._pendingResourceProposal = [];
   }
 
   _cargoMax() {
@@ -7309,6 +7403,10 @@ export default class GameScene extends Phaser.Scene {
     const scaledAmount = Math.round(dcfg.amount * depositMult);
 
     const CLUSTER_R = 100; // радиус россыпи кристаллов вокруг центра точки
+    // Групповой данж — депозиты должны быть общими на группу, не по копии на игрока
+    // (см. диалог: "ресуры в групповом данже... должны быть общие для группы").
+    // Соло-данж (_realtimeRoomKey === null) остаётся как есть — локально, без сервера.
+    const shared = this._realtimeRoomKey?.startsWith('group:') ?? false;
 
     // Для data-driven данжей споты берутся из суточного варианта размещения
     const spots = this._dungeonVariant?.deposits ?? dcfg.spots;
@@ -7325,7 +7423,11 @@ export default class GameScene extends Phaser.Scene {
         const kx = x + Math.cos(angle) * r;
         const ky = y + Math.sin(angle) * r;
         const yield_ = Phaser.Math.Between(1, 3);
-        this.plasmateDeposits.push(new PlasmateDeposit(this, kx, ky, yield_, zone, RESPAWN_MS, resType));
+        if (shared) {
+          this._pendingResourceProposal.push({ id: `spot:${i}:${c}`, x: kx, y: ky, resourceType: resType, amount: yield_, respawnMs: RESPAWN_MS });
+        } else {
+          this.plasmateDeposits.push(new PlasmateDeposit(this, kx, ky, yield_, zone, RESPAWN_MS, resType));
+        }
       }
 
       const gp = galaxy.current === 'R-1-boss'

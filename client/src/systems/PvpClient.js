@@ -31,6 +31,9 @@ export class PvpClient {
         this.onLootSpawned  = null; // (msg) => void — новый общий лут-бокс мне видим
         this.onLootResult   = null; // (msg) => void — ответ на мою claimLoot
         this.onLootRemoved  = null; // (lootId) => void — кто-то другой забрал раньше меня
+        this.onResourceResult    = null; // (msg) => void — ответ на мою claimResource
+        this.onResourceCollected = null; // (resourceId) => void — кто-то другой в комнате собрал этот депозит
+        this.onResourceRespawned = null; // (msg) => void — общий депозит комнаты снова доступен
         this.onEscortStarted = null; // (msg) => void — кто-то другой в комнате начал daily_escort
         this.onBountyPosted  = null; // (msg) => void — {userId,name} поставлен в розыск
         this.onBountyCleared = null; // (msg) => void — {userId} розыск снят (убит)
@@ -44,10 +47,17 @@ export class PvpClient {
 
     // ── Outgoing ─────────────────────────────────────────────────────────────
 
-    enterSector(sector, x, y, loadout) {
+    /** resources — предложенная раскладка депозитов ресурса ЭТОГО клиента (см.
+     * GameScene._pendingResourceProposal), нужна только для комнат, где депозиты
+     * должны быть общими (PvP-сектора, групповые данжи) — сервер использует её,
+     * только если он первый в этой комнате (см. server get_or_create_resources),
+     * иначе просто вернёт уже сохранённую раскладку в pvp_room_snapshot. */
+    enterSector(sector, x, y, loadout, resources = []) {
         this.leaveSector();
         this.sector = sector;
-        this._send({ type: 'pvp_enter', sector, x, y, loadout });
+        const payload = { type: 'pvp_enter', sector, x, y, loadout };
+        if (resources.length) payload.resources = resources;
+        this._send(payload);
     }
 
     /** Обновляет потолок лоадаута без выхода/входа в комнату (без этого смена корабля/
@@ -150,6 +160,13 @@ export class PvpClient {
         this._send({ type: 'pvp_loot_claim', lootId });
     }
 
+    /** Заявка на сбор общего депозита ресурса комнаты (см. server pvp_resource_claim) —
+     * тот же паттерн, что claimLoot: не гранится локально сразу, ждём granted:true/false. */
+    claimResource(resourceId) {
+        if (!this.sector) return;
+        this._send({ type: 'pvp_resource_claim', resourceId });
+    }
+
     /** Лутбокс с уничтоженного вагона бронепоезда (см. GameScene._spawnWagonLoot) —
      * отправляется ТОЛЬКО добившим клиентом. eligible — явный список uid, в отличие от
      * spawnLoot выше (там сервер сам берёт last_death_eligible жертвы — тут нет игрока-
@@ -229,6 +246,10 @@ export class PvpClient {
                 // Реконсиляция уже заспавненных локально мобов с текущим сервером-леджером —
                 // если кто-то бил этого моба до нашего входа, подхватываем актуальный hull.
                 if (msg.mobs) this.scene._applyPvpMobSnapshot?.(msg.mobs);
+                // Общая раскладка депозитов ресурса комнаты (см. GameScene._pendingResourceProposal
+                // выше и server get_or_create_resources) — приходит и первому клиенту комнаты
+                // (его же раскладка, эхом), и всем последующим (уже сохранённая раскладка).
+                if (msg.resources) this.scene._applyPvpResourcesSnapshot?.(msg.resources);
                 break;
 
             case 'pvp_player_joined':
@@ -302,6 +323,18 @@ export class PvpClient {
 
             case 'pvp_loot_removed':
                 this.onLootRemoved?.(msg.lootId);
+                break;
+
+            case 'pvp_resource_result':
+                this.onResourceResult?.(msg);
+                break;
+
+            case 'pvp_resource_collected':
+                this.onResourceCollected?.(msg.resourceId);
+                break;
+
+            case 'pvp_resource_respawned':
+                this.onResourceRespawned?.(msg);
                 break;
 
             case 'pvp_escort_started':

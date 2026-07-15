@@ -445,12 +445,31 @@ class PvpLootBox:
         self.eligible = set(eligible)
 
 
+class PvpResourceNode:
+    """Депозит ресурса (плазмит/данж-кристалл), общий на всех игроков комнаты.
+    Позицию/количество/тип задаёт ПЕРВЫЙ клиент комнаты (см. get_or_create_resources —
+    "клиент решает ЧТО, сервер решает ЧЬЯ версия становится общей", тот же трюк, что и
+    у pvp_loot_spawn), сервер лишь хранит и арбитрирует alive/collect/respawn, чтобы
+    все клиенты комнаты видели ОДИН и тот же депозит в ОДНОМ месте (см. диалог:
+    "каждый видит свой ресурс")."""
+    def __init__(self, node_id: str, x: float, y: float, resource_type: str, amount: float, respawn_ms: float):
+        self.node_id = node_id
+        self.x = x
+        self.y = y
+        self.resource_type = resource_type
+        self.amount = amount
+        self.respawn_ms = respawn_ms
+        self.alive = True
+        self.respawn_at = 0.0  # time.time() когда снова станет alive (0 — не собран)
+
+
 class PvpRoomManager:
     def __init__(self):
         self.rooms: dict[str, dict[int, PvpPlayerState]] = {}
         self.player_sector: dict[int, str] = {}   # user_id → sector, для leave на disconnect
         self.mob_rooms: dict[str, dict[str, PvpMobState]] = {}
         self.loot_rooms: dict[str, dict[str, PvpLootBox]] = {}
+        self.resource_rooms: dict[str, dict[str, PvpResourceNode]] = {}
         # turret_id (уже включает sector через base.id) → time.time() последнего
         # засчитанного залпа — см. TURRET_WEAPONS выше и pvp_turret_fire_claim ниже.
         self.turret_last_fire: dict[str, float] = {}
@@ -513,6 +532,46 @@ class PvpRoomManager:
     def mob_snapshot(self, sector: str) -> dict:
         return {mid: {'hull': s.hull, 'maxHull': s.max_hull, 'shield': s.shield, 'maxShield': s.max_shield}
                 for mid, s in self.mob_rooms.get(sector, {}).items()}
+
+    # Идемпотентно: первый клиент комнаты, приславший непустой resources[], "выигрывает"
+    # и его раскладка становится общей навсегда (пока комната не опустеет/сервер не
+    # перезапустится — то же допущение времени жизни, что у mob_rooms/loot_rooms).
+    # Опоздавшие/расходящиеся предложения от других клиентов той же комнаты молча
+    # игнорируются — они получат уже сохранённую раскладку через serialize_resources.
+    def get_or_create_resources(self, sector: str, proposed: list[dict]) -> dict[str, PvpResourceNode]:
+        room = self.resource_rooms.setdefault(sector, {})
+        if not room and proposed:
+            for entry in proposed[:200]:
+                node_id = str(entry.get('id', ''))[:40]
+                if not node_id or node_id in room:
+                    continue
+                try:
+                    x = float(entry.get('x', 0))
+                    y = float(entry.get('y', 0))
+                    amount = max(0.0, float(entry.get('amount', 0)))
+                    respawn_ms = max(1000.0, float(entry.get('respawnMs', 600000)))
+                except (TypeError, ValueError):
+                    continue
+                resource_type = str(entry.get('resourceType', 'plasmate'))[:30]
+                room[node_id] = PvpResourceNode(node_id, x, y, resource_type, amount, respawn_ms)
+        return room
+
+    def serialize_resources(self, sector: str) -> list[dict]:
+        now_ts = time.time()
+        out = []
+        for node in self.resource_rooms.get(sector, {}).values():
+            if not node.alive and node.respawn_at and now_ts >= node.respawn_at:
+                node.alive = True
+                node.respawn_at = 0.0
+            out.append({
+                'id': node.node_id, 'x': node.x, 'y': node.y,
+                'resourceType': node.resource_type, 'amount': node.amount,
+                'respawnMs': node.respawn_ms, 'alive': node.alive,
+            })
+        return out
+
+    def get_resource(self, sector: str, node_id: str) -> "PvpResourceNode | None":
+        return self.resource_rooms.get(sector, {}).get(node_id)
 
 
 pvp_room_manager = PvpRoomManager()
@@ -834,10 +893,39 @@ async def _mob_tick_loop():
             await _tick_room(room_key, mobs, players)
 
 
+RESOURCE_TICK_MS = 5000  # реген депозитов — минуты/часы, 6Hz мобов тут избыточен
+
+
+async def _resource_tick_loop():
+    """Третий фоновый цикл сервера. Респавн депозита должен долететь ДО ВСЕХ живых
+    клиентов комнаты пушем (не только тому, кто его собрал) — в отличие от pvp_mob_
+    hit_result, тут никто не "стреляет" в момент респавна, чтобы естественно получить
+    событие, поэтому лениво-по-запросу (как serialize_resources на pvp_enter) не
+    покрыло бы уже присутствующих в комнате игроков."""
+    while True:
+        await asyncio.sleep(RESOURCE_TICK_MS / 1000)
+        now_ts = time.time()
+        for sector, nodes in list(pvp_room_manager.resource_rooms.items()):
+            room_uids = [p.user_id for p in pvp_room_manager.rooms.get(sector, {}).values()]
+            if not room_uids:
+                continue
+            for node in nodes.values():
+                if node.alive or not node.respawn_at or now_ts < node.respawn_at:
+                    continue
+                node.alive = True
+                node.respawn_at = 0.0
+                await chat_manager.broadcast_to_uids(room_uids, {
+                    'type': 'pvp_resource_respawned', 'resourceId': node.node_id,
+                    'x': node.x, 'y': node.y, 'resourceType': node.resource_type,
+                    'amount': node.amount, 'respawnMs': node.respawn_ms,
+                })
+
+
 @app.on_event("startup")
 async def _start_mob_tick_loop():
     asyncio.create_task(_mob_tick_loop())
     asyncio.create_task(_offline_ship_tick_loop())
+    asyncio.create_task(_resource_tick_loop())
 
 
 def _split_reward_top5(damage_by: dict[int, float], pools: dict[str, float]) -> dict[int, dict[str, int]]:
@@ -1641,6 +1729,13 @@ async def chat_ws(
                     state.waypoint_x = _off_ship.waypoint_x
                     state.waypoint_y = _off_ship.waypoint_y
                     state.speed = _off_ship.speed
+                # Депозиты ресурсов (плазмит/данж-кристаллы) — первый клиент комнаты
+                # предлагает раскладку (resources[]), она становится общей навсегда
+                # (см. get_or_create_resources); опоздавшие клиенты просто получают уже
+                # сохранённую раскладку в ответ, свою собственную не сохраняя.
+                proposed_resources = data.get('resources') or []
+                if isinstance(proposed_resources, list) and proposed_resources:
+                    pvp_room_manager.get_or_create_resources(sector, proposed_resources)
                 others = pvp_room_manager.others(sector, user.id)
                 await ws.send_json({
                     'type': 'pvp_room_snapshot',
@@ -1648,6 +1743,7 @@ async def chat_ws(
                     # Только мобы, по которым уже кто-то стрелял (см. PvpMobState) — не
                     # тронутые мобы у новых клиентов и так спавнятся на полном HP.
                     'mobs': pvp_room_manager.mob_snapshot(sector),
+                    'resources': pvp_room_manager.serialize_resources(sector),
                 })
                 await chat_manager.broadcast_to_uids(
                     [p.user_id for p in others],
@@ -2246,6 +2342,31 @@ async def chat_ws(
                 await chat_manager.broadcast_to_uids(
                     [uid for uid in box.eligible if uid != user.id],
                     {'type': 'pvp_loot_removed', 'lootId': loot_id},
+                )
+
+            # ── Депозиты ресурсов: заявка на сбор общего узла комнаты — первый
+            #    успешный клейм забирает и ставит respawn_at, остальным в комнате
+            #    рассылаем "узел собран" (см. get_or_create_resources выше) ──
+            elif msg_type == 'pvp_resource_claim':
+                sector = pvp_room_manager.player_sector.get(user.id)
+                node_id = data.get('resourceId')
+                if not sector or not node_id:
+                    continue
+                node_id = str(node_id)[:40]
+                node = pvp_room_manager.get_resource(sector, node_id)
+                now_ts = time.time()
+                if not node or not node.alive:
+                    await ws.send_json({'type': 'pvp_resource_result', 'resourceId': node_id, 'granted': False})
+                    continue
+                node.alive = False
+                node.respawn_at = now_ts + node.respawn_ms / 1000.0
+                await ws.send_json({
+                    'type': 'pvp_resource_result', 'resourceId': node_id, 'granted': True,
+                    'resourceType': node.resource_type, 'amount': node.amount,
+                })
+                await chat_manager.broadcast_to_uids(
+                    [p.user_id for p in pvp_room_manager.others(sector, user.id)],
+                    {'type': 'pvp_resource_collected', 'resourceId': node_id},
                 )
 
             # ── Друзья: добавить / принять авто ──────────────────────

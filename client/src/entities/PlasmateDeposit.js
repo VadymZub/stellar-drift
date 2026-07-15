@@ -18,6 +18,12 @@ export default class PlasmateDeposit {
     this.isPlasmate       = resourceType === 'plasmate';
     this.isDungeonResource = !this.isPlasmate;
     this.respawnAt        = 0;
+    // Общий депозит комнаты (PvP-сектор/групповой данж, см. GameScene._applyPvpResourcesSnapshot) —
+    // респавн диктует сервер (pvp_resource_respawned, всегда та же позиция, см.
+    // GameScene._onPvpResourceRespawned), локальный таймер/зона ниже должны молчать,
+    // иначе узел на миг "оживал" бы у каждого клиента в своей случайной точке зоны
+    // раньше/вместо авторитетного события сервера.
+    this.resourceId       = null;
     this._build(x, y);
   }
 
@@ -37,7 +43,7 @@ export default class PlasmateDeposit {
   collect() {
     this.alive = false;
     this.sprite.setVisible(false);
-    this.respawnAt = this.scene.time.now + this.respawnMs;
+    this.respawnAt = this.resourceId ? 0 : this.scene.time.now + this.respawnMs;
   }
 
   update(now) {
@@ -50,6 +56,15 @@ export default class PlasmateDeposit {
     const nx = Phaser.Math.Between(this.zone.xMin, this.zone.xMax);
     const ny = Phaser.Math.Between(this.zone.yMin, this.zone.yMax);
     this.sprite.setPosition(nx, ny).setVisible(true);
+    this.sprite.anims.setProgress(Math.random());
+    this.alive = true;
+    this.respawnAt = 0;
+  }
+
+  // Респавн общего депозита комнаты — сервер решает КОГДА и (одну и ту же) позицию,
+  // см. класс-комментарий выше. Не переиспользует _respawn() (тот рандомит внутри zone).
+  forceRespawn(x, y) {
+    this.sprite.setPosition(x, y).setVisible(true);
     this.sprite.anims.setProgress(Math.random());
     this.alive = true;
     this.respawnAt = 0;
