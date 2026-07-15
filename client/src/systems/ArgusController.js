@@ -66,6 +66,7 @@ export default class ArgusController {
     this._berserkApplied = false;
 
     this._playerFX = null; // quantum layers attached to player ship
+    this._remoteFX = new Map(); // userId → quantum layers attached to ДРУГИХ игроков на Аргусе
 
     // Player abilities
     this._pulsarData  = null;
@@ -83,16 +84,16 @@ export default class ArgusController {
 
   // ── Player-ship quantum FX (DEV key 8) ─────────────────────────────
 
-  attachToPlayer(player) {
-    this.detachFromPlayer();
+  // Общие 3 тинтованных слоя-дубликата + скан-графика — используется и для своего
+  // корабля (attachToPlayer), и для чужого (attachToRemotePlayer, см. ниже).
+  _createQuantumLayers(sprite) {
     const gs     = this.scene;
-    const texKey = player.sprite.texture.key;
-    const dw     = player.sprite.displayWidth;
-    const dh     = player.sprite.displayHeight;
-    const x = player.sprite.x, y = player.sprite.y;
-
+    const texKey = sprite.texture.key;
+    const dw     = sprite.displayWidth;
+    const dh     = sprite.displayHeight;
+    const x = sprite.x, y = sprite.y;
     // Depths around player (50): white/violet behind, blue just behind, scan above
-    this._playerFX = {
+    return {
       white:      gs.add.image(x, y, texKey).setDepth(48).setAlpha(0.15).setTint(0xe0f7fa).setDisplaySize(dw, dh).setBlendMode('ADD'),
       violet:     gs.add.image(x, y, texKey).setDepth(48).setAlpha(0.25).setTint(0xb39ddb).setDisplaySize(dw, dh).setBlendMode('ADD'),
       blue:       gs.add.image(x, y, texKey).setDepth(49).setAlpha(0.35).setTint(0x00d4ff).setDisplaySize(dw, dh).setBlendMode('ADD'),
@@ -101,15 +102,40 @@ export default class ArgusController {
       nextPhase:  PLAYER_FLICKER_MIN + Math.random() * (PLAYER_FLICKER_MAX - PLAYER_FLICKER_MIN),
       scanT:      0,
       blueOffX:   4,
-      player,
     };
+  }
+
+  attachToPlayer(player) {
+    this.detachFromPlayer();
+    this._playerFX = { ...this._createQuantumLayers(player.sprite), player };
 
     // Auto-insert abilities into action bar slots 0–2
+    const gs = this.scene;
     const bar = gs.actionBar || (gs.actionBar = Array(10).fill(null));
     bar[0] = 'argus:pulsar';
     bar[1] = 'argus:cocoon';
     bar[2] = 'argus:missiles';
     bar[3] = 'argus:phase_strike';
+  }
+
+  // Тот же косметический эффект, что и attachToPlayer, но на ДРУГОМ игроке (RemotePlayer)
+  // — раньше был виден только владельцу собственного Аргуса, другие видели обычный
+  // статичный корабль без переливания/скан-линии (баг из диалога: "игрок не видит эффект
+  // фазового сдвига на корпусе Аргуса (аргус у другого игрока)"). Только пассивный
+  // визуал (свечение/скан/мерцание) — активные способности (пульсар/кокон/ракеты)
+  // остаются как раньше, только у владельца, это отдельная, более крупная задача.
+  // Ключ — userId (переживает пересоздание rp не нужно, вызывается явно из
+  // RemotePlayer.applyShip/destroy при смене корабля/уходе из комнаты).
+  attachToRemotePlayer(rp) {
+    this.detachFromRemotePlayer(rp.userId);
+    this._remoteFX.set(rp.userId, { ...this._createQuantumLayers(rp.sprite), rp });
+  }
+
+  detachFromRemotePlayer(userId) {
+    const fx = this._remoteFX.get(userId);
+    if (!fx) return;
+    fx.white?.destroy(); fx.violet?.destroy(); fx.blue?.destroy(); fx.scan?.destroy();
+    this._remoteFX.delete(userId);
   }
 
   detachFromPlayer() {
@@ -172,6 +198,48 @@ export default class ArgusController {
     this._updatePulsar(dt);
     this._updateCocoon(dt);
     this._updateMissiles(dt);
+  }
+
+  // Тот же визуал, что _updatePlayerQuantum, для каждого ДРУГОГО игрока на Аргусе
+  // (см. attachToRemotePlayer). Скрываем слои, пока цель мертва (RemotePlayer.die()) —
+  // без этого свечение осталось бы висеть на месте гибели, не следуя за респавном.
+  _updateRemoteQuantum(dt) {
+    for (const [userId, fx] of this._remoteFX) {
+      const rp = fx.rp;
+      if (!rp?.sprite) { this.detachFromRemotePlayer(userId); continue; }
+      const visible = rp.alive;
+      fx.white.setVisible(visible);
+      fx.violet.setVisible(visible);
+      fx.blue.setVisible(visible);
+      fx.scan.setVisible(visible);
+      if (!visible) continue;
+
+      const x = rp.sprite.x, y = rp.sprite.y, rot = rp.sprite.rotation;
+      fx.white.setPosition(x, y).setRotation(rot);
+      fx.blue.setPosition(x + fx.blueOffX, y).setRotation(rot);
+      fx.violet.setPosition(x - 4, y).setRotation(rot);
+
+      fx.scanT = (fx.scanT + dt) % SCAN_PERIOD;
+      fx.scan.clear();
+      if (fx.scanT < SCAN_DURATION) {
+        const prog  = fx.scanT / SCAN_DURATION;
+        const halfH = rp.sprite.displayHeight / 2;
+        const halfW = rp.sprite.displayWidth  / 2;
+        fx.scan.fillStyle(0xe0f7fa, 0.15);
+        fx.scan.fillRect(x - halfW, y - halfH + rp.sprite.displayHeight * prog, rp.sprite.displayWidth, 2);
+      }
+
+      fx.phaseTimer += dt;
+      if (fx.phaseTimer >= fx.nextPhase) {
+        fx.phaseTimer = 0;
+        fx.nextPhase  = PLAYER_FLICKER_MIN + Math.random() * (PLAYER_FLICKER_MAX - PLAYER_FLICKER_MIN);
+        const gs = this.scene;
+        gs.tweens.add({ targets: rp.sprite, alpha: { from: 1.0, to: 0.3 }, duration: 80, yoyo: true, repeat: 2, ease: 'Stepped' });
+        fx.blueOffX = 4 + (Math.random() > 0.5 ? 8 : -8);
+        gs.time.delayedCall(200, () => { if (fx === this._remoteFX.get(userId)) fx.blueOffX = 4; });
+        gs.tweens.add({ targets: fx.blue, alpha: { from: fx.blue.alpha, to: 0.7 }, duration: 100, yoyo: true, ease: 'Linear' });
+      }
+    }
   }
 
   // ── Player abilities ─────────────────────────────────────────────────
@@ -255,16 +323,32 @@ export default class ArgusController {
       pd.dmgTimer -= 0.1;
       const HALF = 0.055; // ~3° beam half-width
       const r2   = r * r;
-      for (const mob of this.scene.mobs) {
-        if (!mob.alive) continue;
-        const dx = mob.x - p.x, dy = mob.y - p.y;
+      // Точка (mob/RemotePlayer) в конусе ЛЮБОГО из NUM вращающихся лучей прямо сейчас?
+      const inBeam = (x, y) => {
+        const dx = x - p.x, dy = y - p.y;
         const d2 = dx * dx + dy * dy;
-        if (d2 > r2 || d2 < 900) continue;
+        if (d2 > r2 || d2 < 900) return false;
         const ma = Math.atan2(dy, dx);
         for (let i = 0; i < NUM; i++) {
           let diff = ((ma - (pd.angle + i * step)) % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2);
           if (diff > Math.PI) diff = Math.PI * 2 - diff;
-          if (diff < HALF) { mob.takeDamage(900, 0); break; }
+          if (diff < HALF) return true;
+        }
+        return false;
+      };
+      for (const mob of this.scene.mobs) {
+        if (mob.alive && inBeam(mob.x, mob.y)) mob.takeDamage(900, 0);
+      }
+      // Раньше пульсар бил только this.scene.mobs — других игроков вообще не
+      // рассматривал целью (баг из диалога: "не действуют на других игроков"). Урон по
+      // игроку решает сервер (см. pvp_ability_fire_claim), не локальный takeDamage —
+      // у RemotePlayer его и нет, и не должно быть (та же модель, что и у обычного PvP).
+      const gs = this.scene;
+      if (gs._isPvpSector) {
+        for (const rp of gs.pvpClient?.players?.values() ?? []) {
+          if (rp.alive && rp.corp !== gs.playerCorp && inBeam(rp.x, rp.y)) {
+            gs.pvpClient.abilityFireClaim(rp.userId, 'argus_pulsar', 900);
+          }
         }
       }
     }
@@ -288,6 +372,20 @@ export default class ArgusController {
 
   // ── Homing missiles ─────────────────────────────────────────────────
 
+  // Раньше ракеты искали цель только среди this.scene.mobs — других игроков вообще не
+  // рассматривали (баг из диалога: "не действуют на других игроков"). isRemotePlayer
+  // (см. RemotePlayer.js) — существующий флаг, уже используемый для таргетинга/огня
+  // в GameScene, различает Mob/RemotePlayer без instanceof.
+  _missileCandidates(p, radius) {
+    const gs = this.scene;
+    const mobs = gs.mobs.filter(m => m.alive && Math.hypot(m.x - p.x, m.y - p.y) < radius);
+    const players = gs._isPvpSector
+      ? [...(gs.pvpClient?.players?.values() ?? [])].filter(rp =>
+          rp.alive && rp.corp !== gs.playerCorp && Math.hypot(rp.x - p.x, rp.y - p.y) < radius)
+      : [];
+    return [...mobs, ...players];
+  }
+
   _activateMissiles() {
     const fx = this._playerFX;
     if (!fx?.player?.alive) return;
@@ -298,8 +396,7 @@ export default class ArgusController {
     const MISSILE_DAMAGE = 2000;
     const DETECT_RADIUS  = 900;
 
-    const nearby = gs.mobs.filter(m => m.alive &&
-      Math.hypot(m.x - p.x, m.y - p.y) < DETECT_RADIUS);
+    const nearby = this._missileCandidates(p, DETECT_RADIUS);
 
     this._missileGfx?.destroy();
     this._missileGfx = gs.add.graphics().setDepth(56);
@@ -331,7 +428,7 @@ export default class ArgusController {
 
       // Retarget if current target died
       if (m.target && !m.target.alive) {
-        m.target = gs.mobs.find(mob => mob.alive) || null;
+        m.target = this._missileCandidates(this._playerFX?.player ?? m, 900)[0] || null;
       }
 
       // Steer toward target
@@ -351,7 +448,11 @@ export default class ArgusController {
       if (m.target?.alive) {
         const dist = Math.hypot(m.target.x - m.x, m.target.y - m.y);
         if (dist < 45) {
-          m.target.takeDamage(m.damage, 0);
+          // Раньше — только m.target.takeDamage(...), не работавший бы вовсе на
+          // RemotePlayer (нет такого метода, см. баг из диалога). Урон по игроку решает
+          // сервер (pvp_ability_fire_claim), как и у пульсара выше.
+          if (m.target.isRemotePlayer) gs.pvpClient?.abilityFireClaim(m.target.userId, 'argus_missile', m.damage);
+          else m.target.takeDamage(m.damage, 0);
           m.hit = true;
           gs.explosion?.(m.x, m.y, 0.4);
           continue;
@@ -855,6 +956,7 @@ export default class ArgusController {
       this._updateMobAbilities(dt);
     }
     this._updatePlayerQuantum(dt);
+    this._updateRemoteQuantum(dt);
 
     this._broadcastT += dt;
     if (this._broadcastT >= 0.5) {
@@ -1088,6 +1190,7 @@ export default class ArgusController {
   destroy() {
     this._clearMobAbilityFX();
     this.detachFromPlayer();
+    for (const userId of [...this._remoteFX.keys()]) this.detachFromRemotePlayer(userId);
     this._destroyQuantumFX();
     this._ch?.close();
     this._ch = null;

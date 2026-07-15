@@ -113,10 +113,10 @@ export const ARMORED_TRAIN_WAGON_DAMAGED_AT = 0.5; // обычный вагон:
 // поверх DUNGEON_DIFF (см. GameScene._dungeonDiff()). Недоступны в R-1-boss (та карта
 // уже всегда форсит 'normal' и не показывает модалку сложности вовсе).
 export const DUNGEON_MODIFIERS = {
-  fury:    { label: 'Ярость',             hint: '×1.6 урон мобов → +15% дроп, ×1.3 золото',
-             mult: { mobDamage: 1.6, dropRate: 0.15, goldMult: 1.3 } },
-  armored: { label: 'Бронированный конвой', hint: '×2 щит мобов, ×1.5 хп → +15% дроп, ×1.5 золото',
-             mult: { mobHP: 1.5, mobShieldBonus: 2 / 1.5, dropRate: 0.15, goldMult: 1.5 } },
+  fury:    { label: 'Ярость',             hint: '×1.8 урон мобов → ×1.3 кредиты, ×1.3 золото',
+             mult: { mobDamage: 1.8, creditsMult: 1.3, goldMult: 1.3 } },
+  armored: { label: 'Бронированный конвой', hint: '×2 щит мобов, ×1.5 хп → +15% дроп, ×1.15 золото',
+             mult: { mobHP: 1.5, mobShieldBonus: 2 / 1.5, dropRate: 0.15, goldMult: 1.15 } },
   bounty:  { label: 'Изобилие',           hint: '×2 приспешников босса, урон приспешников ×1.3 → ×1.15 опыт',
              mult: { mobAddsCount: 2, mobAddsDamage: 1.3, xpMult: 1.15 } },
 };

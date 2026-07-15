@@ -138,7 +138,12 @@ class TrainTurretTarget {
   // имеет .corp вообще — undefined безопасно проваливает эту проверку в false, что и
   // нужно турели тоже (нейтральный ивент-объект атакуем для любого корпуса игрока).
   get corp() { return null; }
-  get canBeAttacked() { return this.alive && this.wagon.alive; }
+  // train._inBounds — маршрут поезда НАРОЧНО тянется за пределы worldWidth/worldHeight
+  // на въезде/выезде (EDGE_BUFFER, см. ArmoredTrain constructor) — турель там физически
+  // не видна и не должна ни стрелять (см. ArmoredTrain._updateTurrets), ни принимать
+  // урон (баг из диалога: "если турели за границами карты - не стрелять в игроков,
+  // игрокам тоже запретить наносить урон"). x/y обновляются каждый кадр в _updateTurrets.
+  get canBeAttacked() { return this.alive && this.wagon.alive && this.wagon.train._inBounds(this.x, this.y); }
   // Часть 6 (не 4, как у самого вагона) — сервер гейтит "бить строго с хвоста" только
   // 4-частные id (см. main.py pvp_mob_fire_claim), турели вне этой очереди, как и дроны.
   get pvpMobId() { return `${this.wagon.pvpMobId}:turret:${this.idx}`; }
@@ -581,6 +586,14 @@ export default class ArmoredTrain {
     this.scene.tweens.add({ targets: g, alpha: 0, duration: 350, ease: 'Quad.easeOut', onComplete: () => g.destroy() });
   }
 
+  // Маршрут поезда НАРОЧНО заходит за пределы мира на въезде/выезде (EDGE_BUFFER, см.
+  // constructor) — турель там физически не видна игроку, но без этой проверки всё равно
+  // и стреляла, и принимала урон (баг из диалога). См. использование в _updateTurrets и
+  // TrainTurretTarget.canBeAttacked.
+  _inBounds(x, y) {
+    return x >= 0 && x <= this.scene.worldWidth && y >= 0 && y <= this.scene.worldHeight;
+  }
+
   // Турели: тот же контракт, что MiningBase._updateTurrets (nearest player in range,
   // gs.fireMobWeapon — локально-авторитетный урон по игроку, без сервера). Стреляют
   // ВСЕ живые вагоны одновременно (не только текущий уязвимый "хвостовой") — очередь
@@ -621,20 +634,27 @@ export default class ArmoredTrain {
         // множитель крошечный, не выходит за пределы соседнего слоя (42).
         spr.setDepth(41 + oy * 0.0001);
         // Сервер-авторитетный таргетинг (План Фаза 3): если сервер в этот тик назначил
-        // эту турель ДРУГОМУ игроку комнаты — не наводимся и не стреляем в локального
-        // игрока (тот же паттерн, что и у дронов, см. GameScene.js mobs.forEach) —
-        // ствол просто замирает на месте до своей очереди, вместо того чтобы визуально
-        // довернуться на нас и не выстрелить (что и было исходной жалобой). Фоллбэк на
-        // старое поведение, если сервер ещё не прислал апдейт (соло/дев).
+        // эту турель ДРУГОМУ игроку комнаты — ствол ВСЁ РАВНО должен визуально довернуться
+        // на реального адресата (RemotePlayer), а не замереть на месте (баг из диалога:
+        // "нет поворота башни в сторону другого игрока") — только САМ ВЫСТРЕЛ (fireMobWeapon,
+        // ниже) остаётся только у клиента настоящей цели, иначе урон применился бы у нас
+        // локально ВТОРОЙ раз поверх relay от неё же. Фоллбэк на локального игрока, если
+        // сервер ещё не прислал апдейт (соло/дев) или реальная цель не найдена/не жива.
+        let iAmTarget = true;
+        let targetEntity = player;
         const targets = this.scene._serverMobTargets;
         if (tt.pvpMobId && targets) {
           const targetUid = targets[tt.pvpMobId];
-          if (targetUid !== undefined && targetUid !== this.scene.myUserId) return;
+          if (targetUid !== undefined && targetUid !== this.scene.myUserId) {
+            iAmTarget = false;
+            targetEntity = this.scene.pvpClient?.players?.get(targetUid) || null;
+          }
         }
+        if (!targetEntity?.alive) return; // реальная цель не найдена/не жива — турель бездействует
         w._turretCooldowns[i] -= dt;
-        const d = Phaser.Math.Distance.Between(ox, oy, player.x, player.y);
+        const d = Phaser.Math.Distance.Between(ox, oy, targetEntity.x, targetEntity.y);
         const inRange = d < range;
-        const rawAngle = inRange ? Math.atan2(player.y - oy, player.x - ox) : rot;
+        const rawAngle = inRange ? Math.atan2(targetEntity.y - oy, targetEntity.x - ox) : rot;
         // Сектор обстрела: турель не должна разворачиваться дальше своей "внешней"
         // стороны — иначе, когда игрок перелетает на противоположный борт поезда, ствол
         // делает почти разворот на 180° и по пути визуально проходит сквозь корпус/другую
@@ -658,9 +678,14 @@ export default class ArmoredTrain {
         // целится в клампнутую сторону).
         const withinArc = Math.abs(arcDiff) <= ARC_HALF;
         const aimed = Math.abs(Phaser.Math.Angle.Wrap(targetAngle - spr.rotation)) < 0.12;
-        if (!inRange || !withinArc || !aimed || w._turretCooldowns[i] > 0 || this.frozen) return;
+        // Въезд/выезд поезда нарочно за пределами мира (см. _inBounds) — турель там не
+        // должна стрелять по игроку (баг из диалога).
+        if (!inRange || !withinArc || !aimed || w._turretCooldowns[i] > 0 || this.frozen || !this._inBounds(ox, oy)) return;
         w._turretCooldowns[i] = rateInv;
-        this.scene.fireMobWeapon?.({ x: ox, y: oy, damage, isBoss: false, tpl: { projectileType: 'plasma' } }, player.x, player.y, player);
+        if (!iAmTarget) return; // визуал (доворот/КД) отыгран, реальный выстрел — только у клиента настоящей цели
+        // pvpMobId — нужен fireMobWeapon для relay "меня атакует турель X" остальным
+        // игрокам комнаты (см. pvp_mob_attack_vfx, баг из диалога "второй игрок не видит").
+        this.scene.fireMobWeapon?.({ x: ox, y: oy, damage, isBoss: false, tpl: { projectileType: 'plasma' }, pvpMobId: tt.pvpMobId }, targetEntity.x, targetEntity.y, targetEntity);
       });
     }
   }

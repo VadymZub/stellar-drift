@@ -741,16 +741,20 @@ export default class MiningBase {
       }
 
       // Сервер-авторитетный таргетинг (План Фаза 3): если сервер в этот тик назначил
-      // ЭТУ турель другому игроку комнаты — локальный игрок не валидная цель, турель
-      // просто бездействует эту турель в этот тик (тот же паттерн, что у дронов/турелей
-      // поезда, см. ArmoredTrain._updateTurrets), вместо "довернулась на меня, но не
-      // выстрелила" — исходная жалоба. Обычных мобов (nearest !== player) не касается —
-      // их HP уже общий (PvpMobState), отдельного таргетинга по игрокам там нет.
+      // ЭТУ турель другому игроку комнаты — ствол ВСЁ РАВНО должен визуально довернуться
+      // на реального адресата (RemotePlayer), не замереть на месте (баг из диалога: "нет
+      // поворота башни в сторону другого игрока") — реальный ВЫСТРЕЛ (ниже) остаётся
+      // только у клиента настоящей цели, см. iAmTarget. Обычных мобов (nearest !== player)
+      // не касается — их HP уже общий (PvpMobState), отдельного таргетинга по игрокам там нет.
+      let iAmTarget = true;
       if (nearest === player) {
         const targets = gs._serverMobTargets;
         if (tt.pvpMobId && targets) {
           const targetUid = targets[tt.pvpMobId];
-          if (targetUid !== undefined && targetUid !== gs.myUserId) nearest = null;
+          if (targetUid !== undefined && targetUid !== gs.myUserId) {
+            iAmTarget = false;
+            nearest = gs.pvpClient?.players?.get(targetUid) || null;
+          }
         }
       }
 
@@ -767,14 +771,17 @@ export default class MiningBase {
 
       if (!nearest || this._turretCooldowns[i] > 0) return;
       this._turretCooldowns[i] = rateInv;
+      if (!iAmTarget) return; // визуал (доворот/КД) отыгран, реальный выстрел — только у клиента настоящей цели
 
       if (nearest === player) {
         // Урон по игроку — как у обычных мобов (Player.takeDamage авторитетен для
         // своего же клиента, сервер тут не нужен — та же модель, что и урон от NPC),
         // через готовый пайплайн fireMobWeapon (снаряд/крит/хитрезолв/шейк/лог щита),
         // не через turretFireClaim/mobFireClaim (это только для общих PvpMobState-целей).
+        // pvpMobId — нужен fireMobWeapon для relay "меня атакует турель X" остальным
+        // игрокам комнаты (см. pvp_mob_attack_vfx, баг из диалога "второй игрок не видит").
         gs.fireMobWeapon?.(
-          { x: tx, y: ty, damage, isBoss: false, tpl: { projectileType: 'plasma' } },
+          { x: tx, y: ty, damage, isBoss: false, tpl: { projectileType: 'plasma' }, pvpMobId: tt.pvpMobId },
           player.x, player.y, player,
         );
         return;

@@ -38,6 +38,8 @@ export class PvpClient {
         this.onWagonReward   = null; // (msg) => void — доля пропорциональной награды за вагон бронепоезда
         this.onTrainSnapshot = null; // (msg) => void — {trainKey, destroyed:[idx], wagons:{mobId:{hull,...}}}
         this.onMobRoomUpdate = null; // (msg) => void — {roomKey, mobs:[{mobId,targetUserId}]} серверный таргетинг дронов/турелей
+        this.onMobAttackVfx  = null; // (msg) => void — {mobId,weaponType,targetUserId} моб/турель бьёт другого игрока комнаты
+        this.onMobAttackResult = null; // (msg) => void — {targetUserId,dodged,hullHit,shieldHit,hull,maxHull,shield,maxShield,killed,isCrit}
     }
 
     // ── Outgoing ─────────────────────────────────────────────────────────────
@@ -78,6 +80,16 @@ export class PvpClient {
         this._send({ type: 'pvp_fire_claim', targetUserId, weaponType, dmg });
     }
 
+    /** Активная способность (Аргус: pulsar/missiles, DEV key 8) бьёт другого ИГРОКА —
+     * отдельно от fireClaim (см. server main.py pvp_ability_fire_claim): свой потолок
+     * урона и свой per-ability кулдаун-флор, не общий гейт обычного оружия, который
+     * душил бы почти все попадания (способность на порядок мощнее и тикает намного
+     * чаще одиночного выстрела). ability — 'argus_pulsar' | 'argus_missile'. */
+    abilityFireClaim(targetUserId, ability, dmg) {
+        if (!this.sector) return;
+        this._send({ type: 'pvp_ability_fire_claim', targetUserId, ability, dmg });
+    }
+
     /** maxHull/maxShield — сервер лениво создаёт HP-запись мобa по этим значениям при
      * первом попадании кого угодно; mobX/mobY — для мягкой проверки дальности на сервере
      * (движение моба клиент-локальное, сервер не знает его позицию иначе); dmg — см. fireClaim.
@@ -94,6 +106,25 @@ export class PvpClient {
         if (wagonReward) payload.wagonReward = wagonReward;
         if (isDungeonBoss) payload.isDungeonBoss = true;
         this._send(payload);
+    }
+
+    /** Урон мобу/турели → игроку целиком локально-авторитетен на клиенте ЖЕРТВЫ
+     * (см. GameScene.fireMobWeapon — takeDamage прямо там, сервер не участвует), так что
+     * без этого вызова остальные в комнате вообще не подозревали, что что-то произошло
+     * (баг из диалога: "турель 1 бьёт игрока 1, игрок 2 не видит"). Чисто relay для VFX —
+     * сервер подставит targetUserId сам (из сессии, не из тела), урон здесь не решается. */
+    mobAttackVfx(mobId, weaponType) {
+        if (!this.sector || !mobId) return;
+        this._send({ type: 'pvp_mob_attack_vfx', mobId, weaponType });
+    }
+
+    /** Отправляется ЖЕРТВОЙ сразу после того, как её takeDamage реально применился (см.
+     * GameScene.onProjectileHit) — отдельно от mobAttackVfx выше, потому что для не-хитскан
+     * оружия (болт) момент попадания наступает ПОЗЖЕ момента выстрела (снаряд летит).
+     * Несёт реальные цифры — сервер только ретранслирует. */
+    mobAttackResult({ dodged = false, hullHit = 0, shieldHit = 0, hull, maxHull, shield, maxShield, killed = false, isCrit = false }) {
+        if (!this.sector) return;
+        this._send({ type: 'pvp_mob_attack_result', dodged, hullHit, shieldHit, hull, maxHull, shield, maxShield, killed, isCrit });
     }
 
     /** Залп турели добывающей базы — НЕ личное оружие игрока (сервер валидирует
@@ -201,7 +232,22 @@ export class PvpClient {
                 break;
 
             case 'pvp_player_joined':
-                if (msg.player && !this.players.has(msg.player.userId)) this._spawn(msg.player);
+                // План Фаза 3.1: дисконнект больше не шлёт pvp_player_left (см. server
+                // OfflineShipManager) — RemotePlayer у остальных клиентов НЕ деспавнится,
+                // так что при реконнекте userId уже известен здесь. Раньше это молча
+                // игнорировало сообщение — свежий hull/shield/maxHull/maxShield реконнекта
+                // (уже пересчитанные клиентом через Фазу 2 catch-up) терялись, у остальных
+                // полоска HP реконнектнувшегося игрока замирала на значении ДО дисконнекта
+                // до следующего pvp_hit_result. Теперь обновляем существующего, а не молчим.
+                if (msg.player) {
+                    const existing = this.players.get(msg.player.userId);
+                    if (existing) {
+                        existing.applyState(msg.player);
+                        existing.applyPublicState(msg.player); // corp/level/shipKey тоже могли смениться, пока был офлайн
+                    } else {
+                        this._spawn(msg.player);
+                    }
+                }
                 break;
 
             case 'pvp_player_left':
@@ -284,6 +330,14 @@ export class PvpClient {
 
             case 'pvp_mob_room_update':
                 this.onMobRoomUpdate?.(msg);
+                break;
+
+            case 'pvp_mob_attack_vfx':
+                this.onMobAttackVfx?.(msg);
+                break;
+
+            case 'pvp_mob_attack_result':
+                this.onMobAttackResult?.(msg);
                 break;
         }
     }

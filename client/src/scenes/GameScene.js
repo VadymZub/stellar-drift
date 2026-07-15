@@ -1597,6 +1597,11 @@ export default class GameScene extends Phaser.Scene {
       shipKey: p.ship?.key || '',
       corp: this.playerCorp || 'neutral',
       level: this.pilotLevel || 1, // для PVP_HIGHER/EQUAL/LOWER на стороне убийцы (см. _onPvpHitResult)
+      // rankId/clanTag — только для нашивки над кораблём у других игроков (см.
+      // RemotePlayer._refreshNameplate); rank сам по себе (объект RANKS) не сериализуется,
+      // сервер и другие клиенты знают только числовой id (see rankTier()/RANK_TINTS).
+      rankId: this.pilotRank?.id ?? null,
+      clanTag: this.clan?.tag || null,
       hull: p.hull, maxHull: p.maxHull, shield: p.shield, maxShield: p.maxShield,
       dmg: Math.max(p.cannonDamage || 0, p.laserDamage || 0),
       range: p.weaponRange || 0,
@@ -1632,6 +1637,10 @@ export default class GameScene extends Phaser.Scene {
       if (mult.goldMult)       out.goldMult       *= mult.goldMult;
       if (mult.xpMult)         out.xpMult         *= mult.xpMult;
       if (mult.dropRate)       out.dropRate       = Math.min(1, out.dropRate + mult.dropRate);
+      // creditsMult — нет в базовом DUNGEON_DIFF (кредиты раньше не масштабировались
+      // сложностью данжа вовсе, только личным creditBonusMod игрока, см. onMobKilled) —
+      // как и mobShieldBonus/mobAddsCount ниже, дефолт ?? 1, а не прямое *=.
+      if (mult.creditsMult)    out.creditsMult    = (out.creditsMult ?? 1) * mult.creditsMult;
       if (mult.mobShieldBonus) out.mobShieldBonus = (out.mobShieldBonus ?? 1) * mult.mobShieldBonus;
       if (mult.mobAddsCount)   out.mobAddsCount   = (out.mobAddsCount   ?? 1) * mult.mobAddsCount;
       if (mult.mobAddsDamage)  out.mobAddsDamage  = (out.mobAddsDamage  ?? 1) * mult.mobAddsDamage;
@@ -3177,6 +3186,32 @@ export default class GameScene extends Phaser.Scene {
         }
       }
     }
+    // Скачок уровня (чаще всего — покупка опыта за золото разом на много уровней, но
+    // в принципе любой gainXp()) мог сделать текущий сектор недоступным по sectorAccess()
+    // (данж/PvP с потолком уровня) — баг из диалога: "игрок на пвп покупает опыт, доступ
+    // к этому пвп закрыт для его нового уровня, но он там всё ещё находится" (нечестное
+    // преимущество перекачанного персонажа среди низкоуровневых). Выбрасываем сразу же.
+    this._checkSectorAccessAfterLevelChange();
+  }
+
+  // См. комментарий в _applyRawXp выше. Выбрасывает на базу ПЕРВОЙ домашней карты
+  // корпорации (не "лучшей доступной" — именно первой, как явно попросили в диалоге),
+  // если текущий сектор больше не проходит sectorAccess() на новом уровне пилота.
+  _checkSectorAccessAfterLevelChange() {
+    const key = galaxy.current;
+    if (!SECTORS[key]) return;
+    const acc = sectorAccess(key, this.pilotLevel, this.activeShip, this.premium, this.missionState, this.playerCorp);
+    if (acc.ok) return;
+    const corp = (this.playerCorp && this.playerCorp !== 'neutral') ? this.playerCorp : 'helios';
+    const homeKey = `${corp}_1`;
+    // lvlMin сектора _1 — 1, так что сам он не должен отказать; страховка от бесконечного
+    // цикла восстановления на следующем create(), если что-то всё же пойдёт не так.
+    if (key === homeKey || !SECTORS[homeKey]) return;
+    this.log(`⚠ Уровень изменился — доступ к сектору потерян (${acc.reason}). Возврат на базу.`);
+    galaxy.current = homeKey;
+    const w1 = BASE_WORLD.width * 1.2, h1 = BASE_WORLD.height * 1.2; // corp home sector — обычный масштаб (не PvP/данж)
+    document.getElementById('scene-overlay')?.classList.add('active');
+    this.scene.restart({ startX: w1 / 2, startY: h1 / 2 + 80 });
   }
 
   // Покупка опыта за золото (ShopScene) разрешена строго до 40 уровня — после
@@ -3417,6 +3452,14 @@ export default class GameScene extends Phaser.Scene {
       this._warnThrottle('base_neutral_immune', '🛡 База неуязвима — сейчас фаза иммунитета нейтральной базы.');
       return;
     }
+    // Турель бронепоезда уехала за границы мира (въезд/выезд поезда, см.
+    // ArmoredTrain._inBounds/TrainTurretTarget.canBeAttacked) — уже выбранная ДО этого
+    // цель могла остаться залоченной, пока автоогонь продолжает бить каждый кадр; без
+    // этой проверки урон продолжал бы засчитываться по невидимой за краем карты турели.
+    if (t.isTrainTurretTarget && !t.canBeAttacked) {
+      this.target = null; this.isFiring = false;
+      return;
+    }
 
     // PvP: сервер решает урон/крит (см. server main.py:_resolve_pvp_hit) — клиент
     // только заявляет выстрел и рисует визуал, никакого локального takeDamage.
@@ -3512,10 +3555,29 @@ export default class GameScene extends Phaser.Scene {
   // hull/shield жертвы — локально показываем 0, а не эти значения: визуально корабль
   // должен выглядеть мёртвым до момента фактического респавна через диалог ремонта
   // (as _showRepairDialog/Player.respawn() — та же цепочка, что при смерти от моба).
+  // Луч чужого выстрела (не своего — тот уже рисуется локально в момент нажатия,
+  // см. _fireLaser) был виден только жертве/наблюдателям как hitFlash попадания — сам
+  // выстрел (луч атакующий→цель) не рисовался вовсе (баг из диалога: "выстрел лазера
+  // от врага не видно визуально"). Пока только лазер (hitscan, один кадр VFX) — снаряды
+  // пушки требуют полноценного летящего объекта для наблюдателей, отдельная задача.
+  _drawRemotePvpFireVfx(msg, targetEntity) {
+    if (msg.attackerUserId === this.myUserId) return; // уже нарисовано локально при выстреле
+    if (msg.weaponType !== 'laser') return;
+    if (!targetEntity) return;
+    const attacker = this.pvpClient?.players?.get(msg.attackerUserId);
+    if (!attacker?.alive) return;
+    const beamColor = msg.isCrit ? 0xffff44 : 0xffaa00;
+    const width = msg.isCrit ? 6 : 3;
+    this._laserBeam(attacker.x, attacker.y, targetEntity.x, targetEntity.y,
+      beamColor, msg.dodged ? 0.25 : 1.0, width, 200, attacker, targetEntity);
+    this.muzzleFlash(attacker.x, attacker.y, beamColor, attacker);
+  }
+
   _onPvpHitResult(msg) {
     const isMe = msg.targetUserId === this.myUserId;
     if (isMe) {
       const p = this.player;
+      this._drawRemotePvpFireVfx(msg, p);
       if (msg.dodged) { this.showDodge(p.x, p.y); return; }
       const hullHit   = msg.killed ? p.hull   : Math.max(0, p.hull   - msg.hull);
       const shieldHit = msg.killed ? p.shield : Math.max(0, p.shield - msg.shield);
@@ -3542,6 +3604,7 @@ export default class GameScene extends Phaser.Scene {
 
     const rp = this.pvpClient?.players?.get(msg.targetUserId);
     if (!rp) return;
+    this._drawRemotePvpFireVfx(msg, rp);
     if (msg.dodged) { this.showDodge(rp.x, rp.y); return; }
     const hullHit   = msg.killed ? rp.hull   : Math.max(0, rp.hull   - msg.hull);
     const shieldHit = msg.killed ? rp.shield : Math.max(0, rp.shield - msg.shield);
@@ -3674,12 +3737,74 @@ export default class GameScene extends Phaser.Scene {
   // применяем к своей локальной копии с тем же pvpMobId. Убийство засчитывается всем,
   // кто его видит в этот момент (не строим делёж лута по вкладу урона, как для
   // групповых боссов — отдельная задача, если понадобится).
+  // Общий поиск любой pvpMobId-цели (обычный моб/база/турель базы/вагон поезда/турель
+  // поезда) по id — вынесено из _onPvpMobHitResult, теперь также используется
+  // _onPvpMobAttackVfx (нужна позиция источника выстрела по тому же id).
+  _findPvpMobById(mobId) {
+    return this.mobs.find(m => m.pvpMobId === mobId && m.alive)
+      || this.miningBases.find(b => b.pvpMobId === mobId && b.alive)
+      || this.miningBases.flatMap(b => b.turretTargets).filter(Boolean).find(tt => tt.pvpMobId === mobId && tt.alive)
+      || this.armoredTrain?.wagons.find(w => w.pvpMobId === mobId && w.alive)
+      || this.armoredTrain?.wagons.flatMap(w => w.turrets).find(tt => tt?.pvpMobId === mobId && tt.alive);
+  }
+
+  // Чисто визуальный "призрачный" болт для наблюдателей — обычный Projectile
+  // предполагает живую victim-сущность и сам наносит урон при попадании (см.
+  // Projectile.js:_hit); здесь урон уже применён (или применится чуть позже, см.
+  // _onPvpMobAttackResult) на клиенте настоящей жертвы, нужен только пролёт по прямой
+  // от источника до последней известной позиции цели — по времени примерно совпадает
+  // с реальным полётом снаряда (dist/speed), не более того (полное совпадение кадр-в-
+  // кадр невозможно без сихронизации позиции снаряда по сети, не нужно для косметики).
+  _spawnGhostBolt(fromX, fromY, toX, toY, weaponType) {
+    const cfg = PROJ_TYPES[weaponType] || PROJ_TYPES.plasma;
+    const dist = Phaser.Math.Distance.Between(fromX, fromY, toX, toY);
+    const speed = cfg.speed || PROJECTILE.speed;
+    const duration = Math.max(80, (dist / speed) * 1000);
+    const ang = Math.atan2(toY - fromY, toX - fromX);
+    const spr = this.add.image(fromX, fromY, 'bolt_sprite').setDepth(60)
+      .setTint(cfg.color).setBlendMode(Phaser.BlendModes.ADD)
+      .setDisplaySize(cfg.w || 32, cfg.h || 13).setRotation(ang);
+    this.tweens.add({ targets: spr, x: toX, y: toY, duration, ease: 'Linear', onComplete: () => spr.destroy() });
+  }
+
+  // Моб/турель СТРЕЛЯЕТ по другому игроку комнаты (см. pvp_mob_attack_vfx, main.py) —
+  // только визуал выстрела (болт/луч + вспышка), БЕЗ урона/хитфлеша/цифры урона — те
+  // приходят отдельно и позже в _onPvpMobAttackResult (не-хитскан оружие бьёт не
+  // мгновенно, снаряд летит). Раньше тут всегда рисовался мгновенный луч независимо
+  // от типа оружия — баг из диалога "странный какой-то одномоментный лазер, а должен
+  // быть болт" (турели стреляют 'plasma', это НЕ хитскан-тип, см. PROJ_TYPES.void).
+  _onPvpMobAttackVfx(msg) {
+    const mob = this._findPvpMobById(msg.mobId);
+    if (!mob) return;
+    const target = this.pvpClient?.players?.get(msg.targetUserId);
+    if (!target?.alive) return;
+    const cfg = PROJ_TYPES[msg.weaponType] || PROJ_TYPES.plasma;
+    this.muzzleFlash(mob.x, mob.y, cfg.color, mob);
+    if (cfg.hitscan) {
+      this._laserBeam(mob.x, mob.y, target.x, target.y, cfg.color, 0.85, 4, 200, mob, target);
+    } else {
+      this._spawnGhostBolt(mob.x, mob.y, target.x, target.y, msg.weaponType);
+    }
+  }
+
+  // Реальный результат удара по другому игроку (см. pvp_mob_attack_result, main.py) —
+  // приходит от клиента ЖЕРТВЫ в момент фактического takeDamage (не выстрела, см.
+  // _onPvpMobAttackVfx) — обновляет HP-полоску RemotePlayer и показывает цифру урона
+  // наблюдателям. Раньше этого сообщения не было вовсе: полоска HP другого игрока
+  // никогда не двигалась от урона мобов/турелей, и цифра урона не показывалась (баг из
+  // диалога: "не видно сколько урона нанесено", "прочность и щит... не уменьшается").
+  _onPvpMobAttackResult(msg) {
+    const rp = this.pvpClient?.players?.get(msg.targetUserId);
+    if (!rp) return;
+    if (msg.dodged) { this.showDodge(rp.x, rp.y); return; }
+    rp.applyState({ hull: msg.hull, maxHull: msg.maxHull, shield: msg.shield, maxShield: msg.maxShield });
+    this.hitFlash(rp.x, rp.y, (msg.hullHit || 0) > 0, rp, false); // combatSfx=false — не спамим звуком чужой бой
+    this.showDamage(rp.x, rp.y, { shieldHit: msg.shieldHit, hullHit: msg.hullHit, killed: msg.killed }, msg.maxHull, msg.isCrit);
+    if (msg.killed) rp.die();
+  }
+
   _onPvpMobHitResult(msg) {
-    const mob = this.mobs.find(m => m.pvpMobId === msg.mobId && m.alive)
-      || this.miningBases.find(b => b.pvpMobId === msg.mobId && b.alive)
-      || this.miningBases.flatMap(b => b.turretTargets).filter(Boolean).find(tt => tt.pvpMobId === msg.mobId && tt.alive)
-      || this.armoredTrain?.wagons.find(w => w.pvpMobId === msg.mobId && w.alive)
-      || this.armoredTrain?.wagons.flatMap(w => w.turrets).find(tt => tt?.pvpMobId === msg.mobId && tt.alive);
+    const mob = this._findPvpMobById(msg.mobId);
     if (!mob) return;
     if (msg.dodged) { this.showDodge(mob.x, mob.y); return; }
     const hullHit   = msg.killed ? mob.hull   : Math.max(0, mob.hull   - msg.hull);
@@ -4006,6 +4131,11 @@ export default class GameScene extends Phaser.Scene {
       this._warnThrottle('base_neutral_immune', '🛡 База неуязвима — сейчас фаза иммунитета нейтральной базы.');
       return;
     }
+    // См. _fireCannon — турель поезда уехала за границы мира, снимаем автолок.
+    if (t.isTrainTurretTarget && !t.canBeAttacked) {
+      this.target = null; this.isFiring = false;
+      return;
+    }
 
     // PvP: как в _fireCannon — сервер решает исход, клиент только рисует луч и заявляет
     // выстрел. Вне реальных PvP-секторов И свой корпус — везде союзники (см. комментарий
@@ -4170,6 +4300,15 @@ export default class GameScene extends Phaser.Scene {
   fireMobWeapon(mob, tx, ty, victim = this.player, extraOpts = {}) {
     const pType = mob.tpl.projectileType || 'plasma';
     const cfg   = PROJ_TYPES[pType] || PROJ_TYPES.plasma;
+    // Этот удар полностью локально-авторитетен (victim.takeDamage ниже, без сервера) —
+    // без relay остальные в комнате не подозревали бы, что что-то произошло (баг из
+    // диалога: "турель 1 бьёт игрока 1, игрок 2 не видит"). Только для целей с pvpMobId
+    // (турели/дроны, общие для всех клиентов по id) — обычный клиент-локальный моб не
+    // опознаваем на чужом экране, слать нечего. victim === this.player — шлём только за
+    // СЕБЯ (я и есть жертва), не когда локальный DEV-фоллбэк бьёт кого-то ещё.
+    if (victim === this.player && mob.pvpMobId && this._realtimeRoomKey) {
+      this.pvpClient?.mobAttackVfx(mob.pvpMobId, pType);
+    }
     // Крит — только у боссов (рядовые мобы не критуют, у игрока крит уже есть
     // симметрично). Веерные (ion) выстрелы не критуют — 3 независимых ролла на
     // один залп были бы визуально шумными.
@@ -4387,6 +4526,20 @@ export default class GameScene extends Phaser.Scene {
     } else {
       const hx = proj.victim?.x ?? this.player.x;
       const hy = proj.victim?.y ?? this.player.y;
+      // Реальный результат удара моба/турели по МНЕ — остальным в комнате отдельным
+      // relay (см. pvp_mob_attack_result), иначе HP-полоска жертвы никогда не двигалась
+      // у наблюдателей и цифра урона не показывалась (баг из диалога). Покрывает и
+      // хитскан (fireMobWeapon зовёт onProjectileHit синхронно), и болт-снаряды
+      // (Projectile._hit зовёт его же на реальном попадании, позже момента выстрела).
+      if (proj.victim === this.player && this._realtimeRoomKey) {
+        this.pvpClient?.mobAttackResult({
+          dodged: !!res?.dodged,
+          hullHit: res?.hullHit || 0, shieldHit: res?.shieldHit || 0,
+          hull: this.player.hull, maxHull: this.player.maxHull,
+          shield: this.player.shield, maxShield: this.player.maxShield,
+          killed: !!res?.killed, isCrit: !!proj.isCrit,
+        });
+      }
       if (res?.dodged) { this.showDodge(hx, hy); return; }
       const toHull = (res?.hullHit || 0) > 0;
       this.hitFlash(hx, hy, toHull, proj.victim);
@@ -4460,7 +4613,7 @@ export default class GameScene extends Phaser.Scene {
     // Боссы и R-1-boss не нормализуются.
     const lootNorm = (isDung && galaxy.current !== 'R-1-boss' && !mob.isDungeonBoss)
       ? dungeonLootNorm(galaxy.current) : 1;
-    const credits = Math.round(mob.tpl.credits * lvlScale * _credMult * lootNorm / 5);
+    const credits = Math.round(mob.tpl.credits * lvlScale * _credMult * (diff?.creditsMult ?? 1) * lootNorm / 5);
     const xp = Math.round(mob.tpl.xp * lvlScale * (diff?.xpMult ?? 1) * lootNorm / 60);
     this.log(i18n.t('log.killed', { name, lvl }));
     // Данж-босс в группе: сервер делит credits/xp/золото пропорционально урону+хилу

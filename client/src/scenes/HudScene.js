@@ -259,6 +259,12 @@ export default class HudScene extends Phaser.Scene {
     this._groupInviteTarget  = null;
     this._groupPendingInvites = new Map();
     this._groupEventLog      = [];
+    // Входящее приглашение (кто-то позвал МЕНЯ) — раньше единственным способом принять
+    // было набрать команду "/принять <ник>" в чат, а сама подсказка тонула мелким
+    // текстом в логе (баг из диалога: "текст о том что пригласили очень мелко и не
+    // влазит в окно", "не понятно как принять приглашение"). Теперь — отдельная
+    // заметная строка в окне ГРУППА с кнопками Принять/Отклонить, см. _rebuildGroupWin.
+    this._incomingInvite     = null; // {from, dungeon} | null
     this._buildHudSocialButtons();
     this._buildGroupWin();
     this._buildFriendsWin();
@@ -1894,6 +1900,19 @@ export default class HudScene extends Phaser.Scene {
     this.pvpClient.onMobRoomUpdate = (msg) => {
       this.scene.get('GameScene')?._onPvpMobRoomUpdate(msg);
     };
+    // Моб/турель бьёт ДРУГОГО игрока комнаты — чисто визуальный relay (см. main.py
+    // pvp_mob_attack_vfx), сам урон/HP тут не при делах, только чтобы наблюдатели видели
+    // выстрел, а не тишину (баг из диалога: "турель 1 бьёт игрока 1, игрок 2 не видит").
+    this.pvpClient.onMobAttackVfx = (msg) => {
+      this.scene.get('GameScene')?._onPvpMobAttackVfx(msg);
+    };
+    // Реальные цифры урона от моба/турели по другому игроку (отдельно от VFX выше —
+    // приходит в момент попадания, не выстрела) — обновляет HP-полоску RemotePlayer и
+    // показывает цифру урона наблюдателям (баг из диалога: "не видно урона", "прочность
+    // и щит другого игрока не уменьшается").
+    this.pvpClient.onMobAttackResult = (msg) => {
+      this.scene.get('GameScene')?._onPvpMobAttackResult(msg);
+    };
     this.pvpClient.onTrainForceSpawn = (msg) => {
       const gs = this.scene.get('GameScene');
       if (!gs || !gs.scene.isActive()) return;
@@ -1916,13 +1935,14 @@ export default class HudScene extends Phaser.Scene {
       this.pushChatMessage('general', 'System', text, {});
     };
     this.groupSystem.onInvite = ({ from, dungeon }) => {
-      this._groupLog(`${from} → приглашение в ${dungeon}. /принять ${from}`);
-      // Auto-show group window so the user notices
-      if (!this._groupWinVisible) {
-        this._groupWinVisible = true;
-        this._rebuildGroupWin();
-        this._updateSocialBtnStyles();
-      }
+      this._incomingInvite = { from, dungeon };
+      this._groupLog(`${from} зовёт в группу`);
+      // Auto-show (и разворачиваем, если было свёрнуто) окно группы, чтобы приглашение
+      // сразу увиделось, а не потерялось в свёрнутом заголовке.
+      this._groupWinVisible = true;
+      this._grpWinCollapsed = false;
+      this._rebuildGroupWin();
+      this._updateSocialBtnStyles();
     };
     this.groupSystem.onUpdate = (members) => {
       const gs = this.scene.get('GameScene');
@@ -2305,7 +2325,7 @@ export default class HudScene extends Phaser.Scene {
     const grp      = this.groupSystem;
     const collapsed = this._grpWinCollapsed;
     const BG_ALPHA  = [0.93, 0.55, 0.22][loadSettings().grpWinAlphaIdx ?? 0];
-    const PW = 248, PAD = 8, HDR = 28, INV_ROW = 30;
+    const PW = 248, PAD = 8, HDR = 28, INV_ROW = 30, INVITE_BANNER_H = 46;
     const F  = (sz, c) => ({ fontFamily: 'Inter, sans-serif',    fontSize: sz, color: c, resolution: UI_RES });
     const O  = (sz, c) => ({ fontFamily: 'Orbitron, sans-serif', fontSize: sz, color: c, resolution: UI_RES });
     const add = o => { this._grpWin.add(o); return o; };
@@ -2332,6 +2352,7 @@ export default class HudScene extends Phaser.Scene {
     let contentH = 0;
     if (!collapsed) {
       contentH += 1;
+      if (this._incomingInvite) contentH += INVITE_BANNER_H;
       if (showInvRow) contentH += INV_ROW;
       if (nearbyFriends.length > 0) contentH += 24;
       contentH += 1;
@@ -2382,6 +2403,40 @@ export default class HudScene extends Phaser.Scene {
     // ── Content ──────────────────────────────────────────────────────────────
     let y = HDR;
     add(this.add.rectangle(0, y, PW, 1, 0x1a4060, 0.4).setOrigin(0)); y += 1;
+
+    // ── Входящее приглашение — раньше единственный способ принять был набрать команду
+    // "/принять <ник>" в чат, а подсказка тонула мелким текстом в общем логе (баг из
+    // диалога: "не понятно как принять приглашение"). Теперь — заметный баннер с
+    // кнопками прямо здесь, первым, что видно при открытии окна.
+    if (this._incomingInvite) {
+      const inv = this._incomingInvite;
+      add(this.add.rectangle(PAD / 2, y + 2, PW - PAD, INVITE_BANNER_H - 4, 0x0a2030, 0.9)
+        .setOrigin(0).setStrokeStyle(1, 0x2a6040, 0.9));
+      add(this.add.text(PAD, y + 7, `${inv.from} зовёт в группу`, F('11px', '#e0e0e0')));
+      const btnY = y + 22;
+      const acceptBtn = add(this.add.rectangle(PAD, btnY, 90, 20, 0x0d3020, 1)
+        .setOrigin(0).setStrokeStyle(1, 0x2a8050, 1).setInteractive({ useHandCursor: true }));
+      add(this.add.text(PAD + 45, btnY + 10, 'Принять', F('10px', '#66bb6a')).setOrigin(0.5));
+      acceptBtn.on('pointerover', () => acceptBtn.setFillStyle(0x104028));
+      acceptBtn.on('pointerout',  () => acceptBtn.setFillStyle(0x0d3020));
+      acceptBtn.on('pointerdown', () => {
+        this.groupSystem.join(inv.from);
+        this._groupLog(`Вступление к ${inv.from}…`);
+        this._incomingInvite = null;
+        this._rebuildGroupWin();
+      });
+      const declineX = PAD + 96;
+      const declineBtn = add(this.add.rectangle(declineX, btnY, 90, 20, 0x2a1010, 1)
+        .setOrigin(0).setStrokeStyle(1, 0x703030, 1).setInteractive({ useHandCursor: true }));
+      add(this.add.text(declineX + 45, btnY + 10, 'Отклонить', F('10px', '#ef5350')).setOrigin(0.5));
+      declineBtn.on('pointerover', () => declineBtn.setFillStyle(0x381414));
+      declineBtn.on('pointerout',  () => declineBtn.setFillStyle(0x2a1010));
+      declineBtn.on('pointerdown', () => {
+        this._incomingInvite = null;
+        this._rebuildGroupWin();
+      });
+      y += INVITE_BANNER_H;
+    }
 
     // ── Invite input row ─────────────────────────────────────────────────────
     if (showInvRow) {
@@ -2504,8 +2559,13 @@ export default class HudScene extends Phaser.Scene {
     if (logEntries.length > 0) {
       add(this.add.rectangle(0, y, PW, 1, 0x1a4060, 0.25).setOrigin(0)); y += 1;
       add(this.add.text(PAD, y + 2, 'Лог:', F('9px', '#2a4a60'))); y += 14;
+      // wordWrap — раньше длинные строки (напр. старая подсказка про приглашение)
+      // просто вылезали за правый край панели вместо переноса (баг из диалога: "текст
+      // очень мелко и не влазит в окно"). Высота панели (contentH выше) всё ещё
+      // считает по 1 строке на запись — при переносе текст ниже НЕ вылезет за фон панели
+      // (задний фон панели просто получится с небольшим запасом), это лучше, чем обрезка.
       logEntries.forEach(entry => {
-        add(this.add.text(PAD, y, `• ${entry}`, F('9px', '#3a6878')));
+        add(this.add.text(PAD, y, `• ${entry}`, { ...F('10px', '#3a6878'), wordWrap: { width: PW - PAD * 2 } }));
         y += 13;
       });
     }

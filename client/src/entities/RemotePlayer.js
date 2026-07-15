@@ -1,6 +1,7 @@
 import * as Phaser from 'https://cdn.jsdelivr.net/npm/phaser@4.2.1/dist/phaser.esm.js';
 import { ART_ANGLE_OFFSET, COLORS, UI_RES } from '../constants.js';
 import { SHIP_BY_KEY, SHIPS } from '../ships.js';
+import { RANK_TINTS, rankTier } from './Player.js';
 
 // Другой живой игрок в той же realtime-комнате (PvP-сектор, домашняя/PvE карта,
 // групповой данж — см. GameScene._currentRealtimeRoomKey). В отличие от Player
@@ -14,6 +15,8 @@ export default class RemotePlayer {
     this.name   = data.name || 'Пилот';
     this.corp   = data.corp || 'neutral'; // для ally-fire чека в GameScene._fireCannon/_fireLaser
     this.level  = data.level || 1;        // для тира чести (PVP_HIGHER/EQUAL/LOWER), см. _onPvpHitResult
+    this.rankId = data.rankId ?? null;    // для иконки ранга нашивки, см. _refreshNameplate
+    this.clanTag = data.clanTag || null;
     this.alive  = true;
     this.isRemotePlayer = true; // отличаем от Mob/Player в таргетинге/огне GameScene без instanceof
 
@@ -29,11 +32,25 @@ export default class RemotePlayer {
     // спрайта, которая раньше скрывала реальный вид/скин корабля игрока.
 
     this._baseColor = isHostile ? '#ff8a8a' : '#8ad8ff';
+    // Нашивка над кораблём — та же структура (иконка ранга + клан-тег + ник + герб
+    // корпуса), что и у собственного корабля (см. Player.js:setNameplate/update) —
+    // раньше у других игроков был виден только голый ник под кораблём (баг из диалога:
+    // "ранг, тег и герб корп - не видно у другого игрока"). label переиспользуется как
+    // текст ника (тот же объект, что и раньше — на нём завязан _updateWantedMarker),
+    // но теперь укладывается в общий ряд слева направо, над кораблём, не под ним.
     this.label = scene.add.text(data.x, data.y, this.name, {
       fontFamily: 'Inter, sans-serif', fontSize: '12px',
-      color: this._baseColor, resolution: UI_RES,
-    }).setOrigin(0.5, 0).setDepth(51);
+      color: this._baseColor, stroke: '#000000', strokeThickness: 3, resolution: UI_RES,
+    }).setOrigin(0, 0.5).setDepth(51);
+    this._npIcon = scene.add.image(0, 0, 'rank_tier1').setDisplaySize(22, 22).setDepth(51);
+    this._npTag = scene.add.text(0, 0, '', {
+      fontFamily: 'Inter, sans-serif', fontSize: '11px',
+      color: '#4dd0e1', stroke: '#000000', strokeThickness: 3, resolution: UI_RES,
+    }).setOrigin(0, 0.5).setDepth(51).setVisible(false);
+    this._npEmblemBg = scene.add.graphics().setDepth(50).setVisible(false);
+    this._npEmblem = scene.add.image(0, 0, 'rank_tier1').setDisplaySize(18, 18).setDepth(51).setVisible(false);
     this.bar = scene.add.graphics().setDepth(51);
+    this._refreshNameplate();
 
     this.heading    = data.heading ?? 0;
     this.hull       = data.hull ?? 1;
@@ -46,10 +63,41 @@ export default class RemotePlayer {
     this._targetX = data.x;
     this._targetY = data.y;
     this._targetHeading = this.heading;
+
+    // Косметическое "квантовое" мерцание корпуса Аргуса (см. ArgusController — то же,
+    // что видит владелец на своём Аргусе) — раньше был виден только владельцу, другие
+    // игроки видели статичный корабль (баг из диалога: "не видно эффект фазового
+    // сдвига... аргус у другого игрока"). Если уже заходит на Аргусе — включаем сразу.
+    if (this._shipKey === 'argus') this.scene.argusCtrl?.attachToRemotePlayer(this);
   }
 
   get x() { return this.sprite.x; }
   get y() { return this.sprite.y; }
+
+  // Тот же расчёт, что Player.js:setNameplate — иконка ранга (тир+тинт по rankId),
+  // клан-тег в квадратных скобках, герб корпуса с цветным кольцом. Вызывается один раз
+  // в конструкторе и повторно из applyPublicState при смене corp/rankId/clanTag.
+  _refreshNameplate() {
+    const id = this.rankId ?? 20;
+    const tier = rankTier(id);
+    const tint = RANK_TINTS[id] ?? 0x888888;
+    this._npIconSz = id === 1 ? 30 : 22;
+    this._npIcon.setTexture(`rank_tier${tier}`).setTint(tint).setDisplaySize(this._npIconSz, this._npIconSz);
+    if (this.clanTag) this._npTag.setText(`[${this.clanTag}]`).setVisible(this.alive);
+    else this._npTag.setText('').setVisible(false);
+    const embKey = this.corp && this.corp !== 'neutral' ? `emblem_${this.corp}` : null;
+    if (embKey && this.scene.textures.exists(embKey)) {
+      const ring = { helios: 0xdd2200, karax: 0x00bb66, tides: 0x1188ff }[this.corp] ?? 0x888888;
+      this._npEmblemBg.clear()
+        .fillStyle(0x050810, 0.78).fillCircle(0, 0, 11)
+        .lineStyle(1.5, ring, 0.95).strokeCircle(0, 0, 11);
+      this._npEmblemBg.setVisible(this.alive);
+      this._npEmblem.setTexture(embKey).setDisplaySize(18, 18).setVisible(this.alive);
+    } else {
+      this._npEmblemBg.setVisible(false);
+      this._npEmblem.setVisible(false);
+    }
+  }
 
   applyPos(x, y, heading) {
     // Возобновление pvp_pos_update после смерти = респавн реально произошёл — сервер
@@ -78,6 +126,10 @@ export default class RemotePlayer {
     this.sprite.setVisible(false);
     this.label.setVisible(false);
     this.bar.setVisible(false);
+    this._npIcon.setVisible(false);
+    this._npTag.setVisible(false);
+    this._npEmblemBg.setVisible(false);
+    this._npEmblem.setVisible(false);
   }
 
   revive() {
@@ -85,6 +137,12 @@ export default class RemotePlayer {
     this.sprite.setVisible(true);
     this.label.setVisible(true);
     this.bar.setVisible(true);
+    this._npIcon.setVisible(true);
+    if (this._npTag.text) this._npTag.setVisible(true);
+    if (this._npEmblem.texture.key !== 'rank_tier1') {
+      this._npEmblemBg.setVisible(true);
+      this._npEmblem.setVisible(true);
+    }
   }
 
   // Полное состояние (используется на pvp_room_snapshot/pvp_player_joined, а
@@ -108,9 +166,15 @@ export default class RemotePlayer {
     if (data.maxHull !== undefined) this.maxHull = data.maxHull;
     if (data.maxShield !== undefined) this.maxShield = data.maxShield;
     if (data.shipKey && data.shipKey !== this._shipKey) this.applyShip(data.shipKey);
+    let nameplateDirty = false;
+    if (data.rankId !== undefined && data.rankId !== this.rankId) { this.rankId = data.rankId; nameplateDirty = true; }
+    if (data.clanTag !== undefined && data.clanTag !== this.clanTag) { this.clanTag = data.clanTag; nameplateDirty = true; }
+    if (data.corp !== undefined) nameplateDirty = true; // герб зависит от corp — уже применён выше
+    if (nameplateDirty) this._refreshNameplate();
   }
 
   applyShip(shipKey) {
+    const wasArgus = this._shipKey === 'argus';
     this._shipKey = shipKey;
     const shipDef = SHIP_BY_KEY[shipKey] || SHIPS[0];
     this.sprite.setTexture(shipDef.key);
@@ -118,6 +182,10 @@ export default class RemotePlayer {
     const scale = shipDef.displaySize / Math.max(src.width, src.height);
     this.sprite.setDisplaySize(Math.round(src.width * scale), Math.round(src.height * scale));
     this._artAngleOffset = shipDef.artAngleOffset ?? ART_ANGLE_OFFSET;
+    // Квантовое мерцание Аргуса (см. конструктор) — включаем/выключаем при смене корабля
+    // ПОСЛЕ джойна комнаты (DEV-хоткей 8 на уже заспавненном RemotePlayer).
+    if (shipKey === 'argus' && !wasArgus) this.scene.argusCtrl?.attachToRemotePlayer(this);
+    else if (shipKey !== 'argus' && wasArgus) this.scene.argusCtrl?.detachFromRemotePlayer(this.userId);
   }
 
   update(dt) {
@@ -129,9 +197,31 @@ export default class RemotePlayer {
     const dh = Phaser.Math.Angle.Wrap(this._targetHeading - this.heading);
     this.heading += dh * t;
     this.sprite.rotation = this.heading + this._artAngleOffset;
-    this.label.setPosition(this.x, this.y + this.sprite.displayHeight * 0.55);
     this.drawBar();
     this._updateWantedMarker();
+    this._layoutNameplate();
+  }
+
+  // Тот же приём укладки в ряд, что Player.js:update (иконка ранга → клан-тег → ник →
+  // герб корпуса, центрировано над кораблём) — bar (HP-полоска) уже над кораблём чуть
+  // ближе, нашивка ставится ещё выше, чтобы не перекрываться с ней.
+  _layoutNameplate() {
+    const npY     = this.y - this.sprite.displayHeight * 0.6 - 24;
+    const hasTag  = this._npTag.visible;
+    const hasEmbl = this._npEmblem.visible;
+    const tagW    = hasTag ? this._npTag.width + 4 : 0;
+    const iconSz  = this._npIconSz ?? 22;
+    const totalW  = iconSz + 4 + tagW + this.label.width + (hasEmbl ? 4 + 18 : 0);
+    const npX     = this.x - totalW / 2;
+    this._npIcon.setPosition(npX + iconSz / 2, npY);
+    let cursor = npX + iconSz + 4;
+    if (hasTag) { this._npTag.setPosition(cursor, npY); cursor += this._npTag.width + 4; }
+    this.label.setPosition(cursor, npY);
+    if (hasEmbl) {
+      const embX = cursor + this.label.width + 4 + 9;
+      this._npEmblemBg.setPosition(embX, npY);
+      this._npEmblem.setPosition(embX, npY);
+    }
   }
 
   // Доска розыска: префикс + красный цвет ника, пока этот игрок в gs.wantedPlayers
@@ -168,8 +258,13 @@ export default class RemotePlayer {
   }
 
   destroy() {
+    this.scene.argusCtrl?.detachFromRemotePlayer(this.userId);
     this.sprite.destroy();
     this.label.destroy();
     this.bar.destroy();
+    this._npIcon.destroy();
+    this._npTag.destroy();
+    this._npEmblemBg.destroy();
+    this._npEmblem.destroy();
   }
 }

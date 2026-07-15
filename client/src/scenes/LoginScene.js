@@ -25,22 +25,38 @@ export default class LoginScene extends Phaser.Scene {
     // Фон
     const bg = this.add.image(W / 2, H / 2, 'bg_login');
     bg.setScale(Math.max(W / bg.width, H / bg.height));
-    this.add.rectangle(0, 0, W, H, 0x000000, 0.45).setOrigin(0);
+    const dim = this.add.rectangle(0, 0, W, H, 0x000000, 0.45).setOrigin(0);
 
-    this.add.text(W / 2, H * 0.22, 'STELLAR DRIFT', {
+    const title = this.add.text(W / 2, H * 0.22, 'STELLAR DRIFT', {
       fontFamily: 'Orbitron, sans-serif',
       fontSize: '60px',
       color: '#4dd0e1',
       resolution: UI_RES,
     }).setOrigin(0.5);
 
-    this.add.text(W / 2, H * 0.32, 'ВХОД В ИГРУ', {
+    const subtitle = this.add.text(W / 2, H * 0.32, 'ВХОД В ИГРУ', {
       fontFamily: 'Orbitron, sans-serif',
       fontSize: '16px',
       color: '#607d8b',
       resolution: UI_RES,
       letterSpacing: 4,
     }).setOrigin(0.5);
+
+    // Логин-форма (HTML-оверлей, см. _buildOverlay) центрируется чистым CSS flexbox —
+    // сама следует за реальным размером окна при ресайзе браузера. Фон/заголовок же
+    // считались один раз по W/H на момент create() и оставались на месте — при ресайзе
+    // окна форма пересобиралась на новом месте, а заголовок "уезжал" и налезал на неё
+    // (баг из диалога: "смена размера страницы входа — элементы разъезжаются, налазят
+    // один на другой"). Пересчитываем на resize — тот же приём, что и в
+    // BackgroundScene.createBackground().
+    this._onResize = (gs) => {
+      bg.setPosition(gs.width / 2, gs.height / 2)
+        .setScale(Math.max(gs.width / bg.width, gs.height / bg.height));
+      dim.setSize(gs.width, gs.height);
+      title.setPosition(gs.width / 2, gs.height * 0.22);
+      subtitle.setPosition(gs.width / 2, gs.height * 0.32);
+    };
+    this.scale.on('resize', this._onResize);
 
     this._buildOverlay(W, H);
   }
@@ -280,5 +296,8 @@ export default class LoginScene extends Phaser.Scene {
     this._overlay = null;
   }
 
-  shutdown() { this._removeOverlay(); }
+  shutdown() {
+    this._removeOverlay();
+    if (this._onResize) { this.scale.off('resize', this._onResize); this._onResize = null; }
+  }
 }
