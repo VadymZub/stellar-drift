@@ -18,7 +18,7 @@ from database import engine, get_db, SessionLocal, Base
 from models import User, PlayerState, PlayerProfile, AuditLog, ChatMessage, Friendship, Blacklist, PrivateMessage, EmailVerificationToken, DungeonRun, DungeonLives, MiningBaseState
 from schemas import (
     RegisterRequest, LoginRequest, TokenResponse, UserResponse,
-    VerifyEmailRequest, ChangePasswordRequest, ChangeEmailRequest,
+    VerifyEmailRequest, ChangePasswordRequest, ChangeEmailRequest, ChangeUsernameRequest,
     PlayerStateResponse, AuditEntryCreate, AuditEntryResponse,
     ProfileUpdateRequest, ProfileSelfResponse, ProfilePublicResponse,
     BlacklistAddRequest, BlacklistEntryResponse, BlacklistListResponse,
@@ -47,6 +47,8 @@ async def _migrate_add_email_column():
                 sync_conn.exec_driver_sql("CREATE UNIQUE INDEX IF NOT EXISTS ix_users_email ON users(email)")
             if "email_verified" not in cols:
                 sync_conn.exec_driver_sql("ALTER TABLE users ADD COLUMN email_verified INTEGER NOT NULL DEFAULT 0")
+            if "username_changed_at" not in cols:
+                sync_conn.exec_driver_sql("ALTER TABLE users ADD COLUMN username_changed_at DATETIME")
         await conn.run_sync(_check_and_alter)
 
 
@@ -1052,16 +1054,36 @@ async def _train_weapon_tick_loop():
         now = time.time()
         for train_key in list(armored_train_manager.missile_ready_at.keys()):
             sector = train_key.split(':', 1)[0]
+            destroyed = armored_train_manager.destroyed.get(train_key, set())
+            wagons = armored_train_manager.missile_ready_at.get(train_key, {})
+            # Оголённые турели ≠ уничтоженный корпус вагона (разные HP-пулы, см.
+            # ArmoredTrainManager.destroyed/note_turret_kill) — залп вооружается, когда
+            # умерли ВСЕ 4 турели, но если ПОСЛЕ этого игроки добьют и сам вагон, залп
+            # должен прекратиться. Раньше это не проверялось вовсе — уничтоженный вагон
+            # (и его турели-сокеты) продолжал слать залпы бесконечно (баг из диалога:
+            # "урон игроку наносится после убийства головного вагона").
+            for wagon_idx in [idx for idx in wagons if idx in destroyed]:
+                wagons.pop(wagon_idx, None)
+            if not wagons:
+                armored_train_manager.missile_ready_at.pop(train_key, None)
+                continue
             targets = list(pvp_room_manager.rooms.get(sector, {}).values())
             if not targets:
                 continue
-            wagons = armored_train_manager.missile_ready_at.get(train_key, {})
             for wagon_idx, ready_at in list(wagons.items()):
                 if now >= ready_at:
                     wagons[wagon_idx] = now + TRAIN_MISSILE_COOLDOWN
                     await _fire_train_missiles(train_key, wagon_idx, targets)
         for train_key in list(armored_train_manager.core_turret.keys()):
             sector = train_key.split(':', 1)[0]
+            # Сама поворотная турель растёт ТОЛЬКО на головном вагоне — если его уже
+            # добили (корпус, не только турели), она физически исчезла вместе с ним
+            # (см. клиентский _onCoreTurretDestroyed при уничтожении вагона — но раньше
+            # сервер продолжал слать залпы от уже несуществующей турели, тот же класс
+            # бага, что и у ракет выше).
+            if HEAD_WAGON_IDX in armored_train_manager.destroyed.get(train_key, set()):
+                armored_train_manager.despawn_core_turret(train_key)
+                continue
             targets = list(pvp_room_manager.rooms.get(sector, {}).values())
             if not targets:
                 continue
@@ -1473,6 +1495,54 @@ async def change_email(
     await db.commit()
     await _issue_verification_code(user, db)
     return TokenResponse(access_token=create_token(user.id), username=user.username, email_verified=False)
+
+
+USERNAME_CHANGE_COOLDOWN_HOURS = 24
+
+
+@app.post("/auth/change-username", response_model=TokenResponse)
+async def change_username(
+    body: ChangeUsernameRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    # Без подтверждения по почте — сознательно (см. диалог): в отличие от смены email,
+    # смена ника не меняет канал восстановления доступа к аккаунту, так что более
+    # тяжёлая email-верификация здесь не нужна, только суточный кулдаун + проверка формата
+    # и уникальности (обе — тем же правилом, что и при регистрации, см. validate_username_format).
+    new_name = body.new_username
+    if new_name == user.username:
+        raise HTTPException(status_code=400, detail="Это уже ваш текущий ник")
+
+    if user.username_changed_at and user.username_changed_at > datetime.utcnow() - timedelta(hours=USERNAME_CHANGE_COOLDOWN_HOURS):
+        next_ok = user.username_changed_at + timedelta(hours=USERNAME_CHANGE_COOLDOWN_HOURS)
+        raise HTTPException(status_code=429, detail=f"Смена ника доступна раз в сутки — попробуйте после {next_ok.strftime('%Y-%m-%d %H:%M')} UTC")
+
+    existing = (await db.execute(select(User).where(User.username == new_name, User.id != user.id))).scalar_one_or_none()
+    if existing:
+        raise HTTPException(status_code=400, detail="Username already taken")
+
+    old_name = user.username
+    # Friendship/Blacklist/PrivateMessage/ChatMessage хранят ник строкой, не user_id FK
+    # (см. models.py) — без каскадного обновления смена ника молча "оборвала" бы игрока
+    # от уже существующих друзей/чёрного списка/переписки под старым именем.
+    await db.execute(update(Friendship).where(Friendship.user_a == old_name).values(user_a=new_name))
+    await db.execute(update(Friendship).where(Friendship.user_b == old_name).values(user_b=new_name))
+    await db.execute(update(Blacklist).where(Blacklist.blocker == old_name).values(blocker=new_name))
+    await db.execute(update(Blacklist).where(Blacklist.blocked == old_name).values(blocked=new_name))
+    await db.execute(update(PrivateMessage).where(PrivateMessage.from_username == old_name).values(from_username=new_name))
+    await db.execute(update(PrivateMessage).where(PrivateMessage.to_username == old_name).values(to_username=new_name))
+    await db.execute(update(ChatMessage).where(ChatMessage.username == old_name).values(username=new_name))
+
+    user.username = new_name
+    user.username_changed_at = datetime.utcnow()
+    await db.commit()
+    # Токен несёт только user.id (см. auth.create_token), переиздавать не обязательно —
+    # но клиенту нужно обновить закешированный ник в sessionStorage (см. api.setSession)
+    # и переподключить WS-чат, чтобы chat_manager/group_manager на сервере тоже увидели
+    # новое имя (оба держат его в памяти с момента pvp_enter/connect, а не перечитывают из БД).
+    return TokenResponse(access_token=create_token(user.id), username=user.username,
+                          email_verified=not _needs_verification(user))
 
 
 # ── Player state ──────────────────────────────────────────────────────

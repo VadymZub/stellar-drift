@@ -1,7 +1,7 @@
 import * as Phaser from 'https://cdn.jsdelivr.net/npm/phaser@4.2.1/dist/phaser.esm.js';
 import { COLORS, UI_RES } from '../constants.js';
 import { i18n } from '../i18n.js';
-import { profileGetMine, profileUpdate, apiGet, getUsername, changePassword, changeEmail } from '../api.js';
+import { profileGetMine, profileUpdate, apiGet, getUsername, changePassword, changeEmail, changeUsername, setSession } from '../api.js';
 import { SHIP_BY_KEY } from '../ships.js';
 
 // Вкладки: Профиль (текстовые поля) / Корабль (авто+ручной выбор) / Приватность / Аккаунт.
@@ -24,6 +24,13 @@ export default class ProfileScene extends Phaser.Scene {
     };
     this._dirty = new Set();
     this._domInputs = [];
+    // Общий <form>-контейнер для всех DOM-инпутов сцены — без него браузер пишет в
+    // консоль "Password field is not contained in a form" на полях смены пароля/email
+    // в аккаунт-вкладке (тот же приём, что уже применялся в LoginScene._buildOverlay).
+    this._domForm = document.createElement('form');
+    this._domForm.addEventListener('submit', e => e.preventDefault());
+    Object.assign(this._domForm.style, { position: 'fixed', top: '0', left: '0', margin: '0', padding: '0' });
+    document.body.appendChild(this._domForm);
     this._tabObjs = [[], [], [], []];
     this._activeTab = 0;
     this._tabBtns = [];
@@ -31,7 +38,7 @@ export default class ProfileScene extends Phaser.Scene {
     const dim = this.add.rectangle(0, 0, W, H, 0x000000, 0.55).setOrigin(0).setDepth(0).setInteractive();
     dim.on('pointerdown', () => this._close());
 
-    const PW = 520, PH = 620;
+    const PW = 520, PH = 690; // 690: Account-вкладка выросла (смена ника/пароля/email — 3 формы), 620 не хватало
     const px = Math.round((W - PW) / 2), py = Math.round((H - PH) / 2);
     this._px = px; this._py = py;
 
@@ -116,6 +123,7 @@ export default class ProfileScene extends Phaser.Scene {
       this.scale.off('resize', this._onResize);
       for (const d of this._domInputs) d.el.remove();
       this._domInputs = [];
+      this._domForm?.remove();
     });
 
     this._layoutDomInputs();
@@ -161,8 +169,12 @@ export default class ProfileScene extends Phaser.Scene {
     });
     input.addEventListener('focus', () => input.style.borderColor = '#4dd0e1');
     input.addEventListener('blur',  () => input.style.borderColor = '#1e3a4a');
+    // Без этого ввод текста (например буква "g"/"u"/"1"-"9") долетает до глобальных
+    // хоткеев GameScene (гараж/профиль/слоты скиллов) и до Ctrl-огня — тот же приём,
+    // что и в HudScene._connectChatWS для чат-инпута.
+    input.addEventListener('keydown', e => { e.stopPropagation(); e.stopImmediatePropagation(); });
     input.addEventListener('input', () => this._setDraftField(key, input.value));
-    document.body.appendChild(input);
+    this._domForm.appendChild(input);
     this._domInputs.push({ el: input, key, tabIdx, rect: { x: LX, y: rowY, w: RX - LX, h: rowH } });
   }
 
@@ -285,8 +297,34 @@ export default class ProfileScene extends Phaser.Scene {
   _buildAccountTab(y, LX, RX) {
     const T = 3;
     this._track(this.add.text(LX, y, 'Имя игрока', this._F('11px', '#7eb8c8')).setDepth(4), T);
-    this._track(this.add.text(LX, y + 18, getUsername(), this._F('13px', '#cfe9ee')).setDepth(4), T);
+    const usernameTxt = this._track(this.add.text(LX, y + 18, getUsername(), this._F('13px', '#cfe9ee')).setDepth(4), T);
     y += 40;
+
+    // ── Смена ника (без email-верификации — раз в сутки, см. диалог) ──
+    const newNameInput = this._makeAccountInput(T, LX, RX, y, 'Новый ник', 'text'); y += 34;
+    const nameMsg = this._track(this.add.text(LX, y, '', { ...this._F('10px', '#ef5350'), wordWrap: { width: RX - LX } }).setDepth(4), T);
+    y += 22;
+    this._makeAccountButton(T, LX, y, 'Сменить ник', async () => {
+      nameMsg.setColor('#ef5350').setText('');
+      const newName = newNameInput.value.trim();
+      if (!newName) return;
+      try {
+        const data = await changeUsername(newName);
+        setSession(data.access_token, data.username);
+        usernameTxt.setText(data.username);
+        newNameInput.value = '';
+        nameMsg.setColor('#66bb6a').setText('Ник изменён — следующая смена через сутки');
+        // chat_manager/group_manager на сервере держат имя в памяти с момента подключения
+        // (не перечитывают из БД) — переподключаем WS, иначе друзья/чат видят старый ник
+        // до следующего входа. Тот же реконнект-путь, что и при обрыве связи (ws.onclose).
+        this.scene.get('HudScene')?._chatWS?.close();
+      } catch (e) { nameMsg.setColor('#ef5350').setText(e.message || 'Ошибка'); }
+    });
+    y += 42;
+
+    this._track(this.add.graphics().setDepth(3).lineStyle(1, COLORS.primary, 0.18).lineBetween(LX, y, RX, y), T);
+    y += 18;
+
     this._track(this.add.text(LX, y, i18n.t('profile.email_current'), this._F('11px', '#7eb8c8')).setDepth(4), T);
     this._accountEmailTxt = this._track(this.add.text(LX, y + 18, '…', this._F('13px', '#cfe9ee')).setDepth(4), T);
     y += 34;
@@ -354,7 +392,11 @@ export default class ProfileScene extends Phaser.Scene {
     });
     input.addEventListener('focus', () => input.style.borderColor = '#4dd0e1');
     input.addEventListener('blur',  () => input.style.borderColor = '#1e3a4a');
-    document.body.appendChild(input);
+    // Без этого ввод текста (например буква "g"/"u"/"1"-"9") долетает до глобальных
+    // хоткеев GameScene (гараж/профиль/слоты скиллов) и до Ctrl-огня — тот же приём,
+    // что и в HudScene._connectChatWS для чат-инпута.
+    input.addEventListener('keydown', e => { e.stopPropagation(); e.stopImmediatePropagation(); });
+    this._domForm.appendChild(input);
     this._domInputs.push({ el: input, key: null, tabIdx, rect: { x: LX, y, w: RX - LX, h: 26 } });
     return input;
   }

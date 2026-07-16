@@ -205,7 +205,12 @@ export default class MailScene extends Phaser.Scene {
       this._openThread(name);
     };
     goBtn.on('pointerdown', submit);
-    input.addEventListener('keydown', e => { if (e.key === 'Enter') submit(); });
+    // stopPropagation — иначе ввод ника (буквы вроде "g"/"u"/цифры) долетает до
+    // глобальных хоткеев GameScene, см. ProfileScene._addTextRow за тем же приёмом.
+    input.addEventListener('keydown', e => {
+      e.stopPropagation(); e.stopImmediatePropagation();
+      if (e.key === 'Enter') submit();
+    });
 
     let y = this._contentY + 92;
     const friends = this._friends();
@@ -281,7 +286,10 @@ export default class MailScene extends Phaser.Scene {
     });
     input.addEventListener('focus', () => input.style.borderColor = '#4dd0e1');
     input.addEventListener('blur',  () => input.style.borderColor = '#1e3a4a');
-    input.addEventListener('keydown', e => { if (e.key === 'Enter') this._send(input); });
+    input.addEventListener('keydown', e => {
+      e.stopPropagation(); e.stopImmediatePropagation();
+      if (e.key === 'Enter') this._send(input);
+    });
     document.body.appendChild(input);
     this._domInputs.push({ el: input, rect: { x: this._paneX, y: replyY, w: this._paneW - 70, h: 26 } });
     this._replyInput = input;

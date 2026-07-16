@@ -108,6 +108,9 @@ export function changePassword(currentPassword, newPassword) {
 export function changeEmail(currentPassword, newEmail) {
   return apiPost('/auth/change-email', { current_password: currentPassword, new_email: newEmail });
 }
+export function changeUsername(newUsername) {
+  return apiPost('/auth/change-username', { new_username: newUsername });
+}
 
 // ── Чёрный список (Milestone 3) ──────────────────────────────────────────
 export function blacklistList()          { return apiGet('/player/blacklist'); }

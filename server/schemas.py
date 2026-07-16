@@ -3,6 +3,17 @@ from typing import Any, Optional
 from datetime import datetime
 
 
+def validate_username_format(v: str) -> str:
+    # Общее правило формата ника — используется и при регистрации, и при смене ника
+    # (см. ChangeUsernameRequest), чтобы правила не могли разойтись между ними.
+    v = v.strip()
+    if len(v) < 3 or len(v) > 50:
+        raise ValueError("Username must be 3–50 characters")
+    if not v.replace("_", "").replace("-", "").isalnum():
+        raise ValueError("Username: only letters, digits, _ and -")
+    return v
+
+
 class RegisterRequest(BaseModel):
     username: str
     email: EmailStr
@@ -11,12 +22,7 @@ class RegisterRequest(BaseModel):
     @field_validator("username")
     @classmethod
     def username_valid(cls, v: str) -> str:
-        v = v.strip()
-        if len(v) < 3 or len(v) > 50:
-            raise ValueError("Username must be 3–50 characters")
-        if not v.replace("_", "").replace("-", "").isalnum():
-            raise ValueError("Username: only letters, digits, _ and -")
-        return v
+        return validate_username_format(v)
 
     @field_validator("password")
     @classmethod
@@ -64,6 +70,15 @@ class ChangePasswordRequest(BaseModel):
 class ChangeEmailRequest(BaseModel):
     current_password: str
     new_email: EmailStr
+
+
+class ChangeUsernameRequest(BaseModel):
+    new_username: str
+
+    @field_validator("new_username")
+    @classmethod
+    def new_username_valid(cls, v: str) -> str:
+        return validate_username_format(v)
 
 
 class PlayerStateResponse(BaseModel):

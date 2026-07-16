@@ -12,6 +12,7 @@ class User(Base):
     email_verified = Column(Integer, nullable=False, default=0)  # bool as int (SQLite-friendly, см. DungeonRun.boss_alive)
     password_hash = Column(String(200), nullable=False)
     created_at   = Column(DateTime, default=datetime.utcnow)
+    username_changed_at = Column(DateTime, nullable=True)  # для суточного кулдауна смены ника
 
 
 class EmailVerificationToken(Base):

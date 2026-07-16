@@ -7,6 +7,8 @@ import { buildBitmapFont } from '../utils/buildBitmapFont.js';
 import { prepShipTex, removeWhiteBg } from '../utils/prepShipTex.js';
 import { PERK_DEFS } from '../perks.js';
 import { SFX_KEYS } from '../systems/SoundManager.js';
+import { WAGON_TARGET_LEN, HEAD_TARGET_LEN } from '../entities/ArmoredTrain.js';
+import { BASE_CONFIG } from '../bases.js';
 
 // Классы взрывов (px нативного кадра). Стек 28 кадров на класс — из design/slice_explosion24.py,
 // лежит в client/explosion24/<class>_sheet.png (игра берёт свежий стек оттуда).
@@ -133,6 +135,14 @@ export default class BootScene extends Phaser.Scene {
     for (const type of ['repair_pack','speed_boost','scanner_pulse','emergency_warp','biomech_core','quantum_crystal','plasma_coil','damage_booster','hull_booster','shield_booster','xp_booster'])
       this.load.image(`consumable_${type}`, `assets/consumables/${type}.png`);
 
+    // Дандж/клановые ресурсы (biomech_fragment/quantum_shard/plasma_strand) — раньше
+    // временно рисовались общей текстурой 'plasmate_crystal' на карте и вообще без
+    // иконки на складе (см. itemIconKey). Ключи текстур = сам item.type, тот же
+    // паттерн, что и у ammo-иконок (см. this.textures.exists(item.type) в GarageScene).
+    this.load.image('biomech_fragment', 'assets/modules/biomech_fragment.png');
+    this.load.image('quantum_shard',    'assets/modules/quantum_shard_.png');
+    this.load.image('plasma_strand',    'assets/modules/plasma_strand_invent.png');
+
     // Perk images, module icons, ammo icons, NPC portraits — deferred to GameScene._bgPreloadDeferred()
 
     // Mining base sprites
@@ -155,6 +165,9 @@ export default class BootScene extends Phaser.Scene {
     this.load.image('train_head_2',  'assets/train/train2_2.png');
     this.load.image('train_head_3',  'assets/train/train2_3.png');
     this.load.image('train_cable',   'assets/train/cable.png');
+    // Центральная ротационная турель головы (см. ArmoredTrain.TrainCoreTurret) —
+    // растёт только когда все 4 турели головы уничтожены.
+    this.load.image('turret_core',   'assets/train/rotate_turet.png');
 
     // Skill tree icons (20 skills, 128×128)
     const SKILL_KEYS = [
@@ -270,6 +283,26 @@ export default class BootScene extends Phaser.Scene {
       () => prepShipTex(this, 'lootbox', 68),
       () => prepShipTex(this, 'plasmate_icon', 96),
       ...['ring_apophis_outer', 'ring_apophis_mid', 'ring_apophis_inner'].map(k => () => prepShipTex(this, k, 880)),
+      // Бронепоезд: исходники ~1024×1300-1500px, отображаются на WAGON_TARGET_LEN/
+      // HEAD_TARGET_LEN (609 fit-height) — раньше грузились БЕЗ prepShipTex вообще,
+      // т.е. каждый кадр движения поезда WebGL делал грязный ~2.4× bilinear-даунскейл
+      // прямо из сырого исходника (не чистые 2×, см. правило ниже) — на мелкой
+      // детализации (заклёпки/панели) это давало "плывущее"/мерцающее изображение при
+      // движении (баг из диалога: "похоже на картинку в жаркий день"). Тот же приём,
+      // что и у кораблей (targetMax = displaySize × 2) — после препроцесса рантайм-
+      // даунскейл становится чистым 2×, mipmapFilter/bilinear на нём стабилен.
+      ...['train_wagon_1', 'train_wagon_2'].map(k => () => prepShipTex(this, k, WAGON_TARGET_LEN * 2)),
+      ...['train_head_1', 'train_head_2', 'train_head_3'].map(k => () => prepShipTex(this, k, HEAD_TARGET_LEN * 2)),
+      () => prepShipTex(this, 'train_cable', 600),
+      () => prepShipTex(this, 'turret_core', Math.round(BASE_CONFIG.turretSize * 1.4 * 2)),
+      // Турельные пушки (cannon1/cannon2 — те же ассеты у баз И у поезда, см.
+      // ArmoredTrain._makeTurretSprite/BASE_CONFIG.turretSize=84): исходники ~270-330px,
+      // тоже никогда не проходили через prepShipTex (~3.5× грязный даунскейл на 84px —
+      // хуже, чем у вагона был). Турели вдобавок постоянно доворачиваются на цель каждый
+      // кадр — то же "плывущее" мерцание, что и у корпуса вагона, оставалось заметным
+      // именно на них (баг из диалога: "стало лучше, но эффект остался").
+      ...['helios', 'karax', 'tides', 'neutral'].flatMap(corp =>
+        [`cannon1_${corp}`, `cannon2_${corp}`].map(k => () => prepShipTex(this, k, BASE_CONFIG.turretSize * 2))),
       // Previously-deferred assets — now loaded at boot
       ...Object.keys(MOD_ICON_FILES).map(k => () => prepShipTex(this, k, 96)),
       ...['ammo_plasma', 'ammo_plasma_elite', 'ammo_laser'].map(k => () => prepShipTex(this, k, 230)),
@@ -282,14 +315,21 @@ export default class BootScene extends Phaser.Scene {
   _runPrepJobs(jobs) {
     const bar = document.getElementById('loading-bar');
     let i = 0;
+    // requestAnimationFrame НЕ вызывается вовсе, пока вкладка свёрнута/не в фокусе
+    // (браузеры полностью останавливают rAF у скрытых страниц) — тот же баг, что уже
+    // решали для игрового цикла, см. systems/bgFallbackTick.js. Здесь это загрузочный
+    // экран ДО игры: свернуть окно/уйти во время загрузки — полоса замирает навсегда
+    // (баг из диалога: "виснет загрузка"). setTimeout браузер всё-таки продолжает
+    // тикать в фоне (пусть и троттлится), так что переключаемся на него, пока скрыто.
+    const schedule = (fn) => (document.hidden ? setTimeout(fn, 16) : requestAnimationFrame(fn));
     const tick = () => {
       const t0 = performance.now();
       while (i < jobs.length && performance.now() - t0 < 14) jobs[i++]();
       if (bar) bar.style.width = `${Math.round(i / jobs.length * 100)}%`;
-      if (i < jobs.length) { requestAnimationFrame(tick); return; }
+      if (i < jobs.length) { schedule(tick); return; }
       this._finishCreate();
     };
-    requestAnimationFrame(tick);
+    schedule(tick);
   }
 
   _finishCreate() {
@@ -312,7 +352,11 @@ export default class BootScene extends Phaser.Scene {
     for (const [key, m] of Object.entries(manifest)) {
       this.load.spritesheet(key, m.sheet, { frameWidth: m.frameWidth, frameHeight: m.frameHeight });
     }
-    this.load.once('complete', () => {
+
+    let done = false;
+    const finish = () => {
+      if (done) return;
+      done = true;
       for (const [key, m] of Object.entries(manifest)) {
         this.anims.create({
           key,
@@ -322,8 +366,20 @@ export default class BootScene extends Phaser.Scene {
         });
       }
       this.scene.start('LoginScene');
-    });
+    };
+    this.load.once('complete', finish);
     this.load.start();
+
+    // Тот же баг, что и в _runPrepJobs: Phaser сам замечает "файлы докачались, пора
+    // стрелять 'complete'" только на своём rAF-тике, который стоит, пока вкладка
+    // скрыта — реальные XHR-загрузки к этому моменту уже могли завершиться. setInterval
+    // как страховочный поллинг (браузер тикает таймеры и в фоне) — не завязан на
+    // document.hidden специально, потому что дешёвый и не мешает, если 'complete'
+    // и так сработает вовремя (done-флаг гарантирует только один запуск).
+    const poll = setInterval(() => {
+      if (done) { clearInterval(poll); return; }
+      if (this.load.progress >= 1 || !this.load.isLoading()) { clearInterval(poll); finish(); }
+    }, 500);
   }
 
   // Тайл звёздного поля для параллакса
