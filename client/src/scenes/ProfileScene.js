@@ -1,7 +1,7 @@
 import * as Phaser from 'https://cdn.jsdelivr.net/npm/phaser@4.2.1/dist/phaser.esm.js';
 import { COLORS, UI_RES } from '../constants.js';
 import { i18n } from '../i18n.js';
-import { profileGetMine, profileUpdate, apiGet, getUsername, changePassword, changeEmail, changeUsername, setSession } from '../api.js';
+import { profileGetMine, profileUpdate, apiGet, getUsername, changePassword, changeEmail, changeUsername, setSession, verifyEmail, resendVerification } from '../api.js';
 import { SHIP_BY_KEY } from '../ships.js';
 
 // Вкладки: Профиль (текстовые поля) / Корабль (авто+ручной выбор) / Приватность / Аккаунт.
@@ -38,7 +38,7 @@ export default class ProfileScene extends Phaser.Scene {
     const dim = this.add.rectangle(0, 0, W, H, 0x000000, 0.55).setOrigin(0).setDepth(0).setInteractive();
     dim.on('pointerdown', () => this._close());
 
-    const PW = 520, PH = 690; // 690: Account-вкладка выросла (смена ника/пароля/email — 3 формы), 620 не хватало
+    const PW = 520, PH = 800; // Account-вкладка: смена ника/пароля/email + подтверждение email — 4 формы
     const px = Math.round((W - PW) / 2), py = Math.round((H - PH) / 2);
     this._px = px; this._py = py;
 
@@ -193,8 +193,9 @@ export default class ProfileScene extends Phaser.Scene {
     if (!this.game?.canvas) return;
     const r = this.game.canvas.getBoundingClientRect();
     const sx = r.width / this.scale.width, sy = r.height / this.scale.height;
-    for (const { el, tabIdx, rect } of this._domInputs) {
-      if (tabIdx !== this._activeTab) { el.style.display = 'none'; continue; }
+    for (const d of this._domInputs) {
+      const { el, tabIdx, rect } = d;
+      if (tabIdx !== this._activeTab || d.hidden) { el.style.display = 'none'; continue; }
       Object.assign(el.style, {
         display: 'block',
         left:   `${Math.round(r.left + rect.x * sx)}px`,
@@ -331,9 +332,48 @@ export default class ProfileScene extends Phaser.Scene {
     this._accountVerifiedTxt = this._track(this.add.text(LX, y, '', this._F('10px', '#ffb74d')).setDepth(4), T);
     y += 20;
 
+    // ── Подтверждение email кодом из письма ──────────────────────────────
+    // Раньше код можно было ввести только сразу после логина (гейт в LoginScene) —
+    // если email сменили ПРЯМО В ИГРЕ (см. "Сменить email" ниже) или пропустили тот
+    // экран, ввести код было негде без релогина (см. диалог). Секция всегда строится
+    // (резервирует место), но видима только если email есть и не подтверждён —
+    // см. _setVerifySectionVisible, выставляется после ответа /auth/me ниже.
+    const codeInput = this._makeAccountInput(T, LX, RX, y, 'Код из письма', 'text'); y += 34;
+    const verifyMsg = this._track(this.add.text(LX, y, '', { ...this._F('10px', '#ef5350'), wordWrap: { width: RX - LX } }).setDepth(4), T);
+    y += 22;
+    const { btn: verifyBtn, label: verifyBtnLbl } = this._makeAccountButton(T, LX, y, 'Подтвердить email', async () => {
+      verifyMsg.setColor('#ef5350').setText('');
+      const code = codeInput.value.trim();
+      if (!code) return;
+      try {
+        await verifyEmail(code);
+        verifyMsg.setColor('#66bb6a').setText('Email подтверждён');
+        this._accountVerifiedTxt?.setText('');
+        this._emailUnverified = false;
+        codeInput.value = '';
+      } catch (e) { verifyMsg.setColor('#ef5350').setText(e.message || 'Неверный код'); }
+    });
+    const resendTxt = this._track(this.add.text(LX + 160, y + 13, 'отправить код повторно', this._F('10px', '#607d8b'))
+      .setOrigin(0, 0.5).setDepth(4).setInteractive({ useHandCursor: true }), T);
+    resendTxt.on('pointerover', () => resendTxt.setColor('#4dd0e1'));
+    resendTxt.on('pointerout',  () => resendTxt.setColor('#607d8b'));
+    resendTxt.on('pointerdown', async () => {
+      verifyMsg.setColor('#66bb6a').setText('');
+      try { await resendVerification(); verifyMsg.setColor('#66bb6a').setText('Код отправлен повторно'); }
+      catch (e) { verifyMsg.setColor('#ef5350').setText(e.message || 'Ошибка'); }
+    });
+    y += 42;
+
+    this._verifyPhaserObjs = [verifyMsg, verifyBtn, verifyBtnLbl, resendTxt];
+    this._verifyDomEntry = this._domInputs.find(d => d.el === codeInput);
+    this._setVerifySectionVisible(false); // скрыто, пока /auth/me не подтвердит, что нужно
+
     apiGet('/auth/me').then(d => {
       this._accountEmailTxt?.setText(d.email || '—');
-      this._accountVerifiedTxt?.setText(d.email && !d.email_verified ? '⚠ Email не подтверждён' : '');
+      const unverified = !!(d.email && !d.email_verified);
+      this._accountVerifiedTxt?.setText(unverified ? '⚠ Email не подтверждён' : '');
+      this._emailUnverified = unverified;
+      this._setVerifySectionVisible(unverified);
     }).catch(() => this._accountEmailTxt?.setText('—'));
 
     y += 8;
@@ -373,6 +413,8 @@ export default class ProfileScene extends Phaser.Scene {
         emailMsg.setColor('#66bb6a').setText('Email изменён — на новый адрес отправлен код подтверждения');
         this._accountEmailTxt?.setText(newEmailInput.value);
         this._accountVerifiedTxt?.setText('⚠ Email не подтверждён');
+        this._emailUnverified = true;
+        this._setVerifySectionVisible(true);
         curPass2Input.value = ''; newEmailInput.value = '';
       } catch (e) { emailMsg.setColor('#ef5350').setText(e.message || 'Ошибка'); }
     });
@@ -406,9 +448,19 @@ export default class ProfileScene extends Phaser.Scene {
     // раньше кнопки (default depth 0), см. баг: клик визуально ничего не делал.
     const btn = this._track(this.add.rectangle(LX, y, 150, 26, 0x0a2030, 1).setOrigin(0).setDepth(3)
       .setStrokeStyle(1, COLORS.primary, 0.8).setInteractive({ useHandCursor: true }), tabIdx);
-    this._track(this.add.text(LX + 75, y + 13, label, this._F('11px', '#4dd0e1')).setOrigin(0.5).setDepth(5), tabIdx);
+    const lbl = this._track(this.add.text(LX + 75, y + 13, label, this._F('11px', '#4dd0e1')).setOrigin(0.5).setDepth(5), tabIdx);
     btn.on('pointerdown', onClick);
-    return btn;
+    return { btn, label: lbl };
+  }
+
+  // Резервирует место в layout'е, но показывает секцию "подтвердить email" только
+  // когда она реально нужна (email есть и не подтверждён) — см. _buildAccountTab.
+  _setVerifySectionVisible(visible) {
+    for (const o of (this._verifyPhaserObjs || [])) o?.setVisible(visible);
+    if (this._verifyDomEntry) {
+      this._verifyDomEntry.hidden = !visible;
+      this._layoutDomInputs();
+    }
   }
 
   // ── Tab switching ─────────────────────────────────────────────────────
@@ -417,6 +469,11 @@ export default class ProfileScene extends Phaser.Scene {
     this._activeTab = idx;
     for (const obj of this._tabObjs[this._activeTab]) obj.setVisible?.(true);
     this._updateTabBtns();
+    // Блокет "показать все объекты таба" выше не знает про подусловно скрытые
+    // элементы (код-подтверждение email видно только если email не подтверждён) —
+    // без переприменения секция "оживала" при каждом переключении на АККАУНТ,
+    // даже когда email уже подтверждён (см. диалог, баг найден вживую).
+    this._setVerifySectionVisible(!!this._emailUnverified);
     this._layoutDomInputs();
   }
 
