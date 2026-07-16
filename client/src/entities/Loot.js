@@ -1,5 +1,6 @@
 // Коробка лута на месте смерти моба.
-// tier: 'common' | 'boss' | 'legendary' | 'jackpot'
+// tier: 'common' | 'boss' | 'legendary' | 'jackpot' | 'wagon'
+import * as Phaser from 'https://cdn.jsdelivr.net/npm/phaser@4.2.1/dist/phaser.esm.js';
 import { dungeonLootCollected } from '../api.js';
 
 export default class Loot {
@@ -11,11 +12,17 @@ export default class Loot {
     this.baseX  = x;
     this.baseY  = y;
 
-    const SIZE = { common: 34, boss: 42, legendary: 52, jackpot: 52 };
-    const TINT = { common: null, boss: 0xffb74d, legendary: 0xffd54f, jackpot: 0x00e5ff };
+    // 'wagon' — трофей с вагона/головы бронепоезда (см. GameScene._onPvpLootSpawned).
+    // ПЕРВАЯ правка (стальной сине-серый, обычный alpha-blend) — сливалась с фоном.
+    // ВТОРАЯ (яркая маджента + ADD blend) — "слишком прозрачная": ADD складывает цвет
+    // поверх фона вместо перекрытия, на ярком фоне выглядит блёкло/полупрозрачно, никогда
+    // не даёт плотного "непрозрачного" вида. Обычный alpha-blend (как у остальных тиров),
+    // просто с насыщенным цветом — плотная, непрозрачная коробка.
+    const SIZE = { common: 34, boss: 42, legendary: 52, jackpot: 52, wagon: 48 };
+    const TINT = { common: null, boss: 0xffb74d, legendary: 0xffd54f, jackpot: 0x00e5ff, wagon: 0xe000ff };
     const size = SIZE[tier] ?? 34;
 
-    if (tier === 'legendary' || tier === 'jackpot') {
+    if (tier === 'legendary' || tier === 'jackpot' || tier === 'wagon') {
       this._ring = scene.add.graphics().setDepth(35);
     }
 
@@ -73,6 +80,17 @@ export default class Loot {
         this._ring.lineStyle(1.5, 0xffffff, a1 * 0.45);
         this._ring.strokeCircle(sx, sy, r1 + 9);
         this._ring.lineStyle(1, 0x00e5ff, a1 * 0.25);
+        this._ring.strokeCircle(sx, sy, r1 + 18);
+      } else if (this.tier === 'wagon') {
+        const t = now * 0.007;
+        const r1 = 30 + 6 * Math.sin(t);
+        const a1 = 0.7 + 0.3 * Math.sin(t);
+        this._ring.clear();
+        this._ring.lineStyle(3, 0xe000ff, a1);
+        this._ring.strokeCircle(sx, sy, r1);
+        this._ring.lineStyle(1.5, 0xffffff, a1 * 0.5);
+        this._ring.strokeCircle(sx, sy, r1 + 9);
+        this._ring.lineStyle(1, 0xe000ff, a1 * 0.3);
         this._ring.strokeCircle(sx, sy, r1 + 18);
       } else {
         const t = now * 0.004;

@@ -141,6 +141,7 @@ class ProfileSelfResponse(BaseModel):
     favorite_ship_is_manual: bool = False
     privacy: str = "everyone"
     updated_at: Optional[datetime] = None
+    pvp_wins: int = 0
 
 
 class PmMessageResponse(BaseModel):
@@ -200,7 +201,13 @@ class ProfilePublicResponse(BaseModel):
     social_links: dict = {}
     favorite_ship_key: Optional[str] = None
     level: Optional[int] = None
+    xp: Optional[float] = None
     honor: Optional[int] = None
+    corp: Optional[str] = None
+    pvp_wins: int = 0
+    playtime_hours: Optional[float] = None
+    clan_name: Optional[str] = None
+    clan_tag: Optional[str] = None
 
 
 class AuditEntryCreate(BaseModel):

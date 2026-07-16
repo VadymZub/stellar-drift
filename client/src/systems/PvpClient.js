@@ -43,6 +43,11 @@ export class PvpClient {
         this.onMobRoomUpdate = null; // (msg) => void — {roomKey, mobs:[{mobId,targetUserId}]} серверный таргетинг дронов/турелей
         this.onMobAttackVfx  = null; // (msg) => void — {mobId,weaponType,targetUserId} моб/турель бьёт другого игрока комнаты
         this.onMobAttackResult = null; // (msg) => void — {targetUserId,dodged,hullHit,shieldHit,hull,maxHull,shield,maxShield,killed,isCrit}
+        this.onTrainWeaponFire = null; // (msg) => void — {trainKey,wagonIdx,weapon,hits:[{uid,hits,dmg,hull,shield,maxHull,maxShield,killed}]}
+                                        // — сервер САМ решил и применил урон (ракетный залп/поворотная турель поезда),
+                                        // без client-claim заявки; клиент только рисует визуал и синкает HP.
+        this.onWorldEventReward = null; // (msg) => void — {weKey,credits,xp,gold} — моя доля пропорциональной
+                                         // награды за расчистку волны нашествия (см. worldEventClearClaim)
     }
 
     // ── Outgoing ─────────────────────────────────────────────────────────────
@@ -118,6 +123,18 @@ export class PvpClient {
         this._send(payload);
     }
 
+    /** Активная способность (Аргус: pulsar/missiles) бьёт общего моба комнаты — турель/
+     * вагон бронепоезда или обычный pvpMobId-моб (см. ArgusController._dealAbilityDamage).
+     * Тот же протокол pvp_mob_fire_claim, что и обычное оружие по мобам, но с ability
+     * вместо weaponType/mobX/mobY — сервер применяет ABILITY_DAMAGE_CEILING/COOLDOWN_FLOOR
+     * вместо личного лоадаута атакующего (см. main.py). wagonReward — см. mobFireClaim. */
+    abilityMobFireClaim(mobId, maxHull, maxShield, ability, dmg, wagonReward) {
+        if (!this.sector) return;
+        const payload = { type: 'pvp_mob_fire_claim', mobId, maxHull, maxShield, ability, dmg };
+        if (wagonReward) payload.wagonReward = wagonReward;
+        this._send(payload);
+    }
+
     /** Урон мобу/турели → игроку целиком локально-авторитетен на клиенте ЖЕРТВЫ
      * (см. GameScene.fireMobWeapon — takeDamage прямо там, сервер не участвует), так что
      * без этого вызова остальные в комнате вообще не подозревали, что что-то произошло
@@ -176,6 +193,27 @@ export class PvpClient {
     wagonLootSpawn(x, y, item, eligible) {
         if (!this.sector) return;
         this._send({ type: 'pvp_wagon_loot_spawn', x, y, item, eligible });
+    }
+
+    /** Локальный ArmoredTrain закончился (все вагоны уничтожены ИЛИ истёк маршрутный
+     * таймаут — см. ArmoredTrain._markFinished) — сервер чистит ArmoredTrainManager
+     * (turret_kills/missile_ready_at/core_turret), иначе ракетный залп/поворотная турель
+     * уже несуществующего поезда продолжали бы стрелять по игрокам сектора бесконечно
+     * (баг из диалога: "урон после уничтожения поезда продолжает убивать игрока").
+     * Идемпотентно на сервере — можно звать с любого клиента комнаты, независимо. */
+    trainFinished(trainKey) {
+        if (!this.sector) return;
+        this._send({ type: 'pvp_train_finished', trainKey });
+    }
+
+    /** Нашествие расчищено (все мобы волны мертвы) — просим сервер разослать
+     * пропорциональную награду по накопленному вкладу (server world_event_damage,
+     * см. GameScene._updateWorldEvent). rewards — тот же детерминированный (по
+     * WORLD_EVENT_SECTORS) объект у всех клиентов комнаты, кто бы первым ни заметил
+     * расчистку — идемпотентно на сервере (pop), лишние заявки — молча no-op. */
+    worldEventClearClaim(weKey, rewards) {
+        if (!this.sector) return;
+        this._send({ type: 'pvp_world_event_clear_claim', weKey, rewards });
     }
 
     leaveSector() {
@@ -311,6 +349,14 @@ export class PvpClient {
 
             case 'pvp_wagon_reward':
                 this.onWagonReward?.(msg);
+                break;
+
+            case 'pvp_train_weapon_fire':
+                this.onTrainWeaponFire?.(msg);
+                break;
+
+            case 'pvp_world_event_reward':
+                this.onWorldEventReward?.(msg);
                 break;
 
             case 'pvp_loot_spawned':

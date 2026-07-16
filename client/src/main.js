@@ -110,15 +110,57 @@ Promise.race([
   fitCanvas();
 
   let _resizeRaf = null;
-  window.addEventListener('resize', () => {
+  let _lastW = window.innerWidth, _lastH = window.innerHeight;
+  function scheduleResize() {
     // Debounce via rAF: let the browser commit the new layout before Phaser
     // re-reads getBoundingClientRect() for input coordinate transforms.
     if (_resizeRaf) cancelAnimationFrame(_resizeRaf);
     _resizeRaf = requestAnimationFrame(() => {
-      game.scale.resize(W(), H());
+      _lastW = window.innerWidth; _lastH = window.innerHeight;
+      const gw = W(), gh = H();
+      game.scale.resize(gw, gh);
+      // game.scale.resize() выше меняет только canvas.width/height (атрибут) и
+      // ScaleManager.width/height — САМ WebGL-рендерер (его внутренний viewport/
+      // drawing buffer size) в Scale.NONE НЕ подхватывает это автоматически (это делает
+      // ScaleManager только в FIT/RESIZE режимах). Без явного renderer.resize() рендерер
+      // продолжал рисовать в границах СТАРОГО размера — новая, увеличившаяся область
+      // холста оставалась просто ПУСТОЙ/чёрной (её GL-буфер отрисовки никогда не
+      // получал новых пикселей), хотя canvas.width/camera.width уже отчитывались
+      // "правильным" новым числом (баг из диалога: "снова чёрная область при ресайзе" —
+      // подтверждено диагностикой: game.renderer.width оставался старым).
+      game.renderer.resize(gw, gh);
       fitCanvas();
       game.scale.refresh?.();   // recalculate canvas bounds for input hit-testing
+      // Scale.NONE (см. config выше) — Phaser сам НЕ трогает камеры сцен на resize (это
+      // поведение только у FIT/RESIZE-режимов), game.scale.resize() выше обновляет
+      // ТОЛЬКО width/height самого ScaleManager (то, что читает GameScene.createBackground
+      // resize-хендлер и HUD-позиционирование через this.scale.width/height). Камера же
+      // каждой сцены остаётся зафиксирована на размере окна МОМЕНТА СОЗДАНИЯ сцены —
+      // холст растягивался, а игровой мир/HUD (camera-bound, scrollFactor(0) не спасает,
+      // это позиция ВНУТРИ вьюпорта, не сам вьюпорт) обрывались по старой границе, за
+      // которой канвас просто чист/чёрный (баг из диалога: "смена разрешения окна —
+      // чёрная область вместо игровых элементов"). Ресайзим камеру КАЖДОЙ активной сцены
+      // явно — общее место для всех сцен разом, не нужно чинить в каждом файле отдельно.
+      for (const scene of game.scene.getScenes(true)) {
+        scene.cameras?.main?.setSize(gw, gh);
+      }
       _resizeRaf = null;
     });
-  });
+  }
+  window.addEventListener('resize', scheduleResize);
+  // window.resize не всегда надёжно ловит смену РАЗРЕШЕНИЯ ЭКРАНА (в отличие от смены
+  // размера самого окна браузера) — на части связок браузер/ОС событие не приходит вовсе
+  // или приходит со старыми (ещё не осевшими) innerWidth/innerHeight, оставляя канвас
+  // застрявшим на старом размере посреди уже большего окна — часть игрового поля/HUD
+  // оказывается недоступна за пределами старой области (баг из диалога: "при смене
+  // разрешения экрана часть элементов игрового поля закрыта/недоступна"). ResizeObserver
+  // на <html> — более надёжный сигнал именно "реальный CSS-размер вьюпорта изменился",
+  // независимо от того, какое событие браузер решил (не) прислать. Опрос раз в 500мс —
+  // дешёвый бэкстоп на случай, если ни один из двух сигналов выше не сработал.
+  new ResizeObserver(() => {
+    if (window.innerWidth !== _lastW || window.innerHeight !== _lastH) scheduleResize();
+  }).observe(document.documentElement);
+  setInterval(() => {
+    if (window.innerWidth !== _lastW || window.innerHeight !== _lastH) scheduleResize();
+  }, 500);
 });

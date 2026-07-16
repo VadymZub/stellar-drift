@@ -41,22 +41,30 @@ const vline = (x, y1, y2, ...gaps) => {
 };
 
 // Киты боссов D1–D5/prem — собраны из готовых механик Mob.js (Апофиса/R-1-boss не касаются):
-//   phases: [{at: доля HP, summon:{k,n,r,opts?}, acid?, dashOn?, tint?}] — одноразовые фазы
+//   phases: [{at: доля HP, summon:{k,n,r,opts?}, decoy:{hpFrac}?, acid?, dashOn?, tint?}] — одноразовые фазы
 //   scatter — веерный залп (5 снарядов/8с); minelayer — мины-бомбы; blink — телепорт-уклонение;
-//   dash — рывок через игрока каждые N сек; shielder — аура −30% урона союзникам рядом
+//   blinkInvuln — блинк даёт кратковременную неуязвимость (см. Mob._updateCloaker);
+//   dash — рывок через игрока каждые N сек; shielder — аура −30% урона союзникам рядом;
+//   shieldCycle: {closedSec, openSec} — чередующееся окно полной неуязвимости (см. Mob._updateBossKit)
 export const DUNGEON_BOSS_KIT = {
   dungeon_1: { scatter: true, phases: [
     { at: 0.75, summon: { k: 'swarm_03', n: 3, r: 450 }, tint: 0xffcc66 },
     { at: 0.50, summon: { k: 'swarm_05', n: 3, r: 450 }, tint: 0xff8844 },
+    // "Двойник" — визуальный клон-приманка (не настоящий сплит HP, см. onDungeonBossPhase
+    // ph.decoy), не помечен isDungeonBoss — не влияет на завершение данжа/лут.
+    { at: 0.35, decoy: { hpFrac: 0.4 } },
   ] },
-  dungeon_2: { scatter: true, blink: true },
+  dungeon_2: { scatter: true, blink: true, blinkInvuln: true },
   dungeon_3: { scatter: true, shielder: true, phases: [
+    // Синдикатский щит-генератор (своя фракция/арт, не кристалл древних) — раньше
+    // защита данж-босса. Отдельная фаза от адд-волны на 0.50, не заменяет её.
+    { at: 0.70, summon: { k: 'syndicate_shield', n: 2, r: 400, opts: { behavior: 'guard', patrolRadius: 200 } }, tint: 0x00e5ff },
     { at: 0.50, summon: { k: 'syndicate_05', n: 3, r: 450 }, tint: 0x9090ff },
   ] },
   dungeon_4: { minelayer: true, dash: 20 },
   dungeon_5: { scatter: true, phases: [
     { at: 0.50, summon: { k: 'ancient_shield', n: 3, r: 420, opts: { behavior: 'guard', patrolRadius: 200 } }, tint: 0x4dd0e1 },
-  ] },
+  ], shieldCycle: { closedSec: 4, openSec: 6 } },
   dungeon_prem: { phases: [
     { at: 0.75, summon: { k: 'ancient_09', n: 3, r: 450 }, tint: 0x76ff03 },
     { at: 0.50, summon: { k: 'ancient_10', n: 2, r: 450 }, acid: true, tint: 0x00e676 },

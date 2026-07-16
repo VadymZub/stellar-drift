@@ -1,6 +1,6 @@
 import * as Phaser from 'https://cdn.jsdelivr.net/npm/phaser@4.2.1/dist/phaser.esm.js';
 import { COLORS, UI_RES } from '../constants.js';
-import { itemName, itemStats, itemIconKey, addConsumableToInventory, removeConsumableFromInventory, countConsumableInInventory, DUNGEON_RES_EXCHANGE_RATE, BUFF_KEY_TO_RESOURCE, BUFF_KEY_TO_MATERIAL, RESOURCE_NAMES, MATERIAL_NAMES } from '../items.js';
+import { itemName, itemStats, itemIconKey, addConsumableToInventory, removeConsumableFromInventory, countConsumableInInventory, CONSUMABLES, DUNGEON_RES_EXCHANGE_RATE, BUFF_KEY_TO_RESOURCE, BUFF_KEY_TO_MATERIAL, RESOURCE_NAMES, MATERIAL_NAMES } from '../items.js';
 import { prerenderTex } from '../utils/prerenderTex.js';
 import { PERK_MAP, RARITY_COLOR, perkBonus } from '../perks.js';
 
@@ -109,10 +109,15 @@ export default class ClanScene extends Phaser.Scene {
       if (document.activeElement === this._searchInp) return;
       this._destroyOverlay(); this.scene.stop();
     });
-    this.input.keyboard.on('keydown-N', () => {
-      if (document.activeElement === this._searchInp) return;
-      this._destroyOverlay(); this.scene.stop();
-    });
+    // 'N' НЕ слушаем тут отдельно — GameScene тоже слушает 'N' (toggleOverlay/_openBase),
+    // обе сцены активны одновременно, дублирующий self-listener давал гонку "закрытие
+    // само себя переоткрывает" (тот же баг/фикс, что и у MapScene/'M', SkillScene/'K',
+    // CorpScene/'H'). shutdown() ниже — это ПРОСТО метод, Phaser НЕ вызывает его
+    // автоматически без явной регистрации на событие 'shutdown' (раньше эта регистрация
+    // отсутствовала вовсе, cleanup держался только этим самым self-listener'ом, который
+    // удаляем) — регистрируем явно, чтобы sd-guild-search/-overlay гарантированно
+    // убирались при ЛЮБОМ закрытии сцены (hotkey через GameScene, ESC, что угодно).
+    this.events.once('shutdown', () => this.shutdown());
   }
 
   _destroyOverlay() {
@@ -724,8 +729,17 @@ export default class ClanScene extends Phaser.Scene {
     takeBtn.on('pointerdown', () => {
       this._closeVaultConfirm();
       const idx = vault.indexOf(item); if (idx < 0) return;
-      vault.splice(idx, 1);
-      (gs.inventory = gs.inventory || []).push(item);
+      const inv = gs.inventory = gs.inventory || [];
+      // Стекуемые ресурсы/патроны — сливаем в уже существующий частичный стек трюма
+      // вместо нового слота под каждое взятие (тот же баг, что чинили в CargoScene
+      // _moveToWarehouse/_moveToCargo).
+      if (CONSUMABLES[item.type]) {
+        vault.splice(idx, 1);
+        addConsumableToInventory(inv, item.type, item.amount, gs._cargoMax?.() ?? inv.length + 1);
+      } else {
+        vault.splice(idx, 1);
+        inv.push(item);
+      }
       (clan.log = clan.log || []).unshift({ time: this._ts(),
         text: `${gs.playerName || 'Пилот'} взял «${itemName(item)}» со склада`,
         color: '#ef9a9a' });

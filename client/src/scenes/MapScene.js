@@ -24,6 +24,15 @@ export default class MapScene extends Phaser.Scene {
   F(s, c) { return { fontFamily: 'Inter, sans-serif', fontSize: s, color: c, resolution: UI_RES }; }
 
   create() {
+    // Карта — полноэкранный оверлей, должен рендериться поверх ВСЕГО, включая nav-бар
+    // базы. HudScene._showBaseNav() один раз (при входе на базу) делает
+    // bringToTop('HudScene'), чтобы nav-бар оставался кликабельным поверх Garage/Cargo/
+    // и т.п. — но M можно открыть прямо из меню базы (в отличие от G/C/K/H/N/O, у M нет
+    // atBase-гейта в GameScene), и без этой строки карта оказывалась ПОД nav-баром,
+    // которая перекрывала её заголовок/подсказку (баг из диалога: "два раза M — баг с
+    // отображением кнопок меню"). Self-bringToTop чинит это независимо от того, в каком
+    // порядке сцены запускались.
+    this.scene.bringToTop('MapScene');
     this.gs = this.scene.get('GameScene');
     const W = this.scale.width, H = this.scale.height;
     const lvl = this.gs.pilotLevel || 1;
@@ -126,7 +135,16 @@ export default class MapScene extends Phaser.Scene {
     });
 
     this.input.keyboard.on('keydown-ESC', () => this.scene.stop());
-    this.input.keyboard.on('keydown-M',   () => this.scene.stop());
+    // Раньше тут ЕЩЁ был свой this.input.keyboard.on('keydown-M', () => this.scene.stop())
+    // — GameScene тоже слушает M (toggleOverlay('MapScene'), без ESC/атБазы-гейта в
+    // отличие от G/C/K/H/N/O) и обе сцены активны одновременно, так что ОДНО нажатие M
+    // ловили ОБА хендлера: сначала этот стопал сцену, затем GameScene.toggleOverlay
+    // видел isActive('MapScene')===false и СРАЗУ ЖЕ перезапускал её — "закрытие" картой
+    // само себя переоткрывало. Новый launch вставал ПОВЕРХ HudScene (та bringToTop
+    // делает только один раз, при входе на базу), навсегда закрывая непрозрачным фоном
+    // карты и базу, и nav-бар базы (баг из диалога: "открытие-закрытие навигации на базе
+    // приводит к багу визуального пропадания и базы и меню базы"). Garage/Cargo не имеют
+    // такого дублирующего self-listener — только GameScene решает, открыта карта или нет.
   }
 
   _drawLegend(W, H, playerCorp) {

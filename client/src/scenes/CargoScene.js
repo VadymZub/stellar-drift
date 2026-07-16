@@ -1,7 +1,7 @@
 import * as Phaser from 'https://cdn.jsdelivr.net/npm/phaser@4.2.1/dist/phaser.esm.js';
 import { COLORS, UI_RES } from '../constants.js';
 import { i18n } from '../i18n.js';
-import { itemName, itemStats, itemIconKey, itemSellPrice, PLASMATE_PER_SLOT, PLASMATE_GOLD_RATE, removePlasmateFromInventory, totalPlasmateInInventory, CONSUMABLES, AMMO_ICON, addConsumableToInventory, statRollStr } from '../items.js';
+import { itemName, itemStats, itemIconKey, itemSellPrice, PLASMATE_PER_SLOT, PLASMATE_GOLD_RATE, removePlasmateFromInventory, totalPlasmateInInventory, CONSUMABLES, AMMO_ICON, addConsumableToInventory, compactConsumableStacks, statRollStr } from '../items.js';
 import { prerenderTex } from '../utils/prerenderTex.js';
 import { PERK_MAP, RARITY_COLOR, RARITY_LABEL, perkBonus, rollQualityInfo } from '../perks.js';
 
@@ -33,6 +33,18 @@ export default class CargoScene extends Phaser.Scene {
     this.gs = this.scene.get('GameScene');
     const W = this.scale.width, H = this.scale.height;
     const atBase = !!this.gs.atBase;
+
+    // Одноразовое сжатие уже нафрагментированных стеков ДО фикса addConsumableToInventory
+    // (баг из диалога: "мы исправляли баг схлопывания... но сейчас уже есть такие в
+    // трюме... никуда не могу их переместить") — сам фикс не даёт НОВОЙ фрагментации,
+    // но старые дробные слоты сами по себе не рассасываются. Прозрачно при каждом
+    // открытии трюма/склада — освобождает слоты без ручного действия игрока.
+    const compactedInv = compactConsumableStacks(this.gs.inventory);
+    const compactedWh  = compactConsumableStacks(this.gs.warehouse);
+    if (compactedInv || compactedWh) {
+      this.gs.log?.('📦 Одинаковые патроны/ресурсы объединены в стеки');
+      this.gs._saveState?.();
+    }
 
     if (!this.textures.exists('bg_garage')) this.gs._bgPreloadDeferred?.();
 
@@ -309,13 +321,8 @@ export default class CargoScene extends Phaser.Scene {
               this._moveToWarehouse(item);
               return; // _moveToWarehouse calls restart
             } else {
-              // warehouse → cargo
-              const cargoMax = this._cargoMax();
-              const inv = gs.inventory || [];
-              if (inv.length >= cargoMax) return;
-              const idx = (gs.warehouse || []).indexOf(item); if (idx < 0) return;
-              gs.warehouse.splice(idx, 1);
-              inv.push(item);
+              this._moveToCargo(item);
+              return; // _moveToCargo calls restart
             }
             this.scene.restart();
           });
@@ -489,13 +496,7 @@ export default class CargoScene extends Phaser.Scene {
           if (guildMode) {
             this._moveToGuildVault(item);
           } else {
-            const cargoMax = this._cargoMax();
-            const inv = gs.inventory || [];
-            if (inv.length >= cargoMax) return;
-            const idx = (gs.warehouse || []).indexOf(item); if (idx < 0) return;
-            gs.warehouse.splice(idx, 1); inv.push(item);
-            gs._saveState?.();
-            this.scene.restart();
+            this._moveToCargo(item);
           }
         });
 
@@ -967,10 +968,46 @@ export default class CargoScene extends Phaser.Scene {
     if (idx < 0) return;
     const whMax = this._whMax();
     this.gs.warehouse = this.gs.warehouse || [];
-    if (this.gs.warehouse.length >= whMax) return;
-    inv.splice(idx, 1);
-    this.gs.warehouse.push(item);
+    // Стекуемые ресурсы/патроны — сливаем в уже существующий частичный стек склада
+    // вместо создания нового слота под КАЖДЫЙ перенос (баг из диалога: "при перемещении
+    // в склад тоже это учесть", "патроны... группировать до максимального значения").
+    // Модули (пушки/щиты/etc — уникальные per-item статы/перки, не стекуются) и plasmate
+    // (свой отдельный addPlasmateToInventory/дневной лимит, см. items.js) — не трогаем.
+    if (CONSUMABLES[item.type]) {
+      const hasStack = this.gs.warehouse.some(w => w.type === item.type && w.amount < CONSUMABLES[item.type].maxPerSlot);
+      if (!hasStack && this.gs.warehouse.length >= whMax) return;
+      inv.splice(idx, 1);
+      addConsumableToInventory(this.gs.warehouse, item.type, item.amount, whMax);
+    } else {
+      if (this.gs.warehouse.length >= whMax) return;
+      inv.splice(idx, 1);
+      this.gs.warehouse.push(item);
+    }
     this.gs._saveState?.();
+    this.scene.restart();
+  }
+
+  // Обратное направление к _moveToWarehouse (склад → трюм) — та же стекуемая логика,
+  // раньше оба места (обычная и гильдейская вкладки склада) делали сырой push, без слияния
+  // в уже существующий частичный стек в трюме.
+  _moveToCargo(item) {
+    const gs = this.gs;
+    const cargoMax = this._cargoMax();
+    const inv = gs.inventory = gs.inventory || [];
+    const wh  = gs.warehouse || [];
+    const idx = wh.indexOf(item);
+    if (idx < 0) return;
+    if (CONSUMABLES[item.type]) {
+      const hasStack = inv.some(i => i.type === item.type && i.amount < CONSUMABLES[item.type].maxPerSlot);
+      if (!hasStack && inv.length >= cargoMax) return;
+      wh.splice(idx, 1);
+      addConsumableToInventory(inv, item.type, item.amount, cargoMax);
+    } else {
+      if (inv.length >= cargoMax) return;
+      wh.splice(idx, 1);
+      inv.push(item);
+    }
+    gs._saveState?.();
     this.scene.restart();
   }
 

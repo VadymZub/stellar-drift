@@ -4,6 +4,33 @@ import { i18n } from '../i18n.js';
 
 function scaleStat(base, level) { return Math.round(base * (1 + 0.5 * (level - 1))); }
 
+// Взаимное отталкивание группы (изначально — только у дронов бронепоезда,
+// см. ArmoredTrain.js:_updateDrones, диалог: "не толпиться в одном месте") — вынесено
+// сюда, чтобы переиспользовать и для PvP-патрульных роёв (см. GameScene._updateDroneSwarms),
+// у которых раньше вообще не было антискученности. Чистая функция над любым массивом
+// {alive, x, y, sprite} — не завязана на Mob-специфичное состояние.
+export function applySeparation(group, dt, { sepDist = 70, sepSpeed = 90 } = {}) {
+  for (let i = 0; i < group.length; i++) {
+    const d = group[i];
+    let rx = 0, ry = 0;
+    for (let j = 0; j < group.length; j++) {
+      if (i === j) continue;
+      const o = group[j];
+      const dx = d.x - o.x, dy = d.y - o.y;
+      const dist2 = dx * dx + dy * dy;
+      if (dist2 < sepDist * sepDist && dist2 > 1) {
+        const dist = Math.sqrt(dist2);
+        const push = (sepDist - dist) / sepDist;
+        rx += (dx / dist) * push; ry += (dy / dist) * push;
+      }
+    }
+    if (rx || ry) {
+      d.sprite.x += rx * sepSpeed * dt;
+      d.sprite.y += ry * sepSpeed * dt;
+    }
+  }
+}
+
 export default class Mob {
   // opts: { behavior:'patrol'|'guard'|'roam', patrolRadius, leash, passive, bossRef, orbitLeader, pathDeviation, targets }
   constructor(scene, template, level, x, y, opts = {}) {
@@ -13,6 +40,23 @@ export default class Mob {
     this.tpl = opts.aiClass
       ? (opts.aiClass === 'minelayer' ? { ...template, minelayer: true } : { ...template, aiClass: opts.aiClass })
       : template;
+    // Flanker: детерминированно чередуем сторону захода по числу уже живых
+    // flanker-мобов в сцене — без явной привязки пары, два подряд заспавненных
+    // flanker'а естественно расходятся на разные фланги (см. _updateAggro).
+    if (this.tpl.aiClass === 'flanker') {
+      const existing = scene.mobs?.filter(m => m.alive && m.tpl?.aiClass === 'flanker').length ?? 0;
+      this._flankSide = (existing % 2 === 0) ? 1 : -1;
+    }
+    // Разное поведение по скорости (см. _updateSwarmDrone) — только для МАЛЫХ групп
+    // (<SWARM_SIZE живых сородичей), большие рои вместо этого идут в фазовый цикл
+    // approach/shoot/retreat/circle. Роллится один раз при спавне, постоянна всю жизнь
+    // моба — правка по просьбе ("они могут стоять, двигаться медленно, быстро").
+    if (this.tpl.aiClass === 'swarmDrone') {
+      const roll = Math.random();
+      this._speedProfile = roll < 0.15 ? 'stand' : roll < 0.40 ? 'slow' : roll < 0.80 ? 'normal' : 'fast';
+      this._beePhase = 'approach';
+      this._beePhaseT = 0;
+    }
     this.level = level;
     this.spawnX = x;
     this.spawnY = y;
@@ -123,6 +167,9 @@ export default class Mob {
   takeDamage(amount, penetration = 0, opts = {}) {
     if (!this.alive) return { shieldHit: 0, hullHit: 0, killed: false };
     if (this._invulTimer > 0) return { shieldHit: 0, hullHit: 0, killed: false, dodged: true };
+    // D5 щит-цикл (см. _updateBossKit kit.shieldCycle) — полная неуязвимость, пока
+    // щит "замкнут" (в отличие от _shieldAura, который лишь снижает урон по корпусу).
+    if (this._shieldClosed) return { shieldHit: 0, hullHit: 0, killed: false, dodged: true };
     this.lastDamageAt = this.scene.time.now;
 
     if (!opts.ignoreMovEvasion) {
@@ -135,7 +182,7 @@ export default class Mob {
     }
 
     // Кристальные щиты: ближайший живой shieldDrone поглощает 90% входящего урона по боссу
-    if (this.isDungeonBoss && this.scene?.mobs) {
+    if ((this.isDungeonBoss || this.shieldBonded) && this.scene?.mobs) {
       let nearest = null, nearestDist = 1200;
       for (const m of this.scene.mobs) {
         if (!m.alive || !m.tpl?.shieldDrone) continue;
@@ -190,6 +237,9 @@ export default class Mob {
 
     // shielder-аура: -30% урон соседним мобам
     if (this._shieldAura) hullHit *= 0.7;
+    // Окно "последнего рывка" (см. GameScene.onBossLastStand) — временная скидка на
+    // корпусной урон, стакается с обычной shielder-аурой (последовательное умножение).
+    if (this._lastStandShieldTimer > 0) hullHit *= 0.5;
 
     this.hull -= hullHit;
     if (isNaN(this.hull)) this.hull = 0;
@@ -239,6 +289,7 @@ export default class Mob {
     if (!this.alive) return;
 
     if (this._invulTimer > 0) this._invulTimer -= dt;
+    if (this._lastStandShieldTimer > 0) this._lastStandShieldTimer -= dt;
 
     // Plasma Bleed (cannon perk): DOT от последнего попадания пушкой игрока.
     if (this._bleedTimer > 0) {
@@ -337,9 +388,19 @@ export default class Mob {
       if (this.isBoss && this.phase === 1 && this.hull / this.maxHull <= BOSS.enrageAt) {
         this.enterEnrage();
       }
+      // "Последний рывок" — второй скачок опасности у обычных (не данж) секторных
+      // боссов. isDungeonBoss исключает Апофиса и D1-D5/prem кит-боссов — у них уже
+      // есть собственные, специально настроенные многофазные climax'ы
+      // (_updateApophis/_bossKit.phases), не нужно накладывать сверху ещё один.
+      if (this.isBoss && !this.isDungeonBoss && this.phase >= 2 && !this._lastStandDone && this.hull / this.maxHull <= BOSS.lastStandAt) {
+        this._lastStandDone = true;
+        this.phase = 3;
+        this.scene.onBossLastStand?.(this);
+      }
       const enraged   = this.isBoss && this.phase >= 2;
-      const fireMult  = enraged ? BOSS.enrageFireMult  : 1;
-      const speedMult = enraged ? BOSS.enrageSpeedMult : 1;
+      const lastStand = this.isBoss && this.phase >= 3;
+      const fireMult  = lastStand ? BOSS.lastStandFireMult  : enraged ? BOSS.enrageFireMult  : 1;
+      const speedMult = lastStand ? BOSS.lastStandSpeedMult : enraged ? BOSS.enrageSpeedMult : 1;
 
       // Berserker: при HP < 50% — постоянный буфф. Тинт — иначе баф скорости/огня
       // никак не читался визуально, только по цифрам.
@@ -368,10 +429,70 @@ export default class Mob {
       } else {
         // Стандартный aggro
         let targetX = player.x, targetY = player.y;
+        let approachThreshold = this.tpl.range;
+        // Рой дронов: считаем живых сородичей поблизости (не по leader/пачке — так
+        // работает одинаково и для PvP-патрульных дронов, и для волн бронепоезда, у
+        // которых нет общего leader, см. диалог). ≥4 — "большой рой", ведёт себя как
+        // пчёлы (approach/shoot/retreat/circle); меньше — обычное сближение с личным
+        // множителем скорости (см. _speedProfile в constructor).
+        const isSwarmDrone = this.tpl.aiClass === 'swarmDrone';
+        let inBeeCycle = false;
+        if (isSwarmDrone) {
+          const nearby = this.scene.mobs.filter(m => m !== this && m.alive && m.tpl?.aiClass === 'swarmDrone'
+            && Phaser.Math.Distance.Between(m.x, m.y, this.x, this.y) < 500).length + 1;
+          inBeeCycle = nearby >= 4;
+          if (!inBeeCycle) { this._beePhase = 'approach'; this._beePhaseT = 0; } // сброс, если рой поредел
+        }
         if (this.leader && this.leader.alive) {
           const ang = Math.atan2(player.y - this.leader.y, player.x - this.leader.x);
           targetX = this.leader.x + Math.cos(ang) * 120;
           targetY = this.leader.y + Math.sin(ang) * 120;
+        } else if (this.tpl.aiClass === 'sniper') {
+          // Держит дистанцию: убегает если игрок подошёл слишком близко, стоит на
+          // месте в "рабочей полосе", иначе — обычное сближение (targetX/Y уже = игрок).
+          const minR = this.tpl.range * 0.55, maxR = this.tpl.range * 0.9;
+          if (dist < minR) {
+            const ang = Math.atan2(this.y - player.y, this.x - player.x);
+            targetX = this.x + Math.cos(ang) * 300;
+            targetY = this.y + Math.sin(ang) * 300;
+            approachThreshold = 60;
+          } else if (dist <= maxR) {
+            targetX = this.x; targetY = this.y;
+            approachThreshold = 60;
+          }
+        } else if (this.tpl.aiClass === 'flanker') {
+          // Заходит сбоку от игрока (±90° от направления на игрока, сторона
+          // зафиксирована при спавне — см. constructor), а не в лоб.
+          const ang = Math.atan2(player.y - this.y, player.x - this.x) + (Math.PI / 2) * (this._flankSide ?? 1);
+          targetX = player.x + Math.cos(ang) * this.tpl.range * 0.5;
+          targetY = player.y + Math.sin(ang) * this.tpl.range * 0.5;
+          approachThreshold = 60;
+        } else if (inBeeCycle) {
+          // "Пчелиный" цикл большого роя — approach (по умолчанию targetX/Y уже игрок)
+          // → shoot (держит позицию, стреляет) → retreat (прямо от игрока) → circle
+          // (облёт вокруг игрока) → снова approach. Правка по просьбе: "если большой
+          // рой то действовать как пчелы, приближаются, стреляют, отлетают, крутятся".
+          this._beePhaseT -= dt;
+          if (this._beePhase === 'approach') {
+            if (dist < 250) { this._beePhase = 'shoot'; this._beePhaseT = 1.5; }
+          } else if (this._beePhase === 'shoot') {
+            targetX = this.x; targetY = this.y; approachThreshold = 60;
+            if (this._beePhaseT <= 0) { this._beePhase = 'retreat'; this._beePhaseT = 1; }
+          } else if (this._beePhase === 'retreat') {
+            const ang = Math.atan2(this.y - player.y, this.x - player.x);
+            targetX = this.x + Math.cos(ang) * 350; targetY = this.y + Math.sin(ang) * 350;
+            approachThreshold = 60;
+            if (this._beePhaseT <= 0) {
+              this._beePhase = 'circle'; this._beePhaseT = 2;
+              this._orbitAngle = Math.atan2(this.y - player.y, this.x - player.x);
+            }
+          } else if (this._beePhase === 'circle') {
+            this._orbitAngle += this._orbitSpeed * dt;
+            targetX = player.x + Math.cos(this._orbitAngle) * 300;
+            targetY = player.y + Math.sin(this._orbitAngle) * 300;
+            approachThreshold = 60;
+            if (this._beePhaseT <= 0) this._beePhase = 'approach';
+          }
         }
         this.heading = Math.atan2(targetY - this.y, targetX - this.x);
 
@@ -389,10 +510,21 @@ export default class Mob {
           this._noLosT = 0;
         }
 
+        // distToTarget — по умолчанию (targetX/Y = игрок) совпадает с dist, так что
+        // condition эквивалентна старой "dist > range" один-в-один для всех обычных
+        // мобов; sniper/flanker — единственные, у кого targetX/Y НЕ игрок и порог
+        // другой (approachThreshold=60 — "дошёл до тактической точки").
+        const distToTarget = Phaser.Math.Distance.Between(this.x, this.y, targetX, targetY);
         // losBlocked → двигаемся даже в пределах range, чтобы вернуть линию огня
-        if ((dist > this.tpl.range || losBlocked) && fromAnchor < this.leash) {
+        if ((distToTarget > approachThreshold || losBlocked) && fromAnchor < this.leash) {
           moveSpeed = this.tpl.speed * speedMult * berserkSpeed;
           if (!this._steerAroundWalls(dt)) moveSpeed = 0;
+        }
+        // Малая группа дронов-роёв — личный множитель скорости (см. _speedProfile в
+        // constructor); большие рои (inBeeCycle) уже ведут себя иначе через
+        // targetX/Y/approachThreshold выше, множитель им не нужен.
+        if (isSwarmDrone && !inBeeCycle) {
+          moveSpeed *= { stand: 0.15, slow: 0.6, normal: 1.0, fast: 1.4 }[this._speedProfile] ?? 1.0;
         }
 
         // Физическое застревание (клин корпуса на сегментах стены): хотим двигаться,
@@ -469,9 +601,12 @@ export default class Mob {
           }
         }
 
-        // Стрельба
+        // Стрельба — рой в большом цикле стреляет только в фазе 'shoot' (approach/
+        // retreat/circle не открывают огонь, см. диалог "приближаются, стреляют,
+        // отлетают, крутятся" — порядок именно такой, не непрерывный огонь).
+        const swarmCanFire = !isSwarmDrone || !inBeeCycle || this._beePhase === 'shoot';
         this.fireCooldown -= dt;
-        if (dist <= this.tpl.range && fromAnchor < this.leash + 80 && this.fireCooldown <= 0 &&
+        if (swarmCanFire && dist <= this.tpl.range && fromAnchor < this.leash + 80 && this.fireCooldown <= 0 &&
             !this.scene._hasWallBetween?.(this.x, this.y, player.x, player.y)) {
           this.fireCooldown = 1 / (this.tpl.fireRate * fireMult * berserkFire);
           if (this.tpl.aiClass === 'gunner') this.fireCooldown *= 0.8;
@@ -662,6 +797,19 @@ export default class Mob {
     if (kit.scatter) this._updateScatterShot(dt, player, fireProjectile);
     if (kit.minelayer) this._updateMinelayer(dt);
     if (kit.blink) this._updateCloaker(dt, player);
+    // D5: чередующееся щит-закрыт/щит-открыт окно — тот же двухфазный таймер-цикл,
+    // что и у bossHealer (7с/3с), но полная неуязвимость вместо хила (см. takeDamage).
+    if (kit.shieldCycle) {
+      const { closedSec, openSec } = kit.shieldCycle;
+      this._shieldCycleT = this._shieldCycleT ?? openSec;
+      this._shieldCycleT -= dt;
+      if (this._shieldCycleT <= 0) {
+        this._shieldClosed = !this._shieldClosed;
+        this._shieldCycleT = this._shieldClosed ? closedSec : openSec;
+        this.sprite.setTint(this._shieldClosed ? 0x4dd0e1 : 0xffffff);
+        this.scene.log(this._shieldClosed ? '🛡 Щит замкнут — неуязвим!' : '⚡ Щит открыт — атакуйте!');
+      }
+    }
     const dashCd = kit.dash ?? this._kitDashCd; // dashOn-фаза включает дэш позже
     if (dashCd) {
       // первый дэш через полкулдауна — ранний телеграф механики
@@ -722,6 +870,10 @@ export default class Mob {
       // Не блинкуемся в стену или сквозь стену
       if (this.scene._isPointNearWall?.(nx, ny, 70) ||
           this.scene._hasWallBetween?.(this.x, this.y, nx, ny)) return;
+      // D2 кит-босс (см. DUNGEON_BOSS_KIT.dungeon_2.blinkInvuln) — блинк на телепорт
+      // ненадолго неуязвим, вместо просто исчезнувшего-и-снова-целого. Обычные
+      // cloaker-мобы (без _bossKit) это не задевает.
+      if (this._bossKit?.blinkInvuln) this._invulTimer = 0.5;
       this.scene.tweens.add({
         targets: this.sprite, alpha: 0, duration: 150, ease: 'Quad.easeIn',
         onComplete: () => {

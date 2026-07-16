@@ -1,10 +1,12 @@
 import * as Phaser from 'https://cdn.jsdelivr.net/npm/phaser@4.2.1/dist/phaser.esm.js';
-import { COLORS, UI_RES } from '../constants.js';
+import { COLORS, UI_RES, CORP_META } from '../constants.js';
 import { i18n } from '../i18n.js';
 import { profileGetMine, profileUpdate, apiGet, getUsername, changePassword, changeEmail, changeUsername, setSession, verifyEmail, resendVerification } from '../api.js';
 import { SHIP_BY_KEY } from '../ships.js';
 
-// Вкладки: Профиль (текстовые поля) / Корабль (авто+ручной выбор) / Приватность / Аккаунт.
+// Вкладки: Профиль (текстовые поля + приватность + поиск чужого профиля) / Аккаунт
+// (ник/пароль/email + любимый корабль + живая статистика: корпорация/звание/опыт/
+// честь/наигранное время/победы в PvP — см. диалог "вкладка корабль → в аккаунт").
 // Текстовые поля — HTML <input>, наложенные поверх канваса (тот же приём, что чат-инпут
 // и инпут приглашения в группу в HudScene) — у Phaser нет нативного текстового ввода.
 export default class ProfileScene extends Phaser.Scene {
@@ -31,14 +33,23 @@ export default class ProfileScene extends Phaser.Scene {
     this._domForm.addEventListener('submit', e => e.preventDefault());
     Object.assign(this._domForm.style, { position: 'fixed', top: '0', left: '0', margin: '0', padding: '0' });
     document.body.appendChild(this._domForm);
-    this._tabObjs = [[], [], [], []];
+    this._tabObjs = [[], []];
     this._activeTab = 0;
     this._tabBtns = [];
+    this._tabScroll = {};
+    this._tabMaxScroll = {};
 
     const dim = this.add.rectangle(0, 0, W, H, 0x000000, 0.55).setOrigin(0).setDepth(0).setInteractive();
     dim.on('pointerdown', () => this._close());
 
-    const PW = 520, PH = 800; // Account-вкладка: смена ника/пароля/email + подтверждение email — 4 формы
+    // Высота панели фиксирована (комфортно влезает в обычное окно) — вкладка Аккаунт
+    // теперь самая длинная (сюда переехал Корабль + блок статистики, см. диалог) и
+    // почти всегда не умещается целиком, поэтому её тело скроллится колесом мыши
+    // (см. _setupTabScroll/wheel-обработчик ниже) вместо бесконечного роста PH.
+    // 850, не 820: при 820 вкладка Профиль (лукап-кнопка внизу) не помещалась целиком
+    // (нужен был скролл всего на ~22px) — нет настоящего клипа (см. _applyTabVisibility),
+    // поэтому кнопка визуально налезала на нижнюю панель Сохранить/Отмена (баг найден вживую).
+    const PW = 520, PH = 850;
     const px = Math.round((W - PW) / 2), py = Math.round((H - PH) / 2);
     this._px = px; this._py = py;
 
@@ -59,7 +70,7 @@ export default class ProfileScene extends Phaser.Scene {
     closeBtn.on('pointerout',  () => closeBtn.setColor('#335566'));
     closeBtn.on('pointerdown', () => this._close());
 
-    const tabLabels = ['profile.tab_identity', 'profile.tab_ship', 'profile.tab_privacy', 'profile.tab_account'].map(k => i18n.t(k));
+    const tabLabels = ['profile.tab_identity', 'profile.tab_account'].map(k => i18n.t(k));
     const TBY = py + 34, TBH = 30;
     const TBW = Math.floor(PW / tabLabels.length);
     this.add.graphics().setDepth(1).fillStyle(0x050d18, 1).fillRect(px, TBY, PW, TBH);
@@ -81,18 +92,36 @@ export default class ProfileScene extends Phaser.Scene {
     const contentY = TBY + TBH + 14;
     const LX = px + 18, RX = px + PW - 18;
 
-    this._buildIdentityTab(contentY, LX, RX);
-    this._buildShipTab(contentY, LX, RX);
-    this._buildPrivacyTab(contentY, LX, RX);
-    this._buildAccountTab(contentY, LX, RX);
-
-    for (let i = 1; i < this._tabObjs.length; i++) {
-      for (const obj of this._tabObjs[i]) obj.setVisible?.(false);
-    }
-    this._updateTabBtns();
-
     // Bottom buttons
     const btnY = py + PH - 46, BW = 150, BH = 34;
+
+    // Видимая область тела панели (между шапкой вкладок и нижней панелью Сохранить/
+    // Отмена) — контент вкладки, не помещающийся сюда, скроллится колесом мыши.
+    this._viewportTop = contentY;
+    this._viewportBottom = btnY - 10;
+    this._viewportH = this._viewportBottom - this._viewportTop;
+
+    const identityBottom = this._buildIdentityTab(contentY, LX, RX);
+    const accountBottom  = this._buildAccountTab(contentY, LX, RX);
+    this._setupTabScroll(0, identityBottom);
+    this._setupTabScroll(1, accountBottom);
+
+    this.input.on('wheel', (pointer, _over, _dx, dy) => {
+      const max = this._tabMaxScroll[this._activeTab] || 0;
+      if (max <= 0) return;
+      if (pointer.x < px || pointer.x > px + PW || pointer.y < this._viewportTop || pointer.y > this._viewportBottom) return;
+      const next = Phaser.Math.Clamp((this._tabScroll[this._activeTab] || 0) + dy * 0.5, 0, max);
+      this._tabScroll[this._activeTab] = next;
+      for (const o of this._tabObjs[this._activeTab]) if (o._baseY != null) o.y = o._baseY - next;
+      this._applyTabVisibility();
+      // Тот же реприменение, что в _switchTab — иначе секция подтверждения email
+      // при скролле "оживает" по попаданию в видимую область, даже когда уже скрыта.
+      this._setVerifySectionVisible(!!this._emailUnverified);
+      this._layoutDomInputs();
+    });
+
+    this._applyTabVisibility();
+    this._updateTabBtns();
     const saveX = px + PW / 2 - BW - 8, cancelX = px + PW / 2 + 8;
 
     const saveRect = this.add.rectangle(saveX, btnY, BW, BH, 0x0a2030, 1).setOrigin(0).setDepth(9)
@@ -154,6 +183,43 @@ export default class ProfileScene extends Phaser.Scene {
       this._addTextRow(key, i18n.t(labelKey), T, LX, RX, y, 60);
       y += 46;
     }
+    y += 8;
+    this._track(this.add.graphics().setDepth(3).lineStyle(1, COLORS.primary, 0.18).lineBetween(LX, y, RX, y), T);
+    y += 16;
+
+    y = this._buildPrivacyTab(y, LX, RX, T);
+
+    y += 8;
+    this._track(this.add.graphics().setDepth(3).lineStyle(1, COLORS.primary, 0.18).lineBetween(LX, y, RX, y), T);
+    y += 18;
+
+    // ── Просмотр профиля другого игрока по нику ──────────────────────────
+    this._track(this.add.text(LX, y, i18n.t('profile.lookup_title'), this._F('12px', '#4dd0e1')).setDepth(4), T);
+    y += 24;
+    const lookupInput = this._makeAccountInput(T, LX, RX, y, i18n.t('profile.lookup_placeholder'), 'text'); y += 34;
+    const lookupMsg = this._track(this.add.text(LX, y, '', { ...this._F('10px', '#ef5350'), wordWrap: { width: RX - LX } }).setDepth(4), T);
+    y += 22;
+    this._makeAccountButton(T, LX, y, i18n.t('profile.lookup_button'), () => {
+      lookupMsg.setColor('#ef5350').setText('');
+      const name = lookupInput.value.trim();
+      if (!name) return;
+      this._openProfileView(name);
+    });
+    y += 42;
+    return y;
+  }
+
+  // ProfileViewScene должна каждый раз стартовать с чистыми данными для нового ника —
+  // stop-then-launch, а не голый launch() поверх уже открытой (тот же приём, что в
+  // HudScene/ClanScene, см. диалог "не вижу где посмотреть профиль другого игрока").
+  _openProfileView(name) {
+    if (this.scene.isActive('ProfileViewScene')) this.scene.stop('ProfileViewScene');
+    // ProfileViewScene рендерится поверх канваса ProfileScene, но DOM-инпуты (position:fixed,
+    // z-index:1000) о сценах ничего не знают и просвечивают сквозь неё — прячем их, пока
+    // окно чужого профиля открыто, и возвращаем при его закрытии (см. диалог, баг найден вживую).
+    for (const d of this._domInputs) d.el.style.display = 'none';
+    this.scene.launch('ProfileViewScene', { viewName: name });
+    this.scene.get('ProfileViewScene').events.once(Phaser.Scenes.Events.SHUTDOWN, () => this._layoutDomInputs());
   }
 
   _addTextRow(key, label, tabIdx, LX, RX, y, maxLen) {
@@ -191,15 +257,34 @@ export default class ProfileScene extends Phaser.Scene {
 
   _layoutDomInputs() {
     if (!this.game?.canvas) return;
+    // ProfileViewScene рендерится поверх канваса ProfileScene, но DOM-инпуты (position:fixed,
+    // z-index:1000) о сценах ничего не знают — при простом открытии их прятал _openProfileView,
+    // но следующий resize (смена разрешения экрана) снова вызывал этот метод и без этой
+    // проверки заново показывал их поверх открытого чужого профиля (см. диалог, баг найден вживую).
+    if (this.scene.isActive('ProfileViewScene')) {
+      for (const d of this._domInputs) d.el.style.display = 'none';
+      return;
+    }
     const r = this.game.canvas.getBoundingClientRect();
     const sx = r.width / this.scale.width, sy = r.height / this.scale.height;
+    const scroll = this._tabScroll[this._activeTab] || 0;
     for (const d of this._domInputs) {
       const { el, tabIdx, rect } = d;
       if (tabIdx !== this._activeTab || d.hidden) { el.style.display = 'none'; continue; }
+      const y = (d._baseY ?? rect.y) - scroll;
+      // Скроллом уехавшие ЗА ПРЕДЕЛЫ видимой области (целиком ИЛИ частично) инпуты —
+      // просто скрываем. Полное содержание, не "любое пересечение": DOM-инпуты — это
+      // обычные HTML-элементы поверх всего канваса (z-index:1000), их не прикрывает
+      // непрозрачная плашка панели Сохранить/Отмена (та прикрывает только Phaser-объекты,
+      // которые ниже её по depth) — при частичном перекрытии инпут рисовался поверх
+      // кнопок снизу (см. диалог, баг найден вживую на реальном аккаунте).
+      if (this._viewportTop != null && (y < this._viewportTop || y + rect.h > this._viewportBottom)) {
+        el.style.display = 'none'; continue;
+      }
       Object.assign(el.style, {
         display: 'block',
         left:   `${Math.round(r.left + rect.x * sx)}px`,
-        top:    `${Math.round(r.top  + rect.y * sy)}px`,
+        top:    `${Math.round(r.top  + y * sy)}px`,
         width:  `${Math.round(rect.w * sx)}px`,
         height: `${Math.round(rect.h * sy)}px`,
         fontSize: `${Math.round(12 * sy)}px`,
@@ -207,11 +292,24 @@ export default class ProfileScene extends Phaser.Scene {
     }
   }
 
-  // ── Ship tab (auto-suggestion + owned-ship list) ────────────────────
-  _buildShipTab(y, LX, RX) {
-    const T = 1;
+  // Включает скролл для вкладки, если её контент не влезает в видимую область
+  // тела панели (_viewportH) — без этого длинные вкладки требовали бы бесконечно
+  // растущий PH (см. диалог, PH уже трижды подрастал раньше конкретно из-за этого).
+  _setupTabScroll(tabIdx, contentBottom) {
+    const totalH = contentBottom - this._viewportTop;
+    const maxScroll = Math.max(0, Math.round(totalH - this._viewportH));
+    this._tabMaxScroll[tabIdx] = maxScroll;
+    if (maxScroll <= 0) return;
+    for (const o of this._tabObjs[tabIdx]) o._baseY = o.y;
+    for (const d of this._domInputs) if (d.tabIdx === tabIdx) d._baseY = d.rect.y;
+  }
+
+  // ── Любимый корабль: авто-подсказка по наигранному времени + выпадающий список
+  // (не построчный список — иначе высота вкладки растёт линейно от числа купленных
+  // кораблей, см. диалог) — часть вкладки Аккаунт, см. _buildAccountTab. ────────
+  _buildShipSection(y, LX, RX, T) {
     const gs = this._gs;
-    const owned = [...(gs.ownedShips || [])];
+    const owned = [...(gs.ownedShips || [])].filter(k => SHIP_BY_KEY[k]);
     const playTime = gs._shipPlayTimeSec || {};
     this._autoShipKey = Object.entries(playTime).sort((a, b) => b[1] - a[1])[0]?.[0]
       || owned.slice().sort((a, b) => (gs.shipLevels?.[b] || 0) - (gs.shipLevels?.[a] || 0))[0]
@@ -228,42 +326,41 @@ export default class ProfileScene extends Phaser.Scene {
       useBtn.on('pointerdown', () => {
         this._draft.favorite_ship_key = this._autoShipKey;
         this._dirty.add('favorite_ship_key');
-        this._refreshShipRows();
+        if (this._shipSelect) this._shipSelect.value = this._autoShipKey;
       });
       y += 26;
     }
 
     y += 8;
-    this._shipRows = [];
+    const select = document.createElement('select');
+    Object.assign(select.style, {
+      position: 'fixed', background: '#080d1c', border: '1px solid #1e3a4a',
+      color: '#cfd8dc', fontFamily: 'inherit', padding: '0 6px', borderRadius: '4px',
+      outline: 'none', boxSizing: 'border-box', zIndex: '1000', display: 'none',
+    });
     for (const key of owned) {
-      const def = SHIP_BY_KEY[key];
-      if (!def) continue;
-      const RH = 34;
-      const bg = this._track(this.add.rectangle(LX, y, RX - LX, RH - 4, 0x040c18).setOrigin(0).setDepth(3)
-        .setStrokeStyle(1, 0x1a3040, 0.6).setInteractive({ useHandCursor: true }), T);
-      this._track(this.add.text(LX + 10, y + (RH - 4) / 2, i18n.t(def.nameKey), this._F('12px', '#cfe9ee')).setOrigin(0, 0.5).setDepth(4), T);
-      const mark = this._track(this.add.text(RX - 10, y + (RH - 4) / 2, '', this._F('12px', '#4dd0e1')).setOrigin(1, 0.5).setDepth(4), T);
-      bg.on('pointerdown', () => {
-        this._draft.favorite_ship_key = key;
-        this._dirty.add('favorite_ship_key');
-        this._refreshShipRows();
-      });
-      this._shipRows.push({ key, bg, mark });
-      y += RH;
+      const opt = document.createElement('option');
+      opt.value = key;
+      opt.textContent = i18n.t(SHIP_BY_KEY[key].nameKey);
+      select.appendChild(opt);
     }
+    select.addEventListener('keydown', e => { e.stopPropagation(); e.stopImmediatePropagation(); });
+    select.addEventListener('change', () => {
+      this._draft.favorite_ship_key = select.value;
+      this._dirty.add('favorite_ship_key');
+    });
+    this._domForm.appendChild(select);
+    this._domInputs.push({ el: select, key: null, tabIdx: T, rect: { x: LX, y, w: RX - LX, h: 26 } });
+    if (this._draft.favorite_ship_key) select.value = this._draft.favorite_ship_key;
+    this._shipSelect = select;
+    y += 34;
+    return y;
   }
 
-  _refreshShipRows() {
-    for (const row of (this._shipRows || [])) {
-      const active = row.key === this._draft.favorite_ship_key;
-      row.bg.setStrokeStyle(1, active ? COLORS.primary : 0x1a3040, active ? 1 : 0.6);
-      row.mark.setText(active ? '✓' : '');
-    }
-  }
-
-  // ── Privacy tab ──────────────────────────────────────────────────────
-  _buildPrivacyTab(y, LX, RX) {
-    const T = 2;
+  // ── Privacy (часть вкладки Профиль, ниже соцсетей) ──────────────────
+  _buildPrivacyTab(y, LX, RX, T) {
+    this._track(this.add.text(LX, y, i18n.t('profile.tab_privacy'), this._F('12px', '#4dd0e1')).setDepth(4), T);
+    y += 24;
     const opts = [
       ['everyone', 'profile.privacy_everyone'],
       ['friends',  'profile.privacy_friends'],
@@ -284,6 +381,7 @@ export default class ProfileScene extends Phaser.Scene {
       this._privacyRows.push({ val, bg, mark });
       y += RH;
     }
+    return y;
   }
 
   _refreshPrivacyRows() {
@@ -294,9 +392,45 @@ export default class ProfileScene extends Phaser.Scene {
     }
   }
 
-  // ── Account tab (read-only — email change/verification is a later phase) ──
+  // ── Account tab: любимый корабль + статистика + ник/пароль/email ──
   _buildAccountTab(y, LX, RX) {
-    const T = 3;
+    const T = 1;
+    const gs = this._gs;
+
+    // ── Любимый корабль ──
+    this._track(this.add.text(LX, y, i18n.t('profile.tab_ship'), this._F('12px', '#4dd0e1')).setDepth(4), T);
+    y += 24;
+    y = this._buildShipSection(y, LX, RX, T);
+
+    y += 8;
+    this._track(this.add.graphics().setDepth(3).lineStyle(1, COLORS.primary, 0.18).lineBetween(LX, y, RX, y), T);
+    y += 18;
+
+    // ── Статистика — живые данные из GameScene (тот же клиент-доверенный прогресс,
+    // что и весь остальной аккаунт, см. PlayerState.state), кроме побед в PvP
+    // (серверный AuditLog, см. profileGetMine().pvp_wins ниже) ──────────────────
+    this._track(this.add.text(LX, y, i18n.t('profile.stats_title'), this._F('12px', '#4dd0e1')).setDepth(4), T);
+    y += 24;
+    const corpMeta = CORP_META[gs.playerCorp] || CORP_META.neutral;
+    const totalPlayHrs = Math.round((Object.values(gs._shipPlayTimeSec || {}).reduce((a, b) => a + b, 0) / 3600) * 10) / 10;
+    const statRow = (label, value, color) => {
+      this._track(this.add.text(LX, y, label, this._F('11px', '#7eb8c8')).setDepth(4), T);
+      this._track(this.add.text(RX, y, value, this._F('12px', color || '#cfe9ee')).setOrigin(1, 0).setDepth(4), T);
+      y += 24;
+    };
+    statRow(i18n.t('profile.corp_current'), corpMeta.label, corpMeta.color);
+    statRow(i18n.t('profile.rank'), gs.pilotRank?.name || '—');
+    statRow(i18n.t('profile.xp'), Math.round(gs.pilotXp || 0).toLocaleString());
+    statRow(i18n.t('profile.honor'), Math.round(gs.pilotHonor || 0).toLocaleString());
+    statRow(i18n.t('profile.playtime'), totalPlayHrs > 0 ? `${totalPlayHrs} ч` : '—');
+    this._track(this.add.text(LX, y, i18n.t('profile.pvp_wins'), this._F('11px', '#7eb8c8')).setDepth(4), T);
+    this._pvpWinsTxt = this._track(this.add.text(RX, y, '…', this._F('12px', '#cfe9ee')).setOrigin(1, 0).setDepth(4), T);
+    y += 24;
+
+    y += 8;
+    this._track(this.add.graphics().setDepth(3).lineStyle(1, COLORS.primary, 0.18).lineBetween(LX, y, RX, y), T);
+    y += 18;
+
     this._track(this.add.text(LX, y, 'Имя игрока', this._F('11px', '#7eb8c8')).setDepth(4), T);
     const usernameTxt = this._track(this.add.text(LX, y + 18, getUsername(), this._F('13px', '#cfe9ee')).setDepth(4), T);
     y += 40;
@@ -418,6 +552,8 @@ export default class ProfileScene extends Phaser.Scene {
         curPass2Input.value = ''; newEmailInput.value = '';
       } catch (e) { emailMsg.setColor('#ef5350').setText(e.message || 'Ошибка'); }
     });
+    y += 34;
+    return y;
   }
 
   // DOM-инпут без привязки к this._draft (в отличие от _addTextRow) — смена пароля/email
@@ -465,9 +601,8 @@ export default class ProfileScene extends Phaser.Scene {
 
   // ── Tab switching ─────────────────────────────────────────────────────
   _switchTab(idx) {
-    for (const obj of this._tabObjs[this._activeTab]) obj.setVisible?.(false);
     this._activeTab = idx;
-    for (const obj of this._tabObjs[this._activeTab]) obj.setVisible?.(true);
+    this._applyTabVisibility();
     this._updateTabBtns();
     // Блокет "показать все объекты таба" выше не знает про подусловно скрытые
     // элементы (код-подтверждение email видно только если email не подтверждён) —
@@ -475,6 +610,22 @@ export default class ProfileScene extends Phaser.Scene {
     // даже когда email уже подтверждён (см. диалог, баг найден вживую).
     this._setVerifySectionVisible(!!this._emailUnverified);
     this._layoutDomInputs();
+  }
+
+  // WebGL-рендерер игнорирует GameObject.setMask() (см. предупреждение Phaser
+  // "not supported in WebGL" — было найдено вживую: кнопка "Сменить пароль"
+  // рендерилась поверх хотбара при скролле), поэтому клипаем вручную —
+  // скрываем объекты вне видимой области тела панели вместо настоящей маски.
+  _applyTabVisibility() {
+    for (let i = 0; i < this._tabObjs.length; i++) {
+      const active = i === this._activeTab;
+      for (const o of this._tabObjs[i]) {
+        if (!active) { o.setVisible?.(false); continue; }
+        if (o._baseY == null) { o.setVisible?.(true); continue; }
+        const h = o.displayHeight || o.height || 20;
+        o.setVisible?.(o.y + h >= this._viewportTop && o.y <= this._viewportBottom);
+      }
+    }
   }
 
   _updateTabBtns() {
@@ -503,15 +654,17 @@ export default class ProfileScene extends Phaser.Scene {
       this._draft.favorite_ship_key = p.favorite_ship_key || this._autoShipKey || null;
       this._draft.privacy        = p.privacy || 'everyone';
       this._dirty.clear();
+      this._pvpWinsTxt?.setText(String(p.pvp_wins ?? 0));
     } catch (e) {
       console.warn('[ProfileScene] profileGetMine failed (no server session? DEV profile?)', e.message);
+      this._pvpWinsTxt?.setText('—');
     }
     for (const { el, key } of this._domInputs) {
       if (!key) continue; // инпуты аккаунта (смена пароля/email) не привязаны к _draft
       const val = key.startsWith('social_links.') ? this._draft.social_links[key.split('.')[1]] : this._draft[key];
       el.value = val || '';
     }
-    this._refreshShipRows();
+    if (this._shipSelect && this._draft.favorite_ship_key) this._shipSelect.value = this._draft.favorite_ship_key;
     this._refreshPrivacyRows();
   }
 

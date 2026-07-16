@@ -291,6 +291,10 @@ export default class BootScene extends Phaser.Scene {
       // движении (баг из диалога: "похоже на картинку в жаркий день"). Тот же приём,
       // что и у кораблей (targetMax = displaySize × 2) — после препроцесса рантайм-
       // даунскейл становится чистым 2×, mipmapFilter/bilinear на нём стабилен.
+      // NEAREST-фильтр (эксперимент по дребезжанию поезда) ОПРОВЕРГНУТ живым тестом —
+      // "картинка ухудшилась, дёргание осталось": раз убийство linear-блендинга не
+      // убрало артефакт, дело не в текстурной фильтрации вообще — откатываем на
+      // обычный prepShipTex (LINEAR), причина дребезжания ищется дальше в другом месте.
       ...['train_wagon_1', 'train_wagon_2'].map(k => () => prepShipTex(this, k, WAGON_TARGET_LEN * 2)),
       ...['train_head_1', 'train_head_2', 'train_head_3'].map(k => () => prepShipTex(this, k, HEAD_TARGET_LEN * 2)),
       () => prepShipTex(this, 'train_cable', 600),

@@ -1,8 +1,9 @@
 import * as Phaser from 'https://cdn.jsdelivr.net/npm/phaser@4.2.1/dist/phaser.esm.js';
-import { COLORS, UI_RES } from '../constants.js';
+import { COLORS, UI_RES, CORP_META, MOCK_CORP_RATINGS } from '../constants.js';
 import { i18n } from '../i18n.js';
 import { profileGet } from '../api.js';
 import { SHIP_BY_KEY } from '../ships.js';
+import { calculateRating, getRank } from '../ranking.js';
 
 // Read-only попап профиля ДРУГОГО игрока. Отдельная лёгкая сцена (не часть ProfileScene,
 // не в overlays-массиве GameScene.toggleOverlay) — должна открываться ПОВЕРХ любой уже
@@ -20,7 +21,7 @@ export default class ProfileViewScene extends Phaser.Scene {
     const dim = this.add.rectangle(0, 0, W, H, 0x000000, 0.55).setOrigin(0).setDepth(0).setInteractive();
     dim.on('pointerdown', () => this.scene.stop());
 
-    const PW = 400, PH = 420;
+    const PW = 400, PH = 520;
     const px = Math.round((W - PW) / 2), py = Math.round((H - PH) / 2);
 
     const panel = this.add.graphics().setDepth(1);
@@ -106,6 +107,28 @@ export default class ProfileViewScene extends Phaser.Scene {
       cy += 10;
     }
 
+    // Звание — считаем на клиенте той же формулой, что и для своего пилота
+    // (нет живого лидерборда с сервера, только фиксированный мок-пул, см. GameScene).
+    // Корпорация — свой цвет из CORP_META, тот же справочник, что в CorpScene.
+    if (p.xp != null && p.honor != null) {
+      const rating = calculateRating(p.xp, p.honor);
+      const ratings = MOCK_CORP_RATINGS.includes(rating) ? MOCK_CORP_RATINGS : [...MOCK_CORP_RATINGS, rating].sort((a, b) => b - a);
+      const rank = getRank(rating, ratings);
+      this._track(this.add.text(x, cy, rank.name, F('11px', '#ffb74d')));
+      cy += 18;
+    }
+    if (p.corp) {
+      const meta = CORP_META[p.corp] || CORP_META.neutral;
+      this._track(this.add.text(x, cy, meta.label, F('11px', meta.color)));
+      cy += 18;
+    }
+    if (p.clan_name) {
+      const tag = p.clan_tag ? ` [${p.clan_tag}]` : '';
+      this._track(this.add.text(x, cy, `${i18n.t('profileview.guild')}: ${p.clan_name}${tag}`, F('11px', '#9fb3b8')));
+      cy += 18;
+    }
+    cy += 4;
+
     const row = (label, value) => {
       if (!value) return;
       this._track(this.add.text(x, cy, label, F('10px', '#607d8b')));
@@ -127,6 +150,8 @@ export default class ProfileViewScene extends Phaser.Scene {
     if (p.favorite_ship_key && SHIP_BY_KEY[p.favorite_ship_key]) {
       row(i18n.t('profileview.favorite_ship'), i18n.t(SHIP_BY_KEY[p.favorite_ship_key].nameKey));
     }
+    row(i18n.t('profile.playtime'), p.playtime_hours ? `${p.playtime_hours} ч` : null);
+    row(i18n.t('profile.pvp_wins'), p.pvp_wins || null);
 
     if (!p.country && !p.city && !p.goal && !p.favorite_games && !linkParts.length && !p.favorite_ship_key) {
       this._track(this.add.text(x, cy, '— игрок пока не заполнил профиль —', F('11px', '#455a64')));

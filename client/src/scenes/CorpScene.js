@@ -1,5 +1,5 @@
 import * as Phaser from 'https://cdn.jsdelivr.net/npm/phaser@4.2.1/dist/phaser.esm.js';
-import { COLORS, UI_RES } from '../constants.js';
+import { COLORS, UI_RES, CORP_META } from '../constants.js';
 import MiningBase from '../entities/MiningBase.js';
 import { galaxy, SECTORS } from '../galaxy.js';
 
@@ -9,13 +9,6 @@ import { galaxy, SECTORS } from '../galaxy.js';
 // из-за чего колонки КОРП/ОПЫТ начинали налезать друг на друга (см. правку ниже).
 const TF  = { fontFamily: 'Orbitron, sans-serif', resolution: UI_RES };
 const TFD = { fontFamily: 'Inter, sans-serif',    resolution: UI_RES };
-
-const CORP_META = {
-  helios:  { label: 'HELIOS',  color: '#ffb74d', hex: 0xffb74d, fill: 0x1a1200 },
-  karax:   { label: 'KARAX',   color: '#ef5350', hex: 0xef5350, fill: 0x1a0000 },
-  tides:   { label: 'TIDES',   color: '#4dd0e1', hex: 0x4dd0e1, fill: 0x001a1e },
-  neutral: { label: 'НЕЙТРАЛ',color: '#90a4ae', hex: 0x90a4ae, fill: 0x0d1219 },
-};
 
 // Mock leaderboard — stable values, consistent across restarts
 const MOCK_PLAYERS = [
@@ -125,7 +118,9 @@ export default class CorpScene extends Phaser.Scene {
     this._showTab(0, px, tabY + 34, pw, gs);
 
     this.input.keyboard.on('keydown-ESC', () => this.scene.stop());
-    this.input.keyboard.on('keydown-H',   () => this.scene.stop());
+    // 'H' НЕ слушаем тут отдельно — см. тот же фикс/комментарий в MapScene ('M') и
+    // SkillScene ('K'): GameScene тоже слушает эту клавишу, дублирующий self-listener
+    // давал гонку "закрытие само себя переоткрывает".
   }
 
   _showTab(idx, px, cy, pw, gs) {

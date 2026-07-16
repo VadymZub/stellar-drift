@@ -77,7 +77,9 @@ export default class MissionsScene extends Phaser.Scene {
     this._renderDetail(px + listW + 16, contentY, detW, contentH, selMission, gs);
 
     this.input.keyboard.on('keydown-ESC', () => this.scene.stop());
-    this.input.keyboard.on('keydown-O',   () => this.scene.stop());
+    // 'O' НЕ слушаем тут отдельно — тот же фикс, что у MapScene/'M', SkillScene/'K',
+    // CorpScene/'H', ClanScene/'N': GameScene тоже слушает эту клавишу, дублирующий
+    // self-listener давал гонку "закрытие само себя переоткрывает".
   }
 
   _missionStatus(gs, id) {

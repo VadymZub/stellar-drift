@@ -642,7 +642,7 @@ pvp_room_manager = PvpRoomManager()
 TURRETS_PER_WAGON = 4
 HEAD_WAGON_IDX = 3  # зеркало client/src/constants.js ARMORED_TRAIN_WAGON_COUNT (3 + голова)
 TRAIN_MISSILE_DMG = 3000.0
-TRAIN_MISSILE_DMG_HEAD = 6000.0
+TRAIN_MISSILE_DMG_HEAD = 4500.0  # ×1.5 обычного (было ×2 = 6000 — правка по просьбе)
 TRAIN_MISSILE_COOLDOWN = 10.0
 TRAIN_MISSILE_PENETRATION = 0.15
 TRAIN_MISSILES_PER_VOLLEY = 8
@@ -991,18 +991,42 @@ def _sector_pvp_tier(sector: str) -> int:
 
 async def _distribute_train_damage(targets: list["PvpPlayerState"], total_shots: int,
                                     dmg_per_shot: float, penetration: float,
-                                    train_key: str, wagon_idx: int, weapon: str):
+                                    train_key: str, wagon_idx: int, weapon: str,
+                                    num_groups: int = 1):
     """Раздаёт total_shots "попаданий" круговым round-robin между targets — суммарный
     урон залпа не растёт с числом игроков в комнате (один заберёт все total_shots,
     несколько — поделят), см. AskUserQuestion "распределить суммарный урон (рекомендую)".
     Один игрок — одна общая заявка _apply_pvp_damage (не по отдельному попаданию) —
-    это статичный хазард без личного крита/уклонения атакующего, отдельные роллы не нужны."""
+    это статичный хазард без личного крита/уклонения атакующего, отдельные роллы не нужны.
+
+    num_groups>1 — залп с нескольких независимых "бортов" (см. _fire_train_missiles:
+    4 ракеты с каждого борта). Сервер НЕ знает реальную позицию поезда/игроков (см.
+    диалог — сознательно не портировали геометрию движения поезда в Python), поэтому
+    "борт" каждого игрока — стабильная (по user_id, не случайная от тика к тику)
+    привязка, а не настоящая геометрия. Каждая группа раздаёт СВОЮ долю снарядов ТОЛЬКО
+    своим игрокам — если на борту никого нет, его снаряды в этот залп ни в кого не
+    попадают, а не "долетают" через весь поезд до игрока с другого борта, как было
+    раньше (баг из диалога: "с одного борта 4 ракеты - если игрок с одной стороны то
+    только 4 ракеты попадать должны, 4 остальных должны лететь в другую сторону")."""
     if not targets:
         return
     hits: dict[int, int] = {}
-    for i in range(total_shots):
-        p = targets[i % len(targets)]
-        hits[p.user_id] = hits.get(p.user_id, 0) + 1
+    if num_groups <= 1:
+        for i in range(total_shots):
+            p = targets[i % len(targets)]
+            hits[p.user_id] = hits.get(p.user_id, 0) + 1
+    else:
+        sorted_targets = sorted(targets, key=lambda p: p.user_id)
+        groups: list[list["PvpPlayerState"]] = [[] for _ in range(num_groups)]
+        for i, p in enumerate(sorted_targets):
+            groups[i % num_groups].append(p)
+        shots_per_group = total_shots // num_groups
+        for g in groups:
+            if not g:
+                continue
+            for i in range(shots_per_group):
+                p = g[i % len(g)]
+                hits[p.user_id] = hits.get(p.user_id, 0) + 1
     out_hits = []
     for p in targets:
         n = hits.get(p.user_id, 0)
@@ -1031,8 +1055,11 @@ async def _fire_train_missiles(train_key: str, wagon_idx: int, targets: list["Pv
     sector = train_key.split(':', 1)[0]
     mult = _turret_damage_mult(_sector_pvp_tier(sector))
     dmg = (TRAIN_MISSILE_DMG_HEAD if wagon_idx == HEAD_WAGON_IDX else TRAIN_MISSILE_DMG) * mult
+    # num_groups=2 — 2 борта по 4 ракеты (см. _distribute_train_damage) — солист теперь
+    # получает максимум 4 ракеты за залп, а не все 8.
     await _distribute_train_damage(targets, TRAIN_MISSILES_PER_VOLLEY, dmg,
-                                    TRAIN_MISSILE_PENETRATION, train_key, wagon_idx, 'missile')
+                                    TRAIN_MISSILE_PENETRATION, train_key, wagon_idx, 'missile',
+                                    num_groups=2)
 
 
 async def _fire_core_volley(train_key: str, targets: list["PvpPlayerState"]):
@@ -1574,9 +1601,22 @@ async def save_state(
 
 # ── Player profile ────────────────────────────────────────────────────
 
-def _profile_to_response(user: User, pp: PlayerProfile | None) -> ProfileSelfResponse:
+async def _pvp_win_count(username: str, db: AsyncSession) -> int:
+    # PvP-победы не хранятся как отдельный счётчик — считаем по AuditLog(action='pvp_kill'),
+    # который сервер и так пишет на каждое убийство (см. pvp_hit-обработчик выше). json_extract
+    # работает через встроенный SQLite JSON1 (доступен в любой современной сборке sqlite3).
+    result = await db.execute(
+        select(func.count()).select_from(AuditLog).where(
+            AuditLog.action == 'pvp_kill',
+            func.json_extract(AuditLog.params, '$.killer') == username,
+        )
+    )
+    return result.scalar_one() or 0
+
+
+def _profile_to_response(user: User, pp: PlayerProfile | None, pvp_wins: int = 0) -> ProfileSelfResponse:
     if not pp:
-        return ProfileSelfResponse(username=user.username)
+        return ProfileSelfResponse(username=user.username, pvp_wins=pvp_wins)
     effective_ship = pp.favorite_ship_key if pp.favorite_ship_is_manual else pp.favorite_ship_auto
     return ProfileSelfResponse(
         username=user.username,
@@ -1590,6 +1630,7 @@ def _profile_to_response(user: User, pp: PlayerProfile | None) -> ProfileSelfRes
         favorite_ship_is_manual=bool(pp.favorite_ship_is_manual),
         privacy=pp.privacy,
         updated_at=pp.updated_at,
+        pvp_wins=pvp_wins,
     )
 
 
@@ -1604,7 +1645,8 @@ async def _owned_ships(user_id: int, db: AsyncSession) -> set:
 @app.get("/player/profile", response_model=ProfileSelfResponse)
 async def get_profile(user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     pp = (await db.execute(select(PlayerProfile).where(PlayerProfile.user_id == user.id))).scalar_one_or_none()
-    return _profile_to_response(user, pp)
+    pvp_wins = await _pvp_win_count(user.username, db)
+    return _profile_to_response(user, pp, pvp_wins)
 
 
 @app.patch("/player/profile", response_model=ProfileSelfResponse)
@@ -1645,7 +1687,8 @@ async def update_profile(
 
     await db.commit()
     await db.refresh(pp)
-    return _profile_to_response(user, pp)
+    pvp_wins = await _pvp_win_count(user.username, db)
+    return _profile_to_response(user, pp, pvp_wins)
 
 
 MAX_PILOT_LEVEL = 50
@@ -1717,10 +1760,17 @@ async def get_public_profile(
     state = (ps.state or {}) if ps else {}
     xp    = state.get('pilotXp') or 0
     honor = state.get('pilotHonor')
+    corp  = state.get('playerCorp')
+    playtime_sec = sum((state.get('shipPlayTimeSec') or {}).values())
+    # Гильдии — целиком клиент-доверенная моковая система (нет отдельной таблицы,
+    # см. ClanScene/GameScene._serializeState), поэтому читаем как есть из state.clan.
+    clan = state.get('clan') or {}
 
     effective_ship = None
     if pp:
         effective_ship = pp.favorite_ship_key if pp.favorite_ship_is_manual else pp.favorite_ship_auto
+
+    pvp_wins = await _pvp_win_count(target.username, db)
 
     return ProfilePublicResponse(
         username=target.username,
@@ -1732,7 +1782,13 @@ async def get_public_profile(
         social_links=(pp.social_links or {}) if pp else {},
         favorite_ship_key=effective_ship,
         level=_level_from_xp(xp),
+        xp=xp,
         honor=honor,
+        corp=corp,
+        pvp_wins=pvp_wins,
+        playtime_hours=round(playtime_sec / 3600, 1) if playtime_sec else None,
+        clan_name=clan.get('name'),
+        clan_tag=clan.get('tag'),
     )
 
 
@@ -3162,11 +3218,29 @@ async def chat_ws(
                     continue
                 x = float(data.get('x', 0) or 0)
                 y = float(data.get('y', 0) or 0)
-                loot_id = f"wagonloot:{sector}:{int(time.time() * 1000)}:{user.id}"
+                # +random-суффикс — с личными бандл-коробками на игрока (см. диалог: "1 коробка
+                # на 1 игрока") один и тот же клиент шлёт НЕСКОЛЬКО таких заявок подряд без
+                # паузы; timestamp_ms:user_id одинаков для запросов, попавших в одну и ту же
+                # миллисекунду — коллизия loot_id тихо перезаписывала бы (и теряла) более
+                # раннюю коробку в pvp_room_manager.loot_rooms (dict по loot_id).
+                loot_id = f"wagonloot:{sector}:{int(time.time() * 1000)}:{user.id}:{random.randint(0, 999999)}"
                 pvp_room_manager.spawn_loot(sector, loot_id, x, y, item, eligible)
                 await chat_manager.broadcast_to_uids(eligible, {
                     'type': 'pvp_loot_spawned', 'lootId': loot_id, 'x': x, 'y': y, 'item': item,
                 })
+
+            # ── Бронепоезд: локальный ArmoredTrain клиента закончился (все вагоны
+            #    уничтожены ИЛИ истёк маршрутный таймаут — см. ArmoredTrain._markFinished) —
+            #    чистим turret_kills/missile_ready_at/core_turret для этого train_key.
+            #    Раньше ArmoredTrainManager.cleanup() существовал, но его никто не звал —
+            #    _train_weapon_tick_loop продолжал слать залпы уже несуществующего поезда
+            #    бесконечно (баг из диалога: "урон после уничтожения поезда продолжает
+            #    убивать игрока"). Идемпотентно — можно звать с любого клиента комнаты
+            #    независимо, cleanup() просто молча no-op'ит на уже отсутствующих ключах.
+            elif msg_type == 'pvp_train_finished':
+                train_key = str(data.get('trainKey', ''))[:80]
+                if train_key:
+                    armored_train_manager.cleanup(train_key)
 
             # ── PvP: заявка на подбор общего лут-бокса — первый успешный клейм
             #    забирает; остальным eligible-игрокам разослать "коробки больше нет" ─

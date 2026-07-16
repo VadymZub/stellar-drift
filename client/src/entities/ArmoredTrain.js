@@ -3,9 +3,9 @@ import { BASE_CONFIG, pvpTierMult, CORP_ASSETS, TURRET_ORIGIN } from '../bases.j
 import {
   MOBS, ARMORED_TRAIN_SECTORS, ARMORED_TRAIN_HEAD_MULT, ARMORED_TRAIN_WAGON_COUNT,
   ARMORED_TRAIN_WINDOW_MS, ARMORED_TRAIN_DRONE_WAVE_SIZE, ARMORED_TRAIN_HEAD_PHASES,
-  ARMORED_TRAIN_WAGON_DAMAGED_AT,
+  ARMORED_TRAIN_WAGON_DAMAGED_AT, TURRET_REWARD,
 } from '../constants.js';
-import Mob from './Mob.js';
+import Mob, { applySeparation } from './Mob.js';
 import { prerenderTex } from '../utils/prerenderTex.js';
 
 /**
@@ -41,8 +41,8 @@ const WAGON_TURRET_COUNT = 4;
 // новое число, менять здесь и перезапускать сектор на каждую попытку.
 // Финальные цифры — из живой DEV-калибровки (','/'.' + 'L', см. GameScene) 2026-07-13,
 // не расчёт/угадывание.
-let WAGON_TARGET_LEN = 609; // fit-height цель для обычного вагона (train1_*.png)
-let HEAD_TARGET_LEN  = 609; // одинаковый масштаб с вагоном
+export let WAGON_TARGET_LEN = 609; // fit-height цель для обычного вагона (train1_*.png)
+export let HEAD_TARGET_LEN  = 609; // одинаковый масштаб с вагоном
 // Между центрами соседних вагонов вдоль пути — раздвинуто хоткеями ';'/'\'' (adjustGap)
 // 2026-07-13 под итоговую длину тросов (зазор край-в-край = 690-609 = 81px).
 export let WAGON_GAP = 690;
@@ -147,6 +147,11 @@ class TrainTurretTarget {
   // Часть 6 (не 4, как у самого вагона) — сервер гейтит "бить строго с хвоста" только
   // 4-частные id (см. main.py pvp_mob_fire_claim), турели вне этой очереди, как и дроны.
   get pvpMobId() { return `${this.wagon.pvpMobId}:turret:${this.idx}`; }
+  // Небольшая награда за уничтожение турели поезда (см. TURRET_REWARD в constants.js) —
+  // читается GameScene тем же generic-путём, что и у самого вагона (см. mobFireClaim,
+  // GameScene.js: `t.wagonReward`) — раньше турель этого геттера не имела вообще, урон
+  // доходил до сервера, но killed-ветка никого не награждала (баг из диалога).
+  get wagonReward() { return TURRET_REWARD[this.wagon.train.tier] ?? TURRET_REWARD[1]; }
 
   // Локальный фоллбэк без сервера — см. GameScene._localPvpFireResolve. В обычной игре
   // урон турели идёт через сервер (mobFireClaim), это не вызывается.
@@ -160,6 +165,74 @@ class TrainTurretTarget {
     this.hull -= hullHit;
     const killed = this.hull <= 0;
     if (killed) { this.alive = false; this.wagon.onTurretDestroyed(this.idx); }
+    return { hullHit, shieldHit, killed };
+  }
+}
+
+// Центральная ротационная турель головы — "вырастает" в опустевшем гнезде между 4
+// турелями головы, ТОЛЬКО когда все 4 уже уничтожены (см. ArmoredTrain._spawnHeadCoreTurret,
+// диалог: "ротационная многонаправленная турель, вырастает из места посередине между
+// турелями"). Отдельная от TrainTurretTarget цель (не входит в wagon.turrets[4] — тот
+// массив жёстко индексирован под 4 сокета _updateTurrets), но помечена
+// isTrainTurretTarget=true, чтобы бесплатно подхватить ВЕСЬ существующий боевой пайплайн
+// GameScene (клик-таргетинг/канон-урон/DEV-фоллбэк/награда) без отдельных веток под неё.
+class TrainCoreTurret {
+  constructor(wagon) {
+    this.wagon = wagon;
+    this.isTrainTurretTarget = true;
+    this.isTrainCoreTurret = true; // отличить от обычной турели там, где это важно (арт/лог)
+
+    const mult = pvpTierMult(wagon.train.tier);
+    // Прочнее обычной турели головы (cannon2 ×4) — это "последний рубеж", а не рядовой
+    // сокет (прямая правка по просьбе — было ×1.5, мало для финальной структуры).
+    this.maxHull   = BASE_CONFIG.turretHullMax.cannon2   * mult * 4;
+    this.maxShield = BASE_CONFIG.turretShieldMax.cannon2 * mult * 4;
+    this.hull   = this.maxHull;
+    this.shield = this.maxShield;
+    this.lastDamageAt = -1e9;
+    this.alive = true;
+    this._fireCd = 3; // первый залп чуть раньше полного 5с — сразу читается как новая угроза
+    // Между ЗАДНЕЙ парой турельных сокетов головы (HEAD_TURRET_OFFSETS[2]/[3] —
+    // rear-left/rear-right), не в центре вагона и не сдвигом вперёд (обе предыдущие
+    // попытки: сперва совпадала с вагоном, потом отрывалась сбоку в пустоту — см.
+    // скриншоты из диалога). Правка по последнему скриншоту с разметкой: "перенеси
+    // ротационную турель сюда, ближе к задней части" — та же локальная система
+    // координат и формула поворота, что и у самих турельных сокетов (_updateTurrets).
+    this._localLx = 0;
+    this._localLy = (HEAD_TURRET_OFFSETS[2].ly + HEAD_TURRET_OFFSETS[3].ly) / 2;
+  }
+
+  get x() {
+    const rot = this.wagon.train._wagonRot(this.wagon);
+    const lx = this._localLx * this.wagon.dispW, ly = this._localLy * this.wagon.dispLen;
+    return this.wagon.x + lx * Math.cos(rot) - ly * Math.sin(rot);
+  }
+  get y() {
+    const rot = this.wagon.train._wagonRot(this.wagon);
+    const lx = this._localLx * this.wagon.dispW, ly = this._localLy * this.wagon.dispLen;
+    return this.wagon.y + lx * Math.sin(rot) + ly * Math.cos(rot);
+  }
+  get corp() { return null; } // см. TrainTurretTarget.corp выше — тот же контракт
+  get canBeAttacked() { return this.alive && this.wagon.alive && this.wagon.train._inBounds(this.x, this.y); }
+  get pvpMobId() { return `${this.wagon.pvpMobId}:core`; }
+  // ×4 обычной турельной награды (прямая правка по просьбе, тот же множитель, что и у
+  // прочности выше) — это финальная структура, а не рядовая турель.
+  get wagonReward() {
+    const base = TURRET_REWARD[this.wagon.train.tier] ?? TURRET_REWARD[1];
+    return Object.fromEntries(Object.entries(base).map(([k, v]) => [k, Math.round(v * 4)]));
+  }
+
+  // Локальный фоллбэк без сервера — см. TrainTurretTarget.takeDamage (тот же контракт).
+  takeDamage(damage) {
+    if (!this.canBeAttacked) return { hullHit: 0, shieldHit: 0, killed: false };
+    this.lastDamageAt = Date.now();
+    let dmg = Math.round(damage);
+    let shieldHit = 0;
+    if (this.shield > 0) { shieldHit = Math.min(dmg, this.shield); this.shield -= shieldHit; dmg -= shieldHit; }
+    const hullHit = Math.min(dmg, this.hull);
+    this.hull -= hullHit;
+    const killed = this.hull <= 0;
+    if (killed) { this.alive = false; this.wagon.train._onCoreTurretDestroyed(); }
     return { hullHit, shieldHit, killed };
   }
 }
@@ -203,9 +276,24 @@ class ArmoredTrainWagon {
   // Турель уничтожена индивидуально — освобождаем визуальный слот, сам вагон не трогаем
   // (в отличие от onWagonDestroyed на ArmoredTrain, который сносит весь вагон).
   onTurretDestroyed(idx) {
+    // x/y — из TrainTurretTarget (обновляются каждый кадр в _updateTurrets), берём ДО
+    // destroy() спрайта. Раньше турель просто исчезала без VFX (баг из диалога:
+    // "отсутствует анимация взрыва турели") — та же explosion(), что у вагона/обычного моба.
+    const tt = this.turrets[idx];
+    this.train.scene.explosion?.(tt.x, tt.y, 0.6);
     this._turretSprites?.[idx]?.destroy();
     if (this._turretSprites) this._turretSprites[idx] = null;
     this.train.scene.log?.(`Турель бронепоезда уничтожена (вагон ${this.idx + 1})`);
+
+    // Все 4 турели вагона мертвы — вагон "оголён", получает ракетный бортовой залп
+    // взамен (диалог: "после уничтожения турелей - ракетный залп с бортов"). Решение
+    // "когда стрелять" теперь полностью серверное (см. ArmoredTrainManager.arm_missiles
+    // в server/main.py, включая 4с задержку перед первым залпом) — здесь только визуал
+    // (playMissileVolleyVfx), см. GameScene._onTrainWeaponFire.
+    if (!this.turretsGone && this.turrets.every(t => !t.alive)) {
+      this.turretsGone = true;
+      if (this.isHead) this.train._spawnHeadCoreTurret(this);
+    }
   }
 
   // pvpMobId детерминирован (sector:startAt:idx) — все клиенты, атакующие один и тот
@@ -346,6 +434,13 @@ export default class ArmoredTrain {
 
     this._tetherPhase = 0;
     this._tetherSprites = [];
+    // Ракетный бортовой залп оголённых вагонов (см. ArmoredTrainWagon.onTurretDestroyed,
+    // playMissileVolleyVfx/_updateMissiles) — визуал/самонаведение скопированы с
+    // ArgusController._activateMissiles/_updateMissiles (диалог: "анимация ракеты как у
+    // аргуса"). Server-authoritative: сервер решает залп/урон (server _fire_train_missiles),
+    // клиент здесь только рисует полёт по broadcast'у (см. GameScene._onTrainWeaponFire).
+    this._missiles = [];
+    this._missileGfx = null;
     for (const w of this.wagons) this._buildWagonVisual(w);
     this._positionAll(0);
   }
@@ -476,6 +571,15 @@ export default class ArmoredTrain {
       w.x = headX - this._dirX * behind;
       w.y = headY - this._dirY * behind;
       if (w.sprite) {
+        // Round(w.x/y) ЗДЕСЬ — ОШИБКА, найдено диагностикой: на этапе подъезда (быстро)
+        // квантование в 1px — незаметная доля кадрового смещения, но на крейсерской фазе
+        // (медленно, суб-пиксельное движение за кадр) то же округление даёт неровный
+        // "ступенчатый" ход вместо плавного скольжения — именно это и читалось как
+        // "дрожание", СИЛЬНЕЕ на медленном участке (баг из диалога: "пока выезжает
+        // быстрее — дрожание едва заметно, но на самой карте стаёт сильным"). camera.
+        // roundPixels=true (GameScene.js) уже сам выравнивает финальный экранный кадр —
+        // повторное квантование позиции ДО этого шага только портит суб-пиксельную
+        // точность медленного хода. w.x/w.y остаются float, спрайту — тоже float.
         w.sprite.setPosition(w.x, w.y);
         w.sprite.setRotation(this._wagonRot(w));
       }
@@ -601,7 +705,14 @@ export default class ArmoredTrain {
   // — 2×2 сетка (свой массив на вагон/голову, см. _turretOffsetsFor), повёрнутая на тот
   // же угол, что и корпус сегмента.
   _updateTurrets(dt, player) {
-    if (!player?.alive) return;
+    // Раньше гейтилось на player.alive — как только ЛОКАЛЬНЫЙ игрок умирал, вся функция
+    // (для ВСЕХ вагонов) выходила сразу, турели визуально замирали, хотя поезд продолжал
+    // ехать (баг из диалога: "после убийства корабля... поезд движется, турели остановились").
+    // Ниже уже есть per-турельный гейт по РЕАЛЬНОЙ цели (targetEntity, строка ~653) —
+    // сервер может назначить турель другому живому игроку комнаты, и он должен доворачиваться/
+    // стрелять по нему, даже если ЭТОТ клиент только наблюдает труп своего игрока.
+    // Нужен лишь сам объект player (как дефолтный фоллбэк-таргет ниже), не его .alive.
+    if (!player) return;
     for (const w of this.wagons) {
       if (!w.alive) continue;
       // Головной вагон — турели "2-го уровня" (cannon2: вдвое прочнее/сильнее cannon1,
@@ -615,10 +726,17 @@ export default class ArmoredTrain {
       // рассчитаны по старому углу и разъехались бы с уже перевёрнутым спрайтом.
       const rot = this._wagonRot(w);
       const cosR = Math.cos(rot), sinR = Math.sin(rot);
+      // Корпус вагона теперь рисуется в СЫРОМ w.x/y (см. _positionAllAt — Math.round там
+      // был ошибкой, диагностика нашла настоящую причину дрожания на медленном крейсерском
+      // участке). Турели считаем от ТОГО ЖЕ сырого якоря, тем же способом (не округляем
+      // офсет/финальную позицию) — иначе они снова разошлись бы по фазе с корпусом кадр
+      // от кадра (тот же класс бага, что уже чинили: "турели как будто болтаются -
+      // скользят на корпусе").
+      const bx = w.x, by = w.y;
       this._turretOffsetsFor(w).forEach((off, i) => {
         const lx = off.lx * w.dispW, ly = off.ly * w.dispLen;
-        const ox = w.x + lx * cosR - ly * sinR;
-        const oy = w.y + lx * sinR + ly * cosR;
+        const ox = bx + lx * cosR - ly * sinR;
+        const oy = by + lx * sinR + ly * cosR;
         // Позиция нужна TrainTurretTarget.x/y (клик-таргетинг/урон) даже для уже
         // уничтоженной турели не важна, но для живой — единственное место, где считается.
         const tt = w.turrets[i];
@@ -660,11 +778,22 @@ export default class ArmoredTrain {
         // делает почти разворот на 180° и по пути визуально проходит сквозь корпус/другую
         // турель. "Внешнее" направление сокета — от центра сегмента К сокету (off.lx/ly),
         // довёрнутое на тот же rot, что и позиция. Зажимаем угол наведения в пределах
-        // ±100° от этого направления — турель довернётся максимально близко к игроку, но
-        // не станет разворачиваться через собственный корпус.
+        // ±140° от этого направления (было ±100° — 4 сокета математически покрывали все
+        // 360° без дыр, но в любой момент только 1-2 из 4 реально держали цель в секторе,
+        // остальные корректно молчали — с игровой стороны это читалось как "турели не
+        // стреляют", см. диалог). ±140° даёт кратный запас перекрытия между соседними
+        // секторами (макс. разрыв между центрами соседних сокетов ~121°), но всё ещё
+        // меньше 180° — ствол не разворачивается через сам корпус вагона.
         const arcCenter = Math.atan2(off.ly, off.lx) + rot;
         const arcDiff = Phaser.Math.Angle.Wrap(rawAngle - arcCenter);
-        const ARC_HALF = Math.PI * (100 / 180);
+        // Сокеты идут парами по борту (0/1 — передняя пара, 2/3 — задняя, см.
+        // WAGON_TURRET_OFFSETS/HEAD_TURRET_OFFSETS: лево/право зеркальны по lx при
+        // одинаковом ly) — ограничение ±140° существует, чтобы ствол не разворачивался
+        // через корпус К СОСЕДНЕЙ турели той же пары. Если соседка уже уничтожена — там
+        // больше нечего огибать, доступны все 360° (правка по просьбе).
+        const NEIGHBOR_IDX = [1, 0, 3, 2];
+        const neighborAlive = w.turrets[NEIGHBOR_IDX[i]]?.alive ?? false;
+        const ARC_HALF = neighborAlive ? Math.PI * (140 / 180) : Math.PI;
         const clampedAngle = arcCenter + Phaser.Math.Clamp(arcDiff, -ARC_HALF, ARC_HALF);
         const targetAngle = clampedAngle + Math.PI / 2;
         const diff = Phaser.Math.Angle.Wrap(targetAngle - spr.rotation);
@@ -717,8 +846,33 @@ export default class ArmoredTrain {
       }
       this.scene.mobs.push(m);
       this._drones.push(m);
+      this._spawnDroneFlyoutFx(m, cx, cy, x, y);
     }
     this.scene.log?.(`⚠ Бронепоезд: волна дронов охраны (фаза ${phase + 1})!`);
+  }
+
+  // Косметика "вылета" дрона из головного вагона: реальный спрайт (уже созданный
+  // Mob с корректной физикой/якорем в целевой точке) скрыт до конца твина,
+  // призрак-копия летит cx,cy → x,y и исчезает. Никак не влияет на AI/leash.
+  _spawnDroneFlyoutFx(m, cx, cy, x, y) {
+    if (!m.sprite) return;
+    m.sprite.setVisible(false);
+    const ghost = this.scene.add.image(cx, cy, m.sprite.texture.key)
+      .setDisplaySize(m.sprite.displayWidth, m.sprite.displayHeight)
+      .setDepth(m.sprite.depth)
+      .setAlpha(0.4).setScale(0.4);
+    this.scene.tweens.add({
+      targets: ghost,
+      x, y,
+      alpha: 1,
+      scaleX: m.sprite.scaleX, scaleY: m.sprite.scaleY,
+      duration: 400,
+      ease: 'Cubic.easeOut',
+      onComplete: () => {
+        ghost.destroy();
+        if (m.alive) m.sprite?.setVisible(true);
+      }
+    });
   }
 
   // Дроны — Mob.js держит поводок (leash) от НЕПОДВИЖНОЙ this.spawnX/Y (штатный
@@ -730,6 +884,163 @@ export default class ArmoredTrain {
   // (спавнить точку возврата больше некуда) — оставшиеся дроны не разлетаются дальше.
   // Плюс лёгкое взаимное отталкивание ("рой") — иначе восьмёрка дронов на одной и той же
   // аггро-точке визуально слипается в стопку.
+  // idx → объект вагона (голова тоже в this.wagons, последним элементом — см. конструктор).
+  _wagonByIdx(idx) {
+    return this.wagons[idx];
+  }
+
+  // Вызывается из GameScene._onTrainWeaponFire — сервер УЖЕ решил залп, распределил
+  // урон между целями и применил его (см. server _fire_train_missiles/
+  // _distribute_train_damage, план "Полностью серверное"). Здесь только визуал: летящие
+  // самонаводящиеся снаряды с борта до последней известной позиции каждой цели,
+  // 1:1 с реальным числом "попаданий", доставшихся ей (hits[].hits) — не всегда 4 на
+  // борт, если урон был распределён между несколькими игроками.
+  playMissileVolleyVfx(wagonIdx, hits) {
+    const wagon = this._wagonByIdx(wagonIdx);
+    if (!wagon?.alive || !hits?.length) return;
+    const gs = this.scene;
+    const rot = this._wagonRot(wagon);
+    // Борт = перпендикуляр к курсу вагона (тот же rot, что и у турельных сокетов) —
+    // левая/правая точка запуска, а не 4 отдельных сокета (турели уже мертвы к этому
+    // моменту, их гнёзда пустуют — новый залп не привязан к конкретным турельным точкам).
+    const perpX = -Math.sin(rot), perpY = Math.cos(rot);
+    const sideOffset = wagon.dispW * 0.5;
+    const sides = [
+      { x: wagon.x - perpX * sideOffset, y: wagon.y - perpY * sideOffset },
+      { x: wagon.x + perpX * sideOffset, y: wagon.y + perpY * sideOffset },
+    ];
+    this._missileGfx ??= gs.add.graphics().setDepth(56);
+    let i = 0;
+    for (const h of hits) {
+      const target = h.uid === gs.myUserId ? gs.player : gs.pvpClient?.players?.get(h.uid);
+      if (!target?.alive) { i += h.hits; continue; }
+      for (let s = 0; s < h.hits; s++) {
+        const side = sides[i % 2];
+        const baseAngle = Math.atan2(target.y - side.y, target.x - side.x) + (s - (h.hits - 1) / 2) * 0.12;
+        this._missiles.push({ x: side.x, y: side.y, angle: baseAngle, speed: 620, target, life: 3.5, hit: false });
+        i++;
+      }
+    }
+    gs.log?.(`🚀 Поезд: ракетный залп с борта (вагон ${wagon.idx + 1})`);
+  }
+
+  // Полёт/самонаведение/попадание — визуал скопирован с ArgusController._updateMissiles
+  // (тот же корпус+нос+хвостовой шлейф). Чисто косметическая симуляция — реальный урон
+  // уже применён сервером ДО того, как этот метод вообще узнал о залпе (см.
+  // playMissileVolleyVfx), поэтому попадание тут — только explosion(), без takeDamage/
+  // hitFlash/mobAttackVfx (те теперь в GameScene._onTrainWeaponFire, один раз на весь
+  // залп, а не по факту долёта каждого отдельного визуального снаряда).
+  _updateMissiles(dt) {
+    if (!this._missiles.length) return;
+    const gs = this.scene;
+    this._missileGfx.clear();
+    let anyAlive = false;
+
+    for (const m of this._missiles) {
+      if (m.hit || m.life <= 0) continue;
+      anyAlive = true;
+      m.life -= dt;
+
+      if (m.target?.alive) {
+        const desired = Math.atan2(m.target.y - m.y, m.target.x - m.x);
+        let diff = desired - m.angle;
+        diff = ((diff + Math.PI) % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2) - Math.PI;
+        const turn = Math.min(Math.abs(diff), 4.5 * dt);
+        m.angle += Math.sign(diff) * turn;
+      }
+
+      m.x += Math.cos(m.angle) * m.speed * dt;
+      m.y += Math.sin(m.angle) * m.speed * dt;
+
+      if (m.target?.alive) {
+        const dist = Math.hypot(m.target.x - m.x, m.target.y - m.y);
+        if (dist < 45) {
+          m.hit = true;
+          gs.explosion?.(m.x, m.y, 0.4);
+          continue;
+        }
+      }
+
+      const ca = Math.cos(m.angle), sa = Math.sin(m.angle);
+      this._missileGfx.lineStyle(6, 0xff4400, 0.35);
+      this._missileGfx.lineBetween(m.x - ca * 22, m.y - sa * 22, m.x - ca * 40, m.y - sa * 40);
+      this._missileGfx.lineStyle(4, 0xff8800, 0.55);
+      this._missileGfx.lineBetween(m.x - ca * 10, m.y - sa * 10, m.x - ca * 26, m.y - sa * 26);
+      this._missileGfx.fillStyle(0xffffff, 0.95);
+      this._missileGfx.fillCircle(m.x, m.y, 4);
+      this._missileGfx.fillStyle(0xff6622, 0.9);
+      this._missileGfx.fillTriangle(
+        m.x + ca * 10, m.y + sa * 10,
+        m.x - sa * 4, m.y + ca * 4,
+        m.x + sa * 4, m.y - ca * 4,
+      );
+    }
+
+    if (!anyAlive) this._missiles = [];
+    else this._missiles = this._missiles.filter(m => !m.hit && m.life > 0);
+  }
+
+  // "Вырастает" в опустевшем гнезде головы, когда её 4 турели уже уничтожены (см.
+  // ArmoredTrainWagon.onTurretDestroyed, диалог: "для главного вагона... ротационная
+  // многонаправленная турель, вырастает из места посередине между турелями"). Реальный
+  // ассет (client/assets/train/rotate_turet.png, симметричная 8-ствольная иконка —
+  // origin 0.5/0.5, не нужен TURRET_ORIGIN-якорь по стволу, как у обычных турелей).
+  _spawnHeadCoreTurret(headWagon) {
+    if (this.coreTurret) return; // защита от повторного вызова (не должно случаться)
+    this.coreTurret = new TrainCoreTurret(headWagon);
+    if (this.scene._realtimeRoomKey) this.scene.pvpClient?.registerMob(this.coreTurret.pvpMobId);
+    // ×1.8 обычного turretSize (было ×1.4, затем перебор до ×2.6 — по скриншоту из
+    // диалога получилось слишком крупно и оторвано от корпуса вместе со смещением
+    // выше; ×1.8 — заметнее обычной турели, но не отдельная громадная структура).
+    // Позиция — сразу со смещением (см. TrainCoreTurret.x/y), не headWagon.x/y
+    // напрямую — иначе один кадр мелькнула бы в центре до первого тика _updateCoreTurret.
+    const targetLen = Math.round(BASE_CONFIG.turretSize * 1.8);
+    const { w: tw, h: th } = fitSize(this.scene, 'turret_core', targetLen);
+    this._coreTurretSprite = this.scene.add.image(this.coreTurret.x, this.coreTurret.y, 'turret_core')
+      .setDisplaySize(tw, th).setOrigin(0.5, 0.5).setDepth(42);
+    this.scene.log?.('⚠ Голова бронепоезда наращивает центральную турель!');
+  }
+
+  _onCoreTurretDestroyed() {
+    this.scene.explosion?.(this.coreTurret.x, this.coreTurret.y, 0.7);
+    this._coreTurretSprite?.destroy();
+    this._coreTurretSprite = null;
+    this.coreTurret = null;
+    this.scene.log?.('Центральная турель бронепоезда уничтожена!');
+  }
+
+  // Постоянное вращение кольца стволов + слежение за позицией головы — чисто
+  // косметика, независимая от того, кто и когда решает стрелять (см. playCoreVolleyVfx).
+  _updateCoreTurret(dt) {
+    const core = this.coreTurret;
+    if (!core?.alive) return;
+    this._coreTurretSprite?.setPosition(core.x, core.y); // сырые float — см. _positionAllAt
+    if (this._coreTurretSprite) this._coreTurretSprite.rotation += dt * 0.3;
+  }
+
+  // Вызывается из GameScene._onTrainWeaponFire — сервер УЖЕ решил залп, распределил и
+  // применил урон (см. server _fire_core_volley/_distribute_train_damage). Здесь только
+  // визуал: 8 радиальных "призрачных" болтов (GameScene._spawnGhostBolt — НЕ настоящий
+  // Projectile, тот сам наносит урон в _hit() при owner:'mob' и задвоил бы его поверх
+  // уже применённого сервером). core._burstStep — чисто косметический локальный счётчик
+  // "какой из 3 залпов серии" для 120°-доворота узора; синхронен у всех клиентов, т.к.
+  // инкрементируется РОВНО по одному разу на каждый одинаковый входящий broadcast.
+  playCoreVolleyVfx() {
+    const core = this.coreTurret;
+    if (!core?.alive) return;
+    const gs = this.scene;
+    const BOLTS = 8;
+    core._burstStep = core._burstStep ?? 0;
+    const rotOffset = core._burstStep * (Math.PI * 2 / 3);
+    for (let i = 0; i < BOLTS; i++) {
+      const ang = rotOffset + i * (Math.PI * 2 / BOLTS);
+      const tx = core.x + Math.cos(ang) * 800, ty = core.y + Math.sin(ang) * 800;
+      gs._spawnGhostBolt(core.x, core.y, tx, ty, 'plasma');
+    }
+    gs.muzzleFlash?.(core.x, core.y, 0xffaa44);
+    core._burstStep = (core._burstStep + 1) % 3;
+  }
+
   _updateDrones(dt) {
     if (!this._drones?.length) return;
     const alive = this._drones.filter(d => d.alive);
@@ -737,26 +1048,9 @@ export default class ArmoredTrain {
     if (this.head.alive) {
       for (const d of alive) { d.spawnX = this.head.x; d.spawnY = this.head.y; }
     }
-    const SEP_DIST = 70, SEP_SPEED = 90;
-    for (let i = 0; i < alive.length; i++) {
-      const d = alive[i];
-      let rx = 0, ry = 0;
-      for (let j = 0; j < alive.length; j++) {
-        if (i === j) continue;
-        const o = alive[j];
-        const dx = d.x - o.x, dy = d.y - o.y;
-        const dist2 = dx * dx + dy * dy;
-        if (dist2 < SEP_DIST * SEP_DIST && dist2 > 1) {
-          const dist = Math.sqrt(dist2);
-          const push = (SEP_DIST - dist) / SEP_DIST;
-          rx += (dx / dist) * push; ry += (dy / dist) * push;
-        }
-      }
-      if (rx || ry) {
-        d.sprite.x += rx * SEP_SPEED * dt;
-        d.sprite.y += ry * SEP_SPEED * dt;
-      }
-    }
+    // Общая реализация (см. Mob.js applySeparation) — раньше была только здесь,
+    // теперь переиспользуется и для PvP-патрульных роёв (GameScene._updateDroneSwarms).
+    applySeparation(alive, dt);
     this._drones = alive;
   }
 
@@ -770,7 +1064,27 @@ export default class ArmoredTrain {
     this._updateTetherSprites();
     this.scene.explosion?.(wagon.x, wagon.y, wagon.isHead ? 1.6 : 1.0);
     this.scene.log?.(wagon.isHead ? '💥 Бронепоезд: головной вагон уничтожен!' : '💥 Бронепоезд: вагон уничтожен!');
-    if (this.wagons.every(w => !w.alive)) this.finished = true;
+    // Поворотная турель растёт ИЗ головного вагона (см. _spawnHeadCoreTurret) — если он
+    // уничтожен раньше, чем саму турель успели добить отдельно, она должна исчезнуть
+    // вместе с ним, а не повиснуть спрайтом на месте гибели (баг из диалога: "урон
+    // игроку наносится после убийства головного вагона" — сервер уже перестал слать
+    // залпы от неё, см. server _train_weapon_tick_loop, но визуал сам себя не убирал).
+    if (wagon.isHead && this.coreTurret) this._onCoreTurretDestroyed();
+    if (this.wagons.every(w => !w.alive)) this._markFinished();
+  }
+
+  // Единая точка "поезд закончился" (все вагоны мертвы ИЛИ истёк маршрутный таймаут,
+  // см. вызовы ниже) — раньше каждое место просто ставило this.finished=true само по
+  // себе, ничего не сообщая серверу. ArmoredTrainManager.cleanup(trainKey) на сервере
+  // существовал, но его никто никогда не звал — _train_weapon_tick_loop не знал, что
+  // маршрут закончился (ушёл с карты по расписанию, необязательно уничтожен), и
+  // продолжал слать залпы уже несуществующего поезда бесконечно (баг из диалога: "урон
+  // после уничтожения поезда продолжает убивать игрока"). Идемпотентно на сервере —
+  // не страшно, если несколько клиентов комнаты пришлют это независимо.
+  _markFinished() {
+    if (this.finished) return;
+    this.finished = true;
+    if (this.scene._realtimeRoomKey) this.scene.pvpClient?.trainFinished(this.trainKey);
   }
 
   // Кусочно-линейная скорость (см. конструктор — _approachMs/_cruiseMs/_exitMs/_pEnter/
@@ -810,7 +1124,7 @@ export default class ArmoredTrain {
       if (w) { w.hull = s.hull; w.shield = s.shield; w._updateHpState(); }
     }
     this._updateTetherSprites();
-    if (this.wagons.every(w => !w.alive)) this.finished = true;
+    if (this.wagons.every(w => !w.alive)) this._markFinished();
   }
 
   update(dt) {
@@ -821,13 +1135,15 @@ export default class ArmoredTrain {
     this._tetherPhase = ((this._tetherPhase ?? 0) + dt * 0.4) % 1; // ~2.5с на полный цикл пульса
     if (!this.frozen) {
       const now = Date.now();
-      if (now >= this.startAt + this._totalMs) { this.finished = true; return; }
+      if (now >= this.startAt + this._totalMs) { this._markFinished(); return; }
       this._positionAll(this.progress); // сама вызывает _updateTetherSprites()
     } else {
       this._updateTetherSprites(); // вагоны неподвижны, но пульс троса всё равно анимируем
     }
     for (const w of this.wagons) if (w.alive) w._updateHpState();
     this._updateTurrets(dt, this.scene.player);
+    this._updateMissiles(dt);
+    this._updateCoreTurret(dt);
     this._updateDrones(dt);
   }
 
@@ -835,5 +1151,7 @@ export default class ArmoredTrain {
     this._tetherSprites.forEach(t => { t.imgL.destroy(); t.imgR.destroy(); t.handleL?.destroy(); t.handleR?.destroy(); });
     this._tetherSprites = [];
     for (const w of this.wagons) w.destroyVisuals();
+    this._missileGfx?.destroy();
+    this._coreTurretSprite?.destroy();
   }
 }

@@ -311,6 +311,43 @@ export function addConsumableToInventory(inventory, type, amount, maxSlots) {
   return rem;
 }
 
+// Сжимает уже лежащие в массиве стекуемые предметы (патроны/ресурсы) до минимального
+// числа слотов — addConsumableToInventory выше не даёт НОВОЙ фрагментации при подборе/
+// переносе, но не трогает то, что уже успело нафрагментироваться ДО фикса (баг из
+// диалога: "мы исправляли баг схлопывания... но сейчас уже есть такие в трюме... никуда
+// не могу их переместить" — старые дробные слоты одного типа занимали место, которое
+// решение "слить в первый попавшийся" не освобождало задним числом). Модули/платы и
+// прочее не-CONSUMABLES не трогает вообще. Возвращает true, если реально что-то сжалось
+// (меньше слотов на выходе), false — нечего было сжимать.
+export function compactConsumableStacks(arr) {
+  if (!arr?.length) return false;
+  const totals = new Map(); // type -> {total, count слотов ДО сжатия}
+  for (const it of arr) {
+    if (!CONSUMABLES[it.type]) continue;
+    const t = totals.get(it.type) || { total: 0, count: 0 };
+    t.total += it.amount || 0; t.count += 1;
+    totals.set(it.type, t);
+  }
+  let changed = false;
+  for (const [type, t] of totals) {
+    const max = CONSUMABLES[type].maxPerSlot;
+    const neededSlots = Math.ceil(t.total / max);
+    if (neededSlots < t.count) changed = true;
+  }
+  if (!changed) return false;
+  for (const [type, t] of totals) {
+    const max = CONSUMABLES[type].maxPerSlot;
+    let rem = t.total;
+    for (let i = arr.length - 1; i >= 0; i--) if (arr[i].type === type) arr.splice(i, 1);
+    while (rem > 0) {
+      const amt = Math.min(max, rem);
+      arr.push({ type, amount: amt });
+      rem -= amt;
+    }
+  }
+  return true;
+}
+
 export function countConsumableInInventory(inventory, type) {
   return (inventory || []).filter(i => i.type === type).reduce((s, i) => s + i.amount, 0);
 }
@@ -356,6 +393,9 @@ export function rollAmmoDrop(mob, isDungeon, dungeonDiff) {
 export function itemIconKey(item) {
   if (!item) return null;
   if (item.type === 'plasmate') return 'plasmate_icon';
+  // Дандж/клановые ресурсы — своя текстура на ключе = item.type (см. BootScene.js),
+  // не общий `consumable_${type}` (там для них ничего не грузится).
+  if (CONSUMABLES[item.type]?.category === 'dungeonResource') return item.type;
   if (CONSUMABLES[item.type])  return `consumable_${item.type}`;
   if (item.type === 'laser')   return 'mod_laser';
   const t = Math.min(item.tier || 1, 4);
@@ -468,6 +508,12 @@ export function rollHomeSectorLoot(mob, sectorIdx, dropMult) {
 // Имя предмета (через i18n).
 export function itemName(item) {
   if (item.type === 'plasmate') return `${i18n.t('item.plasmate')} ×${item.amount}`;
+  // Клановые дадж-ресурсы (biomech_fragment/quantum_shard/plasma_strand, category
+  // 'dungeonResource') — свои русские имена в RESOURCE_NAMES (не через i18n, см. эту же
+  // систему выше), у них никогда не было i18n.t('item.'+type) ключа — общая ветка ниже
+  // тихо возвращала непереведённый сырой ключ (баг из диалога: "название ресурса
+  // девовское - не переведено", всплыл на лутбоксе с вагона бронепоезда).
+  if (RESOURCE_NAMES[item.type]) return `${RESOURCE_NAMES[item.type]} ×${item.amount}`;
   if (CONSUMABLES[item.type])  return `${i18n.t(`item.${item.type}`)} ×${item.amount}`;
   if (item.type === 'laser') return i18n.t('item.laser');
   const key = item.type === 'cannon' ? 'item.cannon'

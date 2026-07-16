@@ -1,5 +1,5 @@
 import * as Phaser from 'https://cdn.jsdelivr.net/npm/phaser@4.2.1/dist/phaser.esm.js';
-import { COLORS, BASE_WORLD, PVP_WORLD_SCALE, PLAYER, MOBS, PROJECTILE, PROJ_TYPES, RESPAWN_MS, UI_RES, BOSS, DPR, HANDLING, ART_ANGLE_OFFSET, RANKS, BASE_SCAN_RADIUS, HONOR, DUNGEON_DIFF, DUNGEON_MODIFIERS, DUNGEON_BOSS_DROPS, DUNGEON_STAR_GOLD, dungeonLootNorm, WORLD_EVENT_SECTORS, WORLD_EVENT_STRENGTH_MULT, WORLD_EVENT_WAVE1_FRAC, WORLD_EVENT_WAVE2_DELAY_MS, WORLD_EVENT_WINDOW_MS, ARMORED_TRAIN_SECTORS, ARMORED_TRAIN_WINDOW_MS, FACTION_SHIELD_DRONE } from '../constants.js';
+import { COLORS, BASE_WORLD, PVP_WORLD_SCALE, PLAYER, MOBS, PROJECTILE, PROJ_TYPES, RESPAWN_MS, UI_RES, BOSS, DPR, HANDLING, ART_ANGLE_OFFSET, RANKS, MOCK_CORP_RATINGS, BASE_SCAN_RADIUS, HONOR, DUNGEON_DIFF, DUNGEON_MODIFIERS, DUNGEON_BOSS_DROPS, DUNGEON_STAR_GOLD, dungeonLootNorm, WORLD_EVENT_SECTORS, WORLD_EVENT_STRENGTH_MULT, WORLD_EVENT_WAVE1_FRAC, WORLD_EVENT_WAVE2_DELAY_MS, WORLD_EVENT_WINDOW_MS, ARMORED_TRAIN_SECTORS, ARMORED_TRAIN_WINDOW_MS, FACTION_SHIELD_DRONE } from '../constants.js';
 import { minimapRect, minimapToWorld } from '../systems/minimap.js';
 import { i18n } from '../i18n.js';
 import Player from '../entities/Player.js';
@@ -44,7 +44,6 @@ const PICKUP_TIME = 2000;
 const BOUNTY_LEVEL_GAP = 3;
 
 const DEV_MODE = true;
-const MOCK_CORP_RATINGS = [0.95, 0.92, 0.88, 0.85, 0.82, 0.78, 0.75, 0.72, 0.68, 0.65, 0.62, 0.58, 0.55, 0.52, 0.48];
 
 export function xpForLevel(L) {
   let total = 0;
@@ -2070,8 +2069,14 @@ export default class GameScene extends Phaser.Scene {
   onBossLastStand(boss) {
     if (!boss?.alive) return;
     this.log(i18n.t('log.boss_last_stand'));
-    this._shake(220, 0.01);
-    this.cameras.main.flash(150, 255, 80, 60, true);
+    // Тот же класс бага, что и в onMobKilled — секторный босс где-то далеко на общей
+    // PvP-карте входит в last stand, и КАЖДЫЙ клиент сектора (у всех своя локальная копия
+    // общего моба отслеживает тот же порог HP) видел полноэкранную вспышку, даже если
+    // сам босс за пределами их экрана.
+    if (this._onScreen(boss.x, boss.y)) {
+      this._shake(220, 0.01);
+      this.cameras.main.flash(150, 255, 80, 60, true);
+    }
     this.sfx?.play('sfx_boss_phase', { volume: 0.8 });
     boss.sprite.setTint(0xb71c1c);
     boss._lastStandShieldTimer = 4.0;
@@ -3604,7 +3609,17 @@ export default class GameScene extends Phaser.Scene {
     this.target = mob;
     if (this._targetFx?.active) { this.vfx?.stopLoop(this._targetFx); this._targetFx = null; }
     if (!mob) { this.isFiring = false; return; }
-    this._targetFx = this.vfx?.playLoop('targeting_reticle', mob.x, mob.y, { scale: 0.18, depth: 46 });
+    // Кольцо прицела калибровано (0.18) под размер обычного моба (~40-60px) — на крупных
+    // целях бронепоезда (вагон ~300-600px, обычная/центральная турель) технически
+    // рисовалось в верной точке, но было визуально неотличимо от фона на таком масштабе
+    // (баг из диалога: "не виден фокус на вагонах и турелях, он есть но его не видно").
+    // ПЕРВАЯ правка (линейно от dispW) сильно перелетела — "для вагона на пол экрана
+    // стаёт": фиксированные скромные множители вместо масштабирования от размера цели.
+    let scale = 0.18;
+    if (mob.isArmoredTrainWagon) scale = 0.3;
+    else if (mob.isTrainCoreTurret) scale = 0.3;
+    else if (mob.isTrainTurretTarget) scale = 0.25;
+    this._targetFx = this.vfx?.playLoop('targeting_reticle', mob.x, mob.y, { scale, depth: 46 });
   }
   cycleTarget() {
     if (this.botPilot?.alive) { this.selectTarget(this.botPilot); this.isFiring = true; return; }
@@ -4249,48 +4264,89 @@ export default class GameScene extends Phaser.Scene {
     this.log('⚡ Получена часть лазерной пушки!');
   }
 
-  // Лутбокс(ы) с уничтоженного вагона бронепоезда — гарантированный модуль + шанс
-  // патронов/расходников + шанс клан-ресурса (3-10 по тиру сектора). Переиспользует ту
-  // же PvpLootBox-инфраструктуру, что и лут с убитого игрока (см. pvp_wagon_loot_spawn в
-  // main.py) — каждый пункт отдельной коробкой в той же точке, схема item:{type,...}
-  // не меняется, просто несколько независимых спавнов вместо одного составного объекта.
-  // eligible — из damageBy, который сервер прислал в pvp_mob_hit_result на килле (см. там
-  // же) — тот же набор контрибьюторов, что уже получил денежную долю за вагон.
+  // Лутбокс с уничтоженного вагона бронепоезда — гарантированный модуль + шанс
+  // патронов/расходников + шанс клан-ресурса (3-10 по тиру сектора), с головного вагона
+  // ещё и шанс платы/коннектора (правка по просьбе: "плата и конектор должны падать
+  // только с основного вагона"). Раньше это были НЕСКОЛЬКО независимых коробок в одной
+  // точке, ОБЩИХ на всех contributors (первый успевший забирал) — теперь 1 составная
+  // коробка (type:'wagon_bundle', см. _applyLootItem) НА КАЖДОГО игрока из топ-N по
+  // урону (5 — обычный вагон, 8 — головной, правка по просьбе: "1 коробка на 1 игрока,
+  // топ 5 по урону, основной вагон топ 8 по урону"), с независимым роллом на каждого.
+  // damageByRaw — тот же damageBy, что сервер прислал в pvp_mob_hit_result на килле.
   _spawnWagonLoot(wagon, damageByRaw) {
     if (!this.pvpClient || !damageByRaw) return;
-    const eligible = Object.keys(damageByRaw).map(Number).filter(Number.isFinite);
-    if (!eligible.length) return;
+    const isHead = wagon.isHead;
+    const topN = isHead ? 8 : 5;
+    const topUids = Object.entries(damageByRaw)
+      .map(([uid, dmg]) => [Number(uid), Number(dmg)])
+      .filter(([uid]) => Number.isFinite(uid))
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, topN)
+      .map(([uid]) => uid);
+    if (!topUids.length) return;
+
     const cfg = this.armoredTrain?.cfg;
     const level = cfg?.lvlMax ?? this.pilotLevel ?? 25;
-    const tier = Math.min(4, Math.max(1, this.armoredTrain?.tier ?? 1));
+    const moduleTier = Math.min(4, Math.max(1, this.armoredTrain?.tier ?? 1));
+    const realTier = Math.min(5, Math.max(1, this.armoredTrain?.tier ?? 1));
+    // Плата/коннектор — свой диапазон тиров 1-3 (см. boards.js), зажат по секторному
+    // тиру так же, как модули зажаты в 4 выше ("тир... не должен превышать максимально
+    // доступный", тот же принцип, что уже был у клан-ресурса ниже).
+    const boardConnTier = realTier <= 2 ? 1 : realTier <= 4 ? 2 : 3;
+    // ×3 патроны/ресурсы с обычного вагона, ×6 с головного (правка по просьбе:
+    // "увеличить награду с вагонов - патроны и ресурсы, в 3 раза с обычных... в 6 раз с
+    // главного") — только количество, не модули/плату/коннектор (у тех свой тир-скейлинг).
+    const ammoResMult = isHead ? 6 : 3;
     const x = wagon.x, y = wagon.y;
 
-    // Гарантированный модуль — разброс 40/30/20/10 пушка/щит/двигатель/броня, тот же, что
-    // и rollLootForMob (та ждёт настоящий Mob с .tpl/.level — у вагона его нет).
-    const r = Phaser.Math.Between(0, 99);
-    const moduleItem = r < 40 ? rollCannon(tier, level)
-      : r < 70 ? rollShield(tier, level)
-      : r < 90 ? rollEngine(tier, level)
-      : rollArmor(tier, level);
-    this.pvpClient.wagonLootSpawn(x, y, moduleItem, eligible);
+    for (const uid of topUids) {
+      const items = [];
+      // Небольшой разброс вокруг вагона — иначе все личные коробки топ-N игроков легли
+      // бы точно в одну точку и визуально слипались бы в одну.
+      const ang = Math.random() * Math.PI * 2, dist = 40 + Math.random() * 50;
+      const bx = x + Math.cos(ang) * dist, by = y + Math.sin(ang) * dist;
 
-    // Патроны/расходники — независимый шанс, отдельная коробка.
-    if (Phaser.Math.FloatBetween(0, 1) < 0.35) {
-      const extra = Phaser.Math.FloatBetween(0, 1) < 0.5
-        ? { type: 'ammo_plasma', amount: Phaser.Math.Between(5, 20) }
-        : rollConsumableDrop({ isBoss: true, tpl: {} });
-      if (extra) this.pvpClient.wagonLootSpawn(x, y, extra, eligible);
-    }
+      // Гарантированный модуль — разброс 40/30/20/10 пушка/щит/двигатель/броня, тот же,
+      // что и rollLootForMob (та ждёт настоящий Mob с .tpl/.level — у вагона его нет).
+      const r = Phaser.Math.Between(0, 99);
+      items.push(r < 40 ? rollCannon(moduleTier, level)
+        : r < 70 ? rollShield(moduleTier, level)
+        : r < 90 ? rollEngine(moduleTier, level)
+        : rollArmor(moduleTier, level));
 
-    // Клан-ресурс — 3-10 по тиру сектора (pvp_1..pvp_5 → tier 1-5, максимум зажат в 4
-    // выше для модулей, тут используем реальный тир сектора отдельно для диапазона).
-    if (Phaser.Math.FloatBetween(0, 1) < 0.5) {
-      const realTier = Math.min(5, Math.max(1, this.armoredTrain?.tier ?? 1));
-      const TIER_RES_MAX = [3, 5, 7, 8, 10];
-      const CLAN_RES_KEYS = ['biomech_fragment', 'quantum_shard', 'plasma_strand'];
-      const resType = CLAN_RES_KEYS[Phaser.Math.Between(0, CLAN_RES_KEYS.length - 1)];
-      const amount = Phaser.Math.Between(3, TIER_RES_MAX[realTier - 1] ?? 10);
-      this.pvpClient.wagonLootSpawn(x, y, { type: resType, amount }, eligible);
+      // Патроны/расходники — независимый шанс.
+      if (Phaser.Math.FloatBetween(0, 1) < 0.35) {
+        const extra = Phaser.Math.FloatBetween(0, 1) < 0.5
+          ? { type: 'ammo_plasma', amount: Phaser.Math.Between(5, 20) }
+          : rollConsumableDrop({ isBoss: true, tpl: {} });
+        if (extra) {
+          if (extra.amount != null) extra.amount = Math.round(extra.amount * ammoResMult);
+          items.push(extra);
+        }
+      }
+
+      // Клан-ресурс — 3-10 по тиру сектора, независимый шанс.
+      if (Phaser.Math.FloatBetween(0, 1) < 0.5) {
+        const TIER_RES_MAX = [3, 5, 7, 8, 10];
+        const CLAN_RES_KEYS = ['biomech_fragment', 'quantum_shard', 'plasma_strand'];
+        const resType = CLAN_RES_KEYS[Phaser.Math.Between(0, CLAN_RES_KEYS.length - 1)];
+        const amount = Math.round(Phaser.Math.Between(3, TIER_RES_MAX[realTier - 1] ?? 10) * ammoResMult);
+        items.push({ type: resType, amount });
+      }
+
+      // Плата/коннектор — только с головного вагона, шанс как у "normal" сложности
+      // данжей 2 и 4 (см. DUNGEON_BOSS_DROPS.dungeon_4.normal: 2%/4% — правка по
+      // просьбе: "с головного вагона сделай как нормал данжа 2 и 4%"). Тир — тот же
+      // boardConnTier, зажатый по секторному тиру выше ("тиры тоже соблюдай по уровням").
+      // pvp_1 — вообще без дропа (правка по просьбе: "на первом пвп - отключи выпадение
+      // так проще"), тот же приём, что и у dungeon_1/dungeon_2.normal (null — нет дропа
+      // на самой лёгкой сложности/тире).
+      if (isHead && realTier > 1) {
+        if (Phaser.Math.FloatBetween(0, 1) < 0.02) items.push(rollBoard(boardConnTier));
+        if (Phaser.Math.FloatBetween(0, 1) < 0.04) items.push(rollConnector(boardConnTier));
+      }
+
+      this.pvpClient.wagonLootSpawn(bx, by, { type: 'wagon_bundle', items }, [uid]);
     }
   }
 
@@ -4357,10 +4413,17 @@ export default class GameScene extends Phaser.Scene {
   // Коробка видна только тем, кому сервер её разослал (победитель + все, кто
   // наносил урон) — сама жертва этот Loot никогда не получает.
   _onPvpLootSpawned(msg) {
-    const l = new Loot(this, msg.x, msg.y, msg.item, 'boss');
+    // Один и тот же тип сообщения на 2 разных источника (см. server pvp_loot_spawn —
+    // убитый ИГРОК — и pvp_wagon_loot_spawn — уничтоженный ВАГОН/голова поезда),
+    // различаются только префиксом lootId ("wagonloot:..."). Раньше оба хардкодили
+    // 'boss' — визуально неотличимы от лута с мобов-боссов (баг из диалога: "коробки с
+    // вагонов... сделать отличие от коробок с мобов"), и текст лога был захардкожен под
+    // игрока ("трофей с убитого пилота на карте - хотя убит вагон").
+    const isWagon = msg.lootId?.startsWith('wagonloot:');
+    const l = new Loot(this, msg.x, msg.y, msg.item, isWagon ? 'wagon' : 'boss');
     l.pvpLootId = msg.lootId;
     this.loot.push(l);
-    this.log('💰 Трофей с убитого пилота на карте!');
+    this.log(isWagon ? i18n.t('log.wagon_loot_spawned') : '💰 Трофей с убитого пилота на карте!');
   }
 
   // Кто-то из eligible уже забрал коробку раньше нас — убираем локальную копию,
@@ -4380,14 +4443,47 @@ export default class GameScene extends Phaser.Scene {
     this.pvpClient?.claimLoot(target.pvpLootId);
   }
 
+  // Применяет ОДИН подобранный предмет к нужному инвентарю по его виду — модуль/патроны-
+  // ресурс/плата/коннектор, плюс bundle (см. _spawnWagonLoot: type:'wagon_bundle' —
+  // несколько предметов в одной коробке вагона, каждый применяется рекурсивно). Раньше
+  // _onPvpLootResult всегда делал сырой inventory.push(item) — для патронов/ресурсов это
+  // создавало НОВЫЙ слот вместо слияния в уже существующий частичный стек (тот же баг,
+  // что чинили в CargoScene._moveToWarehouse/_moveToCargo, просто для другого источника).
+  _applyLootItem(item) {
+    if (item.type === 'wagon_bundle') {
+      for (const sub of item.items) this._applyLootItem(sub);
+      return;
+    }
+    if (item.type === 'connector') {
+      this.connectorInventory = this.connectorInventory ?? [];
+      this.connectorInventory.push(item);
+      this.log(`Найден коннектор T${item.tier}`);
+      return;
+    }
+    if (item.nodes && item.edges && item.maxConn !== undefined) { // плата — свой признак, нет .type (см. boards.js)
+      this.boardInventory = this.boardInventory ?? [];
+      this.boardInventory.push(item);
+      this.log(`Найдена плата расширения T${item.tier}`);
+      return;
+    }
+    if (CONSUMABLES[item.type]) {
+      const ammoAdded = this._tryAddToAmmoSlots(item.type, item.amount);
+      const remaining = item.amount - ammoAdded;
+      if (remaining > 0) addConsumableToInventory(this.inventory, item.type, remaining, this._cargoMax());
+      this.log(i18n.t('log.loot_pickup', { item: itemName(item) }));
+      return;
+    }
+    this.inventory.push(item);
+    this.log(i18n.t('log.loot_pickup', { item: itemName(item) }));
+  }
+
   _onPvpLootResult(msg) {
     const target = this._pvpLootPending?.get(msg.lootId);
     this._pvpLootPending?.delete(msg.lootId);
     if (!target) return;
     if (msg.granted) {
       const item = msg.item || target.item;
-      this.inventory.push(item);
-      this.log(i18n.t('log.loot_pickup', { item: itemName(item) }));
+      this._applyLootItem(item);
       this._saveState();
     } else {
       this.log('Трофей уже забрали.');
@@ -4898,7 +4994,13 @@ export default class GameScene extends Phaser.Scene {
     this.player?.triggerEnergyShunt();
     this.explosion(mob.x, mob.y, mob.isBoss ? 1.6 : 0.6);
     this.sfx?.play(mob.isBoss ? 'sfx_explosion_boss' : 'sfx_explosion_small', { volume: mob.isBoss ? 0.8 : 0.5, cooldownMs: mob.isBoss ? 0 : 60 });
-    if (mob.isBoss) { this._shake(280, 0.013); this.cameras.main.flash(140, 255, 210, 140, true); }
+    // Полноэкранная вспышка/тряска — раньше безусловно на КАЖДЫЙ килл босса, даже
+    // относящийся к общему PvP-мобу (broadcast всей комнате сектора, см.
+    // _onPvpMobHitResult → onMobKilled) — в большом PvP-секторе игрок видел вспышку от
+    // босса, убитого кем-то другим далеко от него самого (баг из диалога: "что-то
+    // постоянно блестит как молния... не на целую карту"). Гейтим той же проверкой
+    // видимости, что и hit-VFX ниже (_onScreen).
+    if (mob.isBoss && this._onScreen(mob.x, mob.y)) { this._shake(280, 0.013); this.cameras.main.flash(140, 255, 210, 140, true); }
     const name = i18n.t(mob.tpl.nameKey); const lvl = `${i18n.t('mob.level')}${mob.level}`;
     const lvlScale = 1 + 0.5 * (mob.level - 1);
     const _credMult = this.player?.creditBonusMod ?? 1;

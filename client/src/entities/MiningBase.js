@@ -1,6 +1,6 @@
 import * as Phaser from 'https://cdn.jsdelivr.net/npm/phaser@4.2.1/dist/phaser.esm.js';
 import { BASE_CONFIG, turretSlotsFor, CORP_ASSETS, cannon2GoldCost, goldPerSecByTier, pvpTierMult, stationNameKey, TURRET_ORIGIN } from '../bases.js';
-import { UI_RES } from '../constants.js';
+import { UI_RES, TURRET_REWARD } from '../constants.js';
 import { prerenderTex } from '../utils/prerenderTex.js';
 import { miningBaseSave } from '../api.js';
 import { i18n } from '../i18n.js';
@@ -55,6 +55,13 @@ class TurretTarget {
   get pvpMobId() {
     return this.base.pvpMobId ? `${this.base.pvpMobId}:turret:${this.slotIdx}` : null;
   }
+
+  // Небольшая награда за уничтожение турели (см. TURRET_REWARD) — читается GameScene
+  // тем же generic-путём, что и wagonReward у вагона поезда (см. mobFireClaim), просто
+  // по имени поля: раньше турель этого геттера не имела вообще, поэтому урон по ней
+  // доходил до сервера, но killed-ветка не отправляла никакой награды (баг из диалога:
+  // "награда за уничтожение турелей... похоже что её нет ни для станций").
+  get wagonReward() { return TURRET_REWARD[this.base.pvpTier] ?? TURRET_REWARD[1]; }
 
   applyState(saved) {
     if (!saved) return;

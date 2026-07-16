@@ -1,11 +1,5 @@
 import * as Phaser from 'https://cdn.jsdelivr.net/npm/phaser@4.2.1/dist/phaser.esm.js';
 
-const TINTS = {
-  biomech_fragment: 0xb39ddb,
-  quantum_shard:    0x80ffff,
-  plasma_strand:    0xff8c00,
-};
-
 // Single crystal deposit — plasmate or dungeon resource. Respawns within zone.
 export default class PlasmateDeposit {
   constructor(scene, x, y, amount, zone, respawnMs = 10 * 60 * 1000, resourceType = 'plasmate') {
@@ -31,13 +25,21 @@ export default class PlasmateDeposit {
   get y() { return this.sprite.y; }
 
   _build(x, y) {
-    this.sprite = this.scene.add.sprite(x, y, 'plasmate_crystal')
-      .setDepth(36)
-      .setDisplaySize(40, 40)
-      .setBlendMode(Phaser.BlendModes.ADD)
-      .play('plasmate_idle');
-    this.sprite.anims.setProgress(Math.random());
-    if (TINTS[this.resourceType]) this.sprite.setTint(TINTS[this.resourceType]);
+    if (this.isPlasmate) {
+      this.sprite = this.scene.add.sprite(x, y, 'plasmate_crystal')
+        .setDepth(36)
+        .setDisplaySize(40, 40)
+        .setBlendMode(Phaser.BlendModes.ADD)
+        .play('plasmate_idle');
+      this.sprite.anims.setProgress(Math.random());
+    } else {
+      // Данж/клановые ресурсы — своя статичная иконка на ресурс (см. BootScene.js:
+      // текстура на ключе = resourceType), без анимации/ADD-блендинга — это не
+      // светящаяся энергия, а предметная иконка.
+      this.sprite = this.scene.add.sprite(x, y, this.resourceType)
+        .setDepth(36)
+        .setDisplaySize(40, 40);
+    }
   }
 
   collect() {
@@ -56,7 +58,7 @@ export default class PlasmateDeposit {
     const nx = Phaser.Math.Between(this.zone.xMin, this.zone.xMax);
     const ny = Phaser.Math.Between(this.zone.yMin, this.zone.yMax);
     this.sprite.setPosition(nx, ny).setVisible(true);
-    this.sprite.anims.setProgress(Math.random());
+    if (this.isPlasmate) this.sprite.anims.setProgress(Math.random());
     this.alive = true;
     this.respawnAt = 0;
   }
@@ -65,7 +67,7 @@ export default class PlasmateDeposit {
   // см. класс-комментарий выше. Не переиспользует _respawn() (тот рандомит внутри zone).
   forceRespawn(x, y) {
     this.sprite.setPosition(x, y).setVisible(true);
-    this.sprite.anims.setProgress(Math.random());
+    if (this.isPlasmate) this.sprite.anims.setProgress(Math.random());
     this.alive = true;
     this.respawnAt = 0;
   }

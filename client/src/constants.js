@@ -36,6 +36,18 @@ export const RANKS = [
   { id: 20, name: 'Кадет',              percent: 100, type: 'percent' },
 ];
 
+// Мок-рейтинги "корпорации" для getRank() — нет живого лидерборда с сервера,
+// ранг считается позицией среди этого фиксированного пула (см. ranking.js).
+export const MOCK_CORP_RATINGS = [0.95, 0.92, 0.88, 0.85, 0.82, 0.78, 0.75, 0.72, 0.68, 0.65, 0.62, 0.58, 0.55, 0.52, 0.48];
+
+// Общий для CorpScene/ProfileScene/ProfileViewScene справочник лейбл+цвет по корпорации.
+export const CORP_META = {
+  helios:  { label: 'HELIOS',   color: '#ffb74d', hex: 0xffb74d, fill: 0x1a1200 },
+  karax:   { label: 'KARAX',    color: '#ef5350', hex: 0xef5350, fill: 0x1a0000 },
+  tides:   { label: 'TIDES',    color: '#4dd0e1', hex: 0x4dd0e1, fill: 0x001a1e },
+  neutral: { label: 'НЕЙТРАЛ',  color: '#90a4ae', hex: 0x90a4ae, fill: 0x0d1219 },
+};
+
 // Базовые размеры мира. PvP-секторы масштабируются отдельно.
 export const BASE_WORLD = {
   width: 8315,
@@ -96,6 +108,18 @@ export const ARMORED_TRAIN_SECTORS = {
            clanRes: { biomech_fragment: 180, quantum_shard: 100, plasma_strand: 80 }, laserPartChance: 0.03 },
 };
 export const ARMORED_TRAIN_HEAD_MULT   = 3;      // множитель награды головного вагона (кроме laserPartChance)
+// Небольшая награда за уничтожение отдельной турели (базы или бронепоезда) — на
+// порядок меньше wagonReward/ARMORED_TRAIN_SECTORS (турель — препятствие, не главная
+// цель), но сопоставима с обычным элитным мобом того же тира. Индексируется тем же
+// 1-5 tier, что pvpTier базы и ArmoredTrain.tier. Без клановых ресурсов — обычные
+// элитные мобы вне данжей их тоже не роняют.
+export const TURRET_REWARD = {
+  1: { credits: 150,  xp: 40,  gold: 2 },
+  2: { credits: 280,  xp: 80,  gold: 3 },
+  3: { credits: 450,  xp: 150, gold: 4 },
+  4: { credits: 700,  xp: 250, gold: 6 },
+  5: { credits: 1100, xp: 400, gold: 8 },
+};
 export const ARMORED_TRAIN_WAGON_COUNT = 3;      // + голова = 4 сегмента всего
 // Теперь это ИМЕННО время пролёта ВИДИМОЙ карты (mapEnterPos→mapExitPos, "крейсерская"
 // фаза) — см. ArmoredTrain.js конструктор: заграничные approach/exit-буферы едут вдвое
@@ -283,7 +307,11 @@ export const MOBS = {
   confed_09: { key: 'syndicate_11',     nameKey: 'mob.confed_09', faction: 'confed', artAngleOffset: -Math.PI / 2, displaySize: 140, hull: 1100, shield: 650, damage: 14, speed: 155, aggro: 700,  range: 585, fireRate: 0.6,  credits: 2800, xp: 680, patrolRadius: 200, leash: 500, boss: true, bossType: 'static', starGold: { min: 12, max: 28, chance: 1 }, projectileType: 'grav', aiClass: 'berserker' },
 
   // ── Частная Безопасность (corporate) — ур. 20-50 ──
-  sec_drone:     { key: 'guard_drone', nameKey: 'mob.sec_drone',     faction: 'security', artAngleOffset: -Math.PI / 2, displaySize: 26,  hull: 220,  shield: 350, damage: 6,  speed: 205, aggro: 650,  range: 530, fireRate: 1.0, credits: 380,  xp: 95,   patrolRadius: 250, leash: 700, neutral: true, projectileType: 'ion',  aiClass: 'gunner' },
+  // aiClass:'swarmDrone' (было 'gunner') — одиночный болт с доворотом не более ±90°
+  // (maxTurnRad) вместо трёхболтового ion-веера, +30% размер, разное поведение по
+  // размеру группы (см. Mob.js) — правки по прямой просьбе (диалог: "дроны нейтральной
+  // корпорации... не стрелять веером болтов а по 1, 90 градусов наведение...").
+  sec_drone:     { key: 'guard_drone', nameKey: 'mob.sec_drone',     faction: 'security', artAngleOffset: -Math.PI / 2, displaySize: 34,  hull: 220,  shield: 350, damage: 6,  speed: 205, aggro: 650,  range: 530, fireRate: 1.0, credits: 380,  xp: 95,   patrolRadius: 250, leash: 700, neutral: true, projectileType: 'plasma', maxTurnRad: Math.PI / 2, aiClass: 'swarmDrone' },
   sec_destroyer: { key: 'guard_main', nameKey: 'mob.sec_destroyer', faction: 'security', artAngleOffset: -Math.PI / 2, displaySize: 180, hull: 1400, shield: 750, damage: 17, speed: 135, aggro: 700,  range: 585, fireRate: 0.5, credits: 4500, xp: 1100, patrolRadius: 200, leash: 480, boss: true, bossType: 'static', neutral: true, starGold: { min: 15, max: 35, chance: 1 }, projectileType: 'grav' },
 
   // ── Охрана нейтральных баз (PvP-секторы, пассивны до атаки) ──
@@ -310,12 +338,23 @@ export const MOBS = {
   ancient_miniboss: { key: 'ancient_miniboss', nameKey: 'mob.ancient_miniboss', faction: 'ancient', artAngleOffset: -Math.PI / 2, displaySize: 160, hull: 900, shield: 500, damage: 32, speed: 115, aggro: 650, range: 1000, fireRate: 0.42, credits: 1800, xp: 500, patrolRadius: 320, leash: 1300, elite: true, starGold: { min: 12, max: 22, chance: 0.9 }, projectileType: 'void', aiClass: 'gunner' },
   // Орбитальный дрон-блокировщик: поглощает 90% урона по боссу пока жив; спавн группами по 3
   ancient_shield: { key: 'ancient_shield', nameKey: 'mob.ancient_shield', faction: 'ancient', artAngleOffset: -Math.PI / 2, displaySize: 92, hull: 420, shield: 280, damage: 12, speed: 135, aggro: 650, range: 1000, fireRate: 0.45, credits: 320, xp: 200, patrolRadius: 300, leash: 800, projectileType: 'void', aiClass: 'shielder', shieldDrone: true },
+  // Синдикатский щит-генератор — та же механика shieldDrone (поглощает 90% урона по боссу),
+  // но своя фракция/арт (техно-дрон, не кристалл), см. D3 (dungeon_3) в DUNGEON_BOSS_KIT.
+  syndicate_shield: { key: 'syndicate_shield', nameKey: 'mob.syndicate_shield', faction: 'syndicate', artAngleOffset: -Math.PI / 2, displaySize: 92, hull: 420, shield: 280, damage: 12, speed: 135, aggro: 650, range: 1000, fireRate: 0.45, credits: 320, xp: 200, patrolRadius: 300, leash: 800, projectileType: 'ion', aiClass: 'shielder', shieldDrone: true },
 
   // ── БОЛЬШОЙ БОСС (R1-тип) — кристальное ядро + 3 вращающихся кольца (GameScene._apophisRings) ──
   apophis: { key: 'ancient_12', nameKey: 'mob.apophis', faction: 'ancient', artAngleOffset: 0, displaySize: 210, hull: 1800, shield: 1100, damage: 48, speed: 120, aggro: 900, range: 600, fireRate: 0.5, credits: 5000, xp: 1200, patrolRadius: 240, leash: Infinity, boss: true, bossType: 'dungeon', starGold: { min: 20, max: 40, chance: 1 }, projectileType: 'acid' },
 
   // ── АРГУС (Admin-only) ──
   argus_boss: { key: 'argus_boss', nameKey: 'mob.argus_boss', faction: 'admin', artAngleOffset: -Math.PI / 2, displaySize: 220, hull: 24000, shield: 16000, damage: 189, speed: 180, aggro: 900, range: 600, fireRate: 1.5, credits: 0, xp: 0, patrolRadius: 300, leash: Infinity, boss: true, projectileType: 'plasma' },
+};
+
+// Фракция сектор-босса → её собственный shieldDrone-эскорт (см. GameScene.js
+// sectorBoss-спавн, Mob.js shieldDrone-бонд в takeDamage). Фракции без записи здесь
+// просто не получают щит-эскорт — плейн-эскорт как раньше, без визуального рассинхрона.
+export const FACTION_SHIELD_DRONE = {
+  ancient:   'ancient_shield',
+  syndicate: 'syndicate_shield',
 };
 
 // ── Боссы: фазы (ярость) + телеграфированный AoE-залп ──────────────────────────
@@ -336,6 +375,11 @@ export const BOSS = {
   enrageTint: 0xff7a6b,    // подкраска спрайта в ярости
   critChance: 0.15,        // шанс крит. выстрела у боссов (рядовые мобы не критуют)
   critMult: 1.8,           // множитель урона критического выстрела босса
+  // "Последний рывок" — второй, более резкий скачок опасности у обычных (не данж/
+  // не Аргус) секторных боссов, отдельно от 40%-ярости (см. Mob.js phase>=3 проверку).
+  lastStandAt: 0.15,          // доля корпуса
+  lastStandFireMult: 2.0,     // ×скорострельность (сильнее enrageFireMult)
+  lastStandSpeedMult: 1.6,    // ×скорость движения (сильнее enrageSpeedMult)
 };
 
 // Реген мобов. Щит — у всех мобов со щитом; корпус — только у боссов, через 1 мин без урона.

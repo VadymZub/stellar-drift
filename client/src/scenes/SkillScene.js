@@ -199,7 +199,10 @@ export default class SkillScene extends Phaser.Scene {
     // Input
     const kb = this.input.keyboard;
     kb.on('keydown-ESC', () => this.scene.stop());
-    kb.on('keydown-K',   () => this.scene.stop());
+    // 'K' НЕ слушаем тут отдельно — GameScene тоже слушает 'K' (toggleOverlay/
+    // _openBase) и обе сцены активны одновременно; одно нажатие ловили ОБА хендлера,
+    // и "закрытие" открытой сцены через K само себя переоткрывало (см. диалог,
+    // тот же баг нашёлся и починен для MapScene/'M' — тот же паттерн).
   }
 
   // ── Panel background (static, redrawn once) ──────────────────────────────

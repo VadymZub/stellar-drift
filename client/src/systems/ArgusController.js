@@ -337,7 +337,12 @@ export default class ArgusController {
         return false;
       };
       for (const mob of this.scene.mobs) {
-        if (mob.alive && inBeam(mob.x, mob.y)) mob.takeDamage(900, 0);
+        if (mob.alive && inBeam(mob.x, mob.y)) this._dealAbilityDamage(mob, 'argus_pulsar', 900);
+      }
+      // Вагоны/турели бронепоезда — см. _trainTargets/_dealAbilityDamage выше (баг из
+      // диалога: "ракетный залп и квантовый пульсар не наносят урон турелям и вагонам").
+      for (const t of this._trainTargets(p, r)) {
+        if (inBeam(t.x, t.y)) this._dealAbilityDamage(t, 'argus_pulsar', 900);
       }
       // Раньше пульсар бил только this.scene.mobs — других игроков вообще не
       // рассматривал целью (баг из диалога: "не действуют на других игроков"). Урон по
@@ -347,7 +352,7 @@ export default class ArgusController {
       if (gs._isPvpSector) {
         for (const rp of gs.pvpClient?.players?.values() ?? []) {
           if (rp.alive && rp.corp !== gs.playerCorp && inBeam(rp.x, rp.y)) {
-            gs.pvpClient.abilityFireClaim(rp.userId, 'argus_pulsar', 900);
+            this._dealAbilityDamage(rp, 'argus_pulsar', 900);
           }
         }
       }
@@ -376,6 +381,23 @@ export default class ArgusController {
   // рассматривали (баг из диалога: "не действуют на других игроков"). isRemotePlayer
   // (см. RemotePlayer.js) — существующий флаг, уже используемый для таргетинга/огня
   // в GameScene, различает Mob/RemotePlayer без instanceof.
+  // Вагоны/турели бронепоезда — не в scene.mobs (лёгкие боевые прокси, см.
+  // ArmoredTrain.js), раньше вообще не рассматривались целью ни пульсаром, ни
+  // ракетами (баг из диалога: "ракетный залп и квантовый пульсар не наносят урон
+  // турелям и вагонам") — они попросту никогда не попадали в список кандидатов.
+  _trainTargets(p, radius) {
+    const train = this.scene.armoredTrain;
+    if (!train) return [];
+    const out = [];
+    for (const w of train.wagons) {
+      if (w.alive && w.canBeAttacked && Math.hypot(w.x - p.x, w.y - p.y) < radius) out.push(w);
+      for (const tt of w.turrets) {
+        if (tt.alive && tt.canBeAttacked && Math.hypot(tt.x - p.x, tt.y - p.y) < radius) out.push(tt);
+      }
+    }
+    return out;
+  }
+
   _missileCandidates(p, radius) {
     const gs = this.scene;
     const mobs = gs.mobs.filter(m => m.alive && Math.hypot(m.x - p.x, m.y - p.y) < radius);
@@ -383,7 +405,27 @@ export default class ArgusController {
       ? [...(gs.pvpClient?.players?.values() ?? [])].filter(rp =>
           rp.alive && rp.corp !== gs.playerCorp && Math.hypot(rp.x - p.x, rp.y - p.y) < radius)
       : [];
-    return [...mobs, ...players];
+    return [...mobs, ...players, ...this._trainTargets(p, radius)];
+  }
+
+  // Единая точка урона для активных способностей (пульсар/ракеты) — раньше мобы
+  // (scene.mobs, включая те, у кого уже есть pvpMobId в PvP-комнате) получали урон
+  // ЛОКАЛЬНЫМ takeDamage() напрямую, минуя общий сервер-леджер (см. PvpMobState) —
+  // остальные клиенты комнаты этот урон вообще не видели, а следующий "нормальный"
+  // выстрел по мобу читал нетронутое серверное HP поверх уже подешевевшего локального.
+  // Теперь: RemotePlayer — как раньше (abilityFireClaim), любая pvpMobId-цель (моб/
+  // турель/вагон) — через сервер (abilityMobFireClaim, см. server pvp_mob_fire_claim),
+  // и только когда pvpClient совсем недоступен (соло/дев без сервера) — локальный
+  // takeDamage напрямую, тот же фоллбэк, что и у обычного оружия (_localPvpFireResolve).
+  _dealAbilityDamage(target, ability, dmg) {
+    const gs = this.scene;
+    if (target.isRemotePlayer) {
+      gs.pvpClient?.abilityFireClaim(target.userId, ability, dmg);
+    } else if (target.pvpMobId && gs.pvpClient) {
+      gs.pvpClient.abilityMobFireClaim(target.pvpMobId, target.maxHull, target.maxShield, ability, dmg, target.wagonReward);
+    } else {
+      target.takeDamage(dmg, 0);
+    }
   }
 
   _activateMissiles() {
@@ -449,10 +491,10 @@ export default class ArgusController {
         const dist = Math.hypot(m.target.x - m.x, m.target.y - m.y);
         if (dist < 45) {
           // Раньше — только m.target.takeDamage(...), не работавший бы вовсе на
-          // RemotePlayer (нет такого метода, см. баг из диалога). Урон по игроку решает
-          // сервер (pvp_ability_fire_claim), как и у пульсара выше.
-          if (m.target.isRemotePlayer) gs.pvpClient?.abilityFireClaim(m.target.userId, 'argus_missile', m.damage);
-          else m.target.takeDamage(m.damage, 0);
+          // RemotePlayer (нет такого метода, см. баг из диалога), и локально/без сервера
+          // для мобов/турелей/вагонов (см. _dealAbilityDamage выше — тот же фикс, что и у
+          // пульсара, для "ракетный залп не наносит урон турелям и вагонам").
+          this._dealAbilityDamage(m.target, 'argus_missile', m.damage);
           m.hit = true;
           gs.explosion?.(m.x, m.y, 0.4);
           continue;

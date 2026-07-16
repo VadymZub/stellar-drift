@@ -5,13 +5,21 @@ import { PROJECTILE, PROJ_TYPES } from '../constants.js';
 // type: ключ из PROJ_TYPES (plasma|ion|acid|grav|emp). void — хитскан, не создаёт объект.
 // effect: сохраняется из PROJ_TYPES[type].effect для применения при попадании в GameScene.
 export default class Projectile {
-  constructor(scene, owner, fromX, fromY, toX, toY, victim, damage, penetration, color, turnRate = 0, type = 'plasma', isCrit = false) {
+  // maxTurnRad — опционально: ограничивает СУММАРНОЕ отклонение курса от угла запуска
+  // (не рад/сек, как turnRate, а общий бюджет поворота на весь полёт) — болт довернёт
+  // не более чем на maxTurnRad и дальше летит прямо, даже если цель продолжает уходить
+  // в сторону, в отличие от бесконечного самонаведения (см. диалог: "90 градусов
+  // самонаведения" у веерной турели поезда). По умолчанию Infinity — не меняет поведение
+  // ни одного существующего вызова (обычные снаряды/ракеты по-прежнему без потолка).
+  constructor(scene, owner, fromX, fromY, toX, toY, victim, damage, penetration, color, turnRate = 0, type = 'plasma', isCrit = false, maxTurnRad = Infinity) {
     this.scene = scene;
     this.owner = owner;          // 'player' | 'mob'
     this.victim = victim;
     this.damage = damage;
     this.penetration = penetration;
     this.turnRate = turnRate;    // рад/сек; 0 = прямолинейный
+    this.maxTurnRad = maxTurnRad;
+    this._turnedSoFar = 0;
     this.type = type;
     this.isCrit = isCrit;        // для showDamage — крит получает свой цвет числа
 
@@ -57,6 +65,11 @@ export default class Projectile {
       let delta = Phaser.Math.Angle.Wrap(toTarget - curAng);
       const maxTurn = this.turnRate * dt;
       delta = Phaser.Math.Clamp(delta, -maxTurn, maxTurn);
+      if (Number.isFinite(this.maxTurnRad)) {
+        const room = this.maxTurnRad - Math.abs(this._turnedSoFar);
+        delta = room <= 0 ? 0 : Phaser.Math.Clamp(delta, -room, room);
+      }
+      this._turnedSoFar += delta;
       const newAng = curAng + delta;
       const speed = Math.sqrt(this.vx * this.vx + this.vy * this.vy);
       this.vx = Math.cos(newAng) * speed;

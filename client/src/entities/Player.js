@@ -356,8 +356,16 @@ export default class Player {
     // BASE that already includes ship-level upgrades (user intent: "базовые = с апгрейдом").
     this.cannonDamage = Math.round(BASE_cannon * (1 + cannonUpgPct + sl('heavy_caliber') * 0.06 + cannonPerkPct + packAuraPct + BF('cannonDmg') + boostDmg + mbDmg));
     this.laserDamage  = Math.round(BASE_laser  * (1 + laserUpgPct  + sl('heavy_caliber') * 0.06 + packAuraPct + BF('laserDmg') + boostDmg + (this.allLasers ? 0.05 : 0) + mbDmg));
-    this.maxHull      = Math.round(BASE_hull   * (1 + sl('reinforced_hull') * 0.06 + BF('hullMax') + boostHull + mbHull)) + armorHullFlat;
-    this.maxShield    = Math.round(BASE_shield  * (1 + shieldUpgPct + sl('shield_optimizer') * 0.05 + coopShieldPct + BF('shieldMax') + boostShield + mbShield));
+    // ADMIN-корабль (Аргус, DEV-хоткей 8) — hullMax/shieldBase уже "максимальные из
+    // максимальных" (500 000 каждый) сами по себе; обычные % бонусы прогрессии (скилл
+    // shield_optimizer, борды, бустеры) считались для скромных базовых значений обычных
+    // кораблей (450-3600) и никогда не предполагали складываться поверх уже предельного
+    // числа. Без этой развилки — Аргус+макс. shield_optimizer давал ровно 500000×1.2 =
+    // 600000 (баг из диалога: "видел 600 тысяч щита за раз"), с активным бустером ещё
+    // +20% — вплотную к серверному потолку PVP_MAX_SHIELD=700000. Для ADMIN — статы
+    // строго BASE, без единого множителя сверху.
+    this.maxHull      = isAdmin ? BASE_hull   : Math.round(BASE_hull   * (1 + sl('reinforced_hull') * 0.06 + BF('hullMax') + boostHull + mbHull)) + armorHullFlat;
+    this.maxShield    = isAdmin ? BASE_shield : Math.round(BASE_shield  * (1 + shieldUpgPct + sl('shield_optimizer') * 0.05 + coopShieldPct + BF('shieldMax') + boostShield + mbShield));
     this.baseSpeed    = Math.round(BASE_speed   * (1 + speedUpgPct  + engineThrustPct + BF('speed') + speedBoostPct));
     this.shieldRegenPerSec = Math.round(BASE_regen * (1 + regenUpgPct + regenPerkPct + BF('shieldRegen')));
 

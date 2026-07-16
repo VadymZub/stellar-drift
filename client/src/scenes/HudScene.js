@@ -87,6 +87,16 @@ export default class HudScene extends Phaser.Scene {
 
     this.bars = this.add.graphics().setDepth(100);
     this.miniGfx = this.add.graphics().setDepth(101);   // миникарта — векторные блипы
+    // Дёрти-чек кэш (см. update() ниже, "Graphics.clear()+перерисовка... дорогая
+    // операция") — обычные поля сцены, ПЕРЕЖИВАЮТ scene.restart() (это тот же JS-объект,
+    // restart() пересоздаёт только display-объекты типа this.bars выше). Без сброса —
+    // свежий ПУСТОЙ Graphics после ресайза-рестарта (см. комментарий про 'resize' в
+    // начале create()) сравнивался со СТАРЫМ закэшированным значением ширины/цвета,
+    // "ничего не изменилось" → g.clear()+перерисовка не вызывались НИКОГДА, пока реально
+    // не изменится HP — полосы щита/корпуса пропадали после ресайза (баг из диалога:
+    // "после ресайза страницы пропадают бары прочности и щита").
+    this._lastPSW = this._lastPHW = this._lastHullColor = undefined;
+    this._lastTargetKind = this._lastTSW = this._lastTHW = undefined;
 
     // Счётчик FPS (SettingsScene → Графика → "Счётчик FPS") — раньше тумблер существовал
     // только в настройках/localStorage, счётчика не было вообще нигде в коде.
@@ -177,48 +187,9 @@ export default class HudScene extends Phaser.Scene {
     // Cargo indicator (always visible)
     this._cargoTxt = this.add.text(0, 0, '', F('11px', '#7e9398')).setOrigin(1, 0.5).setDepth(101);
 
-    // Settings gear button — draggable, position saved in settings
-    const _W = this.scale.width, _H = this.scale.height;
-    const _gPos = loadSettings();
-    const _sbDefX = _W - 36, _sbDefY = _H - 104;
-    let _gearX = Math.max(0, Math.min(_W - 28, _gPos.gearX ?? _sbDefX));
-    let _gearY = Math.max(0, Math.min(_H - 28, _gPos.gearY ?? _sbDefY));
-
-    const _sb   = this.add.rectangle(_gearX, _gearY, 28, 28, 0x0a1828, 0.85).setOrigin(0)
-      .setStrokeStyle(1, 0x1e4060, 0.8).setInteractive({ useHandCursor: true }).setDepth(101);
-    const _sTxt = this.add.text(_gearX + 14, _gearY + 14, '⚙', F('14px', '#2a6080')).setOrigin(0.5).setDepth(102);
-
-    let _gDragActive = false, _gDragSX = 0, _gDragSY = 0, _gDragOX = 0, _gDragOY = 0;
-
-    _sb.on('pointerover', () => { if (!_gDragActive) { _sb.setFillStyle(0x102840); _sTxt.setColor('#4dd0e1'); } });
-    _sb.on('pointerout',  () => { _sb.setFillStyle(0x0a1828); _sTxt.setColor('#2a6080'); });
-
-    _sb.on('pointerdown', (pointer) => {
-      _gDragActive = true;
-      _gDragSX = pointer.x; _gDragSY = pointer.y;
-      _gDragOX = pointer.x - _sb.x; _gDragOY = pointer.y - _sb.y;
-    });
-
-    this.input.on('pointermove', (pointer) => {
-      if (!_gDragActive || !pointer.isDown) return;
-      const nx = Math.max(0, Math.min(_W - 28, pointer.x - _gDragOX));
-      const ny = Math.max(0, Math.min(_H - 28, pointer.y - _gDragOY));
-      _sb.setPosition(nx, ny);
-      _sTxt.setPosition(nx + 14, ny + 14);
-    });
-
-    this.input.on('pointerup', (pointer) => {
-      if (!_gDragActive) return;
-      _gDragActive = false;
-      const moved = Math.abs(pointer.x - _gDragSX) > 5 || Math.abs(pointer.y - _gDragSY) > 5;
-      if (!moved) {
-        this.gs.toggleOverlay('SettingsScene');
-      } else {
-        const s = loadSettings();
-        s.gearX = Math.round(_sb.x); s.gearY = Math.round(_sb.y);
-        saveSettings(s);
-      }
-    });
+    // Настройки — раньше отдельная перетаскиваемая кнопка здесь (см. диалог "прикрепи
+    // настройки, сейчас это отдельная кнопка") — теперь часть общего ряда социальных
+    // кнопок, см. _buildHudSocialButtons (вызывается ниже в create()).
 
     // Base nav bar (dynamic — built/destroyed on atBase change)
     this._navObjs = null;
@@ -1496,6 +1467,11 @@ export default class HudScene extends Phaser.Scene {
     this._chatTab = 'general';
     this._chatPmTarget = null;
     this._chatVisible = true;
+    // Отдельно от _chatVisible/_chatCollapsed (те переключают "полное окно" ⇄ "маленькая
+    // свёрнутая таблетка", см. _rebuildChatPanel) — кнопка ЧАТ на общей панели убирает
+    // чат ПОЛНОСТЬЮ, даже без таблетки (правка по просьбе: "при нажатии на иконку чата
+    // на панели - убирать полностью чат, даже маленькое свёрнутое окошко").
+    this._chatHidden = false;
     this._chatDragging  = false;
     this._chatResizing  = false;
     this._chatCollapsed = false;
@@ -1510,10 +1486,14 @@ export default class HudScene extends Phaser.Scene {
       // Сброс если позиция из старого дефолта (верхняя зона < 100px)
       if (s && s.y < 100) { cx = W - 380; cy = BAR_TOP - 234; }
     } catch {}
-    this._chatX = Math.max(0, Math.min(W - 260, cx));
-    this._chatY = Math.max(0, Math.min(BAR_TOP - 50, cy));
+    // Ширина/высота ДО клэмпа X/Y — крестик закрытия сидит у ПРАВОГО края окна
+    // (chatX + chatW - 6), клэмп по фиксированным "260" (а не реальной ширине, которая
+    // может доходить до 600) оставлял его за пределами экрана после ресайза в меньшее
+    // окно (баг из диалога: "после ресайза страницы не могу попасть по крестику").
     this._chatW = Math.max(260, Math.min(600, cw));
     this._chatH = Math.max(150, Math.min(480, ch));
+    this._chatX = Math.max(0, Math.min(W - this._chatW, cx));
+    this._chatY = Math.max(0, Math.min(BAR_TOP - 50, cy));
 
     // Контейнер — всё содержимое в нём, при drag просто двигаем контейнер
     this._chatC = this.add.container(this._chatX, this._chatY).setDepth(205);
@@ -1572,6 +1552,7 @@ export default class HudScene extends Phaser.Scene {
         if (this._chatCollapsed && !this._chatDragMoved) {
           this._chatVisible = true;
           this._rebuildChatPanel();
+          this._updateSocialBtnStyles();
         }
         this._chatDragging = false;
         this._chatCollapsed = false;
@@ -1609,6 +1590,13 @@ export default class HudScene extends Phaser.Scene {
     this._chatC.removeAll(true);
     this._chatC.setPosition(this._chatX, this._chatY);
 
+    // Полностью убрано кнопкой ЧАТ на общей панели (см. _toggleChatWin) — ни окна, ни
+    // свёрнутой таблетки, в отличие от "просто свёрнуто" ниже.
+    if (this._chatHidden) {
+      this._chatInputEl.style.display = 'none';
+      return;
+    }
+
     const HDR = 22, TAB = 24, INP = 26;
     const w = this._chatW, h = this._chatH;
     const F = (sz, c) => ({ fontFamily: 'Inter, sans-serif', fontSize: sz, color: c, resolution: UI_RES });
@@ -1645,7 +1633,7 @@ export default class HudScene extends Phaser.Scene {
     const xBtn = mk(this.add.text(w - 6, HDR / 2, '✕', F('11px', '#335566')).setOrigin(1, 0.5).setInteractive({ useHandCursor: true }));
     xBtn.on('pointerover', () => xBtn.setColor('#ef5350'));
     xBtn.on('pointerout',  () => xBtn.setColor('#335566'));
-    xBtn.on('pointerdown', () => { this._chatVisible = false; this._rebuildChatPanel(); });
+    xBtn.on('pointerdown', () => { this._chatVisible = false; this._rebuildChatPanel(); this._updateSocialBtnStyles(); });
 
     // Drag-зона (заголовок)
     mk(this.add.rectangle(0, 0, w - 20, HDR, 0, 0).setOrigin(0).setInteractive({ useHandCursor: true }))
@@ -2209,57 +2197,58 @@ export default class HudScene extends Phaser.Scene {
     try { localStorage.setItem('sd_chat_state', JSON.stringify({ x: this._chatX, y: this._chatY, w: this._chatW, h: this._chatH })); } catch {}
   }
 
-  // ── HUD кнопки: ГРУППА и ДРУЗЬЯ ─────────────────────────────────────────
-
+  // ── HUD кнопки: ГРУППА/ДРУЗЬЯ/ПОЧТА/ПРОФИЛЬ/НАСТРОЙКИ ──────────────────────
+  // Крупнее (было 26×22) и с более крупными иконками — читались слишком мелко (баг из
+  // диалога: "сделай кнопки крупнее и картинки на них читабельнее"). НАСТРОЙКИ — раньше
+  // отдельная перетаскиваемая кнопка в другом месте HUD, теперь 5-й слот этого же ряда,
+  // сразу после профиля ("после профиля прикрепи настройки, сейчас это отдельная
+  // кнопка"). Ряд можно разворачивать и горизонтально, и вертикально — клик по ручке
+  // (без перетаскивания) переключает ориентацию, см. pointerup ниже ("сделай возможность
+  // кнопки и по вертикали и по горизонтали").
   _buildHudSocialButtons() {
     const F = (sz, c) => ({ fontFamily: 'Inter, sans-serif', fontSize: sz, color: c, resolution: UI_RES });
     const W = this.scale.width, H = this.scale.height;
-    const BH = 22, BW = 26;    // button size
-    const GX = 12, FX = GX + BW + 2, MX = FX + BW + 2, PX = MX + BW + 2;  // button local X positions (after grip)
-    const BAR_W = PX + BW;   // total bar width
+    const BH = 36, BW = 40;   // button size
+    const GAP = 3, GRIP = 18; // gap between buttons + grip thickness
 
-    // Restore saved position
-    let bx = 8, by = 92;
+    // ЧАТ — перед настройками (правка по просьбе): клик открывает/сворачивает то же
+    // окно, что и крестик/сворачивание-перетаскиванием внутри самого чата (см.
+    // _rebuildChatPanel — this._chatVisible уже управляет ровно этим же состоянием).
+    const BTN_DEFS = [
+      { key: 'grp',  icon: '⚔', tip: 'ГРУППА',       badgeColor: '#4dd0e1', action: () => this._toggleGroupWin() },
+      { key: 'fr',   icon: '★', tip: 'ДРУЗЬЯ  [F]',  badgeColor: '#ef5350', action: () => this._toggleFriendsWin() },
+      { key: 'mail', icon: '✉', tip: 'ПОЧТА  [B]',   badgeColor: '#ef5350', action: () => this.scene.get('GameScene').toggleOverlay('MailScene') },
+      { key: 'prof', icon: '🪪', tip: 'ПРОФИЛЬ  [U]', badgeColor: null,      action: () => this.scene.get('GameScene').toggleOverlay('ProfileScene') },
+      { key: 'chat', icon: '💬', tip: 'ЧАТ',          badgeColor: null,      action: () => this._toggleChatWin() },
+      { key: 'set',  icon: '⚙', tip: 'НАСТРОЙКИ',    badgeColor: null,      action: () => this.gs.toggleOverlay('SettingsScene') },
+    ];
+
+    // Restore saved position/orientation (та же localStorage-запись, что и раньше,
+    // просто с добавленным полем orient — старые сохранённые {x,y} без orient молча
+    // трактуются как горизонтальные, обратной совместимости ради).
+    let bx = 8, by = 92, orient = 'h';
     try {
       const s = JSON.parse(localStorage.getItem('sd_social_btns') || 'null');
-      if (s) { bx = s.x; by = s.y; }
+      if (s) { bx = s.x; by = s.y; orient = s.orient === 'v' ? 'v' : 'h'; }
     } catch {}
-    bx = Math.max(0, Math.min(W - BAR_W - 2, bx));
-    by = Math.max(0, Math.min(H - BH - 2,    by));
+    this._socialOrient = orient;
+    const isV = orient === 'v';
+    const barW = isV ? BW : GRIP + BTN_DEFS.length * (BW + GAP) - GAP;
+    const barH = isV ? GRIP + BTN_DEFS.length * (BH + GAP) - GAP : BH;
+    this._socialBarW = barW; this._socialBarH = barH;
+
+    bx = Math.max(0, Math.min(W - barW - 2, bx));
+    by = Math.max(0, Math.min(H - barH - 2, by));
 
     this._socialBtnC = this.add.container(bx, by).setDepth(104);
     const mk = o => { this._socialBtnC.add(o); return o; };
 
-    // ── Grip ────────────────────────────────────────────────────────────────
-    const grip = mk(this.add.rectangle(0, 0, GX - 2, BH, 0x060f1c, 0.9)
+    // ── Grip ──────────────────────────────────────────────────────────────
+    const gripW = isV ? BW : GRIP - 2;
+    const gripH = isV ? GRIP - 2 : BH;
+    const grip = mk(this.add.rectangle(0, 0, gripW, gripH, 0x060f1c, 0.9)
       .setOrigin(0).setStrokeStyle(1, 0x1e3050, 0.6).setInteractive({ useHandCursor: true, cursor: 'grab' }));
-    mk(this.add.text((GX - 2) / 2, BH / 2, '⠿', F('9px', '#263a50')).setOrigin(0.5));
-
-    // ── ГРУППА button  ◈ ────────────────────────────────────────────────────
-    this._grpBtn    = mk(this.add.rectangle(GX, 0, BW, BH, 0x0a1828, 0.92)
-      .setOrigin(0).setStrokeStyle(1, 0x1e4060, 0.8).setInteractive({ useHandCursor: true }));
-    this._grpBtnTxt = mk(this.add.text(GX + BW / 2, BH / 2, '⚔', F('12px', '#3a7090')).setOrigin(0.5));
-    // Badge: member count (top-right corner, tiny)
-    this._grpBadgeTxt = mk(this.add.text(GX + BW - 1, 1, '', F('7px', '#4dd0e1')).setOrigin(1, 0));
-
-    // ── ДРУЗЬЯ button  ★ ────────────────────────────────────────────────────
-    this._frBtn     = mk(this.add.rectangle(FX, 0, BW, BH, 0x0a1828, 0.92)
-      .setOrigin(0).setStrokeStyle(1, 0x1e4060, 0.8).setInteractive({ useHandCursor: true }));
-    this._frBtnTxt  = mk(this.add.text(FX + BW / 2, BH / 2, '★', F('13px', '#3a7090')).setOrigin(0.5));
-    // Badge: pending requests (top-right corner, red)
-    this._frBadgeTxt = mk(this.add.text(FX + BW - 1, 1, '', F('7px', '#ef5350')).setOrigin(1, 0));
-
-    // ── ПОЧТА button  ✉ ─────────────────────────────────────────────────────
-    this._mailBtn    = mk(this.add.rectangle(MX, 0, BW, BH, 0x0a1828, 0.92)
-      .setOrigin(0).setStrokeStyle(1, 0x1e4060, 0.8).setInteractive({ useHandCursor: true }));
-    this._mailBtnTxt = mk(this.add.text(MX + BW / 2, BH / 2, '✉', F('13px', '#3a7090')).setOrigin(0.5));
-    // Badge: unread PM count (top-right corner, red)
-    this._mailBadgeTxt = mk(this.add.text(MX + BW - 1, 1, '', F('7px', '#ef5350')).setOrigin(1, 0));
-
-    // ── ПРОФИЛЬ button  🪪 ──────────────────────────────────────────────────
-    this._profBtn    = mk(this.add.rectangle(PX, 0, BW, BH, 0x0a1828, 0.92)
-      .setOrigin(0).setStrokeStyle(1, 0x1e4060, 0.8).setInteractive({ useHandCursor: true }));
-    this._profBtnTxt = mk(this.add.text(PX + BW / 2, BH / 2, '🪪', F('12px', '#3a7090')).setOrigin(0.5));
+    mk(this.add.text(gripW / 2, gripH / 2, '⠿', F('10px', '#263a50')).setOrigin(0.5));
 
     // ── Tooltip (outside _socialBtnC so it's not clipped) ───────────────────
     this._socialTooltip    = this.add.container(0, 0).setDepth(210).setVisible(false);
@@ -2270,16 +2259,41 @@ export default class HudScene extends Phaser.Scene {
     this._socialTooltipTxt = ttTxt;
     this._hideTip = () => this._socialTooltip.setVisible(false);
 
-    const showTip = (btnLX, label) => {
-      const cx = this._socialBtnC.x + btnLX + BW / 2;
-      const cy = this._socialBtnC.y;
-      // show below if near top, else above
-      const ty = cy < 44 ? cy + BH + 10 : cy - 10;
+    const showTip = (lx, ly, label) => {
+      const cx = this._socialBtnC.x + lx + BW / 2;
+      const cy = this._socialBtnC.y + ly + BH / 2;
+      let tx, ty;
+      if (isV) {
+        // Слева/справа от кнопки, смотря куда есть место — вертикальный ряд обычно
+        // стоит у одного из боковых краёв экрана.
+        tx = cx < W / 2 ? cx + BW / 2 + 62 : cx - BW / 2 - 62;
+        ty = cy;
+      } else {
+        tx = cx;
+        ty = cy < 44 ? cy + BH / 2 + 12 : cy - BH / 2 - 12;
+      }
       this._socialTooltipTxt.setText(label);
-      this._socialTooltip.setPosition(cx, ty).setVisible(true);
+      this._socialTooltip.setPosition(tx, ty).setVisible(true);
     };
 
-    // ── Drag ────────────────────────────────────────────────────────────────
+    // ── Buttons ───────────────────────────────────────────────────────────
+    this._socialBtns = {};
+    BTN_DEFS.forEach((def, i) => {
+      const lx = isV ? 0 : GRIP + i * (BW + GAP);
+      const ly = isV ? GRIP + i * (BH + GAP) : 0;
+      const btn = mk(this.add.rectangle(lx, ly, BW, BH, 0x0a1828, 0.92)
+        .setOrigin(0).setStrokeStyle(1, 0x1e4060, 0.8).setInteractive({ useHandCursor: true }));
+      const txt = mk(this.add.text(lx + BW / 2, ly + BH / 2, def.icon, F('20px', '#3a7090')).setOrigin(0.5));
+      const badge = def.badgeColor ? mk(this.add.text(lx + BW - 2, ly + 1, '', F('8px', def.badgeColor)).setOrigin(1, 0)) : null;
+      this._socialBtns[def.key] = { btn, txt, badge, lx, ly };
+
+      btn.on('pointerdown', () => { this._hideTip(); def.action(); });
+      btn.on('pointerover', () => { btn.setFillStyle(0x102840); showTip(lx, ly, def.tip); });
+      btn.on('pointerout',  () => { this._hideTip(); this._updateSocialBtnStyles(); });
+    });
+
+    // ── Drag (grip) — клик без перетаскивания переключает ориентацию,
+    // см. pointerup-обработчик рядом с this._socialBtnDrag ниже ────────────
     this._socialBtnDrag = { active: false, moved: false, ox: 0, oy: 0 };
     grip.on('pointerdown', (p) => {
       this._socialBtnDrag.active = true;
@@ -2288,28 +2302,25 @@ export default class HudScene extends Phaser.Scene {
       this._socialBtnDrag.oy = p.y - this._socialBtnC.y;
     });
 
-    // ── Button events ────────────────────────────────────────────────────────
-    this._grpBtn.on('pointerdown', () => { this._hideTip(); this._toggleGroupWin(); });
-    this._grpBtn.on('pointerover', () => { this._grpBtn.setFillStyle(0x102840); showTip(GX, 'ГРУППА'); });
-    this._grpBtn.on('pointerout',  () => { this._hideTip(); this._updateSocialBtnStyles(); });
-
-    this._frBtn.on('pointerdown', () => { this._hideTip(); this._toggleFriendsWin(); });
-    this._frBtn.on('pointerover', () => { this._frBtn.setFillStyle(0x102840); showTip(FX, 'ДРУЗЬЯ  [F]'); });
-    this._frBtn.on('pointerout',  () => { this._hideTip(); this._updateSocialBtnStyles(); });
-
-    this._mailBtn.on('pointerdown', () => { this._hideTip(); this.scene.get('GameScene').toggleOverlay('MailScene'); });
-    this._mailBtn.on('pointerover', () => { this._mailBtn.setFillStyle(0x102840); showTip(MX, 'ПОЧТА  [B]'); });
-    this._mailBtn.on('pointerout',  () => { this._hideTip(); this._updateSocialBtnStyles(); });
-
-    this._profBtn.on('pointerdown', () => { this._hideTip(); this.scene.get('GameScene').toggleOverlay('ProfileScene'); });
-    this._profBtn.on('pointerover', () => { this._profBtn.setFillStyle(0x102840); showTip(PX, 'ПРОФИЛЬ  [U]'); });
-    this._profBtn.on('pointerout',  () => { this._hideTip(); this._updateSocialBtnStyles(); });
-
     this._socialBtnC.setVisible(loadSettings().showSocialBtns !== false);
+    this._updateSocialBtnStyles();
+  }
+
+  // Полностью пересобирает ряд (проще, чем на лету переставлять уже созданные объекты
+  // под другую ориентацию) — вызывается кликом по ручке без перетаскивания, см. pointerup.
+  _rebuildSocialButtons(newOrient, keepPos) {
+    const x = keepPos ? this._socialBtnC?.x : 8;
+    const y = keepPos ? this._socialBtnC?.y : 92;
+    this._socialBtnC?.destroy();
+    this._socialTooltip?.destroy();
+    try {
+      localStorage.setItem('sd_social_btns', JSON.stringify({ x: Math.round(x ?? 8), y: Math.round(y ?? 92), orient: newOrient }));
+    } catch {}
+    this._buildHudSocialButtons();
   }
 
   _updateSocialBtnStyles() {
-    if (!this._socialBtnC) return;
+    if (!this._socialBtnC || !this._socialBtns) return;
     const show = loadSettings().showSocialBtns !== false;
     this._socialBtnC.setVisible(show);
     if (!show) return;
@@ -2319,35 +2330,53 @@ export default class HudScene extends Phaser.Scene {
     const frOn    = this._friendsWinVisible;
     const pending = (this._friendsList || []).filter(f => f.status === 'pending' && f.dir === 'in').length;
 
-    // Group button
-    this._grpBtn.setFillStyle(grpOn ? 0x0f3040 : 0x0a1828);
-    this._grpBtn.setStrokeStyle(1, grpOn ? 0x4dd0e1 : (grp?.inGroup ? 0x2a6080 : 0x1e4060), 1);
-    this._grpBtnTxt.setColor(grpOn || grp?.inGroup ? '#4dd0e1' : '#3a7090');
-    this._grpBadgeTxt?.setText(grp?.inGroup && grp.memberCount > 1 ? `${grp.memberCount}` : '');
+    // warnStroke — цвет обводки в "не активна, но что-то требует внимания" состоянии:
+    // группа использует другой (нейтрально-синий "я в группе"), остальные — жёлто-
+    // оранжевый "есть непрочитанное/ожидающее" — тот же контраст, что и раньше.
+    const setBtn = (key, on, warn, badgeText, warnStroke = 0x806020) => {
+      const b = this._socialBtns[key];
+      if (!b) return;
+      b.btn.setFillStyle(on ? 0x0f3040 : 0x0a1828);
+      b.btn.setStrokeStyle(1, on ? 0x4dd0e1 : (warn ? warnStroke : 0x1e4060), 1);
+      b.txt.setColor(on || (warn && key === 'grp') ? '#4dd0e1' : (warn ? '#ffb74d' : '#3a7090'));
+      b.badge?.setText(badgeText ?? '');
+    };
 
-    // Friends button
-    this._frBtn.setFillStyle(frOn ? 0x0f3040 : 0x0a1828);
-    this._frBtn.setStrokeStyle(1, frOn ? 0x4dd0e1 : (pending > 0 ? 0x806020 : 0x1e4060), 1);
-    this._frBtnTxt.setColor(frOn ? '#4dd0e1' : (pending > 0 ? '#ffb74d' : '#3a7090'));
-    this._frBadgeTxt?.setText(pending > 0 ? `${pending}` : '');
+    setBtn('grp', grpOn, grp?.inGroup, grp?.inGroup && grp.memberCount > 1 ? `${grp.memberCount}` : '', 0x2a6080);
+    setBtn('fr', frOn, pending > 0, pending > 0 ? `${pending}` : '');
 
-    // Mail button
     const mailOn = this.scene.isActive('MailScene');
     const unread = this._mailUnread || 0;
-    this._mailBtn?.setFillStyle(mailOn ? 0x0f3040 : 0x0a1828);
-    this._mailBtn?.setStrokeStyle(1, mailOn ? 0x4dd0e1 : (unread > 0 ? 0x806020 : 0x1e4060), 1);
-    this._mailBtnTxt?.setColor(mailOn ? '#4dd0e1' : (unread > 0 ? '#ffb74d' : '#3a7090'));
-    this._mailBadgeTxt?.setText(unread > 0 ? `${unread}` : '');
+    setBtn('mail', mailOn, unread > 0, unread > 0 ? `${unread}` : '');
 
-    // Profile button
     const profOn = this.scene.isActive('ProfileScene');
-    this._profBtn?.setFillStyle(profOn ? 0x0f3040 : 0x0a1828);
-    this._profBtn?.setStrokeStyle(1, profOn ? 0x4dd0e1 : 0x1e4060, 1);
-    this._profBtnTxt?.setColor(profOn ? '#4dd0e1' : '#3a7090');
+    setBtn('prof', profOn, false);
+
+    // Подсвечена, пока чат виден в ЛЮБОМ виде (окно или свёрнутая таблетка) — гаснет
+    // только когда убран полностью этой же кнопкой (см. _toggleChatWin/_chatHidden).
+    setBtn('chat', !this._chatHidden, false);
+
+    const setOn = this.scene.isActive('SettingsScene');
+    setBtn('set', setOn, false);
   }
 
   _toggleGroupWin()   { this._groupWinVisible   = !this._groupWinVisible;   this._rebuildGroupWin();   this._updateSocialBtnStyles(); }
   _toggleFriendsWin() { this._friendsWinVisible = !this._friendsWinVisible; this._rebuildFriendsWin(); this._updateSocialBtnStyles(); }
+  // Отдельное от крестика/сворачивания-перетаскиванием (те дают маленькую таблетку,
+  // см. _rebuildChatPanel) состояние — кнопка на общей панели убирает чат ПОЛНОСТЬЮ,
+  // без остатка в виде таблетки (правка по просьбе: "убирать полностью чат, даже
+  // маленькое свёрнутое окошко"), и восстанавливает в виде полного окна при повторном клике.
+  _toggleChatWin() {
+    this._chatHidden = !this._chatHidden;
+    if (this._chatHidden) {
+      this._chatVisible = false;
+    } else {
+      this._chatVisible = true;
+      this._chatCollapsed = false;
+    }
+    this._rebuildChatPanel();
+    this._updateSocialBtnStyles();
+  }
 
   // ── Окно ГРУППА ──────────────────────────────────────────────────────────
 
@@ -3169,8 +3198,9 @@ export default class HudScene extends Phaser.Scene {
         this._frWin?.setPosition(nx, ny);
       }
       if (this._socialBtnDrag?.active && pointer.isDown) {
-        const nx = Math.max(0, Math.min(W - 68, pointer.x - this._socialBtnDrag.ox));
-        const ny = Math.max(0, Math.min(H - 24, pointer.y - this._socialBtnDrag.oy));
+        const barW = this._socialBarW ?? 68, barH = this._socialBarH ?? 24;
+        const nx = Math.max(0, Math.min(W - barW, pointer.x - this._socialBtnDrag.ox));
+        const ny = Math.max(0, Math.min(H - barH, pointer.y - this._socialBtnDrag.oy));
         if (Math.abs(nx - this._socialBtnC.x) > 3 || Math.abs(ny - this._socialBtnC.y) > 3)
           this._socialBtnDrag.moved = true;
         this._socialBtnC?.setPosition(nx, ny);
@@ -3198,8 +3228,13 @@ export default class HudScene extends Phaser.Scene {
             localStorage.setItem('sd_social_btns', JSON.stringify({
               x: Math.round(this._socialBtnC.x),
               y: Math.round(this._socialBtnC.y),
+              orient: this._socialOrient ?? 'h',
             }));
           } catch {}
+        } else {
+          // Клик по ручке БЕЗ перетаскивания — переключить ориентацию ряда (правка по
+          // просьбе: "сделай возможность кнопки и по вертикали и по горизонтали").
+          this._rebuildSocialButtons(this._socialOrient === 'v' ? 'h' : 'v', true);
         }
       }
     });
