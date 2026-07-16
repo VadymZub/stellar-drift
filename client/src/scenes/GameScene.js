@@ -927,19 +927,62 @@ export default class GameScene extends Phaser.Scene {
 
   // ── World event: mob invasion (PvP sectors only) ────────────────────────────
   // Deterministic wall-clock scheduling (same trick as ArgusController's phase
-  // window) — every client computes the identical start hour for (date, sector)
-  // via a hash, with no server round-trip needed to agree on "when".
+  // window) — every client computes the identical schedule for (date) via a
+  // hash, with no server round-trip needed to agree on "when".
   _worldEventHash(seed) {
     let h = 0;
     for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) >>> 0;
     return h;
   }
 
-  _worldEventTodayStart(sectorKey) {
+  // Единый дневной слот-план для ОБОИХ ивентов (нашествие + бронепоезд, все
+  // PvP-сектора разом) — см. диалог: "будни 19-23, выходные 11-23, бронепоезд
+  // каждый день, вторжение только сб/вс, разнести по времени и картам между
+  // собой". Раньше каждый (сектор, тип) считал свой час независимым хешем —
+  // ":train"-суффикс в сиде только НАДЕЯЛСЯ не совпасть с нашествием в тот же
+  // час, без гарантии. Здесь все события дня раскладываются РАВНОМЕРНЫМИ
+  // слотами внутри дневного окна — гарантированный минимальный зазор между
+  // любыми двумя событиями (сектор ↔ сектор, поезд ↔ нашествие), а порядок
+  // (кто в какой слот попал) детерминированно перетасован сидом от даты —
+  // тот же приём, что ConfedGuardSystem._seededRandom.
+  _dailyEventSchedule() {
     const now = new Date();
     const dateStr = `${now.getFullYear()}-${now.getMonth()}-${now.getDate()}`;
-    const hour = this._worldEventHash(`${dateStr}:${sectorKey}`) % 24;
-    return new Date(now.getFullYear(), now.getMonth(), now.getDate(), hour, 0, 0, 0).getTime();
+    if (this._eventScheduleCache?.dateStr === dateStr) return this._eventScheduleCache.events;
+
+    const dow = now.getDay(); // 0=Вс..6=Сб
+    const isWeekend = dow === 0 || dow === 6;
+    const winStartMin = (isWeekend ? 11 : 19) * 60;
+    const winEndMin = 23 * 60;
+
+    const slots = Object.keys(ARMORED_TRAIN_SECTORS).map(sector => ({ type: 'train', sector }));
+    if (isWeekend) {
+      for (const sector of Object.keys(WORLD_EVENT_SECTORS)) slots.push({ type: 'invasion', sector });
+    }
+
+    let seed = this._worldEventHash(`${dateStr}:schedule`);
+    const rnd = () => { seed = (seed * 1103515245 + 12345) >>> 0; return seed / 0xffffffff; };
+    for (let i = slots.length - 1; i > 0; i--) {
+      const j = Math.floor(rnd() * (i + 1));
+      [slots[i], slots[j]] = [slots[j], slots[i]];
+    }
+
+    const slotLen = (winEndMin - winStartMin) / slots.length;
+    const events = slots.map((s, i) => {
+      const startMin = Math.round(winStartMin + i * slotLen);
+      const startAt = new Date(now.getFullYear(), now.getMonth(), now.getDate(),
+                                Math.floor(startMin / 60), startMin % 60, 0, 0).getTime();
+      return { ...s, startAt };
+    });
+
+    this._eventScheduleCache = { dateStr, events };
+    return events;
+  }
+
+  // null = сегодня в этом секторе нашествия нет вообще (будний день — только
+  // бронепоезд идёт каждый день, см. _dailyEventSchedule).
+  _worldEventTodayStart(sectorKey) {
+    return this._dailyEventSchedule().find(e => e.type === 'invasion' && e.sector === sectorKey)?.startAt ?? null;
   }
 
   _initWorldEvent() {
@@ -948,6 +991,7 @@ export default class GameScene extends Phaser.Scene {
     const cfg = WORLD_EVENT_SECTORS[galaxy.current];
     if (!sec?.pvp || !cfg) return;
     const startAt = this._worldEventTodayStart(galaxy.current);
+    if (startAt == null) return; // будний день — нашествий сегодня нет вообще
     const now = Date.now();
     if (now < startAt || now >= startAt + WORLD_EVENT_WINDOW_MS) return; // not today's live window
 
@@ -967,14 +1011,11 @@ export default class GameScene extends Phaser.Scene {
     }
   }
 
-  // Бронепоезд — тот же детерминированный wall-clock паттерн, что "нашествие"
-  // (_worldEventHash), но с суффиксом ":train" в seed, чтобы не всегда совпадать по
-  // времени с нашествием в один день (иначе оба ивента одновременно на одной карте).
+  // Бронепоезд — идёт каждый день (в отличие от нашествия, только сб/вс), но
+  // делит с ним общий слот-план дня, см. _dailyEventSchedule — гарантированно
+  // не совпадает по времени ни с одним другим событием дня.
   _armoredTrainTodayStart(sectorKey) {
-    const now = new Date();
-    const dateStr = `${now.getFullYear()}-${now.getMonth()}-${now.getDate()}`;
-    const hour = this._worldEventHash(`${dateStr}:${sectorKey}:train`) % 24;
-    return new Date(now.getFullYear(), now.getMonth(), now.getDate(), hour, 0, 0, 0).getTime();
+    return this._dailyEventSchedule().find(e => e.type === 'train' && e.sector === sectorKey)?.startAt ?? null;
   }
 
   _initArmoredTrain() {
@@ -984,6 +1025,7 @@ export default class GameScene extends Phaser.Scene {
     const cfg = ARMORED_TRAIN_SECTORS[galaxy.current];
     if (!sec?.pvp || !cfg) return;
     const startAt = this._armoredTrainTodayStart(galaxy.current);
+    if (startAt == null) return; // не должно случаться (поезд всегда в расписании), но на всякий
     const now = Date.now();
     // ARMORED_TRAIN_WINDOW_MS — только время "крейсерского" пролёта видимой карты (см.
     // ArmoredTrain конструктор — _approachMs/_exitMs добавляют время сверху, но зависят от
@@ -1012,11 +1054,11 @@ export default class GameScene extends Phaser.Scene {
     const cands = [];
     if (WORLD_EVENT_SECTORS[galaxy.current]) {
       const startAt = this._worldEventTodayStart(galaxy.current);
-      if (startAt > now && startAt - now <= 15 * 60000) cands.push({ label: 'Нашествие', startAt });
+      if (startAt != null && startAt > now && startAt - now <= 15 * 60000) cands.push({ label: 'Нашествие', startAt });
     }
     if (ARMORED_TRAIN_SECTORS[galaxy.current]) {
       const startAt = this._armoredTrainTodayStart(galaxy.current);
-      if (startAt > now && startAt - now <= 15 * 60000) cands.push({ label: 'Бронепоезд', startAt });
+      if (startAt != null && startAt > now && startAt - now <= 15 * 60000) cands.push({ label: 'Бронепоезд', startAt });
     }
     if (cands.length) this._mmEventNotice = cands.sort((a, b) => a.startAt - b.startAt)[0];
   }
@@ -1030,13 +1072,13 @@ export default class GameScene extends Phaser.Scene {
     const list = [];
     for (const sectorKey of Object.keys(WORLD_EVENT_SECTORS)) {
       const startAt = this._worldEventTodayStart(sectorKey);
-      if (startAt > now && startAt - now <= 15 * 60000 + 1000) {
+      if (startAt != null && startAt > now && startAt - now <= 15 * 60000 + 1000) {
         list.push({ sectorKey, label: 'Нашествие', startAt });
       }
     }
     for (const sectorKey of Object.keys(ARMORED_TRAIN_SECTORS)) {
       const startAt = this._armoredTrainTodayStart(sectorKey);
-      if (startAt > now && startAt - now <= 15 * 60000 + 1000) {
+      if (startAt != null && startAt > now && startAt - now <= 15 * 60000 + 1000) {
         list.push({ sectorKey, label: 'Бронепоезд', startAt });
       }
     }
