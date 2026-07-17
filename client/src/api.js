@@ -3,7 +3,16 @@
 
 // location.hostname, не жёсткий 'localhost' — иначе со второго ПК в локальной сети
 // клиент лез бы на свой собственный localhost вместо машины с сервером.
-export const API_BASE = `http://${location.hostname}:8000`;
+//
+// Исключение — Tauri prod-сборка: там страница отдаётся с tauri.localhost (встроенный
+// фронтенд, не наш http.server), так что location.hostname не укажет ни на что реальное.
+// В dev-режиме (браузер ИЛИ `cargo tauri dev`, у которого devUrl = localhost:8080)
+// hostname остаётся 'localhost' как раньше — эта ветка вообще не участвует.
+const isTauriProd = location.hostname === 'tauri.localhost';
+// TODO: заменить на реальный домен после переезда бэкенда на Render (см. память deployment_hosting_plan).
+const PROD_HOST = 'stellar-drift-api.onrender.com';
+export const API_BASE = isTauriProd ? `https://${PROD_HOST}` : `http://${location.hostname}:8000`;
+export const WS_BASE  = isTauriProd ? `wss://${PROD_HOST}`   : `ws://${location.hostname}:8000`;
 
 const TOKEN_KEY   = 'sd_token';
 const USERNAME_KEY = 'sd_username';

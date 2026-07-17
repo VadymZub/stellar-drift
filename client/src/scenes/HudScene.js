@@ -10,7 +10,7 @@ import { prerenderTex } from '../utils/prerenderTex.js';
 import { loadSettings, saveSettings, getMinimapDims } from '../settings.js';
 import { GroupSystem } from '../systems/GroupSystem.js';
 import { PvpClient } from '../systems/PvpClient.js';
-import { blacklistList, blacklistAdd, blacklistRemove } from '../api.js';
+import { blacklistList, blacklistAdd, blacklistRemove, WS_BASE } from '../api.js';
 import { MailClient } from '../systems/MailClient.js';
 import ArmoredTrain from '../entities/ArmoredTrain.js';
 
@@ -1814,8 +1814,7 @@ export default class HudScene extends Phaser.Scene {
     this._chatWsDestroyed = false;
     let ws;
     try {
-      // location.hostname — тот же принцип, что в api.js API_BASE (см. комментарий там)
-      ws = new WebSocket(`ws://${location.hostname}:8000/ws/chat?token=${encodeURIComponent(token)}`);
+      ws = new WebSocket(`${WS_BASE}/ws/chat?token=${encodeURIComponent(token)}`);
     } catch { return; }
     this._chatWS = ws;
 
