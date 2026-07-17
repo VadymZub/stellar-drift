@@ -344,4 +344,54 @@ render: { roundPixels: true, mipmapFilter: 'LINEAR' }
 | Файл | Что |
 |---|---|
 | `src/scenes/GameScene.js` | `_dailyEventSchedule()` NEW; `_worldEventTodayStart`/`_armoredTrainTodayStart` переписаны на lookup из общего плана; `_initWorldEvent`/`_initArmoredTrain`/`_initEventCountdown`/`_upcomingScheduledEvents` — null-проверки |
+
+---
+
+## Десктоп-клиент на Tauri (2026-07-17)
+
+### Запрос
+
+Нужны: реальная дистрибуция (инсталлятор вместо "открой URL"), ощущение нативного приложения (своё окно/иконка, без хрома браузера), прирост скорости за счёт изоляции от остального браузера (вкладки/расширения делят GPU/память). Выбор стоял между Electron и Tauri.
+
+### Решение — Tauri, не Electron
+
+Оба оборачивают тот же Chromium-движок на Windows (Tauri — через системный WebView2, Electron — через встроенный Chromium), так что сырой рендер не станет быстрее ни там, ни там — выигрыш именно в изоляции процесса. Tauri выбран из-за меньшего веса инсталлятора (~5-10 МБ против ~150-200 МБ) и отсутствия встроенного браузера.
+
+**Важное уточнение по хостингу**: Tauri зашивает статику клиента (весь `client/`) в инсталлятор — хостинг фронтенда (Vercel/Netlify из старого плана) становится не нужен. Бэкенд (FastAPI + БД) как был отдельным сервисом, так и остаётся — общий мир на всех игроков не может «уехать» в локальный инстанс каждого игрока (см. `deployment_hosting_plan` — Render + Neon/Supabase, ещё не реализовано, отдельная задача).
+
+### Архитектура
+
+1. **Vendoring Phaser вместо CDN** (`client/vendor/phaser.esm.js` + import map в `index.html`):
+   ```html
+   <script type="importmap">
+   { "imports": { "https://cdn.jsdelivr.net/npm/phaser@4.2.1/dist/phaser.esm.js": "./vendor/phaser.esm.js" } }
+   </script>
+   ```
+   Все 40 файлов, каждый из которых независимо делает `import * as Phaser from 'https://cdn.jsdelivr.net/...'`, продолжают импортировать ровно ту же CDN-строку — браузер/webview прозрачно резолвит её в локальный файл. Ноль правок в этих 40 файлах. Убирает рантайм-зависимость от jsdelivr (важно для офлайн-надёжности инсталлятора), заодно работает и для обычного браузерного дев-режима.
+
+2. **`client/src-tauri/`** — Tauri v2 скаффолд (`tauri.conf.json`):
+   - `build.frontendDist = "../"` — указывает на `client/` целиком, без сборки — Tauri просто встраивает статику при `tauri build`.
+   - `build.devUrl = "http://localhost:8080"` — переиспользует существующий dev-сервер из `run.ps1`; `tauri dev` просто ждёт TCP-соединение по этому адресу вместо запуска своего сервера. Дев-цикл не меняется вообще.
+   - `identifier: "com.stellardrift.app"`, `app.security.csp: null` (v1 — ничего не блокируется, как и текущий wildcard CORS на сервере; сузить CSP — будущий hardening-шаг, не блокер).
+   - **Без `tauri-plugin-single-instance`** — намеренно, чтобы можно было запускать 2 инстанса на одной машине для локального тестирования PvP (как сейчас 2 вкладки браузера). Отдельный риск — WebView2 эксклюзивно блокирует свою user-data-folder на процесс; 2 ярлыка одной и той же установленной копии могут столкнуться на втором запуске. Митигация: ставить/копировать приложение в 2 разные папки — тогда у каждой своя UDF.
+
+3. **`client/src/api.js`** — детект «это упакованный Tauri-билд» через `location.hostname === 'tauri.localhost'` (v2 prod-origin; НЕ `location.protocol === 'tauri:'` — это устаревший v1 синтаксис). В этом случае — плейсхолдер прод-URL бэкенда (`https://stellar-drift-api.onrender.com`, обновить после реального деплоя на Render) вместо `location.hostname`-логики. Экспортирован `WS_BASE` рядом с `API_BASE`; `HudScene.js._connectChatWS()` теперь берёт готовый `WS_BASE` вместо независимого дублирования `ws://${location.hostname}:8000` у себя. Дев-поведение (браузер ИЛИ `tauri dev` на :8080) не меняется байт в байт, поскольку `location.hostname` остаётся `localhost` в обоих случаях.
+
+4. **DevTools/Playwright никуда не делись** — WebView2 хромиумный, те же Chrome DevTools (по умолчанию включены в dev-сборке). Для скриптовых репродукций (как весь этот сеанс) — запуск с `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9222` (именно через env var, не как обычный argv-флаг exe — WebView2-специфичный способ прокинуть Chromium-флаги во внутренний процесс), затем Playwright `chromium.connectOverCDP('http://localhost:9222')` вместо `chromium.launch()`.
+
+5. **DEV_MODE = true** в `LoginScene.js`/`GameScene.js` — ручной чек-лист перед реальным релизом (флипнуть в `false`), не автоматизировано — в проекте нет механизма dev/prod-веток без сборщика, а добавлять его ради этого было бы лишним усложнением.
+
+### Живая проверка
+
+`npx @tauri-apps/cli dev` (Rust на машине отсутствовал — доустановлен через `rustup-init`, MSVC Build Tools и WebView2 рантайм уже были) — первая сборка ~360 крейтов, 6м45с. Реальное нативное окно WebView2 «Stellar Drift» запустилось, подключилось к локальному бэкенду, полностью отрендерило и логин-экран, и геймплей (полёт, HUD, миникарта, чат, лог миссий) — 0 page errors. Проверено через `--remote-debugging-port` + Playwright CDP-attach (скриншот именно webview-контента приложения, не экрана целиком — первая попытка скриншотить через `GetWindowRect`+`CopyFromScreen` по ошибке поймала чужое окно с рабочего стола, immediately deleted).
+
+### Файлы изменены
+
+| Файл | Что |
+|---|---|
+| `index.html` | import map, редирект Phaser-CDN на vendor |
+| `vendor/phaser.esm.js` | NEW — локальная копия Phaser 4.2.1 ESM |
+| `src/api.js` | `isTauriProd` детект, `WS_BASE` export |
+| `src/scenes/HudScene.js` | `_connectChatWS()` использует `WS_BASE` вместо дублирования |
+| `src-tauri/` | NEW — весь Tauri v2 скаффолд (tauri.conf.json, Cargo.toml/.lock, src/main.rs, src/lib.rs, capabilities, icons) |
 | `locales/ru.json` | +garage.tab_perks |
