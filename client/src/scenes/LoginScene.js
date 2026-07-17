@@ -447,27 +447,40 @@ export default class LoginScene extends Phaser.Scene {
     }
 
     for (const { username } of accounts) {
+      // Раньше вся строка была кликабельна БЕЗ явной подписи — пользователь не понимал,
+      // что клик по имени = вход (баг из диалога со скриншотом: "неявно как войти").
+      // Явная кнопка "ВОЙТИ" рядом с именем убирает эту неоднозначность.
       const row = document.createElement('div');
       Object.assign(row.style, {
         display: 'flex', justifyContent: 'space-between', alignItems: 'center',
         padding: '8px 10px', background: '#080d1c', border: '1px solid #1e3a4a',
-        borderRadius: '4px', cursor: 'pointer', fontSize: '13px',
+        borderRadius: '4px', fontSize: '13px',
       });
       const nameEl = document.createElement('span');
       nameEl.textContent = username;
+      Object.assign(nameEl.style, { flex: '1', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' });
+
+      const loginBtn = document.createElement('button');
+      loginBtn.type = 'button';
+      loginBtn.textContent = 'ВОЙТИ';
+      Object.assign(loginBtn.style, {
+        background: '#0d2a30', color: '#4dd0e1', border: '1px solid #4dd0e1',
+        borderRadius: '4px', padding: '4px 10px', fontSize: '11px', fontWeight: '700',
+        letterSpacing: '1px', cursor: 'pointer', fontFamily: 'inherit', marginLeft: '8px',
+      });
+      loginBtn.addEventListener('mouseenter', () => loginBtn.style.background = '#123a42');
+      loginBtn.addEventListener('mouseleave', () => loginBtn.style.background = '#0d2a30');
+
       const rmBtn = document.createElement('span');
       rmBtn.textContent = '✕';
-      Object.assign(rmBtn.style, { color: '#607d8b', cursor: 'pointer', padding: '0 4px' });
-      rmBtn.addEventListener('click', async (e) => {
-        e.stopPropagation();
+      Object.assign(rmBtn.style, { color: '#607d8b', cursor: 'pointer', padding: '0 4px', marginLeft: '4px' });
+      rmBtn.addEventListener('click', async () => {
         await vault.removeAccount(username);
         modal.remove();
         this._showAccountListModal();
       });
-      row.append(nameEl, rmBtn);
-      row.addEventListener('mouseenter', () => row.style.borderColor = '#4dd0e1');
-      row.addEventListener('mouseleave', () => row.style.borderColor = '#1e3a4a');
-      row.addEventListener('click', async () => {
+
+      const doLoginFlow = async () => {
         modal.remove();
         const password = vault.getAccountPassword(username);
         this._removeOverlay();
@@ -477,7 +490,10 @@ export default class LoginScene extends Phaser.Scene {
           // Сервер недоступен/пароль устарел на сервере — вернуть на обычную форму входа.
           this.scene.restart();
         }
-      });
+      };
+      loginBtn.addEventListener('click', doLoginFlow);
+
+      row.append(nameEl, loginBtn, rmBtn);
       box.append(row);
     }
 
