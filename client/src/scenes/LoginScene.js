@@ -3,6 +3,7 @@ import { COLORS, UI_RES } from '../constants.js';
 import { i18n } from '../i18n.js';
 import { apiPost, apiGet, setSession, clearSession, getToken, getUsername, verifyEmail, resendVerification, changeEmail } from '../api.js';
 import { galaxy, SECTORS } from '../galaxy.js';
+import * as vault from '../vault.js';
 
 // Determine the sector the player should start in from their saved state.
 // Mirrors the redirect logic in GameScene._applyLoadedState.
@@ -156,6 +157,27 @@ export default class LoginScene extends Phaser.Scene {
       });
     }
 
+    // Вейлт мульти-аккаунтов (десктоп-клиент, см. IMPL_NOTES): чекбокс "Сохранить" рядом
+    // с формой + отдельная ссылка "Сохранённые аккаунты" (если вейлт уже существует).
+    // Полностью скрыты, если Web Crypto недоступен (crypto.subtle требует secure context —
+    // см. vault.js) — не показываем UI, который не сможет реально зашифровать данные.
+    let saveChk = null, saveRow = null, savedLink = null;
+    if (vault.isCryptoAvailable()) {
+      saveRow = document.createElement('label');
+      Object.assign(saveRow.style, {
+        display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11px',
+        color: '#607d8b', cursor: 'pointer', marginTop: '2px', userSelect: 'none',
+      });
+      saveChk = document.createElement('input');
+      saveChk.type = 'checkbox';
+      saveChk.id = 'sd-save-account';
+      const saveLbl = document.createElement('span');
+      saveLbl.textContent = '💾 Сохранить аккаунт (зашифровано)';
+      saveRow.append(saveChk, saveLbl);
+
+      savedLink = this._makeSavedAccountsLink();
+    }
+
     // Состояние: login | register
     let mode = 'login';
 
@@ -193,16 +215,10 @@ export default class LoginScene extends Phaser.Scene {
         const endpoint = mode === 'login' ? '/auth/login' : '/auth/register';
         const payload = mode === 'login' ? { username, password } : { username, email, password };
         const data = await apiPost(endpoint, payload);
-        setSession(data.access_token, data.username);
 
-        if (data.email_verified === false) {
-          this._removeOverlay();
-          this._showVerificationGate(password);
-          return;
-        }
-        window.TEST_PROFILE = null; // clear any leftover dev session data
-        this._removeOverlay();
-        await this._proceedIntoGame();
+        if (saveChk?.checked) await this._saveAccountToVault(username, password);
+
+        await this._completeLogin(data, password);
       } catch (e) {
         errMsg.textContent = e.message || 'Ошибка сервера';
       } finally {
@@ -219,6 +235,8 @@ export default class LoginScene extends Phaser.Scene {
     );
 
     box.append(tabBar, fldUser, fldEmail, fldPass, btnAction, errMsg);
+    if (saveRow) box.append(saveRow);
+    if (savedLink) box.append(savedLink);
     if (devLink) box.append(devLink);
     wrap.append(box);
     document.body.appendChild(wrap);
@@ -260,6 +278,217 @@ export default class LoginScene extends Phaser.Scene {
       this.load.once('complete', _launch);
       this.load.start();
     }
+  }
+
+  // Общий "после успешного /auth/login или /auth/register" — используется и обычным
+  // сабмитом формы, и логином по сохранённому в вейлте аккаунту (_doLogin).
+  async _completeLogin(data, password) {
+    setSession(data.access_token, data.username);
+    if (data.email_verified === false) {
+      this._removeOverlay();
+      this._showVerificationGate(password);
+      return;
+    }
+    window.TEST_PROFILE = null; // clear any leftover dev session data
+    this._removeOverlay();
+    await this._proceedIntoGame();
+  }
+
+  // Логин по паре username/password, полученной из вейлта (см. _showAccountListModal) —
+  // тот же /auth/login, что и обычная форма, без дублирования логики.
+  async _doLogin(username, password) {
+    const data = await apiPost('/auth/login', { username, password });
+    await this._completeLogin(data, password);
+  }
+
+  // Сохранить username/password в локальный зашифрованный вейлт (client/src/vault.js)
+  // после успешного логина/регистрации, если отмечен чекбокс "Сохранить аккаунт". Мастер-
+  // пароль спрашивается один раз за сессию — см. _promptMasterPassword и диалог "перед
+  // сохранением вызывать мастер пароль... запоминать на сессию".
+  async _saveAccountToVault(username, password) {
+    try {
+      if (!vault.hasVault()) {
+        await this._promptMasterPassword('create');
+      } else if (!vault.isUnlocked()) {
+        await this._promptMasterPassword('unlock');
+      }
+      await vault.saveAccount(username, password);
+    } catch (e) {
+      // Отменённый мастер-пароль или ошибка вейлта не должны блокировать сам вход в игру.
+      console.warn('Не удалось сохранить аккаунт в хранилище:', e.message);
+    }
+  }
+
+  // Модалка мастер-пароля — отдельный оверлей ПОВЕРХ текущей формы логина (не трогает
+  // this._overlay, чтобы после отмены/успеха вернуться к уже заполненной форме как есть).
+  // mode: 'create' (первая настройка вейлта, поле повторите-пароль) | 'unlock' (одно поле).
+  // Возвращает Promise — resolve после успешного createVault/unlockVault, reject при отмене.
+  _promptMasterPassword(mode) {
+    return new Promise((resolve, reject) => {
+      const modal = document.createElement('div');
+      Object.assign(modal.style, {
+        position: 'fixed', inset: '0', background: 'rgba(2,4,10,0.7)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: '1000',
+      });
+      const box = document.createElement('form');
+      box.addEventListener('submit', (e) => e.preventDefault());
+      Object.assign(box.style, {
+        background: 'rgba(5,10,25,0.97)', border: '1px solid rgba(77,208,225,0.25)',
+        borderRadius: '8px', padding: '28px 32px', width: '300px',
+        display: 'flex', flexDirection: 'column', gap: '12px',
+        fontFamily: "'Segoe UI', system-ui, sans-serif", color: '#cfd8dc',
+      });
+
+      const title = document.createElement('div');
+      title.textContent = mode === 'create' ? 'СОЗДАЙТЕ МАСТЕР-ПАРОЛЬ' : 'МАСТЕР-ПАРОЛЬ';
+      Object.assign(title.style, { fontSize: '13px', letterSpacing: '2px', color: '#4dd0e1', textAlign: 'center' });
+
+      const hint = document.createElement('div');
+      hint.textContent = 'Хранится локально, шифрует сохранённые аккаунты на этом устройстве.';
+      Object.assign(hint.style, { fontSize: '11px', color: '#607d8b', textAlign: 'center' });
+
+      const fldPass1 = this._makeField('Мастер-пароль', 'password', 'sd-mp-1');
+      const fldPass2 = this._makeField('Повторите пароль', 'password', 'sd-mp-2');
+      if (mode !== 'create') fldPass2.style.display = 'none';
+
+      const errMsg = document.createElement('div');
+      Object.assign(errMsg.style, { fontSize: '12px', color: '#ef5350', minHeight: '18px', textAlign: 'center' });
+
+      const btnOk = document.createElement('button');
+      btnOk.type = 'button';
+      btnOk.textContent = mode === 'create' ? 'СОЗДАТЬ' : 'РАЗБЛОКИРОВАТЬ';
+      Object.assign(btnOk.style, this._btnStyle('#4dd0e1', '#03070f'));
+
+      const btnCancel = document.createElement('div');
+      btnCancel.textContent = 'Отмена';
+      Object.assign(btnCancel.style, { fontSize: '11px', color: '#607d8b', textAlign: 'center', cursor: 'pointer' });
+
+      const cleanup = () => modal.remove();
+
+      btnCancel.addEventListener('click', () => { cleanup(); reject(new Error('cancelled')); });
+
+      btnOk.addEventListener('click', async () => {
+        const p1 = fldPass1.querySelector('input').value;
+        const p2 = mode === 'create' ? fldPass2.querySelector('input').value : p1;
+        if (!p1) { errMsg.textContent = 'Введите пароль'; return; }
+        if (mode === 'create' && p1 !== p2) { errMsg.textContent = 'Пароли не совпадают'; return; }
+        btnOk.disabled = true; errMsg.textContent = '';
+        try {
+          if (mode === 'create') await vault.createVault(p1);
+          else await vault.unlockVault(p1);
+          cleanup();
+          resolve();
+        } catch (e) {
+          errMsg.textContent = e.message || 'Ошибка';
+          btnOk.disabled = false;
+        }
+      });
+
+      [fldPass1, fldPass2].forEach((f) =>
+        f.querySelector('input').addEventListener('keydown', (e) => { if (e.key === 'Enter') btnOk.click(); })
+      );
+
+      box.append(title, hint, fldPass1, fldPass2, errMsg, btnOk, btnCancel);
+      modal.append(box);
+      document.body.appendChild(modal);
+      setTimeout(() => fldPass1.querySelector('input').focus(), 50);
+    });
+  }
+
+  // Ссылка "Сохранённые аккаунты" — видна только если вейлт уже существует (создаётся
+  // впервые через чекбокс "Сохранить аккаунт" при логине/регистрации).
+  _makeSavedAccountsLink() {
+    if (!vault.hasVault()) return null;
+    const link = document.createElement('div');
+    link.textContent = '🔐 Сохранённые аккаунты';
+    Object.assign(link.style, {
+      fontSize: '11px', color: '#607d8b', textAlign: 'center', cursor: 'pointer', marginTop: '4px',
+    });
+    link.addEventListener('mouseenter', () => link.style.color = '#4dd0e1');
+    link.addEventListener('mouseleave', () => link.style.color = '#607d8b');
+    link.addEventListener('click', () => this._openSavedAccounts());
+    return link;
+  }
+
+  async _openSavedAccounts() {
+    try {
+      if (!vault.isUnlocked()) await this._promptMasterPassword('unlock');
+    } catch (_e) {
+      return; // отменено
+    }
+    this._showAccountListModal();
+  }
+
+  _showAccountListModal() {
+    const accounts = vault.listAccounts();
+    const modal = document.createElement('div');
+    Object.assign(modal.style, {
+      position: 'fixed', inset: '0', background: 'rgba(2,4,10,0.7)',
+      display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: '1000',
+    });
+    const box = document.createElement('div');
+    Object.assign(box.style, {
+      background: 'rgba(5,10,25,0.97)', border: '1px solid rgba(77,208,225,0.25)',
+      borderRadius: '8px', padding: '24px 28px', width: '300px',
+      display: 'flex', flexDirection: 'column', gap: '10px',
+      fontFamily: "'Segoe UI', system-ui, sans-serif", color: '#cfd8dc',
+    });
+
+    const title = document.createElement('div');
+    title.textContent = 'СОХРАНЁННЫЕ АККАУНТЫ';
+    Object.assign(title.style, { fontSize: '13px', letterSpacing: '2px', color: '#4dd0e1', textAlign: 'center', marginBottom: '4px' });
+    box.append(title);
+
+    if (!accounts.length) {
+      const empty = document.createElement('div');
+      empty.textContent = 'Пока нет сохранённых аккаунтов';
+      Object.assign(empty.style, { fontSize: '12px', color: '#607d8b', textAlign: 'center' });
+      box.append(empty);
+    }
+
+    for (const { username } of accounts) {
+      const row = document.createElement('div');
+      Object.assign(row.style, {
+        display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+        padding: '8px 10px', background: '#080d1c', border: '1px solid #1e3a4a',
+        borderRadius: '4px', cursor: 'pointer', fontSize: '13px',
+      });
+      const nameEl = document.createElement('span');
+      nameEl.textContent = username;
+      const rmBtn = document.createElement('span');
+      rmBtn.textContent = '✕';
+      Object.assign(rmBtn.style, { color: '#607d8b', cursor: 'pointer', padding: '0 4px' });
+      rmBtn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        await vault.removeAccount(username);
+        modal.remove();
+        this._showAccountListModal();
+      });
+      row.append(nameEl, rmBtn);
+      row.addEventListener('mouseenter', () => row.style.borderColor = '#4dd0e1');
+      row.addEventListener('mouseleave', () => row.style.borderColor = '#1e3a4a');
+      row.addEventListener('click', async () => {
+        modal.remove();
+        const password = vault.getAccountPassword(username);
+        this._removeOverlay();
+        try {
+          await this._doLogin(username, password);
+        } catch (_e) {
+          // Сервер недоступен/пароль устарел на сервере — вернуть на обычную форму входа.
+          this.scene.restart();
+        }
+      });
+      box.append(row);
+    }
+
+    const btnClose = document.createElement('div');
+    btnClose.textContent = 'Закрыть';
+    Object.assign(btnClose.style, { fontSize: '11px', color: '#607d8b', textAlign: 'center', cursor: 'pointer', marginTop: '6px' });
+    btnClose.addEventListener('click', () => modal.remove());
+    box.append(btnClose);
+
+    modal.append(box);
+    document.body.appendChild(modal);
   }
 
   // Гейт "подтвердите email" — показывается вместо запуска игры, если сервер вернул

@@ -1,5 +1,5 @@
 import * as Phaser from 'https://cdn.jsdelivr.net/npm/phaser@4.2.1/dist/phaser.esm.js';
-import { COLORS, BASE_WORLD, PVP_WORLD_SCALE, PLAYER, MOBS, PROJECTILE, PROJ_TYPES, RESPAWN_MS, UI_RES, BOSS, DPR, HANDLING, ART_ANGLE_OFFSET, RANKS, MOCK_CORP_RATINGS, BASE_SCAN_RADIUS, HONOR, DUNGEON_DIFF, DUNGEON_MODIFIERS, DUNGEON_BOSS_DROPS, DUNGEON_STAR_GOLD, dungeonLootNorm, WORLD_EVENT_SECTORS, WORLD_EVENT_STRENGTH_MULT, WORLD_EVENT_WAVE1_FRAC, WORLD_EVENT_WAVE2_DELAY_MS, WORLD_EVENT_WINDOW_MS, ARMORED_TRAIN_SECTORS, ARMORED_TRAIN_WINDOW_MS, FACTION_SHIELD_DRONE } from '../constants.js';
+import { COLORS, BASE_WORLD, PVP_WORLD_SCALE, PLAYER, MOBS, PROJECTILE, PROJ_TYPES, UI_RES, BOSS, DPR, HANDLING, ART_ANGLE_OFFSET, RANKS, MOCK_CORP_RATINGS, BASE_SCAN_RADIUS, HONOR, DUNGEON_DIFF, DUNGEON_MODIFIERS, DUNGEON_BOSS_DROPS, DUNGEON_STAR_GOLD, dungeonLootNorm, WORLD_EVENT_SECTORS, WORLD_EVENT_STRENGTH_MULT, WORLD_EVENT_WAVE1_FRAC, WORLD_EVENT_WAVE2_DELAY_MS, WORLD_EVENT_WINDOW_MS, ARMORED_TRAIN_SECTORS, ARMORED_TRAIN_WINDOW_MS, FACTION_SHIELD_DRONE } from '../constants.js';
 import { minimapRect, minimapToWorld } from '../systems/minimap.js';
 import { i18n } from '../i18n.js';
 import Player from '../entities/Player.js';
@@ -4839,7 +4839,7 @@ export default class GameScene extends Phaser.Scene {
       const hullFrac   = b.maxHull   > 0 ? b.hull   / b.maxHull   : 0;
       const shieldFrac = b.maxShield > 0 ? b.shield / b.maxShield : 0;
       const barY = b.y - sz / 2 - 22;
-      const color = hullFrac > 0.5 ? 0x4dd0e1 : hullFrac > 0.25 ? 0xffb74d : 0xef5350;
+      const color = hullFrac > 0.5 ? COLORS.emerald : hullFrac > 0.25 ? 0xffb74d : 0xef5350;
       g.fillStyle(0x333344, 1); g.fillRect(b.x - 100, barY - 4, 200, 8);
       g.fillStyle(color, 1);    g.fillRect(b.x - 100, barY - 4, 200 * hullFrac, 8);
       if (b.maxShield > 0) {

@@ -43,6 +43,16 @@ function _cyclePhaseAlive(seedKey, period, gap, nowMs) {
   return t < (period - gap) * 1000;
 }
 
+// Номер текущей итерации цикла (растёт на 1 каждые period сек) — тем же якорем, что
+// _cyclePhaseAlive, так что оба всегда согласованы. Нужен, чтобы отличить "этого стража
+// убил игрок ДОСРОЧНО, посреди окна alive" от "цикл сам естественно закончился" — см.
+// использование в update() ниже.
+function _cycleId(seedKey, period, nowMs) {
+  const anchorMs = _guardHash(seedKey) % (period * 1000);
+  const periodMs = period * 1000;
+  return Math.floor((nowMs - anchorMs) / periodMs);
+}
+
 // Детерминированный [0,1) ГПСЧ (LCG), засеянный тем же хэшем — см. использование в
 // _spawnAt ниже: без этого Math.random() выбирал бы разную позицию на каждом клиенте.
 function _seededRandom(seed) {
@@ -76,6 +86,10 @@ export default class ConfedGuardSystem {
     this._main       = null;                        // main guard Mob (guard_main)
     this._drones     = new Array(MAX_DRONES).fill(null); // фиксированные слоты — индекс = свой цикл-якорь
     this._active     = false;
+    // Цикл, в котором стража/дрон убили ДОСРОЧНО (не сам _despawnAll на границе окна) —
+    // подавляет немедленный респавн до конца ЭТОГО окна alive, см. update().
+    this._mainKilledEarlyCycle  = null;
+    this._droneKilledEarlyCycle = new Array(MAX_DRONES).fill(null);
   }
 
   update(dt, player) {
@@ -97,25 +111,45 @@ export default class ConfedGuardSystem {
     }
     this._active = true;
 
-    // Prune dead refs
-    if (this._main && !this._main.alive) this._main = null;
-    for (let i = 0; i < MAX_DRONES; i++) {
-      if (this._drones[i] && !this._drones[i].alive) this._drones[i] = null;
-    }
-
     // Детерминированный wall-clock цикл вместо per-client накопителя — см. комментарий
     // у _cyclePhaseAlive выше. sectorKey — общий для всех клиентов сектора якорь.
     const sectorKey = galaxy.current;
     const now = Date.now();
 
+    // Prune dead refs. Если ссылка ещё не null, а .alive уже false — это НЕ наш
+    // собственный плановый деспавн на границе окна (тот сразу же обнуляет ссылку сам,
+    // см. else-if ниже) — значит, стража/дрона убил игрок ДОСРОЧНО, посреди окна alive.
+    // Запоминаем номер ЭТОГО цикла, чтобы не респавнить немедленно на следующем тике —
+    // баг из диалога: "страж базы и дрон охраны — спавн после слива за секунду"
+    // (wantMain/wantSlot оставался true до конца окна независимо от факта убийства,
+    // а "нет стража"-гэп срабатывал только на естественной границе цикла).
+    if (this._main && !this._main.alive) {
+      this._main = null;
+      this._mainKilledEarlyCycle = _cycleId(`${sectorKey}:guard_main`, MAIN_INTERVAL, now);
+    }
+    for (let i = 0; i < MAX_DRONES; i++) {
+      if (this._drones[i] && !this._drones[i].alive) {
+        this._drones[i] = null;
+        this._droneKilledEarlyCycle[i] = _cycleId(`${sectorKey}:guard_drone:${i}`, DRONE_CD_MAIN, now);
+      }
+    }
+
     const wantMain = _cyclePhaseAlive(`${sectorKey}:guard_main`, MAIN_INTERVAL, MAIN_RESPAWN_GAP, now);
-    if (wantMain && !this._main) this._main = this._spawnAt('guard_main', bases);
-    else if (!wantMain && this._main) { this._main.die(); this._main = null; }
+    const mainCycle = _cycleId(`${sectorKey}:guard_main`, MAIN_INTERVAL, now);
+    if (wantMain && !this._main) {
+      if (this._mainKilledEarlyCycle !== mainCycle) this._main = this._spawnAt('guard_main', bases);
+    } else if (!wantMain && this._main) {
+      this._main.die(); this._main = null;
+    }
 
     for (let i = 0; i < MAX_DRONES; i++) {
       const wantSlot = _cyclePhaseAlive(`${sectorKey}:guard_drone:${i}`, DRONE_CD_MAIN, DRONE_RESPAWN_GAP, now);
-      if (wantSlot && !this._drones[i]) this._drones[i] = this._spawnAt('guard_drone', bases);
-      else if (!wantSlot && this._drones[i]) { this._drones[i].die(); this._drones[i] = null; }
+      const droneCycle = _cycleId(`${sectorKey}:guard_drone:${i}`, DRONE_CD_MAIN, now);
+      if (wantSlot && !this._drones[i]) {
+        if (this._droneKilledEarlyCycle[i] !== droneCycle) this._drones[i] = this._spawnAt('guard_drone', bases);
+      } else if (!wantSlot && this._drones[i]) {
+        this._drones[i].die(); this._drones[i] = null;
+      }
     }
 
     // Aggro all guards when player enters the protection radius of any neutral base
@@ -183,6 +217,8 @@ export default class ConfedGuardSystem {
     this._main   = null;
     this._drones = new Array(MAX_DRONES).fill(null);
     this._active = false;
+    this._mainKilledEarlyCycle  = null;
+    this._droneKilledEarlyCycle = new Array(MAX_DRONES).fill(null);
   }
 
   destroy() { this._despawnAll(); }

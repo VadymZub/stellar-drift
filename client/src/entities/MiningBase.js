@@ -1,6 +1,6 @@
 import * as Phaser from 'https://cdn.jsdelivr.net/npm/phaser@4.2.1/dist/phaser.esm.js';
 import { BASE_CONFIG, turretSlotsFor, CORP_ASSETS, cannon2GoldCost, goldPerSecByTier, pvpTierMult, stationNameKey, TURRET_ORIGIN } from '../bases.js';
-import { UI_RES, TURRET_REWARD } from '../constants.js';
+import { UI_RES, DPR, TURRET_REWARD } from '../constants.js';
 import { prerenderTex } from '../utils/prerenderTex.js';
 import { miningBaseSave } from '../api.js';
 import { i18n } from '../i18n.js';
@@ -569,7 +569,14 @@ export default class MiningBase {
     // бары в GameScene.mobBarsGfx — см. тот коммит). Теперь один общий канвас на ВСЕ
     // базы сразу: GameScene._redrawMiningBaseBars().
 
-    const tf = { fontFamily: 'Orbitron', fontSize: '16px', color: '#4dd0e1', resolution: UI_RES };
+    // Мировая камера зумится на DPR (см. GameScene: setZoom(DPR)) — этот текст рисуется
+    // в МИРОВЫХ координатах (в отличие от HUD, где камера всегда zoom=1), так что весь
+    // UI_RES-запас резкости съедается зумом камеры обратно (эффективная плотность
+    // получается UI_RES/DPR вместо UI_RES). ×DPR компенсирует это — тот же приём, что
+    // уже используют турели/корабли под тем же зумом (см. комментарий в _refreshTurrets
+    // про displaySize×2 и prerenderTex) — иначе имя станции/статус/бары выглядят мыльно
+    // (баг из диалога со скриншотом: "улучшить качество шрифта в меню добывающей базы").
+    const tf = { fontFamily: 'Orbitron', fontSize: '16px', color: '#4dd0e1', resolution: UI_RES * DPR };
 
     // Station name — above HP bar
     const namY = y - sz / 2 - 42;

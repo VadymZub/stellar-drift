@@ -126,7 +126,7 @@ export default class BaseMenuScene extends Phaser.Scene {
     const barW   = W - PAD * 2;
     this.add.text(cx - barW / 2, y - 12, 'ОБШИВКА', { ...TF, fontSize: '11px', color: '#2a4a5a' }).setOrigin(0, 0.5);
     this.add.rectangle(cx, y, barW, 16, 0x0a1420).setOrigin(0.5).setStrokeStyle(1, 0x1a3a50, 0.7);
-    const hpFill = this.add.rectangle(cx - barW / 2, y, 1, 16, 0x4dd0e1).setOrigin(0, 0.5);
+    const hpFill = this.add.rectangle(cx - barW / 2, y, 1, 16, COLORS.emerald).setOrigin(0, 0.5);
     const hpTxt  = this.add.text(cx, y + 20, '', { ...TF, fontSize: '13px', color: '#4a7090' }).setOrigin(0.5);
     let shieldFill = null, shieldTxt = null;
     if (hasShield) {
@@ -136,7 +136,7 @@ export default class BaseMenuScene extends Phaser.Scene {
     }
     const refreshHp = () => {
       const f = this.base.maxHull > 0 ? this.base.hull / this.base.maxHull : 0;
-      const c = f > 0.5 ? 0x4dd0e1 : f > 0.25 ? 0xffb74d : 0xef5350;
+      const c = f > 0.5 ? COLORS.emerald : f > 0.25 ? 0xffb74d : 0xef5350;
       if (hpFill?.active) { hpFill.setDisplaySize(Math.max(1, Math.round(barW * f)), 13).setFillStyle(c); }
       if (hpTxt?.active)  { hpTxt.setText(`HP  ${Math.round(this.base.hull).toLocaleString()} / ${Math.round(this.base.maxHull).toLocaleString()}`); }
       if (hasShield && shieldFill?.active) {

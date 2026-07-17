@@ -420,8 +420,6 @@ export const ART_ANGLE_OFFSET = Math.PI / 2;
 // Скилл scanner_boost добавляет +20% за уровень (×3 уровня = до +60%).
 export const BASE_SCAN_RADIUS = 900;
 
-export const RESPAWN_MS = 8000; // моб возвращается в систему через 8 сек после смерти
-
 export const HONOR = {
   BOSS_HIGHER: 10,   // boss level > player level
   BOSS_EQUAL:  5,    // boss level === player level
