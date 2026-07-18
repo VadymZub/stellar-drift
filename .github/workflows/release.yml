@@ -1,0 +1,42 @@
+name: Release
+
+# Builds, signs, and publishes the Tauri desktop client whenever a vX.Y.Z tag is
+# pushed to this remote (morion). Push the tag here specifically — the
+# in-app updater (client/src/updater.js + tauri.conf.json plugins.updater.endpoints)
+# points at THIS repo's GitHub Releases (latest.json), not origin's.
+#
+# Requires two repo secrets (Settings -> Secrets and variables -> Actions):
+#   TAURI_SIGNING_PRIVATE_KEY, TAURI_SIGNING_PRIVATE_KEY_PASSWORD
+# generated once via `cargo tauri signer generate` (see client/src-tauri README
+# notes / IMPL_NOTES.md) — the matching public key is already embedded in
+# client/src-tauri/tauri.conf.json.
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  release:
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      # No beforeBuildCommand/frontendDist build step: client/ has no bundler —
+      # tauri.conf.json's build.frontendDist already points straight at the
+      # plain ES-module source tree.
+      - name: Build and release Tauri app
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          projectPath: client
+          tagName: ${{ github.ref_name }}
+          releaseName: 'Stellar Drift ${{ github.ref_name }}'
+          releaseDraft: false
+          prerelease: false

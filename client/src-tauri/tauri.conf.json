@@ -8,6 +8,7 @@
     "devUrl": "http://localhost:8080"
   },
   "app": {
+    "withGlobalTauri": true,
     "windows": [
       {
         "title": "Stellar Drift",
@@ -33,6 +34,14 @@
     ],
     "android": {
       "debugApplicationIdSuffix": ".debug"
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IERENTY3MTdDNzVDNjQyREIKUldUYlFzWjFmSEZXM1JPMjY3MVdWVmVWa3R5UCtTcUJNRXZtRzErZ0htK29NRzQ0Z2h4TmxMcUoK",
+      "endpoints": [
+        "https://github.com/vadimmorion-commits/stellar-drift/releases/latest/download/latest.json"
+      ]
     }
   }
 }

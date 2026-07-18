@@ -23,6 +23,7 @@ import ProfileScene from './scenes/ProfileScene.js';
 import ProfileViewScene from './scenes/ProfileViewScene.js';
 import MailScene from './scenes/MailScene.js';
 import { loadSettings } from './settings.js';
+import { checkForUpdates } from './updater.js';
 
 // Canvas at physical pixel resolution. CSS canvas element uses image-rendering:pixelated
 // for nearest-neighbour CSS scaling — eliminates bilinear blur at non-integer DPR
@@ -106,6 +107,7 @@ Promise.race([
   new Promise(resolve => setTimeout(resolve, 4000)),
 ]).catch(() => {}).then(() => {
   const game = new Phaser.Game(config);
+  checkForUpdates(); // no-op outside a real Tauri window (see updater.js)
 
   function fitCanvas() {
     const c = game.canvas;
