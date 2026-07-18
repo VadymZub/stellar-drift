@@ -89,6 +89,9 @@ export default class BaseMenuScene extends Phaser.Scene {
     // из-за чего лейбл визуально налезал на первую строку карточек турелей, см.
     // отступ ниже) + 2 ряда карточек (57px + 8px зазор каждый).
     const turretH   = isActive ? (40 + 2 * (57 + 8)) : 0;
+    // Найм охраны: кнопка (не нанята, владелец) или строка статуса (уже нанята) —
+    // видна только для активной базы (см. диалог "частная охрана - хорошая идея").
+    const hireH     = !isActive ? 0 : (this.base.hiredSecurity ? 26 : (isOwner ? 70 : 0));
     const H         = Math.min(780,
       PAD + 50              // title (station name + "ДОБЫВАЮЩАЯ БАЗА" subtitle)
       + 29                  // state
@@ -99,6 +102,7 @@ export default class BaseMenuScene extends Phaser.Scene {
       + ownerRows * 26      // owner rows
       + 29                  // banked
       + (turretH > 0 ? turretH + 21 : 0)
+      + hireH
       + 57                  // close button
       + PAD * 2
     );
@@ -247,6 +251,35 @@ export default class BaseMenuScene extends Phaser.Scene {
       });
 
       y += 2 * (slotH + 8) + 8;
+    }
+
+    // Найм Частной Безопасности (active only) — 1 sec_destroyer + 3 sec_drone,
+    // разово, навсегда, привязаны к этой базе (см. MiningBase.hireSecurity).
+    if (isActive) {
+      if (this.base.hiredSecurity) {
+        this.add.text(cx, y + 5, '🛡 Охрана нанята', { ...TF, fontSize: '14px', color: '#4dd0e1' }).setOrigin(0.5);
+        y += 26;
+      } else if (isOwner) {
+        const cost      = this.base.hireSecurityCost;
+        const gs        = this.scene.get('GameScene');
+        const canAfford = (gs?.starGold || 0) >= cost;
+        const btnColor  = canAfford ? 0x2a1a0d : 0x1a1a10;
+        const lblColor  = canAfford ? '#ffb74d' : '#665533';
+        const btn = this.add.rectangle(cx, y + 26, W - PAD * 2, 62, btnColor)
+          .setStrokeStyle(2, canAfford ? 0xff9800 : 0x665533, 0.9).setInteractive();
+        this.add.text(cx, y + 14, 'НАНЯТЬ ОХРАНУ', { ...TF, fontSize: '16px', color: lblColor }).setOrigin(0.5);
+        this.add.text(cx, y + 36, `${cost} ⭐  (у вас: ${Math.floor(gs?.starGold || 0)} ⭐)`, { ...TF, fontSize: '14px', color: canAfford ? '#ffcc44' : '#554422' }).setOrigin(0.5);
+        if (canAfford) {
+          btn.on('pointerover',  () => btn.setFillStyle(0x3a2412));
+          btn.on('pointerout',   () => btn.setFillStyle(btnColor));
+          btn.on('pointerdown',  (pointer, lx, ly, event) => {
+            if (event) event.stopPropagation();
+            const ok = this.base.hireSecurity(this.playerName);
+            if (ok) this.scene.restart({ base: this.base, playerName: this.playerName });
+          });
+        }
+        y += 70;
+      }
     }
 
     this._closeBtn(cx, y + 23);

@@ -51,8 +51,6 @@ export const SECTORS = {
   tides_3: { name: 'Туманный Архив',       map: 'HM3', lvlMin: 20, lvlMax: 30, sx: 2, sy: 2 },
   tides_4: { name: 'Бездонный Риф',        map: 'HM4', lvlMin: 30, lvlMax: 40, sx: 3, sy: 2 },
   tides_5: { name: 'Предел Горизонта',     map: 'HM5', lvlMin: 40, lvlMax: 50, sx: 4, sy: 2 },
-
-  tides_d4: { name: 'Тёмный Риф',          map: 'HM4',    lvlMin: 40, lvlMax: 50, sx: 3, sy: 3 },
 };
 
 // Связи (двусторонние) — где есть джапгейт между секторами.
@@ -88,9 +86,6 @@ export const EDGES = [
   ['helios_5', 'pvp_5'], ['karax_5', 'pvp_5'], ['tides_5', 'pvp_5'],
   ['pvp_4', 'pvp_5'],
   ['pvp_5', 'R-1-boss'],
-
-  // Тёмный Риф — ответвление от tides_4
-  ['tides_4', 'tides_d4'],
 ];
 
 // Текущий сектор (мутабельно; переживает scene.restart при прыжке).

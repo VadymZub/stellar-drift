@@ -1451,36 +1451,16 @@ export default class GameScene extends Phaser.Scene {
       // перезагрузки, догрузит актуальное состояние с сервера через ~один RTT.
       this._loadMiningBaseState(galaxy.current, miningBases);
 
-      const baseTargets = miningBases.map(b => ({ x: b.x, y: b.y }));
-
-      if (pvpLvl === 1) {
-        // PvP 1: 3 дрона курсируют между базами (стаей)
-        const leader = add('sec_drone', Lmax, rnd(-1800, 1800), rnd(-1200, 1200), { behavior: 'roam', targets: baseTargets });
-        for (let i = 0; i < 2; i++) {
-          add('sec_drone', Lmax, leader.spawnX - cx + rnd(-100, 100), leader.spawnY - cy + rnd(-100, 100), { leader, orbitLeader: true });
-        }
-      } else {
-        // PvP 2-5: Эсминцы + Дроны
-        const compositions = {
-          2: { destroyers: 2, dronesPerDest: 2 },
-          3: { destroyers: 2, dronesPerDest: 3 },
-          4: { destroyers: 3, dronesPerDest: 3 },
-          5: { destroyers: 4, dronesPerDest: 4 }
-        };
-        const config = compositions[pvpLvl] || compositions[2];
-
-        for (let i = 0; i < config.destroyers; i++) {
-          const b = miningBases[i % miningBases.length];
-          // Эсминцы курсируют между базами с отклонением от прямой линии
-          const dest = add('sec_destroyer', Lmax, b.x - cx + rnd(-200, 200), b.y - cy + rnd(-200, 200), { behavior: 'roam', targets: baseTargets, pathDeviation: 200 });
-          dest.isConfedBoss = true;
-          for (let j = 0; j < config.dronesPerDest; j++) {
-            add('sec_drone', Lmax, dest.spawnX - cx + rnd(-100, 100), dest.spawnY - cy + rnd(-100, 100), { leader: dest, orbitLeader: true });
-          }
-        }
-      }
-
-      // Охранники нейтральных баз — спавн по таймеру, уходят когда все базы захвачены
+      // Частная Безопасность (sec_drone/sec_destroyer) больше НЕ спавнится
+      // автоматически по входу в сектор — раньше эта охрана роилась между ВСЕМИ
+      // базами независимо от владения, дублируя ConfedGuardSystem ниже (та тоже
+      // охраняет нейтральные базы) — два независимых механизма одновременно
+      // защищали одну и ту же нейтральную базу без всякого лора (баг из диалога:
+      // "конфедераты и частная охрана - это разные корпорации? нелогично").
+      // Теперь Частная Безопасность — платный найм ВЛАДЕЛЬЦЕМ конкретной базы
+      // (см. MiningBase.hireSecurity/_spawnHiredSecurity), привязана к одной базе,
+      // не роится по сектору. ConfedGuardSystem остаётся охранять нейтральные
+      // (незахваченные) базы без изменений.
       this._checkGuardReset();
       this.confedGuards = new ConfedGuardSystem(this, Lmax);
       return;
@@ -6140,7 +6120,7 @@ export default class GameScene extends Phaser.Scene {
       // сервер ещё не прислал апдейт (соло/дев, realtimeRoomKey нет, registerMob никогда
       // не звался) — targetUid остаётся undefined и мы просто идём по старому пути ниже
       // без изменений.
-      if ((m.isArmoredTrainDrone || m.isWorldEvent) && m.pvpMobId && this._serverMobTargets) {
+      if ((m.isArmoredTrainDrone || m.isWorldEvent || m.isHiredSecurity) && m.pvpMobId && this._serverMobTargets) {
         const targetUid = this._serverMobTargets[m.pvpMobId];
         if (targetUid !== undefined && targetUid !== this.myUserId) {
           m.update(dt, this.player, true, () => {});

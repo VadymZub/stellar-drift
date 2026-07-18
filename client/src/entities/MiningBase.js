@@ -1,9 +1,11 @@
 import * as Phaser from 'https://cdn.jsdelivr.net/npm/phaser@4.2.1/dist/phaser.esm.js';
 import { BASE_CONFIG, turretSlotsFor, CORP_ASSETS, cannon2GoldCost, goldPerSecByTier, pvpTierMult, stationNameKey, TURRET_ORIGIN } from '../bases.js';
-import { UI_RES, DPR, TURRET_REWARD } from '../constants.js';
+import { UI_RES, DPR, TURRET_REWARD, MOBS } from '../constants.js';
 import { prerenderTex } from '../utils/prerenderTex.js';
 import { miningBaseSave } from '../api.js';
 import { i18n } from '../i18n.js';
+import Mob from './Mob.js';
+import { SECTORS } from '../galaxy.js';
 
 // Persists base ownership/state across sector re-entries.
 const _registry = new Map();
@@ -14,6 +16,14 @@ const SHIELD_REGEN_DELAY_MS = 30000;
 const SHIELD_REGEN_PCT_SEC  = 0.05;
 const HULL_REGEN_DELAY_MS   = 180000;
 const HULL_REGEN_PCT_SEC    = 0.005;
+
+// Частная Безопасность (hireSecurity) — платный наём владельцем, привязан к ЭТОЙ
+// базе (орбита вокруг неё), не роится по сектору — см. диалог: старый автоматический
+// патруль sec_drone/sec_destroyer дублировал ConfedGuardSystem на одних и тех же
+// нейтральных базах без всякого лора ("конфедераты и частная охрана - разные
+// корпорации? нелогично"). ORBIT_RADIUS то же значение, что ConfedGuardSystem
+// использует для одиночной базы (визуальная согласованность двух систем охраны).
+const GARRISON_ORBIT_RADIUS = 300;
 
 // Турельные HP-бары — фиксированный размер, не зависит от aspect базы. Экспортируется
 // для GameScene._redrawMiningBaseBars() (см. там же, почему бары не Rectangle-объекты).
@@ -148,6 +158,7 @@ export default class MiningBase {
       this._neutralPhase = saved.neutralPhase || 'open';
       this._neutralPhaseEndsAt = this._neutralEndsAtFromSaved(saved);
       this._buildEndsAt  = this._buildEndsAtFromSaved(saved);
+      this.hiredSecurity = saved.hiredSecurity || false;
     } else {
       this.corp          = 'neutral';
       this.state         = 'destroyed';
@@ -162,7 +173,11 @@ export default class MiningBase {
       this._neutralPhase = 'open';
       this._neutralPhaseEndsAt = Date.now() + BASE_CONFIG.neutralOpenSec * 1000;
       this._buildEndsAt  = 0;
+      this.hiredSecurity = false;
     }
+    // Спавнится лениво из applyPersistedState()/hireSecurity() — ЭФЕМЕРНОЕ (не
+    // персистится само по себе, только флаг hiredSecurity выше); { leader, drones }.
+    this._garrison = null;
 
     // Боевые прокси турелей — отдельно от this.turrets (голые строки типа, которые
     // читает BaseMenuScene без изменений). Восстанавливаем hp/shield из _turretState.
@@ -189,6 +204,14 @@ export default class MiningBase {
     this._zone          = null;
 
     this._createVisuals();
+    // Гарнизон, нанятый ДО этого рестарта сцены — восстанавливаем сразу из
+    // синхронного in-memory _registry (переживает scene.restart() внутри одной
+    // вкладки, см. диалог про jumpgate-прыжки), не дожидаясь асинхронного
+    // applyPersistedState() (тот покрывает только СВЕЖУЮ загрузку с сервера —
+    // первый визит в сектор в этой вкладке/после релоада страницы). Без этой
+    // строки наём "выживал" по флагу hiredSecurity, но сами мобы пропадали при
+    // каждом прыжке туда-обратно внутри одной сессии.
+    if (this.hiredSecurity) this._spawnHiredSecurity();
     this._persist();
   }
 
@@ -359,6 +382,84 @@ export default class MiningBase {
     this.scene.log?.(`Турель уничтожена (слот ${slotIdx + 1})`);
   }
 
+  // Корабль (sec_destroyer) стоит как турель 2 уровня (⭐), 3 дрона-эскорта — ещё
+  // столько же (см. диалог) — итого 2×cannon2GoldCost(pvpTier). Разово, навсегда,
+  // без подписки; погибший гарнизон можно нанять заново (см. _despawnGarrison).
+  get hireSecurityCost() { return 2 * cannon2GoldCost(this.pvpTier); }
+
+  hireSecurity(playerName) {
+    if (this.state !== 'active') return false;
+    if (this.hiredSecurity) return false;
+    const gs = this.scene;
+    // Как и buyTurret() — сервер-стороны эквивалента у нас нет (клиент-авторитетно),
+    // так что проверка владения нужна ЗДЕСЬ, а не только скрытием кнопки в BaseMenuScene.
+    if (!this.owners.some(o => o.name === playerName)) {
+      gs.log('Только владелец может нанять охрану');
+      return false;
+    }
+    const cost = this.hireSecurityCost;
+    if ((gs.starGold || 0) < cost) { gs.log(`Недостаточно ⭐ (нужно ${cost})`); return false; }
+    gs.starGold -= cost;
+    this.hiredSecurity = true;
+    this._spawnHiredSecurity();
+    this._persist();
+    gs.log(`Охрана нанята за ${cost} ⭐`);
+    return true;
+  }
+
+  // Спавнит 1 sec_destroyer (лидер) + 3 sec_drone (эскорт, orbitLeader) на орбите
+  // ВОКРУГ ЭТОЙ базы (не роятся по сектору, в отличие от старого автоматического
+  // патруля). Сервер-авторитетный таргетинг обязателен для всех новых мобов (см.
+  // диалог "да все новые мобы серверно управляемые") — registerMob(mobId, this.corp)
+  // передаёт ownerCorp тем же путём, что и турели базы (_updateTurrets), сервер
+  // фильтрует кандидатов на таргетинг, исключая игроков корпа-владельца. Без этого
+  // GameScene.update()'s targetUid-фильтр (isArmoredTrainDrone/isWorldEvent) просто
+  // не знал бы про этих мобов — добавлен isHiredSecurity туда же.
+  _spawnHiredSecurity() {
+    const gs = this.scene;
+    if (this._garrison?.leader?.alive) return; // уже заспавнен в этой сессии клиента
+    const level = Math.min(50, SECTORS[this.sector]?.lvlMax ?? this.pvpTier * 10 + 15);
+    const angle0 = Math.random() * Math.PI * 2;
+    const leader = new Mob(gs, MOBS.sec_destroyer, level,
+      this.x + Math.cos(angle0) * GARRISON_ORBIT_RADIUS,
+      this.y + Math.sin(angle0) * GARRISON_ORBIT_RADIUS,
+      { behavior: 'patrol', patrolRadius: GARRISON_ORBIT_RADIUS, neutral: false });
+    leader.isConfedBoss = true; // тот же star-gold pity-roll, что был у старого патруля
+    leader.noRespawn    = true; // разовый найм, не авто-пополняющийся спавн
+    gs.mobs.push(leader);
+
+    const drones = [];
+    for (let i = 0; i < 3; i++) {
+      const drone = new Mob(gs, MOBS.sec_drone, level, leader.x, leader.y,
+        { leader, orbitLeader: true, neutral: false });
+      drone.noRespawn = true;
+      gs.mobs.push(drone);
+      drones.push(drone);
+    }
+
+    if (gs._realtimeRoomKey) {
+      [leader, ...drones].forEach((m, i) => {
+        m.pvpMobId = `${gs._realtimeRoomKey}:hiredsec:${this.id}:${i}`;
+        m.isHiredSecurity = true;
+        gs.pvpClient?.registerMob(m.pvpMobId, this.corp);
+      });
+    }
+
+    this._garrison = { leader, drones };
+  }
+
+  // Гарнизон уничтожен (леший корабль погиб) ИЛИ база пала — освобождает наём,
+  // владелец может нанять заново. Дроны без лидера не переживают (die() всех разом);
+  // одиночная гибель дрона при живом лидере наём НЕ заканчивает (noRespawn — дрон
+  // просто пропадает, найм остаётся активным до гибели именно лидера).
+  _despawnGarrison() {
+    if (!this._garrison) return;
+    const { leader, drones } = this._garrison;
+    if (leader?.alive) leader.die();
+    drones.forEach(d => d?.alive && d.die());
+    this._garrison = null;
+  }
+
   // Игроки СВОЕГО корпа физически в радиусе guardRadius прямо сейчас — "охрана",
   // единственный источник владения/дохода (см. update()). Учитывает и локального
   // игрока, и остальных через уже известные RemotePlayer-позиции (реального списка
@@ -467,6 +568,15 @@ export default class MiningBase {
       }
 
       for (const tt of this.turretTargets) tt?.update(dt, now);
+
+      // Гарнизон потерян (лидер погиб) — освобождаем наём, владелец может нанять
+      // заново (см. hireSecurity/_spawnHiredSecurity выше).
+      if (this.hiredSecurity && this._garrison && !this._garrison.leader?.alive) {
+        this.hiredSecurity = false;
+        this._despawnGarrison();
+        this._persist();
+        gs.log?.('Охрана базы уничтожена — можно нанять заново');
+      }
 
       this._updateTurrets(dt);
       // Бары базы/турелей больше не свои Rectangle-объекты — рисуются одним общим
@@ -902,6 +1012,8 @@ export default class MiningBase {
     this.turretTargets = Array(BASE_CONFIG.turretSlots).fill(null);
     this._neutralPhase = 'open';
     this._neutralPhaseEndsAt = Date.now() + BASE_CONFIG.neutralOpenSec * 1000;
+    this.hiredSecurity = false;
+    this._despawnGarrison();
     this._refreshVisuals();
     this._persist();
     if (gs.scene.isActive('BaseMenuScene')) gs.scene.stop('BaseMenuScene');
@@ -925,6 +1037,8 @@ export default class MiningBase {
     this._neutralPhase = 'open';
     this._neutralPhaseEndsAt = Date.now() + BASE_CONFIG.neutralOpenSec * 1000;
     this._buildEndsAt  = 0;
+    this.hiredSecurity = false;
+    this._despawnGarrison();
     this._refreshVisuals();
     this._persist();
   }
@@ -986,6 +1100,7 @@ export default class MiningBase {
       neutralPhase: this._neutralPhase,
       neutralPhaseEndsAt: this._neutralPhaseEndsAt,
       buildEndsAt:  this._buildEndsAt,
+      hiredSecurity: this.hiredSecurity,
     });
     this._scheduleServerSave();
   }
@@ -1022,6 +1137,7 @@ export default class MiningBase {
     this._neutralPhase = saved.neutralPhase || 'open';
     this._neutralPhaseEndsAt = this._neutralEndsAtFromSaved(saved);
     this._buildEndsAt  = this._buildEndsAtFromSaved(saved);
+    this.hiredSecurity = saved.hiredSecurity || false;
 
     this.turretTargets.forEach(tt => tt && (tt.alive = false));
     this.turretTargets = this.turrets.map((type, i) => {
@@ -1034,6 +1150,10 @@ export default class MiningBase {
     this._recomputeTurretOffsets();
     this._refreshVisuals();
     this._refreshTurrets();
+    // Гарнизон, нанятый ДО этого визита (сохранён на сервере) — респавним его на этом
+    // клиенте, иначе после релогина/рестарта сцены наём оставался бы "оплачен", но
+    // невидим (мобов больше нет в памяти этого конкретного клиента).
+    if (this.hiredSecurity) this._spawnHiredSecurity();
     this._persist();
   }
 }
