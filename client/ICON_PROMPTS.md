@@ -132,6 +132,97 @@ game consumable icon style, high contrast, digital illustration
 
 ---
 
+## Иконка приложения (App Icon — Tauri desktop, taskbar/favicon)
+
+Сейчас в `client/src-tauri/icons/` стоит дефолтный логотип самого Tauri (заглушка
+скаффолда, см. диалог "иконка которую ты выбрал" — на самом деле ничего не выбирал,
+это stock-иконка фреймворка). Нужна настоящая иконка под "Stellar Drift".
+
+**В отличие от предметных иконок выше** — эта должна читаться на **16×16/32×32**
+(таскбар, папка, alt-tab), поэтому силуэт должен быть узнаваем БЕЗ деталей —
+1-2 крупные формы, не мелкая графика/текстуры. Фон — **сплошной**, не прозрачный
+(системная иконка — это плитка, не floating item), тёмный, в духе основного фона
+игры (#080814 / глубокий космос). Квадрат 512×512 (Tauri сам генерит все нужные
+размеры через `tauri icon`).
+
+**Три принципа отбора:** несложная (читается на 16px), по смыслу (звёзды/дрифт/полёт,
+не случайный sci-fi мотив), интересная (не банальный "космический корабль анфас").
+
+---
+
+### Вариант 1 — Корабль + след дрейфа
+
+```
+Minimalist app icon for a space game called "Stellar Drift", bold flat design,
+single angular top-down starship silhouette in bright cyan (#4dd0e1) mid-turn,
+one sweeping curved comet-like drift trail behind it fading to transparent,
+solid dark background deep space navy (#080814), no text, no other details,
+extremely simple bold shapes readable at 16px, high contrast silhouette,
+square 512x512, flat vector icon style, no gradients on the ship itself,
+subtle soft glow only on the trail
+```
+
+### Вариант 2 — Комета сквозь кольцо (джампгейт)
+
+```
+Minimalist app icon for a space game called "Stellar Drift", bold flat design,
+a small bright star/comet with a long curved drift streak passing through
+the center of a simple glowing ring (like a jumpgate), ring in warm amber (#ffb74d),
+comet and streak in bright cyan (#4dd0e1), solid dark deep-space background (#080814),
+no text, no stars/background clutter, two clean geometric shapes only,
+extremely simple silhouette readable at 16px, high contrast,
+square 512x512, flat vector icon style, subtle glow, no gradients on background
+```
+
+### Вариант 3 — Абстрактный дрейф-виток (буква/знак)
+
+Выбран как финальный (2026-07-18). **Правка по фидбеку после первой генерации**:
+хвост витка почти не виден (затухал в прозрачность), сам обвод местами читался
+тонкой линией — именно то, от чего предостерегали принципы "читаемая на 16px".
+Ниже — исправленная версия: **одинаковая толщина по всей длине**, хвост остаётся
+полностью непрозрачным (не тает), просто чуть темнее по тону, а не по alpha.
+
+```
+Minimalist app icon for a space game called "Stellar Drift", bold flat design,
+a single abstract swooshing orbital arc curling into a loose spiral like a drifting
+comet trail, forming a shape reminiscent of the letter S, THICK uniform ribbon
+stroke width from end to end (no tapering to a thin line or point anywhere),
+fully opaque solid fill throughout — the trailing end must stay clearly visible
+and bold, NOT fading to transparent or thinning out, only the color shifts along
+the ribbon from emerald (#66bb6a) at the trailing end to bright cyan (#4dd0e1)
+at the leading end, bright star/node glowing at the leading tip in cyan,
+solid dark deep-space navy background (#080814), no text,
+extremely simple bold silhouette clearly readable at 16px, high contrast,
+square 512x512, flat vector icon style, subtle soft glow only at the star tip,
+thick chunky proportions like a rounded ribbon, not a thin calligraphic line
+```
+
+### Вариант 4 — Прицел наведения (игровой HUD-мотив)
+
+```
+Minimalist app icon for a space game called "Stellar Drift", bold flat design,
+a simple circular targeting reticle (crosshair with four short corner brackets,
+like a lock-on HUD marker) in bright cyan (#4dd0e1), with one small bright star
+drifting just off-center inside the ring, slight motion streak trailing the star,
+solid dark deep-space navy background (#080814), no text, no clutter,
+extremely simple bold geometric shapes readable at 16px, high contrast silhouette,
+square 512x512, flat vector icon style, subtle glow only on the star and streak
+```
+
+### Вариант 5 — Планета с орбитальным дрейф-следом
+
+```
+Minimalist app icon for a space game called "Stellar Drift", bold flat design,
+a small solid planet circle in cool slate-blue, encircled by a single thin
+elliptical orbit ring, part of the ring rendered as a bright cyan (#4dd0e1)
+comet-drift streak that fades out rather than a full closed line,
+solid dark deep-space navy background (#080814), no text, no extra stars,
+extremely simple two-shape silhouette readable at 16px, high contrast,
+square 512x512, flat vector icon style, subtle soft glow only on the streak
+```
+
+---
+
 ## Примечания
 
 - Все иконки: **без текста**, **чёрный/прозрачный фон**, квадрат 512×512
