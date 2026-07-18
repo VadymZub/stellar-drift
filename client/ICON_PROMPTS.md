@@ -134,7 +134,8 @@ game consumable icon style, high contrast, digital illustration
 
 ## Иконка приложения (App Icon — Tauri desktop, taskbar/favicon)
 
-Сейчас в `client/src-tauri/icons/` стоит дефолтный логотип самого Tauri (заглушка
+Сейчас в `src-tauri/icons/` (корень репо — папка вынесена из `client/`, см.
+IMPL_NOTES.md) стоит дефолтный логотип самого Tauri (заглушка
 скаффолда, см. диалог "иконка которую ты выбрал" — на самом деле ничего не выбирал,
 это stock-иконка фреймворка). Нужна настоящая иконка под "Stellar Drift".
 

@@ -7,9 +7,9 @@ name: Release
 #
 # Requires two repo secrets (Settings -> Secrets and variables -> Actions):
 #   TAURI_SIGNING_PRIVATE_KEY, TAURI_SIGNING_PRIVATE_KEY_PASSWORD
-# generated once via `cargo tauri signer generate` (see client/src-tauri README
-# notes / IMPL_NOTES.md) — the matching public key is already embedded in
-# client/src-tauri/tauri.conf.json.
+# generated once via `cargo tauri signer generate` (see src-tauri README
+# notes / client/IMPL_NOTES.md) — the matching public key is already embedded
+# in src-tauri/tauri.conf.json.
 on:
   push:
     tags:
@@ -21,13 +21,16 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - uses: dtolnay/rust-toolchain@stable
 
       # No beforeBuildCommand/frontendDist build step: client/ has no bundler —
       # tauri.conf.json's build.frontendDist already points straight at the
-      # plain ES-module source tree.
+      # plain ES-module source tree. src-tauri lives at the REPO ROOT (sibling
+      # of client/, not nested inside it) — Tauri's build validator refuses to
+      # bundle frontendDist if it's an ancestor of src-tauri itself (would try
+      # to ship src-tauri/target as "web assets"), so projectPath is "." here.
       - name: Build and release Tauri app
         uses: tauri-apps/tauri-action@v0
         env:
@@ -35,7 +38,7 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
-          projectPath: client
+          projectPath: .
           tagName: ${{ github.ref_name }}
           releaseName: 'Stellar Drift ${{ github.ref_name }}'
           releaseDraft: false
