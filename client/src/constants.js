@@ -171,6 +171,28 @@ export const DUNGEON_STAR_GOLD = {
   dungeon_prem: { bossMin: 50, bossMax: 70, mobMult: 1.25 },
 };
 
+// Именной элитный моб домашних карт (тир сектора 2-5, все 3 корпа) — редкий,
+// 1-2 раза в сутки до слива (см. GameScene._initHomeElite). Награда сверх
+// обычного лута: гарантированное ⭐ золото (тем же числом, что и обычный
+// босс данжа normal-сложности того же тира — starGold переиспользует
+// DUNGEON_STAR_GOLD напрямую) + клановый материал (см. clanMatAmount,
+// материал берётся из HOME_ELITE_CORP_MATERIAL по корпу сектора).
+// statMult/clanMatAmount — первая прикидка баланса, легко подправить позже.
+export const HOME_ELITE_TIERS = {
+  2: { statMult: 2.0, starGold: DUNGEON_STAR_GOLD.dungeon_2, clanMatAmount: 1 },
+  3: { statMult: 2.2, starGold: DUNGEON_STAR_GOLD.dungeon_3, clanMatAmount: 2 },
+  4: { statMult: 2.5, starGold: DUNGEON_STAR_GOLD.dungeon_4, clanMatAmount: 3 },
+  5: { statMult: 3.0, starGold: DUNGEON_STAR_GOLD.dungeon_5, clanMatAmount: 4 },
+};
+
+// Клановый материал, зачисляемый именным элитом — по корпу сектора (не по тиру),
+// каждый корп получает свой "фирменный" ресурс.
+export const HOME_ELITE_CORP_MATERIAL = {
+  helios: 'biomech_core',
+  karax:  'quantum_crystal',
+  tides:  'plasma_coil',
+};
+
 // Дроп плат и коннекторов с ГЛАВНОГО босса данжа по сложности.
 // null = нет дропа; boardChance/connChance — вероятность (0–1).
 export const DUNGEON_BOSS_DROPS = {

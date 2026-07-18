@@ -1,5 +1,5 @@
 import * as Phaser from 'https://cdn.jsdelivr.net/npm/phaser@4.2.1/dist/phaser.esm.js';
-import { COLORS, BASE_WORLD, PVP_WORLD_SCALE, PLAYER, MOBS, PROJECTILE, PROJ_TYPES, UI_RES, BOSS, DPR, HANDLING, ART_ANGLE_OFFSET, RANKS, MOCK_CORP_RATINGS, BASE_SCAN_RADIUS, HONOR, DUNGEON_DIFF, DUNGEON_MODIFIERS, DUNGEON_BOSS_DROPS, DUNGEON_STAR_GOLD, dungeonLootNorm, WORLD_EVENT_SECTORS, WORLD_EVENT_STRENGTH_MULT, WORLD_EVENT_WAVE1_FRAC, WORLD_EVENT_WAVE2_DELAY_MS, WORLD_EVENT_WINDOW_MS, ARMORED_TRAIN_SECTORS, ARMORED_TRAIN_WINDOW_MS, FACTION_SHIELD_DRONE } from '../constants.js';
+import { COLORS, BASE_WORLD, PVP_WORLD_SCALE, PLAYER, MOBS, PROJECTILE, PROJ_TYPES, UI_RES, BOSS, DPR, HANDLING, ART_ANGLE_OFFSET, RANKS, MOCK_CORP_RATINGS, BASE_SCAN_RADIUS, HONOR, DUNGEON_DIFF, DUNGEON_MODIFIERS, DUNGEON_BOSS_DROPS, DUNGEON_STAR_GOLD, dungeonLootNorm, WORLD_EVENT_SECTORS, WORLD_EVENT_STRENGTH_MULT, WORLD_EVENT_WAVE1_FRAC, WORLD_EVENT_WAVE2_DELAY_MS, WORLD_EVENT_WINDOW_MS, ARMORED_TRAIN_SECTORS, ARMORED_TRAIN_WINDOW_MS, FACTION_SHIELD_DRONE, HOME_ELITE_TIERS, HOME_ELITE_CORP_MATERIAL } from '../constants.js';
 import { minimapRect, minimapToWorld } from '../systems/minimap.js';
 import { i18n } from '../i18n.js';
 import Player from '../entities/Player.js';
@@ -662,6 +662,7 @@ export default class GameScene extends Phaser.Scene {
       this.pvpClient?.leaveSector();
     }
 
+    this._registerHomeSectorBosses();
     this._initAnomaly();
     this._initWorldEvent();
     this._initArmoredTrain();
@@ -976,6 +977,21 @@ export default class GameScene extends Phaser.Scene {
 
     this._eventScheduleCache = { dateStr, events };
     return events;
+  }
+
+  // 2 детерминированных дневных окна для именного элита ДОМАШНЕГО сектора — НЕ
+  // переиспользует _dailyEventSchedule (та только для PvP-секторов: собирает
+  // слоты нашествия/поезда и избегает их коллизии друг с другом внутри одного
+  // сектора). Домашние секторы не делят таймер ни с чем — свой независимый
+  // счётчик на сектор, поэтому просто 2 фиксированных времени дня + небольшой
+  // сектор-зависимый джиттер (±20 мин), чтобы окна разных секторов не совпадали
+  // все ровно в одну и ту же минуту.
+  _homeEliteWindows(sectorKey) {
+    const now = new Date();
+    const dateStr = `${now.getFullYear()}-${now.getMonth()}-${now.getDate()}`;
+    const mk = (h, m) => new Date(now.getFullYear(), now.getMonth(), now.getDate(), h, m, 0, 0).getTime();
+    const jitter = (seed) => (this._worldEventHash(`${dateStr}:homeElite:${sectorKey}:${seed}`) % 41) - 20;
+    return [mk(13, 0) + jitter('w1') * 60000, mk(21, 0) + jitter('w2') * 60000];
   }
 
   // null = сегодня в этом секторе нашествия нет вообще (будний день — только
@@ -1696,16 +1712,25 @@ export default class GameScene extends Phaser.Scene {
         const sectorBoss = add(boss, Lmax, gx, gy, { behavior: 'guard', patrolRadius: 180, leash: 480 });
         sectorBoss.isSectorBoss = true;
         if (galaxy.current === 'helios_5') sectorBoss.isConfedBoss = true;
+        // Сервер-авторитетный таргетинг (аудит 2026-07-18: ДО этой правки ни один
+        // моб домашней карты, включая сектор-босса, не был зарегистрирован — каждый
+        // клиент решал агро локально независимо, тот же класс бага, что чинили для
+        // дронов бронепоезда/мобов нашествия). registerMob уже общий/sector-agnostic
+        // механизм на сервере, ничего серверного менять не нужно. Сам вызов —
+        // НЕ здесь (this.pvpClient ещё не готов на этом этапе create(), см.
+        // _registerHomeSectorBosses(), вызывается позже той же create()).
         // Щит-дрон эскорт (см. FACTION_SHIELD_DRONE, Mob.shieldDrone-бонд в takeDamage) —
         // только для фракций, у которых есть свой арт; иначе обычный эскорт как раньше.
         const shieldDroneKey = FACTION_SHIELD_DRONE[MOBS[boss]?.faction];
         if (shieldDroneKey) sectorBoss.shieldBonded = true;
         [[-250, -140], [260, -100], [-120, 260]].forEach(([ox, oy], i) => {
-          if (i === 0 && shieldDroneKey) {
-            add(shieldDroneKey, Lmax, gx+ox, gy+oy, { behavior: 'guard', patrolRadius: 200, bossRef: sectorBoss });
-          } else {
-            add(pool[0], rnd(Lmin,Lmax), gx+ox, gy+oy, { patrolRadius: 150, leash: 520, bossRef: sectorBoss });
-          }
+          const escort = (i === 0 && shieldDroneKey)
+            ? add(shieldDroneKey, Lmax, gx+ox, gy+oy, { behavior: 'guard', patrolRadius: 200, bossRef: sectorBoss })
+            : add(pool[0], rnd(Lmin,Lmax), gx+ox, gy+oy, { patrolRadius: 150, leash: 520, bossRef: sectorBoss });
+          // Отдельный флаг (НЕ isSectorBoss) — тот уже участвует в награде/респауне
+          // (8%-ролл ⭐, 5-мин респаун, см. ~5058/5170), эскорт не должен их триггерить,
+          // только таргетинг-whitelist.
+          escort.isSectorBossEscort = true;
         });
 
         // ── Блуждающий одиночный босс (карты 3-5): roam по всей карте, пассивен до атаки ─
@@ -1713,6 +1738,27 @@ export default class GameScene extends Phaser.Scene {
           const wb = add(boss, Lmax, -3500, -2200, { behavior: 'roam', passive: true, leash: Infinity, patrolRadius: 0 });
           wb.isWanderBoss = true;
           wb.isSectorBoss = true;
+        }
+
+        // ── Именной элитный моб (тир 2-5, все корпы) — редкий, спавнится в одно
+        // из 2 дневных окон (см. _homeEliteWindows), живёт до слива, гарантированная
+        // награда сверх обычного лута (см. reward-ветку isNamedElite ниже). Диалог:
+        // "элитный вариант моба... появляется 1-2 раза в сутки до слива".
+        const _eliteTierNum = parseInt(galaxy.current.split('_')[1], 10);
+        const eliteTier = HOME_ELITE_TIERS[_eliteTierNum];
+        if (eliteTier) {
+          const [ew1, ew2] = this._homeEliteWindows(galaxy.current);
+          const eNow = Date.now();
+          const activeWindowStart = eNow >= ew2 ? ew2 : (eNow >= ew1 ? ew1 : null);
+          if (activeWindowStart != null) {
+            const elite = add(boss, Lmax, gx - 1400, gy - 900,
+              { behavior: 'guard', patrolRadius: 220, leash: 560, hpMult: eliteTier.statMult, dmgMult: eliteTier.statMult });
+            elite.isNamedElite = true;
+            elite.eliteNameKey = `mob.elite_${galaxy.current}`;
+            this._homeEliteWindowStart = activeWindowStart;
+            // registerMob — НЕ здесь, this.pvpClient ещё не готов на этом этапе
+            // create() (см. _registerHomeSectorBosses()).
+          }
         }
       } else {
         // ── PvP-сектора: оригинальный спавн ────────────────────────────────
@@ -1731,6 +1777,20 @@ export default class GameScene extends Phaser.Scene {
             add(pool[0], rnd(Lmin,Lmax), gx+ox, gy+oy, { patrolRadius: 150, leash: 520, bossRef: sectorBoss });
           }
         });
+      }
+    }
+  }
+
+  // registerMob для сектор-босса/эскортов/блуждающего босса/именного элита —
+  // ОТДЕЛЬНЫМ проходом по this.mobs ПОСЛЕ spawnMobs(), не внутри неё: this.pvpClient
+  // (геттер на HudScene) ещё не готов на момент spawnMobs() (та вызывается в create()
+  // раньше HudScene/enterSector, см. диалог/аудит 2026-07-18) — inline-вызовы внутри
+  // spawnMobs() молча no-op'ились через this.pvpClient?.registerMob(...).
+  _registerHomeSectorBosses() {
+    if (!this._realtimeRoomKey) return;
+    for (const m of this.mobs) {
+      if (m.isSectorBoss || m.isSectorBossEscort || m.isWanderBoss || m.isNamedElite) {
+        this.pvpClient?.registerMob(m.pvpMobId);
       }
     }
   }
@@ -2670,7 +2730,7 @@ export default class GameScene extends Phaser.Scene {
       const mob = this.mobAt(wx, wy);
       if (isDouble && mob) {
         this.selectTarget(mob); this.isFiring = true;
-        this.log("ATTACK: " + i18n.t(mob.tpl.nameKey));
+        this.log("ATTACK: " + i18n.t(mob.eliteNameKey || mob.tpl.nameKey));
         return;
       }
       if (mob) { this.cancelCollect(); this.selectTarget(mob); return; }
@@ -4981,11 +5041,18 @@ export default class GameScene extends Phaser.Scene {
     // постоянно блестит как молния... не на целую карту"). Гейтим той же проверкой
     // видимости, что и hit-VFX ниже (_onScreen).
     if (mob.isBoss && this._onScreen(mob.x, mob.y)) { this._shake(280, 0.013); this.cameras.main.flash(140, 255, 210, 140, true); }
-    const name = i18n.t(mob.tpl.nameKey); const lvl = `${i18n.t('mob.level')}${mob.level}`;
+    const name = i18n.t(mob.eliteNameKey || mob.tpl.nameKey); const lvl = `${i18n.t('mob.level')}${mob.level}`;
     const lvlScale = 1 + 0.5 * (mob.level - 1);
     const _credMult = this.player?.creditBonusMod ?? 1;
     const sec = SECTORS[galaxy.current];
     const isDung = sec?.isDungeon === true;
+    // Захватываем ключ сектора СЕЙЧАС — this.gainXp() ниже может синхронно вызвать
+    // _checkSectorAccessAfterLevelChange()/scene.restart() и подменить galaxy.current
+    // (мутабельный global) ДО того, как этот же вызов onMobKilled дойдёт до
+    // isNamedElite-веток (нашли живьём: тест-профиль без пройденных gate-миссий
+    // получал уровень от килла и тут же телепортировался на homeKey, отчего
+    // сектор для награды элита читался уже неверный).
+    const _killSectorKey = galaxy.current;
     // Прогресс инстанса на сутки: отмечаем убитого моба на сервере, чтобы при
     // выходе-входе (пока есть жизни) он не заспавнился заново
     if (isDung && this._dungeonRunId && mob.dungeonId) {
@@ -5044,7 +5111,15 @@ export default class GameScene extends Phaser.Scene {
         sg = rawSg > 0 ? Math.round(rawSg * (dsg?.mobMult ?? 1) * lootNorm) : 0;
       }
     } else {
-      if (mob.isConfedBoss) {
+      if (mob.isNamedElite) {
+        // Гарантированное ⭐ (не ролл шанса, в отличие от confed/sector boss ниже) —
+        // тем же числом, что и обычный босс данжа normal-сложности того же тира
+        // сектора (см. HOME_ELITE_TIERS, диалог "золото как с босса на нормал
+        // уровне данжа").
+        const eliteTierNum = parseInt(_killSectorKey.split('_')[1], 10);
+        const eliteTierCfg = HOME_ELITE_TIERS[eliteTierNum];
+        sg = eliteTierCfg ? Phaser.Math.Between(eliteTierCfg.starGold.bossMin, eliteTierCfg.starGold.bossMax) : 0;
+      } else if (mob.isConfedBoss) {
         const sg_tpl = mob.tpl.starGold;
         sg = (sg_tpl && Phaser.Math.FloatBetween(0, 1) < 0.02)
           ? Phaser.Math.Between(sg_tpl.min, sg_tpl.max) : 0;
@@ -5167,6 +5242,32 @@ export default class GameScene extends Phaser.Scene {
         this.log(`💎 ${matName} (вступи в гильдию для вклада в казну)`);
       }
     }
+    // Именной элит домашней карты: гарантированный клановый материал сверх обычного
+    // лута (не 2.5%-ролл, как у обычного данж-босса выше) — см. HOME_ELITE_TIERS/
+    // HOME_ELITE_CORP_MATERIAL, диалог "клановый ресурс + 100% золото".
+    if (mob.isNamedElite) {
+      const eliteCorp = _killSectorKey.split('_')[0];
+      const eliteTierNum2 = parseInt(_killSectorKey.split('_')[1], 10);
+      const eliteTierCfg2 = HOME_ELITE_TIERS[eliteTierNum2];
+      const matType = HOME_ELITE_CORP_MATERIAL[eliteCorp];
+      if (matType && eliteTierCfg2) {
+        const amount = eliteTierCfg2.clanMatAmount;
+        const matName = MATERIAL_NAMES[matType] || matType;
+        if (this.clan) {
+          this.clan.treasury = this.clan.treasury || {};
+          this.clan.treasury[matType] = (this.clan.treasury[matType] || 0) + amount;
+          const d = new Date();
+          const ts = `${String(d.getDate()).padStart(2,'0')}.${String(d.getMonth()+1).padStart(2,'0')}  ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+          (this.clan.log = this.clan.log || []).unshift({ time: ts, text: `${this.playerName || 'Пилот'} добыл «${matName}» ×${amount} (${name}) → казна`, color: '#ffd54f' });
+          this.clan.log = this.clan.log.slice(0, 500);
+          this._trackClanContrib(matType, amount);
+          this.log(`💎 ${matName} ×${amount} → казна гильдии!`);
+        } else {
+          addConsumableToInventory(this.inventory, matType, amount, this._cargoMax());
+          this.log(`💎 ${matName} ×${amount} (вступи в гильдию для вклада в казну)`);
+        }
+      }
+    }
     if (!mob.noRespawn && !SECTORS[galaxy.current]?.isDungeon) {
       if (mob.bossRef) {
         // эскорт босса: не респавнится сам — поднимается вместе с боссом
@@ -5184,6 +5285,20 @@ export default class GameScene extends Phaser.Scene {
             const canRespawn = !sec?.pvp || this.miningBases?.some(b => b.corp === 'neutral');
             if (canRespawn) { mob.respawn(); this.log(i18n.t('log.respawn', { name, lvl })); }
           }
+        });
+      } else if (mob.isNamedElite) {
+        // Не респавнится до СЛЕДУЮЩЕГО дневного окна (не флэт-таймер, как у
+        // обычных боссов выше) — убит в окне 1 → ждём окно 2 (или уже завтрашнее
+        // окно 1, если оба прошли). Работает только пока игрок остаётся в секторе
+        // непрерывно (та же граница корректности, что и у ConfedGuardSystem —
+        // выход/вход в сектор пересоздаёт мобов с нуля, известное ограничение).
+        const [hw1, hw2] = this._homeEliteWindows(_killSectorKey);
+        const hNow = Date.now();
+        let nextWindow = (this._homeEliteWindowStart === hw1) ? hw2 : null;
+        if (nextWindow == null || hNow >= nextWindow) nextWindow = hw1 + 24 * 60 * 60000;
+        const delayMs = Math.max(5000, nextWindow - hNow);
+        this.time.delayedCall(delayMs, () => {
+          if (!mob.alive) { mob.respawn(); this.log(i18n.t('log.respawn', { name, lvl })); }
         });
       } else {
         this.time.delayedCall(60000, () => {
@@ -6120,7 +6235,7 @@ export default class GameScene extends Phaser.Scene {
       // сервер ещё не прислал апдейт (соло/дев, realtimeRoomKey нет, registerMob никогда
       // не звался) — targetUid остаётся undefined и мы просто идём по старому пути ниже
       // без изменений.
-      if ((m.isArmoredTrainDrone || m.isWorldEvent || m.isHiredSecurity) && m.pvpMobId && this._serverMobTargets) {
+      if ((m.isArmoredTrainDrone || m.isWorldEvent || m.isHiredSecurity || m.isSectorBoss || m.isSectorBossEscort || m.isNamedElite) && m.pvpMobId && this._serverMobTargets) {
         const targetUid = this._serverMobTargets[m.pvpMobId];
         if (targetUid !== undefined && targetUid !== this.myUserId) {
           m.update(dt, this.player, true, () => {});

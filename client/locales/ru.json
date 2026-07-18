@@ -210,6 +210,20 @@
   "mob.apophis": "АПОФИС",
   "mob.argus_boss": "АРГУС",
   "mob.shadow_bot": "ТЕНЬ",
+
+  "mob.elite_helios_2": "Пепельный Ловчий",
+  "mob.elite_helios_3": "Клинок Рассвета",
+  "mob.elite_helios_4": "Вестник Затмения",
+  "mob.elite_helios_5": "Коронный Палач",
+  "mob.elite_karax_2": "Шлаковый Ловчий",
+  "mob.elite_karax_3": "Кузнец Разлома",
+  "mob.elite_karax_4": "Расплавленный Тиран",
+  "mob.elite_karax_5": "Повелитель Магмы",
+  "mob.elite_tides_2": "Туманный Ловчий",
+  "mob.elite_tides_3": "Глубинный Страж",
+  "mob.elite_tides_4": "Призрак Приливов",
+  "mob.elite_tides_5": "Владыка Бездны",
+
   "mob.level": "ур.",
 
   "log.welcome": "Добро пожаловать в сектор Гелиос-Прайм.",

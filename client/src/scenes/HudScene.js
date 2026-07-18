@@ -757,7 +757,7 @@ export default class HudScene extends Phaser.Scene {
         else if (t.isRemotePlayer) label = t.name;
         else if (t.tpl) {
           const enrageTag = (t.isBoss && t.phase >= 2) ? `  ⚠${i18n.t('hud.enraged')}` : '';
-          label = `${i18n.t(t.tpl.nameKey)}  ${i18n.t('mob.level')}${t.level}${enrageTag}`;
+          label = `${i18n.t(t.eliteNameKey || t.tpl.nameKey)}  ${i18n.t('mob.level')}${t.level}${enrageTag}`;
         } else {
           label = t.name || '';
         }
