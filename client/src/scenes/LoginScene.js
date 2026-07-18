@@ -43,6 +43,26 @@ export default class LoginScene extends Phaser.Scene {
       letterSpacing: 4,
     }).setOrigin(0.5);
 
+    // Версия клиента — только в собранном Tauri-приложении, не в браузерном
+    // dev-режиме (там window.__TAURI__ не существует — сам браузерный билд не
+    // версионируется/не раздаётся игрокам, см. диалог "браузер нам только для
+    // дев"). Читаем через СОБСТВЕННУЮ Tauri-команду (get_app_version, lib.rs),
+    // а не window.__TAURI__.app.getVersion() — та молча ничего не возвращала
+    // (ни результата, ни ошибки), точная форма core-модулей под withGlobalTauri
+    // оказалась ненадёжной, тогда как core.invoke — гарантированный примитив.
+    // Нижний правый угол — не мешает форме логина, видна всегда.
+    const versionLbl = this.add.text(W - 12, H - 10, '', {
+      fontFamily: 'Orbitron, sans-serif',
+      fontSize: '11px',
+      color: '#3a4a55',
+      resolution: UI_RES,
+    }).setOrigin(1, 1);
+    try {
+      window.__TAURI__?.core?.invoke?.('get_app_version')
+        ?.then(v => versionLbl.setText(`v${v}`))
+        ?.catch(() => {});
+    } catch (_) {}
+
     // Логин-форма (HTML-оверлей, см. _buildOverlay) центрируется чистым CSS flexbox —
     // сама следует за реальным размером окна при ресайзе браузера. Фон/заголовок же
     // считались один раз по W/H на момент create() и оставались на месте — при ресайзе
@@ -62,6 +82,7 @@ export default class LoginScene extends Phaser.Scene {
       dim.setSize(gs.width, gs.height);
       title.setPosition(gs.width / 2, gs.height * 0.22);
       subtitle.setPosition(gs.width / 2, gs.height * 0.32);
+      versionLbl.setPosition(gs.width - 12, gs.height - 10);
     };
     this.scale.on('resize', this._onResize);
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => this.scale.off('resize', this._onResize));
