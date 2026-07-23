@@ -15,7 +15,7 @@ from sqlalchemy import or_, and_, select, delete, update, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import engine, get_db, SessionLocal, Base
-from models import User, PlayerState, PlayerProfile, AuditLog, ChatMessage, Friendship, Blacklist, PrivateMessage, EmailVerificationToken, DungeonRun, DungeonLives, MiningBaseState
+from models import User, PlayerState, PlayerProfile, AuditLog, ChatMessage, Friendship, Blacklist, PrivateMessage, EmailVerificationToken, DungeonRun, DungeonLives, MiningBaseState, ArenaDaily
 from schemas import (
     RegisterRequest, LoginRequest, TokenResponse, UserResponse,
     VerifyEmailRequest, ChangePasswordRequest, ChangeEmailRequest, ChangeUsernameRequest,
@@ -28,9 +28,18 @@ from schemas import (
     DungeonMobKilledRequest, DungeonLootDropRequest, DungeonLootCollectedRequest,
     DungeonCorridorStateRequest, DungeonDeathRequest, DungeonDeathResponse,
     DungeonCompleteRequest, MiningBaseSaveRequest, MiningBaseSectorResponse,
+    ArenaStatusResponse, ArenaMatchCompleteRequest, ArenaMatchCompleteResponse,
 )
 from auth import hash_password, verify_password, create_token, decode_token
 from mailer import send_verification_code
+from arena import (
+    ArenaMatch, ArenaQueueManager, ArenaMatchManager,
+    ARENA_TEAM_SIZE, ARENA_LEVEL_SPREAD, ARENA_RESPAWN_MS, ARENA_OFFLINE_ABORT_MS, ARENA_BASE_SAFE_R,
+    ARENA_PICKUP_R, ARENA_CAPTURE_R, ARENA_POINT_R, ARENA_POINT_CLAIM_COOLDOWN,
+    ARENA_POINT_DURABILITY_PER_CLAIM, ARENA_POINT_MAX_DURABILITY, ARENA_DUEL_ROUNDS_TO_WIN,
+    ARENA_CARGO_RESPAWN_SEC, ARENA_FLAG_TOUCH_RETURN_SEC, ARENA_FLAG_DROP_TIMEOUT_SEC,
+    ARENA_EARLY_LEAVE_VOID_SEC,
+)
 
 app = FastAPI(title="Stellar Drift API", version="0.1.0")
 
@@ -283,6 +292,94 @@ class GroupManager:
 
 group_manager = GroupManager()
 
+# ── Арена: очередь + матчи (см. arena.py) ──────────────────────────────
+arena_queue = ArenaQueueManager()
+arena_matches = ArenaMatchManager()
+ARENA_DAILY_CAP = 10
+ARENA_REWARD = {'win': {'honor': 50, 'gold': 5}, 'draw': {'honor': 10, 'gold': 2}}
+ARENA_MODE_SECTOR = {'flag': 'arena_flag', 'points': 'arena_points', 'cargo': 'arena_cargo', 'duel': 'arena_duel'}
+ARENA_COUNTDOWN_SEC = 5.0  # обратный отсчёт до боя — зеркалит клиентский ArenaController.countdownActive
+
+# Абсолютные мировые координаты баз/точек/спавна груза — ДОЛЖНЫ совпадать с offset'ами
+# в client/src/data/arenaLayouts.js (там координаты заданы от центра мира, здесь —
+# центр + offset, т.к. серверные PvpPlayerState.x/y абсолютны, как this.player.x/y).
+ARENA_BASE_WORLD_W, ARENA_BASE_WORLD_H = 8315.0, 4680.0
+ARENA_3V3_SCALE, ARENA_1V1_SCALE = 0.85, 0.6
+
+
+def _arena_world_center(scale: float) -> tuple[float, float]:
+    return (ARENA_BASE_WORLD_W * scale / 2.0, ARENA_BASE_WORLD_H * scale / 2.0)
+
+
+_ax3, _ay3 = _arena_world_center(ARENA_3V3_SCALE)
+_ax1, _ay1 = _arena_world_center(ARENA_1V1_SCALE)
+
+ARENA_SPAWNS = {
+    'flag':   ((_ax3 - 2900, _ay3 - 1400), (_ax3 + 2900, _ay3 + 1400)),
+    'points': ((_ax3 - 3300, _ay3), (_ax3 + 3300, _ay3)),
+    'cargo':  ((_ax3 - 3000, _ay3), (_ax3 + 3000, _ay3)),
+    'duel':   ((_ax1 - 1200, _ay1), (_ax1 + 1200, _ay1)),
+}
+ARENA_CARGO_SPAWN = (_ax3, _ay3)
+# Точки: B всегда в центре (истинный центр карты, максимально нейтрально), A/C — по
+# одной ближе к каждой базе, но случайное расстояние НА МАТЧ (см. диалог: "точки
+# сделать случайный разброс с условием 2 точки ближе к каждой из баз, одна в
+# центре") — тот же принцип, что ArenaMatch.maze_variant: сервер кидает кубик один
+# раз при создании матча (см. arena_queue_join), обе стороны получают ОДНО и то же
+# значение через arena_match_found. Клиренс под стены режется в рантайме
+# (GameScene.js clipLine, круг R=260 на реальной позиции этого матча), не запечён
+# статически — не нужно плодить лабиринт под каждый офсет.
+ARENA_POINT_OFFSET_CHOICES = (1200.0, 1600.0, 2000.0)
+# A/C раньше сидели на той же строке сетки лабиринта (y=0), что и обе базы — весь
+# матч сводился к полёту по одному горизонтальному коридору (баг из диалога: "3
+# точки на одной линии — нет смысла летать кроме как по одной линии"). Сдвигаем их
+# на соседние ряды сетки (шаг ~583, см. arenaLayouts.js), в противоположные стороны
+# — по диагонали от своих баз, а не по одной прямой.
+ARENA_POINT_ROW_OFFSET = 583.0
+
+
+def _arena_point_positions(offset: float) -> dict[str, tuple[float, float]]:
+    return {
+        'A': (_ax3 - offset, _ay3 - ARENA_POINT_ROW_OFFSET),
+        'B': (_ax3, _ay3),
+        'C': (_ax3 + offset, _ay3 + ARENA_POINT_ROW_OFFSET),
+    }
+
+# Уровень пилота — из БД PlayerState.state['pilotXp'] (не из client-claimed loadout на
+# pvp_enter, см. план risk#2), формула — намеренный порт client/src/leveling.js
+# (xpToNext/levelInfo). Как и LASER_SHIELD_MULT/PVP_BURST_MULT выше — дублирование
+# клиентской формулы, синхронизировать вручную при изменении кривой опыта.
+ARENA_MAX_LEVEL = 50
+
+
+def _xp_to_next(level: int) -> float:
+    if level >= ARENA_MAX_LEVEL:
+        return float('inf')
+    knee = max(0, level - 25)
+    base = 40 * level * level + 13 * (knee ** 3)
+    if level >= 46:
+        return base * 6
+    if level >= 40:
+        return base * 4.5
+    return base
+
+
+def _level_from_xp(total_xp: float) -> int:
+    level, acc = 1, 0.0
+    while level < ARENA_MAX_LEVEL:
+        need = _xp_to_next(level)
+        if total_xp < acc + need:
+            break
+        acc += need
+        level += 1
+    return level
+
+
+async def _player_level(db: AsyncSession, user_id: int) -> int:
+    ps = (await db.execute(select(PlayerState).where(PlayerState.user_id == user_id))).scalar_one_or_none()
+    xp = ((ps.state or {}).get('pilotXp') or 0) if ps else 0
+    return _level_from_xp(float(xp))
+
 
 # ── PvP: live-позиции и бой игрок-игрок в PvP-секторах ─────────────────
 # In-memory, как GroupManager выше — тот же допущение "один воркер, не
@@ -327,6 +424,13 @@ def _weapon_mults(weapon_type: str) -> tuple[float, float]:
 PVP_CRIT_CHANCE_CAP = 0.45   # потолок — тот же, что у клиента (Player.js:critChance)
 PVP_CRIT_MULT_CAP   = 3.0    # потолок — тот же, что у клиента (Player.js:critMult)
 
+# Пассивный реген (см. PvpPlayerState.last_hp_sync_at) — потолок ЗАЯВЛЕННОГО роста
+# hull/shield за секунду, не точная копия клиентской формулы (та зависит от кучи
+# факторов — перки/борды/скиллы/тип корпуса), а щедрый, но конечный допуск в том же
+# духе, что PVP_BURST_MULT: реальный реген (5%/с корпус, максимум в районе тех же
+# единиц % у щита) всегда пройдёт, а "заявить себе мгновенно полный хил" — нет.
+PVP_REGEN_RATE_CEILING = 0.20  # доля от max за секунду
+
 # План Фаза 3.1 (offline-ship): PvpPlayerState.hull/maxHull/shield/maxShield сегодня
 # сознательно НЕ валидируются на входе (см. _clamp_pvp_loadout ниже — там только боевые
 # статы) — приемлемо для живого, постоянно переподтверждаемого соединения, но не для
@@ -343,6 +447,15 @@ PVP_MAX_SHIELD = 700000.0
 # тот же принцип "щедрый, но конечный допуск", что и PVP_BURST_MULT ниже.
 ABILITY_DAMAGE_CEILING = {'argus_pulsar': 1000.0, 'argus_missile': 2500.0}
 ABILITY_COOLDOWN_FLOOR = {'argus_pulsar': 0.08, 'argus_missile': 0.03}
+
+# "Фазовый кокон" (см. pvp_self_heal_claim) — сервер сам считает сумму хила от своего
+# max_hull/max_shield (% фиксирован, клиентской заявке тут доверять нечему), только
+# кулдаун-флор нужен как страховка от спама. Значения зеркалят клиент
+# (ArgusController._activateCocoon: 30% хил, 2с неуязвимость; GameScene._skillCooldownMs:
+# 'argus:cocoon' 60с) — с тем же запасом "щедрый, но конечный допуск", что и выше.
+ABILITY_HEAL_PCT = {'argus_cocoon': 0.30}
+ARGUS_COCOON_COOLDOWN_FLOOR = 55.0
+ARGUS_COCOON_INVULN_SEC = 2.0
 
 # Турели добывающих баз — залп НЕ привязан к личному оружию/лоадауту конкретного
 # игрока (иначе конфликтовал бы с cooldown/range того игрока, чей клиент случайно
@@ -428,6 +541,12 @@ class PvpPlayerState:
         self.max_shield  = max(0.0, float(loadout.get('maxShield', 0)))
         self.loadout = _clamp_pvp_loadout(loadout)
         self.last_shot_at = 0.0
+        # Пассивный реген (щит/корпус, см. Player.js update()) считается целиком на
+        # клиенте — pvp_update_loadout периодически репортит РОСТ hull/shield (см. диалог:
+        # "актуально — полная жизнь... над кораблём врага и на экране — неактуально"),
+        # зажатый PVP_REGEN_RATE_CEILING*elapsed от last_hp_sync_at, чтобы клиент не мог
+        # заявить мгновенный полный хил тем же путём.
+        self.last_hp_sync_at = time.time()
         # Кто наносил урон этой жизни игрока (uid → суммарный урон) — используется,
         # чтобы решить, кому будет виден лут-бокс после смерти (см. PvpLootBox). Сбрасывается
         # при килле в last_death_eligible.
@@ -446,6 +565,13 @@ class PvpPlayerState:
         # других игроков" — способности вообще не были рассчитаны на игроков, били
         # только мобов).
         self.ability_last_fire: dict[str, float] = {}
+        # "Фазовый кокон" (argus:cocoon, см. ArgusController._activateCocoon) — раньше
+        # хил+неуязвимость были ЧИСТО клиент-локальными: сервер никогда не узнавал ни о
+        # заживлении (следующий хит считался от старого, незалеченного hull — баг из
+        # диалога "бар хп/щита у противника неактуальный"), ни о самой неуязвимости
+        # (кокон визуально защищал, а сервер всё равно засчитывал полный урон). См.
+        # pvp_self_heal_claim.
+        self.invulnerable_until = 0.0
 
     def to_public(self) -> dict:
         return {
@@ -1179,6 +1305,7 @@ async def _start_mob_tick_loop():
     asyncio.create_task(_offline_ship_tick_loop())
     asyncio.create_task(_resource_tick_loop())
     asyncio.create_task(_train_weapon_tick_loop())
+    asyncio.create_task(_arena_tick_loop())
 
 
 def _split_reward_top5(damage_by: dict[int, float], pools: dict[str, float]) -> dict[int, dict[str, int]]:
@@ -1239,21 +1366,28 @@ def _apply_pvp_damage(claimed_dmg: float, ceiling: float, penetration: float,
                        victim_max_hull: float, victim_max_shield: float,
                        crit_chance: float = 0.0, crit_mult: float = 2.0,
                        victim_evasion: float = 0.0,
-                       shield_mult: float = 1.0, hull_mult: float = 1.0) -> dict:
+                       shield_mult: float = 1.0, hull_mult: float = 1.0,
+                       burst_mult: float = PVP_BURST_MULT) -> dict:
     """Мирроит shield/hull split из Player.takeDamage (client/src/entities/Player.js).
     Урон — заявка клиента (claimed_dmg, реальный посчитанный урон выстрела со всеми
-    баффами/перками), зажатая потолком ceiling*PVP_BURST_MULT — не плоское число на
+    баффами/перками), зажатая потолком ceiling*burst_mult — не плоское число на
     весь визит в комнату, но и не слепое доверие. Крит и уклонение всё равно решает
     сервер своим роллом (по статам АТАКУЮЩЕГО — crit_chance/crit_mult, не фиксированные
     для всех), не заявка клиента. Общий расчёт для игрок→игрок и игрок→моб — обе жертвы
     описываются просто парой hull/shield, дальше не важно, чьи они. victim_evasion=0
     для мобов — их движение клиент-локальное, сервер не знает скорость, чтобы честно
-    её учитывать. shield_mult/hull_mult — см. _weapon_mults (асимметрия лазера)."""
+    её учитывать. shield_mult/hull_mult — см. _weapon_mults (асимметрия лазера).
+    burst_mult по умолчанию PVP_BURST_MULT (слэк на баффы поверх СТАТИЧНОГО
+    loadout.dmg у обычного оружия) — способности (ABILITY_DAMAGE_CEILING) передают
+    burst_mult=1.0 явно: их ceiling уже САМ ПО СЕБЕ финальный урон одного тика/ракеты,
+    не "статичная база до баффов", лишний ×3 сверху не нужен и раньше давал урон
+    способности на порядок выше задуманного (баг из диалога: "ракетный залп нанёс
+    более 400 тыс урона")."""
     if victim_evasion > 0 and random.random() < victim_evasion:
         return {'isCrit': False, 'dmg': 0, 'killed': False, 'dodged': True,
                 'hull': victim_hull, 'shield': victim_shield}
 
-    base = max(0.0, min(claimed_dmg, ceiling * PVP_BURST_MULT))
+    base = max(0.0, min(claimed_dmg, ceiling * burst_mult))
     is_crit = random.random() < crit_chance
     amount = base * (crit_mult if is_crit else 1.0)
 
@@ -1285,10 +1419,12 @@ def _apply_pvp_damage(claimed_dmg: float, ceiling: float, penetration: float,
 
 def _resolve_pvp_hit(attacker: PvpPlayerState, victim: PvpPlayerState, claimed_dmg: float,
                       weapon_type: str = 'cannon') -> dict:
-    # Грейс-период после "ремонта на месте" — короткое замыкание ДО _apply_pvp_damage,
-    # тем же контрактом ответа, что дожд ("dodged"), которым уже пользуется клиент
-    # (_onPvpHitResult → showDodge), без урона и без изменения hull/shield жертвы.
-    if victim.respawn_grace_until > time.time():
+    # Грейс-период после "ремонта на месте" ИЛИ активный "Фазовый кокон" (см.
+    # PvpPlayerState.invulnerable_until, pvp_self_heal_claim) — короткое замыкание ДО
+    # _apply_pvp_damage, тем же контрактом ответа, что дожд ("dodged"), которым уже
+    # пользуется клиент (_onPvpHitResult → showDodge), без урона и без изменения
+    # hull/shield жертвы.
+    if victim.respawn_grace_until > time.time() or victim.invulnerable_until > time.time():
         return {
             'isCrit': False, 'dmg': 0, 'killed': False, 'dodged': True,
             'hull': victim.hull, 'shield': victim.shield,
@@ -1324,6 +1460,160 @@ def _resolve_pvp_hit(attacker: PvpPlayerState, victim: PvpPlayerState, claimed_d
             bounty_bonus = {'honorMult': 3 * mult, 'gold': 20 * mult}
             del bounties[victim.user_id]
     return {**r, 'maxHull': victim.max_hull, 'maxShield': victim.max_shield, 'damageBy': damage_by_out, 'bountyBonus': bounty_bonus}
+
+
+# ── Арена: персонализированный arena_match_end ──────────────────────────
+# Раньше все 4 места, шлющие arena_match_end, делали один и тот же
+# broadcast_to_uids с СЫРЫМ m.outcome ('win_a'/'win_b'/'draw'/'void') всем игрокам
+# одинаково — ArenaMatch.outcome_for(uid) (уже существовавший нормализатор в 'win'/
+# 'lose'/'draw'/'void' для конкретного получателя) вызывался только в /arena/
+# match-complete (награда), никогда в самом WS-broadcast. Клиент (ArenaController.
+# onMatchEnd) ищет outcome в таблице labels — 'win_a' там нет, показывает как есть
+# (баг из диалога: "победитель — выводить ник а не просто wins_a"). winnerName —
+# дополнительно ник победителя (из PvpPlayerState.username), чтобы проигравший видел,
+# КТО именно выиграл, не только сам факт поражения.
+async def _broadcast_arena_match_end(m: "ArenaMatch"):
+    winner_name = None
+    if m.outcome and m.outcome.startswith('win_'):
+        winner_team = m.outcome[len('win_'):]
+        winner_uids = m.teams.get(winner_team, [])
+        if winner_uids:
+            winner_state = pvp_room_manager.get(m.room_key, winner_uids[0])
+            winner_name = winner_state.username if winner_state else None
+    winning_team = m.outcome[len('win_'):] if m.outcome and m.outcome.startswith('win_') else None
+    for uid in list(m.team_of.keys()):
+        await chat_manager.send_to_uid(uid, {
+            'type': 'arena_match_end', 'outcome': m.outcome_for(uid),
+            'winningTeam': winning_team, 'winnerName': winner_name,
+        })
+
+
+# ── Арена: обработка килла внутри матча ─────────────────────────────────
+# Вызывается из pvp_fire_claim/pvp_ability_fire_claim ПОСЛЕ того, как _resolve_pvp_hit/
+# ручная бухгалтерия уже отметили result['killed']=True и сбросили victim.damage_by —
+# здесь только арена-специфичные последствия (дуэль завершается, носимый флаг/груз
+# роняется, respawn ставится на таймер вместо мгновенного).
+async def _arena_on_kill(m: "ArenaMatch", victim: "PvpPlayerState", attacker: "PvpPlayerState"):
+    if m.outcome:
+        return
+    if m.mode == 'duel':
+        # До 2 побед из 3 раундов (см. диалог: "должно быть 3 боя, потом только награда
+        # победителю") — очки те же self.scores, что и у flag/cargo, просто с другим
+        # порогом. Награда — уже как есть: outcome_for() нормализует только на итоговый
+        # win_a/win_b, промежуточные раунды наград не дают (нет ArenaMatchCompleteRequest
+        # между раундами — клиент зовёт /arena/match-complete только по arena_match_end).
+        winner_team = m.team_of.get(attacker.user_id)
+        m.scores[winner_team] = m.scores.get(winner_team, 0) + 1
+        await chat_manager.broadcast_to_uids(
+            list(m.team_of.keys()), {'type': 'arena_score', 'a': m.scores['a'], 'b': m.scores['b']},
+        )
+        if m.scores[winner_team] >= ARENA_DUEL_ROUNDS_TO_WIN:
+            arena_matches.end(m.room_key, f'win_{winner_team}')
+            await _broadcast_arena_match_end(m)
+            return
+        # Не финал — новый раунд: респаун ОБОИХ на своих споунах, полный HP. Клиент сам
+        # рестартует 5с обратный отсчёт по получению arena_respawn в duel-режиме (см.
+        # ArenaController.onRespawn) — отдельное сообщение не нужно.
+        now_ts = time.time()
+        for uid, team in list(m.team_of.items()):
+            sx, sy = m.spawns[team]
+            state = pvp_room_manager.get(m.room_key, uid)
+            if state:
+                state.x, state.y = sx, sy
+                state.hull, state.shield = state.max_hull, state.max_shield
+                state.respawn_grace_until = now_ts + 3.0
+            m.respawn_at.pop(uid, None)
+            await chat_manager.broadcast_to_uids(
+                list(m.team_of.keys()), {'type': 'arena_respawn', 'userId': uid, 'x': sx, 'y': sy, 'at': now_ts},
+            )
+        return
+    # 3на3 — уронить флаг/груз, если убитый его несёт; respawn через таймер (тикает
+    # _arena_tick_loop), не мгновенно, как обычный "ремонт на месте".
+    dropped = False
+    if m.mode == 'flag' and m.flags:
+        for team, f in m.flags.items():
+            if f['carrier'] == victim.user_id:
+                f['carrier'] = None
+                f['x'], f['y'] = victim.x, victim.y
+                # failsafe: никто не тронул за ARENA_FLAG_DROP_TIMEOUT_SEC — сам
+                # вернётся на базу (см. arena_flag_return/_arena_tick_loop, диалог:
+                # "никто не подбирает — 15 сек и тоже возвращается на базу").
+                f['auto_return_at'] = time.time() + ARENA_FLAG_DROP_TIMEOUT_SEC
+                dropped = True
+    elif m.mode == 'cargo' and m.cargo and m.cargo['carrier'] == victim.user_id:
+        m.cargo['carrier'] = None
+        m.cargo['x'], m.cargo['y'] = victim.x, victim.y
+        dropped = True
+    m.respawn_at[victim.user_id] = time.time() + ARENA_RESPAWN_MS / 1000.0
+    payload = {'type': 'arena_objective_sync'}
+    if m.mode == 'flag':
+        payload['flags'] = m.flags
+    elif m.mode == 'cargo':
+        payload['cargo'] = m.cargo
+    if dropped:
+        await chat_manager.broadcast_to_uids(list(m.team_of.keys()), payload)
+
+
+ARENA_TICK_MS = 500
+
+
+async def _arena_tick_loop():
+    """Третий фоновый цикл сервера (после _mob_tick_loop/_offline_ship_tick_loop).
+    Респауны по таймеру, декей точек/кумулятивное время владения (см. ArenaMatch.tick —
+    абсолютные таймстемпы), проверка победы/дедлайна, watchdog оффлайна >2 мин → void."""
+    while True:
+        await asyncio.sleep(ARENA_TICK_MS / 1000)
+        now = time.time()
+        for room_key, m in list(arena_matches.matches.items()):
+            if m.outcome:
+                continue
+            for uid, rat in list(m.respawn_at.items()):
+                if now >= rat:
+                    del m.respawn_at[uid]
+                    team = m.team_of.get(uid)
+                    sx, sy = m.spawns.get(team, (0.0, 0.0))
+                    state = pvp_room_manager.get(room_key, uid)
+                    if state:
+                        state.x, state.y = sx, sy
+                        state.hull, state.shield = state.max_hull, state.max_shield
+                        state.respawn_grace_until = now + 3.0
+                    await chat_manager.broadcast_to_uids(
+                        list(m.team_of.keys()),
+                        {'type': 'arena_respawn', 'userId': uid, 'x': sx, 'y': sy, 'at': now},
+                    )
+            # Груз: пауза после доставки (ARENA_CARGO_RESPAWN_SEC, см. arena_cargo_deliver) —
+            # available=False, x/y=None, до этого момента подбирать нечего.
+            if m.mode == 'cargo' and m.cargo and not m.cargo.get('available', True) and now >= m.cargo['next_spawn_at']:
+                cx, cy = ARENA_CARGO_SPAWN
+                m.cargo = {'spawned_at': now, 'carrier': None, 'x': cx, 'y': cy,
+                           'next_spawn_at': now, 'available': True}
+                await chat_manager.broadcast_to_uids(list(m.team_of.keys()),
+                                                      {'type': 'arena_objective_sync', 'cargo': m.cargo})
+            # Флаг: авто-возврат упавшего флага домой — либо 3с после касания своим (см.
+            # arena_flag_return), либо 15с failsafe без касаний вовсе (см. _arena_on_kill).
+            if m.mode == 'flag' and m.flags:
+                for team, f in m.flags.items():
+                    if f['carrier'] is None and not f['at_base'] and f['auto_return_at'] and now >= f['auto_return_at']:
+                        sx, sy = m.spawns[team]
+                        f['x'], f['y'] = sx, sy
+                        f['at_base'] = True
+                        f['auto_return_at'] = None
+                        await chat_manager.broadcast_to_uids(list(m.team_of.keys()),
+                                                              {'type': 'arena_objective_sync', 'flags': m.flags})
+            m.tick(now)
+            outcome = m.check_win(now)
+            if not outcome and now >= m.deadline:
+                outcome = m.deadline_outcome()
+            if outcome:
+                arena_matches.end(room_key, outcome)
+                await _broadcast_arena_match_end(m)
+                continue
+            for uid, dat in list(m.disconnected_at.items()):
+                if now - dat > ARENA_OFFLINE_ABORT_MS / 1000.0:
+                    arena_matches.end(room_key, 'void')
+                    await _broadcast_arena_match_end(m)
+                    break
+        arena_matches.cleanup_ended(now)
 
 
 # ── Friends helpers ───────────────────────────────────────────────────
@@ -2157,6 +2447,68 @@ async def dungeon_death(
     )
 
 
+# ── Арена: дневной лимит награждённых матчей ────────────────────────────
+# Сервер авторитетен ЗДЕСЬ (исход матча сервер знает сам — он вёл ArenaMatch),
+# в отличие от общей "клиент-доверенной" модели прогресса (кредиты/xp/честь
+# считает и применяет клиент через PUT /player/state, как обычно). Мы гейтим
+# только сам факт "матч выиграл/сыграл вничью и лимит не исчерпан" — суммы
+# честь/золото клиент применяет и сохраняет как всегда. Тот же принцип, что
+# DungeonLives гейтит вход/жизни, не пересчитывая сам лут данжа.
+
+async def _get_or_create_arena_daily(db: AsyncSession, user_id: int, day_key: str) -> ArenaDaily:
+    row = (await db.execute(select(ArenaDaily).where(
+        ArenaDaily.user_id == user_id,
+        ArenaDaily.day_key == day_key,
+    ))).scalar_one_or_none()
+    if not row:
+        row = ArenaDaily(user_id=user_id, day_key=day_key, rewarded_count=0)
+        db.add(row)
+        await db.commit()
+        await db.refresh(row)
+    return row
+
+
+@app.get("/arena/status", response_model=ArenaStatusResponse)
+async def arena_status(
+    dayKey: str,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    row = await _get_or_create_arena_daily(db, user.id, dayKey)
+    return ArenaStatusResponse(
+        rewardedToday=row.rewarded_count,
+        remaining=max(0, ARENA_DAILY_CAP - row.rewarded_count),
+    )
+
+
+@app.post("/arena/match-complete", response_model=ArenaMatchCompleteResponse)
+async def arena_match_complete(
+    body: ArenaMatchCompleteRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    m = arena_matches.matches.get(f"arena:{body.matchId}")
+    if not m or user.id not in m.team_of:
+        return ArenaMatchCompleteResponse(eligible=False, reason="not_in_match")
+    if user.id in m.claimed:
+        return ArenaMatchCompleteResponse(eligible=False, reason="already_claimed")
+    server_outcome = m.outcome_for(user.id)
+    if server_outcome != body.outcome:
+        return ArenaMatchCompleteResponse(eligible=False, reason="outcome_mismatch")
+    m.claimed.add(user.id)
+    if server_outcome in ('lose', 'void'):
+        return ArenaMatchCompleteResponse(eligible=False, reason=server_outcome)
+    row = await _get_or_create_arena_daily(db, user.id, body.dayKey)
+    if row.rewarded_count >= ARENA_DAILY_CAP:
+        return ArenaMatchCompleteResponse(eligible=False, reason="cap", rewardedCount=row.rewarded_count)
+    row.rewarded_count += 1
+    await db.commit()
+    reward = ARENA_REWARD[server_outcome]
+    return ArenaMatchCompleteResponse(
+        eligible=True, honor=reward['honor'], gold=reward['gold'], rewardedCount=row.rewarded_count,
+    )
+
+
 @app.post("/dungeon/complete")
 async def dungeon_complete(
     body: DungeonCompleteRequest,
@@ -2570,6 +2922,21 @@ async def chat_ws(
                     state.max_hull = max(1.0, float(loadout['maxHull']))
                 if loadout.get('maxShield') is not None:
                     state.max_shield = max(0.0, float(loadout['maxShield']))
+                # Пассивный реген (см. PvpPlayerState.last_hp_sync_at выше) — только РОСТ,
+                # зажатый темпом с последней синхронизации; урон/смерть остаются
+                # авторитетными исключительно через pvp_fire_claim/ability, это НИКОГДА
+                # не уменьшает hull/shield.
+                _now_hp = time.time()
+                _elapsed = max(0.0, _now_hp - state.last_hp_sync_at)
+                if loadout.get('hull') is not None:
+                    _claimed_hull = float(loadout['hull'])
+                    _max_hull_gain = state.max_hull * PVP_REGEN_RATE_CEILING * _elapsed
+                    state.hull = max(state.hull, min(_claimed_hull, state.hull + _max_hull_gain, state.max_hull))
+                if loadout.get('shield') is not None:
+                    _claimed_shield = float(loadout['shield'])
+                    _max_shield_gain = state.max_shield * PVP_REGEN_RATE_CEILING * _elapsed
+                    state.shield = max(state.shield, min(_claimed_shield, state.shield + _max_shield_gain, state.max_shield))
+                state.last_hp_sync_at = _now_hp
                 if loadout.get('corp'):
                     state.corp = str(loadout['corp'])[:20]
                 if loadout.get('level'):
@@ -2592,7 +2959,11 @@ async def chat_ws(
                         {'type': 'pvp_player_updated', 'userId': user.id, 'shipKey': state.ship_key,
                          'corp': state.corp, 'level': state.level,
                          'rankId': state.rank_id, 'clanTag': state.clan_tag,
-                         'maxHull': state.max_hull, 'maxShield': state.max_shield},
+                         'maxHull': state.max_hull, 'maxShield': state.max_shield,
+                         # hull/shield — реген (см. выше), раньше сюда не попадали вовсе:
+                         # наблюдатель никогда не видел, что чужой hull/shield подрос со
+                         # временем (баг из диалога), только на следующее боевое попадание.
+                         'hull': state.hull, 'shield': state.shield},
                     )
 
             # ── PvP: обновление позиции (throttled клиентом, ~10Hz) ────
@@ -2696,6 +3067,40 @@ async def chat_ws(
 
             # ── PvP: осознанный выход из сектора (не disconnect) ───────
             elif msg_type == 'pvp_leave':
+                # Осознанный выход из арена-комнаты (не дисконнект WS) — раньше НЕ запускал
+                # 2-минутный void-таймер вообще (тот стоит только в except-блоке
+                # дисконнекта ниже), так что ушедший вручную игрок оставлял соперника
+                # висеть в ожидании до конца 10-минутного дедлайна матча (баг из диалога:
+                # "противник перезагрузился и вышел, игрок продолжает висеть на арене").
+                # Сектор берём ДО leave() — та удаляет запись, после неё узнать откуда
+                # ушёл игрок можно только из её же возвращаемого значения.
+                _leaving_sector = pvp_room_manager.player_sector.get(user.id)
+                if _leaving_sector and _leaving_sector.startswith('arena:'):
+                    _am = arena_matches.matches.get(_leaving_sector)
+                    if _am and not _am.outcome:
+                        # Досрочный выход, пока соперник ещё в матче (хоть один участник
+                        # его команды подключён) — поражение вышедшего, без ожидания
+                        # 2-минутного void-таймера (см. диалог: "выход по время матча
+                        # если противник на карте - поражение"). Если соперник уже сам
+                        # отключился — просто запускаем обычный void-таймер, как раньше.
+                        # НО победу засчитываем, только если у оставшихся уже есть реальное
+                        # преимущество (см. ArenaMatch.has_advantage, диалог: "если ни одного
+                        # флага/груза/точки не захвачено... победу не присуждать, просто
+                        # выйти", "для победы должно быть преимущество") — при равном счёте
+                        # (в т.ч. 0:0) уходящий не отдаёт победу, матч просто void.
+                        _my_team = _am.team_of.get(user.id)
+                        _opp_team = 'b' if _my_team == 'a' else 'a'
+                        _opp_uids = _am.teams.get(_opp_team, [])
+                        _opp_connected = any(_am.connected.get(u, True) for u in _opp_uids)
+                        if _opp_connected:
+                            # Только 3на3 (не дуэль) — первые 3 минуты выход не даёт победы
+                            # никому вообще, даже при перевесе (см. ARENA_EARLY_LEAVE_VOID_SEC).
+                            _too_early = _am.mode != 'duel' and time.time() - _am.start_at < ARENA_EARLY_LEAVE_VOID_SEC
+                            _outcome = 'void' if _too_early else (f'win_{_opp_team}' if _am.has_advantage(_opp_team) else 'void')
+                            arena_matches.end(_leaving_sector, _outcome)
+                            await _broadcast_arena_match_end(_am)
+                        else:
+                            arena_matches.on_disconnect(user.id, time.time())
                 sector = pvp_room_manager.leave(user.id)
                 if sector:
                     others = pvp_room_manager.others(sector, user.id)
@@ -2713,22 +3118,38 @@ async def chat_ws(
                 target_id = data.get('targetUserId')
                 if not sector or target_id is None:
                     continue
-                # Игрок-игрок бой — только в реальных PvP-секторах (room key начинается с
-                # "pvp_"). Комнаты для дома/PvE/групповых данжей (room key = имя сектора
-                # или "group:<instanceId>") тоже используют pvp_enter/pvp_pos для видимости
-                # союзников, но там драться друг с другом нельзя — молча игнорируем попытку.
-                if not sector.startswith('pvp_'):
+                # Игрок-игрок бой — в реальных PvP-секторах (room key начинается с "pvp_")
+                # ИЛИ в арена-матче (room key "arena:<matchId>", см. arena.py). Комнаты для
+                # дома/PvE/групповых данжей (room key = имя сектора или "group:<instanceId>")
+                # тоже используют pvp_enter/pvp_pos для видимости союзников, но там драться
+                # друг с другом нельзя — молча игнорируем попытку.
+                is_arena = sector.startswith('arena:')
+                if not sector.startswith('pvp_') and not is_arena:
                     continue
                 attacker = pvp_room_manager.get(sector, user.id)
                 victim = pvp_room_manager.get(sector, int(target_id))
                 if not attacker or not victim or victim.user_id == attacker.user_id:
                     continue
-                # Дружественный огонь между игроками одного корпа запрещён — единственное
-                # исключение будет отдельная арена с записью/очередью (дуэли не по
-                # корпам), которой пока нет как отдельного сектора. Проверяем на
-                # сервере (не только скрытие/блок на клиенте), т.к. клиент не авторитетен.
-                if attacker.corp == victim.corp:
-                    continue
+                arena_match = None
+                if is_arena:
+                    arena_match = arena_matches.matches.get(sector)
+                    if not arena_match or arena_match.outcome:
+                        continue  # матч уже завершён/void — урон больше не считаем
+                    if time.time() - arena_match.start_at < ARENA_COUNTDOWN_SEC:
+                        continue  # 5с обратный отсчёт до боя — сервер тоже игнорирует урон, не только клиент
+                    if arena_match.team_of.get(attacker.user_id) == arena_match.team_of.get(victim.user_id):
+                        continue  # союзник по арена-команде — независимо от корпорации
+                    if arena_match.mode != 'duel':  # дуэль без safe zone на спавне
+                        victim_team = arena_match.team_of.get(victim.user_id)
+                        bx, by = arena_match.spawns.get(victim_team, (victim.x, victim.y))
+                        if math.hypot(victim.x - bx, victim.y - by) < ARENA_BASE_SAFE_R:
+                            continue  # жертва на своей базе — safe zone, неатакуема
+                else:
+                    # Дружественный огонь между игроками одного корпа запрещён вне арены.
+                    # Проверяем на сервере (не только скрытие/блок на клиенте), т.к. клиент
+                    # не авторитетен.
+                    if attacker.corp == victim.corp:
+                        continue
                 now_ts = time.time()
                 if now_ts - attacker.last_shot_at < attacker.loadout['cooldown']:
                     continue  # чаще заявленного КД — молча игнорируем (см. план: без ложных банов)
@@ -2752,7 +3173,9 @@ async def chat_ws(
                 room_uids = [attacker.user_id] + [p.user_id for p in pvp_room_manager.others(sector, attacker.user_id)]
                 await chat_manager.broadcast_to_uids(room_uids, out)
 
-                if result['killed']:
+                if result['killed'] and arena_match:
+                    await _arena_on_kill(arena_match, victim, attacker)
+                elif result['killed']:
                     async with SessionLocal() as db:
                         db.add(AuditLog(user_id=victim.user_id, action='pvp_kill', params={
                             'killer': attacker.username, 'victim': victim.username, 'sector': sector,
@@ -2777,13 +3200,26 @@ async def chat_ws(
                 ability = str(data.get('ability', ''))[:30]
                 if not sector or target_id is None or ability not in ABILITY_DAMAGE_CEILING:
                     continue
-                if not sector.startswith('pvp_'):
+                is_arena = sector.startswith('arena:')
+                if not sector.startswith('pvp_') and not is_arena:
                     continue
                 attacker = pvp_room_manager.get(sector, user.id)
                 victim = pvp_room_manager.get(sector, int(target_id))
                 if not attacker or not victim or victim.user_id == attacker.user_id:
                     continue
-                if attacker.corp == victim.corp:
+                arena_match = None
+                if is_arena:
+                    arena_match = arena_matches.matches.get(sector)
+                    if not arena_match or arena_match.outcome:
+                        continue
+                    if arena_match.team_of.get(attacker.user_id) == arena_match.team_of.get(victim.user_id):
+                        continue
+                    if arena_match.mode != 'duel':  # дуэль без safe zone на спавне
+                        victim_team = arena_match.team_of.get(victim.user_id)
+                        bx, by = arena_match.spawns.get(victim_team, (victim.x, victim.y))
+                        if math.hypot(victim.x - bx, victim.y - by) < ARENA_BASE_SAFE_R:
+                            continue
+                elif attacker.corp == victim.corp:
                     continue
                 now_ts = time.time()
                 last = attacker.ability_last_fire.get(ability, 0.0)
@@ -2793,14 +3229,18 @@ async def chat_ws(
                 attacker.respawn_grace_until = 0.0
 
                 claimed_dmg = max(0.0, float(data.get('dmg', 0) or 0))
-                if victim.respawn_grace_until > now_ts:
+                if victim.respawn_grace_until > now_ts or victim.invulnerable_until > now_ts:
                     r = {'isCrit': False, 'dmg': 0, 'killed': False, 'dodged': True,
                          'hull': victim.hull, 'shield': victim.shield}
                 else:
+                    # Способности — без крита (см. диалог: "нельзя применять криты к
+                    # способностям", "8 ракет по 2 тысячи — 16 тыс в одну цель должно
+                    # быть статично") — 0.0 critChance делает is_crit гарантированно
+                    # False в _apply_pvp_damage, урон = ceiling ровно, без разброса.
                     r = _apply_pvp_damage(claimed_dmg, ABILITY_DAMAGE_CEILING[ability], 0.0,
                                            victim.hull, victim.shield, victim.max_hull, victim.max_shield,
-                                           attacker.loadout['critChance'], attacker.loadout['critMult'],
-                                           victim.loadout['evasion'])
+                                           0.0, 1.0,
+                                           victim.loadout['evasion'], burst_mult=1.0)
                     victim.hull, victim.shield = r['hull'], r['shield']
                 damage_by_out = None
                 if not r['dodged'] and r['dmg'] > 0:
@@ -2810,6 +3250,8 @@ async def chat_ws(
                     victim.last_death_eligible = list(victim.damage_by.keys())
                     damage_by_out = {str(uid): round(dmg) for uid, dmg in victim.damage_by.items()}
                     victim.damage_by = {}
+                    if arena_match:
+                        await _arena_on_kill(arena_match, victim, attacker)
 
                 out = {
                     'type': 'pvp_hit_result',
@@ -2829,6 +3271,39 @@ async def chat_ws(
                             'killer': attacker.username, 'victim': victim.username, 'sector': sector,
                         }, sector=sector))
                         await db.commit()
+
+            # ── Аргус: "Фазовый кокон" (argus:cocoon) — самолечение + неуязвимость.
+            # Раньше ArgusController._activateCocoon лечил hull/shield и ставил
+            # invulnerable=true ЧИСТО локально у себя — сервер (и другие клиенты) никогда
+            # об этом не узнавали: следующий хит от сервера считался от старого,
+            # незалеченного hull (бар HP/щита противника выглядел "неактуальным" — баг из
+            # диалога), а сама неуязвимость не мешала серверу засчитать полный урон, пока
+            # клиент думал, что защищён. Сумма хила — считает СЕРВЕР сам от своего
+            # авторитетного max_hull/max_shield (не клиентская заявка) — это фиксированный
+            # % способности, а не бой-ролл, доверять тут нечему.
+            elif msg_type == 'pvp_self_heal_claim':
+                sector = pvp_room_manager.player_sector.get(user.id)
+                ability = str(data.get('ability', ''))[:30]
+                if not sector or ability not in ABILITY_HEAL_PCT:
+                    continue
+                state = pvp_room_manager.get(sector, user.id)
+                if not state:
+                    continue
+                now_ts = time.time()
+                last = state.ability_last_fire.get(ability, 0.0)
+                if now_ts - last < ABILITY_COOLDOWN_FLOOR.get(ability, ARGUS_COCOON_COOLDOWN_FLOOR):
+                    continue
+                state.ability_last_fire[ability] = now_ts
+                pct = ABILITY_HEAL_PCT[ability]
+                state.hull = min(state.max_hull, state.hull + state.max_hull * pct)
+                state.shield = min(state.max_shield, state.shield + state.max_shield * pct)
+                state.invulnerable_until = now_ts + ARGUS_COCOON_INVULN_SEC
+                room_uids = [user.id] + [p.user_id for p in pvp_room_manager.others(sector, user.id)]
+                await chat_manager.broadcast_to_uids(room_uids, {
+                    'type': 'pvp_player_healed', 'userId': user.id,
+                    'hull': state.hull, 'shield': state.shield,
+                    'maxHull': state.max_hull, 'maxShield': state.max_shield,
+                })
 
             # ── Доска розыска: жертва (после своей смерти) вешает розыск на убийцу —
             # только если убийца оказался выше уровнем (см. клиент _onPvpHitResult).
@@ -2902,6 +3377,259 @@ async def chat_ws(
             # масштабе (см. _tick_room — распределение круговое, не по дистанции), так что
             # достаточно самого факта регистрации mob_id в комнате. Очистка — либо на килле
             # (pvp_mob_fire_claim ниже), либо когда комната опустеет (_mob_tick_loop).
+            # ── Арена: встать/выйти из очереди ─────────────────────────────
+            # 3на3 — вызывается ЛИДЕРОМ уже собранной группы (см. GroupManager, тот же
+            # флоу что данж-пати — арена просто использует dungeon_key вида "arena:<mode>"
+            # как непрозрачный ключ инстанса, никакой новой серверной party-логики не
+            # нужно). 1на1 — вызывается самим игроком, группа не нужна. Уровни — из БД
+            # PlayerState.state (клиент-заявочные, как и весь остальной прогресс в этом
+            # проекте, но нужен отдельный round-trip до постановки в очередь — не тот же
+            # риск подмены "на лету", что client-claimed loadout на pvp_enter).
+            elif msg_type == 'arena_queue_join':
+                mode = str(data.get('mode', ''))[:10]
+                if mode not in ARENA_TEAM_SIZE:
+                    continue
+                if mode == 'duel':
+                    member_names = [user.username]
+                else:
+                    # ── ВРЕМЕННЫЙ DEV-БЭКДОР (см. диалог: "как протестировать 3на3, 6
+                    # аккаунтов не запущу") — обычно 3на3 требует РЕАЛЬНОЙ группы ровно
+                    # из 3 (лидер жмёт запись, len(member_names) == ARENA_TEAM_SIZE[mode]).
+                    # На время ручного тестирования с малым числом аккаунтов принимаем
+                    # ЛЮБОЙ размер группы (включая соло, без группы вовсе) как "команду"
+                    # для мэтчинга — механика режима (флаг/точки/груз) от размера команды
+                    # не зависит. УБРАТЬ перед реальным тестом с полными командами —
+                    # вернуть строгую проверку == ARENA_TEAM_SIZE[mode] и обязательность
+                    # группы/лидерства.
+                    inst = group_manager.get_instance(user.username)
+                    if inst and inst.leader != user.username:
+                        await ws.send_json({'type': 'arena_queue_update', 'mode': mode,
+                                             'ok': False, 'reason': 'Встать в очередь может только лидер группы.'})
+                        continue
+                    member_names = list(inst.members.keys()) if inst else [user.username]
+                uid_by_name = {m['name']: m['uid'] for m in chat_manager.active.values()}
+                member_uids = [uid_by_name[n] for n in member_names if n in uid_by_name]
+                if len(member_uids) != len(member_names):
+                    await ws.send_json({'type': 'arena_queue_update', 'mode': mode,
+                                         'ok': False, 'reason': 'Не все участники группы онлайн.'})
+                    continue
+                async with SessionLocal() as db:
+                    levels = [await _player_level(db, uid) for uid in member_uids]
+                # Разброс уровней ВНУТРИ своей же группы уже больше лимита — заведомо
+                # невозможно найти соперника (доп. игроки могут только РАСШИРИТЬ разброс,
+                # никогда не сузить), предупреждаем сразу, не тратя 3 мин ожидания впустую.
+                if max(levels) - min(levels) > ARENA_LEVEL_SPREAD:
+                    await ws.send_json({'type': 'arena_queue_update', 'mode': mode, 'ok': False,
+                                         'reason': f'Разница уровней в группе больше {ARENA_LEVEL_SPREAD} — запись невозможна.'})
+                    continue
+                pair = arena_queue.enqueue(mode, user.id, member_uids, levels)
+                if not pair:
+                    await chat_manager.broadcast_to_uids(
+                        member_uids, {'type': 'arena_queue_update', 'mode': mode, 'ok': True, 'waiting': True},
+                    )
+                    continue
+                sector_key = ARENA_MODE_SECTOR[mode]
+                match_id = f"{mode}_{int(time.time() * 1000)}"
+                spawn_a, spawn_b = ARENA_SPAWNS.get(mode, ((-3000.0, 0.0), (3000.0, 0.0)))
+                m = ArenaMatch(match_id, mode, sector_key, pair['a']['member_uids'], pair['b']['member_uids'], spawn_a, spawn_b)
+                if mode == 'cargo':
+                    m.cargo['x'], m.cargo['y'] = ARENA_CARGO_SPAWN
+                if mode == 'points':
+                    m.point_offset = random.choice(ARENA_POINT_OFFSET_CHOICES)
+                arena_matches.create(m)
+                name_by_uid = {v: k for k, v in uid_by_name.items()}
+                for team in ('a', 'b'):
+                    team_uids = m.teams[team]
+                    other_team = 'b' if team == 'a' else 'a'
+                    for uid in team_uids:
+                        await chat_manager.send_to_uid(uid, {
+                            'type': 'arena_match_found', 'matchId': match_id, 'roomKey': m.room_key,
+                            'mode': mode, 'sectorKey': sector_key, 'team': team, 'mazeVariant': m.maze_variant,
+                            'pointOffset': getattr(m, 'point_offset', None),
+                            # userId-списки — авторитетны для teamOf()/hostility (см. ArenaController);
+                            # имена — только для отображения в HUD/лобби.
+                            'teammateIds': [u for u in team_uids if u != uid],
+                            'enemyIds': list(m.teams[other_team]),
+                            'teammates': [name_by_uid.get(u, '') for u in team_uids if u != uid],
+                            'enemies': [name_by_uid.get(u, '') for u in m.teams[other_team]],
+                            'spawn': {'x': m.spawns[team][0], 'y': m.spawns[team][1]},
+                        })
+
+            elif msg_type == 'arena_queue_leave':
+                arena_queue.dequeue(user.id)
+                await ws.send_json({'type': 'arena_queue_update', 'mode': None, 'ok': True, 'waiting': False})
+
+            # ── Арена: захват флага ─────────────────────────────────────────
+            # Все переходы валидируются по серверной позиции игрока (pvp_room_manager),
+            # никогда по самозаявке клиента — клиент присылает только "я поднимаю/несу/
+            # донёс", сервер проверяет дистанцию сам (см. план, риск #3).
+            elif msg_type == 'arena_flag_pickup':
+                m = arena_matches.get_by_uid(user.id)
+                if not m or m.mode != 'flag' or m.outcome or not m.flags:
+                    continue
+                my_team = m.team_of.get(user.id)
+                enemy_team = 'b' if my_team == 'a' else 'a'
+                flag = m.flags[enemy_team]
+                if flag['carrier'] is not None:
+                    continue  # уже несут
+                state = pvp_room_manager.get(m.room_key, user.id)
+                if not state or math.hypot(state.x - flag['x'], state.y - flag['y']) > ARENA_PICKUP_R:
+                    continue
+                flag['carrier'] = user.id
+                # at_base=False — раньше это НИГДЕ не выставлялось на подборе (только
+                # arena_flag_return/capture возвращали его в True), из-за чего два места
+                # молча ломались: (1) arena_flag_capture's "свой флаг должен быть дома"
+                # проверка всегда проходила (at_base оставался True даже когда флаг несли),
+                # (2) клиентский arena_flag_return никогда не срабатывал на упавший флаг
+                # (см. диалог: "убийство носителя флага... так работает?" — расследование).
+                flag['at_base'] = False
+                flag['auto_return_at'] = None  # понесли — failsafe-таймер больше не нужен
+                await chat_manager.broadcast_to_uids(list(m.team_of.keys()),
+                                                      {'type': 'arena_objective_sync', 'flags': m.flags})
+
+            elif msg_type == 'arena_flag_capture':
+                m = arena_matches.get_by_uid(user.id)
+                if not m or m.mode != 'flag' or m.outcome or not m.flags:
+                    continue
+                my_team = m.team_of.get(user.id)
+                enemy_team = 'b' if my_team == 'a' else 'a'
+                enemy_flag = m.flags[enemy_team]
+                if enemy_flag['carrier'] != user.id:
+                    continue
+                state = pvp_room_manager.get(m.room_key, user.id)
+                bx, by = m.spawns[my_team]
+                if not state or math.hypot(state.x - bx, state.y - by) > ARENA_CAPTURE_R:
+                    continue
+                # Захват возможен только если СВОЙ флаг на месте (см. правило "защитить флаг
+                # на своей базе") — если свой флаг унесён, донести чужой домой не считается.
+                if not m.flags[my_team]['at_base']:
+                    continue
+                enemy_flag['carrier'] = None
+                enemy_flag['x'], enemy_flag['y'] = m.spawns[enemy_team]
+                enemy_flag['at_base'] = True  # свежий респаун на своей базе (см. фикс at_base выше)
+                enemy_flag['auto_return_at'] = None
+                m.add_score(my_team)
+                await chat_manager.broadcast_to_uids(
+                    list(m.team_of.keys()),
+                    {'type': 'arena_objective_sync', 'flags': m.flags},
+                )
+                await chat_manager.broadcast_to_uids(list(m.team_of.keys()),
+                                                      {'type': 'arena_score', 'a': m.scores['a'], 'b': m.scores['b']})
+
+            elif msg_type == 'arena_flag_return':
+                # Коснулся СВОЙ упавший (не у врага) флаг на земле — не мгновенный возврат,
+                # а таймер на ARENA_FLAG_TOUCH_RETURN_SEC (3с), фактический "прыжок" домой —
+                # см. _arena_tick_loop (см. диалог: "свой подбирает — 3 сек и флаг
+                # перескакивает на место на базу"). min(), не перезапись — повторные касания
+                # (клиент шлёт это каждые 300мс, пока стоит рядом) не должны ОТКЛАДЫВАТЬ уже
+                # тикающий таймер дальше в будущее.
+                m = arena_matches.get_by_uid(user.id)
+                if not m or m.mode != 'flag' or m.outcome or not m.flags:
+                    continue
+                my_team = m.team_of.get(user.id)
+                flag = m.flags[my_team]
+                if flag['at_base'] or flag['carrier'] is not None:
+                    continue
+                state = pvp_room_manager.get(m.room_key, user.id)
+                if not state or math.hypot(state.x - flag['x'], state.y - flag['y']) > ARENA_PICKUP_R:
+                    continue
+                target = time.time() + ARENA_FLAG_TOUCH_RETURN_SEC
+                if flag['auto_return_at'] is None or flag['auto_return_at'] > target:
+                    flag['auto_return_at'] = target
+
+            # ── Арена: захват груза ──────────────────────────────────────────
+            elif msg_type == 'arena_cargo_pickup':
+                m = arena_matches.get_by_uid(user.id)
+                if not m or m.mode != 'cargo' or m.outcome or not m.cargo:
+                    continue
+                if m.cargo['carrier'] is not None:
+                    continue
+                state = pvp_room_manager.get(m.room_key, user.id)
+                if not state or math.hypot(state.x - m.cargo['x'], state.y - m.cargo['y']) > ARENA_PICKUP_R:
+                    continue
+                m.cargo['carrier'] = user.id
+                await chat_manager.broadcast_to_uids(list(m.team_of.keys()),
+                                                      {'type': 'arena_objective_sync', 'cargo': m.cargo})
+
+            elif msg_type == 'arena_cargo_deliver':
+                m = arena_matches.get_by_uid(user.id)
+                if not m or m.mode != 'cargo' or m.outcome or not m.cargo:
+                    continue
+                if m.cargo['carrier'] != user.id:
+                    continue
+                my_team = m.team_of.get(user.id)
+                state = pvp_room_manager.get(m.room_key, user.id)
+                bx, by = m.spawns[my_team]
+                if not state or math.hypot(state.x - bx, state.y - by) > ARENA_CAPTURE_R:
+                    continue
+                m.add_score(my_team)
+                now_ts = time.time()
+                # available=False на ARENA_CARGO_RESPAWN_SEC — раньше груз мгновенно
+                # возвращался в центр картой же доставкой, без паузы (см. диалог: "через
+                # 5 сек он должен вернуться на место респавна"); фактическое появление —
+                # см. _arena_tick_loop.
+                m.cargo = {'spawned_at': None, 'carrier': None, 'x': None, 'y': None,
+                           'next_spawn_at': now_ts + ARENA_CARGO_RESPAWN_SEC, 'available': False}
+                await chat_manager.broadcast_to_uids(list(m.team_of.keys()),
+                                                      {'type': 'arena_objective_sync', 'cargo': m.cargo})
+                await chat_manager.broadcast_to_uids(list(m.team_of.keys()),
+                                                      {'type': 'arena_score', 'a': m.scores['a'], 'b': m.scores['b']})
+
+            # ── Арена: заявка на точку — сервер валидирует дистанцию и кулдаун заявок,
+            #    сам решает прочность/владельца (никогда по самозаявке клиента) ──────
+            elif msg_type == 'arena_point_claim':
+                m = arena_matches.get_by_uid(user.id)
+                point_id = str(data.get('pointId', ''))[:1]
+                if not m or m.mode != 'points' or m.outcome or not m.points or point_id not in m.points:
+                    continue
+                now_ts = time.time()
+                if now_ts - m.last_point_claim.get(user.id, 0.0) < ARENA_POINT_CLAIM_COOLDOWN:
+                    continue
+                m.last_point_claim[user.id] = now_ts
+                state = pvp_room_manager.get(m.room_key, user.id)
+                px, py = _arena_point_positions(getattr(m, 'point_offset', 1600.0)).get(point_id, (0.0, 0.0))
+                if not state or math.hypot(state.x - px, state.y - py) > ARENA_POINT_R:
+                    continue
+                my_team = m.team_of.get(user.id)
+                p = m.points[point_id]
+                if p['owner'] == my_team:
+                    continue  # своя точка — нечего заявлять
+                # Живой защитник (игрок ПРОТИВОПОЛОЖНОЙ команды) в радиусе точки — захват
+                # невозможен вовсе, пока его не убьют (см. диалог: "если противник стоит
+                # возле точки — захватить невозможно, нужно уничтожить противника").
+                # Раньше присутствие защитника никак не мешало захвату — обе стороны
+                # просто отправляли заявки, и точка "перескакивала" туда-сюда без реальной
+                # необходимости сначала выиграть бой за неё.
+                opp_team = 'b' if my_team == 'a' else 'a'
+                opp_defending = any(
+                    (opp_state := pvp_room_manager.get(m.room_key, opp_uid)) and opp_state.hull > 0
+                    and math.hypot(opp_state.x - px, opp_state.y - py) <= ARENA_POINT_R
+                    for opp_uid in m.teams.get(opp_team, [])
+                )
+                if opp_defending:
+                    continue
+                p['attacker'] = my_team
+                p['last_attacked_at'] = now_ts
+                p['durability'] -= ARENA_POINT_DURABILITY_PER_CLAIM
+                if p['durability'] <= 0:
+                    p['owner'] = my_team
+                    p['durability'] = ARENA_POINT_MAX_DURABILITY
+                    p['attacker'] = None
+                    # Счёт наверху экрана — количество ЗАХВАТОВ (растёт монотонно,
+                    # как у флага/груза), а не "сколько точек держим прямо сейчас"
+                    # (то — live-снимок владения, который может упасть при потере
+                    # точки; см. диалог: "нужно по кол-ву... захватили несколько раз
+                    # ту же точку — считать столько раз сколько захватили"). Победа/
+                    # тайбрейк для points режима как и раньше решаются отдельно
+                    # (all_points_held/owned_seconds, см. check_win/deadline_outcome)
+                    # — m.scores здесь используется ТОЛЬКО для табло, has_advantage()
+                    # у points тоже намеренно продолжает смотреть на live-владение.
+                    m.add_score(my_team)
+                    await chat_manager.broadcast_to_uids(list(m.team_of.keys()),
+                                                          {'type': 'arena_score', 'a': m.scores['a'], 'b': m.scores['b']})
+                await chat_manager.broadcast_to_uids(list(m.team_of.keys()),
+                                                      {'type': 'arena_objective_sync', 'points': m.points})
+
             elif msg_type == 'pvp_mob_register':
                 sector = pvp_room_manager.player_sector.get(user.id)
                 mob_id = data.get('mobId')
@@ -2991,11 +3719,16 @@ async def chat_ws(
                 shield_mult, hull_mult = _weapon_mults(weapon_type)
                 ceiling = ABILITY_DAMAGE_CEILING[ability] if ability else attacker.loadout['dmg']
                 penetration = 0.0 if ability else attacker.loadout['penetration']
+                # burst_mult=1.0 и без крита для способности — тот же фикс/причина, что и у
+                # pvp_ability_fire_claim (см. _apply_pvp_damage) — ceiling уже финальный урон
+                # тика/ракеты, крит на способностях не должен применяться вовсе (см. диалог).
+                crit_chance = 0.0 if ability else attacker.loadout['critChance']
+                crit_mult   = 1.0 if ability else attacker.loadout['critMult']
                 result = _apply_pvp_damage(
                     claimed_dmg, ceiling, penetration,
                     mob_state.hull, mob_state.shield, mob_state.max_hull, mob_state.max_shield,
-                    attacker.loadout['critChance'], attacker.loadout['critMult'], evasion,
-                    shield_mult, hull_mult,
+                    crit_chance, crit_mult, evasion,
+                    shield_mult, hull_mult, burst_mult=(1.0 if ability else PVP_BURST_MULT),
                 )
                 mob_state.hull, mob_state.shield = result['hull'], result['shield']
                 if result['dmg'] > 0:
@@ -3391,6 +4124,13 @@ async def chat_ws(
         except Exception:
             pass
         group_manager.leave(user.username)
+        # Арена: снять из очереди (если ждал матча) и запустить 2-минутный таймер void —
+        # у арены нет оффлайн-путешествия (это боевой инстанс, не открытый мир), поэтому
+        # НЕ снэпшотим в OfflineShipManager ниже для arena-комнат (см. ветку pending_sector
+        # startswith('arena:')) — только сам факт дисконнекта до срабатывания watchdog'а
+        # в _arena_tick_loop.
+        arena_queue.dequeue(user.id)
+        arena_matches.on_disconnect(user.id, time.time())
         # План Фаза 3.1 (offline-ship): раньше дисконнект просто удалял PvpPlayerState и
         # broadcast'ил pvp_player_left — остальные в комнате видели, что корабль исчезает.
         # Теперь снимаем снапшот в OfflineShipManager ПЕРЕД удалением: RemotePlayer у
@@ -3401,7 +4141,18 @@ async def chat_ws(
         # player_sector/rooms рассинхрона (defensive, не должно случаться).
         pending_sector = pvp_room_manager.player_sector.get(user.id)
         pending_state = pvp_room_manager.get(pending_sector, user.id) if pending_sector else None
-        if pending_state:
+        if pending_state and pending_sector and pending_sector.startswith('arena:'):
+            pvp_sector = pvp_room_manager.leave(user.id)
+            others = pvp_room_manager.others(pvp_sector, user.id) if pvp_sector else []
+            try:
+                await chat_manager.broadcast_to_uids(
+                    [p.user_id for p in others],
+                    {'type': 'pvp_player_left', 'userId': user.id},
+                    exclude_uid=user.id,
+                )
+            except Exception:
+                pass
+        elif pending_state:
             offline_ship_manager.snapshot(pending_sector, user.id, user.username, pending_state)
             pvp_room_manager.leave(user.id)
         else:

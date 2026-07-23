@@ -17,8 +17,9 @@
 //   deposits — точки ресурсных россыпей (кол-во = старому: D1:3 D2:5 D3:3 D4:3 D5:4 prem:3)
 // reinforceZones — зоны подкреплений hard/elite (общие для вариантов)
 
-// Горизонтальная линия y, от x1 до x2, с вырезами [gx1,gx2]
-const hline = (y, x1, x2, ...gaps) => {
+// Горизонтальная линия y, от x1 до x2, с вырезами [gx1,gx2] — экспортируются также для
+// client/src/data/arenaLayouts.js (арена-лабиринты используют тот же формат стен).
+export const hline = (y, x1, x2, ...gaps) => {
   const segs = [];
   let cur = x1;
   for (const [g1, g2] of [...gaps].sort((a, b) => a[0] - b[0])) {
@@ -29,7 +30,7 @@ const hline = (y, x1, x2, ...gaps) => {
   return segs;
 };
 // Вертикальная линия x, от y1 до y2, с вырезами [gy1,gy2]
-const vline = (x, y1, y2, ...gaps) => {
+export const vline = (x, y1, y2, ...gaps) => {
   const segs = [];
   let cur = y1;
   for (const [g1, g2] of [...gaps].sort((a, b) => a[0] - b[0])) {

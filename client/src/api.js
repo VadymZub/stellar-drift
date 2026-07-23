@@ -84,6 +84,14 @@ export function dungeonComplete(runId, key, dayKey, memberUsernames) {
   return apiPost('/dungeon/complete', { runId, key, dayKey, memberUsernames });
 }
 
+// ── Арена (дневной лимит награждённых матчей — см. server ArenaDaily) ───────
+export function arenaStatus(dayKey) {
+  return apiGet(`/arena/status?dayKey=${encodeURIComponent(dayKey)}`);
+}
+export function arenaMatchComplete(dayKey, matchId, outcome) {
+  return apiPost('/arena/match-complete', { dayKey, matchId, outcome });
+}
+
 // ── Добывающие базы (общие для всех игроков сектора, не user-scoped) ────────
 export function miningBaseSector(sector) {
   return apiGet(`/mining_base/sector/${encodeURIComponent(sector)}`);

@@ -307,3 +307,24 @@ class MiningBaseSaveRequest(BaseModel):
 
 class MiningBaseSectorResponse(BaseModel):
     bases: dict[str, dict[str, Any]] = {}
+
+
+# ── Арена ────────────────────────────────────────────────────────────────
+
+class ArenaStatusResponse(BaseModel):
+    rewardedToday: int
+    remaining: int
+
+
+class ArenaMatchCompleteRequest(BaseModel):
+    dayKey: str
+    matchId: str
+    outcome: str  # 'win' | 'lose' | 'draw' | 'void' — сверяется с авторитетным исходом на сервере
+
+
+class ArenaMatchCompleteResponse(BaseModel):
+    eligible: bool
+    reason: Optional[str] = None
+    honor: int = 0
+    gold: int = 0
+    rewardedCount: int = 0

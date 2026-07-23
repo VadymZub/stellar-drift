@@ -77,6 +77,12 @@ export default class BootScene extends Phaser.Scene {
     this.load.image('jumpgate_ring', 'assets/structures/jumpgate_ring.png');
     this.load.image('jumpgate_vortex', 'assets/structures/jumpgate_vortex.png');
 
+    // Арена: контейнер груза + флаги команд (см. ArenaCargoContainer.js/ArenaFlag.js) —
+    // 'a' = синие, 'b' = красные (см. ARENA_TEAM_COLOR).
+    this.load.image('arena_cargo', 'assets/structures/arena_cargo.png');
+    this.load.image('arena_flag_a', 'assets/structures/arena_flag_blue.png');
+    this.load.image('arena_flag_b', 'assets/structures/arena_flag_red.png');
+
     // Корабли игрока — весь модельный ряд (витрина Гаража)
     for (const s of SHIPS) {
       this.load.image(s.key, `assets/ships/${s.key}.png`);

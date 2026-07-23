@@ -1,5 +1,5 @@
 import * as Phaser from 'https://cdn.jsdelivr.net/npm/phaser@4.2.1/dist/phaser.esm.js';
-import { PLAYER, ART_ANGLE_OFFSET, HANDLING, BASE_SCAN_RADIUS, UI_RES } from '../constants.js';
+import { PLAYER, ART_ANGLE_OFFSET, HANDLING, BASE_SCAN_RADIUS, UI_RES, ARENA_CARRIER_SPEED_MULT } from '../constants.js';
 import { getBoardEffects } from '../boards.js';
 import { defaultLoadout, modMult } from '../items.js';
 import { perkBonus } from '../perks.js';
@@ -367,6 +367,11 @@ export default class Player {
     this.maxHull      = isAdmin ? BASE_hull   : Math.round(BASE_hull   * (1 + sl('reinforced_hull') * 0.06 + BF('hullMax') + boostHull + mbHull)) + armorHullFlat;
     this.maxShield    = isAdmin ? BASE_shield : Math.round(BASE_shield  * (1 + shieldUpgPct + sl('shield_optimizer') * 0.05 + coopShieldPct + BF('shieldMax') + boostShield + mbShield));
     this.baseSpeed    = Math.round(BASE_speed   * (1 + speedUpgPct  + engineThrustPct + BF('speed') + speedBoostPct));
+    // Арена: носитель флага/груза -25% скорости (см. ARENA_CARRIER_SPEED_MULT, правило
+    // "тому кто несёт груз/флаг дебаф скорости") — единственное намеренное исключение
+    // из "recomputeStats без секторных проверок" (см. ArenaController._refreshCarrierDebuff,
+    // который выставляет this._arenaCarrier и зовёт этот метод заново при смене статуса).
+    if (this._arenaCarrier) this.baseSpeed = Math.round(this.baseSpeed * ARENA_CARRIER_SPEED_MULT);
     this.shieldRegenPerSec = Math.round(BASE_regen * (1 + regenUpgPct + regenPerkPct + BF('shieldRegen')));
 
     // fast_regen skill overrides regen formula when no shield modules equipped

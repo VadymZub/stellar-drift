@@ -33,6 +33,16 @@ export const SECTORS = {
   // Персональный сектор — арена для Боя с тенью. Нет джампгейтов, нет мобов, нет базы.
   shadow_arena: { name: 'Арена Теней', map: 'helios_1', lvlMin: 1, lvlMax: 50, sx: -99, sy: -99, personal: true },
 
+  // Арена (PvP, вне корповой системы) — инстансы по матчу, не привязаны к точке на
+  // карте (sx/sy — тот же вне-карты сентинел, что у shadow_arena). pvp:true включает
+  // бой/таргетинг игрок-игрок (см. _isPvpSector), но НЕ общий PvE-контент — см. чек-лист
+  // подавления в GameScene (spawnMobs/майнинг-базы/вторжение/бронепоезд/home-elite),
+  // arenaMode гейтит и то, и другое. arenaMaze — есть ли лабиринт (createDungeonWalls).
+  arena_flag:   { name: 'Арена: Захват флага', map: 'Arena-3', lvlMin: 1, lvlMax: 50, sx: -99, sy: -98, pvp: true, arenaMode: 'flag',   arena: '3v3', arenaMaze: true },
+  arena_points: { name: 'Арена: Захват точек', map: 'Arena-1', lvlMin: 1, lvlMax: 50, sx: -99, sy: -97, pvp: true, arenaMode: 'points', arena: '3v3', arenaMaze: true },
+  arena_cargo:  { name: 'Арена: Захват груза', map: 'Arena-2', lvlMin: 1, lvlMax: 50, sx: -99, sy: -96, pvp: true, arenaMode: 'cargo',  arena: '3v3', arenaMaze: true },
+  arena_duel:   { name: 'Арена: Дуэль',        map: 'Arena-1', lvlMin: 1, lvlMax: 50, sx: -99, sy: -95, pvp: true, arenaMode: 'duel',   arena: '1v1', arenaMaze: false },
+
   // ══════════════════════════════════════════════════════════════════════
   // KARAX  (sy = -2)
   // ══════════════════════════════════════════════════════════════════════

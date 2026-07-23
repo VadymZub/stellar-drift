@@ -122,6 +122,10 @@ export default class RemotePlayer {
   // в GameScene._onPvpHitResult), но для наблюдателей корабль должен выглядеть
   // уничтоженным, а не полностью здоровым и живым, до реального возвращения игрока.
   die() {
+    // ВРЕМЕННЫЙ диагностический лог (см. диалог: "справа победителя после слива врага" —
+    // третий, безымянный силуэт корабля на скриншоте) — убрать после того, как причина
+    // найдена.
+    console.warn('[GHOST DEBUG] die()', this.name, this.userId, 'was alive=', this.alive);
     this.alive = false;
     this.sprite.setVisible(false);
     this.label.setVisible(false);
@@ -133,6 +137,7 @@ export default class RemotePlayer {
   }
 
   revive() {
+    console.warn('[GHOST DEBUG] revive()', this.name, this.userId, 'was alive=', this.alive, new Error().stack); // ВРЕМЕННО
     this.alive = true;
     this.sprite.setVisible(true);
     this.label.setVisible(true);
@@ -165,6 +170,12 @@ export default class RemotePlayer {
     if (data.level !== undefined) this.level = data.level;
     if (data.maxHull !== undefined) this.maxHull = data.maxHull;
     if (data.maxShield !== undefined) this.maxShield = data.maxShield;
+    // Пассивный реген цели (см. GameScene._updatePvpHpSync/server pvp_update_loadout) —
+    // раньше сюда не долетало вовсе, нашивка/HUD цели показывали hull/shield только на
+    // момент последнего боевого попадания (баг из диалога: "над кораблём врага и на
+    // экране — неактуально").
+    if (data.hull !== undefined) this.hull = data.hull;
+    if (data.shield !== undefined) this.shield = data.shield;
     if (data.shipKey && data.shipKey !== this._shipKey) this.applyShip(data.shipKey);
     let nameplateDirty = false;
     if (data.rankId !== undefined && data.rankId !== this.rankId) { this.rankId = data.rankId; nameplateDirty = true; }
@@ -194,8 +205,17 @@ export default class RemotePlayer {
     const t = Math.min(1, dt * 8);
     this.sprite.x += (this._targetX - this.sprite.x) * t;
     this.sprite.y += (this._targetY - this.sprite.y) * t;
+    // Разворот — своя скорость лерпа, НЕ общая с позицией: позиции сглаживание нужно,
+    // чтобы скрыть дискретность pvp_pos (см. PvpClient._posIntervalMs, теперь ~60мс),
+    // но тот же темп на heading делал разворот противника заметно медленнее, чем видит
+    // сам пилот (баг из диалога). Первая попытка (th=25) чинила отставание, но при этом
+    // ЗАКРЫВАЛА разрыв за 2-3 кадра и потом замирала до следующего сэмпла — "дискретно и
+    // дёргано" (баг из диалога #2): корабль дёргался рывком, а не крутился плавно. th=15
+    // растягивает довод на весь интервал между сэмплами (~85% за 60мс), а не за первые
+    // кадры — вместе с более частыми сэмплами (60мс) это должно выглядеть непрерывным.
+    const th = Math.min(1, dt * 15);
     const dh = Phaser.Math.Angle.Wrap(this._targetHeading - this.heading);
-    this.heading += dh * t;
+    this.heading += dh * th;
     this.sprite.rotation = this.heading + this._artAngleOffset;
     this.drawBar();
     this._updateWantedMarker();

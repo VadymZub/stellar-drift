@@ -1,5 +1,6 @@
 import * as Phaser from 'https://cdn.jsdelivr.net/npm/phaser@4.2.1/dist/phaser.esm.js';
-import { COLORS, BASE_WORLD, PVP_WORLD_SCALE, PLAYER, MOBS, PROJECTILE, PROJ_TYPES, UI_RES, BOSS, DPR, HANDLING, ART_ANGLE_OFFSET, RANKS, MOCK_CORP_RATINGS, BASE_SCAN_RADIUS, HONOR, DUNGEON_DIFF, DUNGEON_MODIFIERS, DUNGEON_BOSS_DROPS, DUNGEON_STAR_GOLD, dungeonLootNorm, WORLD_EVENT_SECTORS, WORLD_EVENT_STRENGTH_MULT, WORLD_EVENT_WAVE1_FRAC, WORLD_EVENT_WAVE2_DELAY_MS, WORLD_EVENT_WINDOW_MS, ARMORED_TRAIN_SECTORS, ARMORED_TRAIN_WINDOW_MS, FACTION_SHIELD_DRONE, HOME_ELITE_TIERS, HOME_ELITE_CORP_MATERIAL } from '../constants.js';
+import { COLORS, BASE_WORLD, PVP_WORLD_SCALE, PLAYER, MOBS, PROJECTILE, PROJ_TYPES, UI_RES, BOSS, DPR, HANDLING, ART_ANGLE_OFFSET, RANKS, MOCK_CORP_RATINGS, BASE_SCAN_RADIUS, HONOR, DUNGEON_DIFF, DUNGEON_MODIFIERS, DUNGEON_BOSS_DROPS, DUNGEON_STAR_GOLD, dungeonLootNorm, WORLD_EVENT_SECTORS, WORLD_EVENT_STRENGTH_MULT, WORLD_EVENT_WAVE1_FRAC, WORLD_EVENT_WAVE2_DELAY_MS, WORLD_EVENT_WINDOW_MS, ARMORED_TRAIN_SECTORS, ARMORED_TRAIN_WINDOW_MS, FACTION_SHIELD_DRONE, HOME_ELITE_TIERS, HOME_ELITE_CORP_MATERIAL,
+  ARENA_3V3_WORLD_SCALE, ARENA_1V1_WORLD_SCALE, ARENA_TEAM_COLOR, ARENA_BASE_SAFE_R, ARENA_CARRIER_SPEED_MULT, ARENA_MODES, ARENA_QUEUE_TIMEOUT_MS, ARENA_POINT_ROW_OFFSET } from '../constants.js';
 import { minimapRect, minimapToWorld } from '../systems/minimap.js';
 import { i18n } from '../i18n.js';
 import Player from '../entities/Player.js';
@@ -31,6 +32,8 @@ import { getUsername, getToken, apiPut, apiGet, dungeonEnter, dungeonMobKilled, 
 import { prepShipTex, removeWhiteBg } from '../utils/prepShipTex.js';
 import { MISSIONS, getMissionSectorTarget, matchKillObjective, dailyBracketFor } from '../data/missions.js';
 import { DUNGEON_LAYOUTS, DUNGEON_BOSS_KIT } from '../data/dungeonLayouts.js';
+import { ARENA_LAYOUTS } from '../data/arenaLayouts.js';
+import ArenaController from '../systems/ArenaController.js';
 import EscortTransport, { ESCORT_SPEED, ESCORT_WAVE_AT } from '../entities/EscortTransport.js';
 import { loadSettings, getMinimapDims } from '../settings.js';
 import SettingsScene from './SettingsScene.js';
@@ -137,6 +140,18 @@ const PVP_GATES = {
 export default class GameScene extends Phaser.Scene {
   constructor() { super('GameScene'); }
 
+  // Общий расчёт масштаба мира по флагам сектора — арена (sec.arena) проверяется
+  // РАНЬШЕ pvp, т.к. арена-секторы несут pvp:true тоже (см. galaxy.js). Заменяет три
+  // инлайновых тернарника (create/_execJump/_spawnHomeBase-lookup), которые раньше
+  // не знали про арену вовсе.
+  _worldScaleFor(sec) {
+    if (sec.arena === '3v3') return ARENA_3V3_WORLD_SCALE;
+    if (sec.arena === '1v1') return ARENA_1V1_WORLD_SCALE;
+    if (sec.pvp) return PVP_WORLD_SCALE;
+    if (sec.isDungeon || sec.personal) return 1.0;
+    return 1.2;
+  }
+
   create(data) {
     // Общий анти-AFK (не привязан к базам) — 5 мин без ввода = дисконнект, см.
     // client/src/systems/afkGuard.js. Idempotent, безопасно дёргать на каждом
@@ -171,8 +186,19 @@ export default class GameScene extends Phaser.Scene {
     const isPvp        = sec.pvp      === true;
     const isDungeon    = sec.isDungeon === true;  // данжи + R-1-boss
     const isPersonal   = sec.personal  === true;  // shadow_arena
-    // PvE-секторы (не данж, не PvP, не персональный) — +20% по каждой стороне
-    const scale = isPvp ? PVP_WORLD_SCALE : (isDungeon || isPersonal) ? 1.0 : 1.2;
+    // PvE-секторы (не данж, не PvP, не персональный) — +20% по каждой стороне.
+    // Арена (sec.arena) проверяется внутри _worldScaleFor раньше isPvp.
+    const scale = this._worldScaleFor(sec);
+
+    // Арена: matchKey/team передаются через scene.restart({...}) с экрана лобби (см.
+    // ArenaController._onMatchFound) — читаем ДО _currentRealtimeRoomKey() ниже, той
+    // самой строке нужен this._arenaMatchKey уже выставленным. ?? this._arenaMatchKey
+    // сохраняет значение между restart() внутри самого арена-сектора (напр. respawn),
+    // где data не несёт этих полей повторно.
+    if (data?.arenaMatchKey) {
+      this._arenaMatchKey = data.arenaMatchKey;
+      this._arenaTeam = data.arenaTeam;
+    }
 
     // Realtime-комната для этого захода — считаем РАНО: нужна уже в spawnMobs() ниже
     // (мобы получают pvpMobId по этому ключу, чтобы шариться между игроками одной
@@ -302,7 +328,14 @@ export default class GameScene extends Phaser.Scene {
 
     this.cameras.main.startFollow(this.player.sprite, false, 0.35, 0.35);
     this.cameras.main.setZoom(DPR);
-    this.cameras.main.roundPixels = true;
+    // false — было true с самого первого коммита, независимо от render.roundPixels в
+    // main.js (отдельная per-camera настройка, не наследуется/не переопределяется
+    // рендерер-конфигом). Это ТОТ ЖЕ баг, который main.js уже чинил на уровне рендерера
+    // (719ebab, "дёрганье движения корабля") — снапинг дробной позиции камеры (~3.33px/
+    // кадр на крейсерской скорости) к целому пикселю каждый кадр даёт пилу "0px, затем
+    // 2×шаг" вместо равномерного хода. Тот фикс не заметил эту отдельную камерную
+    // настройку, поэтому дёрганье вернулось (или никогда полностью не уходило).
+    this.cameras.main.roundPixels = false;
     // Snap camera to spawn position immediately (prevents visible drift on restart)
     this.cameras.main.setScroll(startX - this.scale.width / (2 * DPR), startY - this.scale.height / (2 * DPR));
 
@@ -382,6 +415,15 @@ export default class GameScene extends Phaser.Scene {
         this.player.applyShip(SHIP_BY_KEY['argus']);
         this.player.hull = this.player.maxHull;
         this.player.shield = this.player.maxShield;
+        // applyShip() уже протолкнул серверу свежий лоадаут через recomputeStats()
+        // (см. _onPlayerStatsChanged), НО с hull ещё по старой ship-фракции (applyShip
+        // сохраняет %HP при смене корабля, см. Player.js:170-171) — ручной full-heal
+        // выше происходит уже ПОСЛЕ этого пуша и ничего не триггерит сам. Раньше сервер
+        // так и оставался с этим заниженным hull/maxHull=500000 до следующего pvp_enter
+        // (баг из диалога: "первый урон 313 тысяч" — на самом деле разница между
+        // заниженным серверным hull и реальным полным 500000, "при повторном входе на
+        // арену такого урона нет" ровно потому, что pvp_enter шлёт hull+maxHull вместе).
+        this._onPlayerStatsChanged?.();
         this.argusCtrl.attachToPlayer(this.player);
         // DEV: add 2 boards of each tier + 20 random connectors
         this.boardInventory = this.boardInventory ?? [];
@@ -630,6 +672,16 @@ export default class GameScene extends Phaser.Scene {
     this.createDungeonWalls();
     this.spawnMobs();
 
+    // Арена — контроллер матча (базы/флаг/точки/груз), строится ПОСЛЕ spawnMobs()
+    // (нужен this.worldWidth/worldHeight уже посчитанным для абсолютных координат
+    // из ARENA_LAYOUTS-офсетов). _arenaPendingMatch — полный msg из arena_match_found,
+    // переданный через scene.restart({arenaPending}) (см. _onArenaMatchFound).
+    this._arenaController?.destroy();
+    this._arenaController = (sec.arenaMode && this._arenaPendingMatch)
+      ? new ArenaController(this, this._arenaPendingMatch)
+      : null;
+    this._arenaPendingMatch = null;  // потреблено — следующий arena_match_found выставит заново
+
     // Restore floor loot for current sector
     if (!this._lootBySector) this._lootBySector = {};
     if (sec.isDungeon) {
@@ -835,7 +887,7 @@ export default class GameScene extends Phaser.Scene {
 
   spawnPlasmateDeposits() {
     const sec = SECTORS[galaxy.current];
-    if (sec.isDungeon || sec.personal) return;
+    if (sec.isDungeon || sec.personal || sec.arenaMode) return;  // арена — без общего PvE-контента
     const isPvp = sec.pvp === true;
     const lvl = sec.lvlMin || 1;
     const tier = Math.min(4, Math.floor(lvl / 10));
@@ -1004,7 +1056,7 @@ export default class GameScene extends Phaser.Scene {
     this._worldEvent = null;
     const sec = SECTORS[galaxy.current];
     const cfg = WORLD_EVENT_SECTORS[galaxy.current];
-    if (!sec?.pvp || !cfg) return;
+    if (!sec?.pvp || sec.arenaMode || !cfg) return;  // арена — без нашествий (и так нет в WORLD_EVENT_SECTORS, но явно)
     const startAt = this._worldEventTodayStart(galaxy.current);
     if (startAt == null) return; // будний день — нашествий сегодня нет вообще
     const now = Date.now();
@@ -1038,7 +1090,7 @@ export default class GameScene extends Phaser.Scene {
     this.armoredTrain = null;
     const sec = SECTORS[galaxy.current];
     const cfg = ARMORED_TRAIN_SECTORS[galaxy.current];
-    if (!sec?.pvp || !cfg) return;
+    if (!sec?.pvp || sec.arenaMode || !cfg) return;  // арена — без бронепоезда (и так нет в ARMORED_TRAIN_SECTORS, но явно)
     const startAt = this._armoredTrainTodayStart(galaxy.current);
     if (startAt == null) return; // не должно случаться (поезд всегда в расписании), но на всякий
     const now = Date.now();
@@ -1431,8 +1483,11 @@ export default class GameScene extends Phaser.Scene {
       return m;
     };
 
-    if (sec.pvp) {
-      // PvP-карты: Частная Безопасность охраняет добывающие базы.
+    if (sec.pvp && !sec.arenaMode) {
+      // PvP-карты: Частная Безопасность охраняет добывающие базы. Арена — без общего
+      // PvE/майнинг-контента (см. план, риск #1) — здесь galaxy.current вида
+      // "arena_flag" вообще не парсится как "pvp_N" ниже, поэтому гейт обязателен,
+      // не просто желателен.
       const pvpLvl = parseInt(galaxy.current.split('_')[1]);
       let basePoints = [];
       
@@ -1664,7 +1719,9 @@ export default class GameScene extends Phaser.Scene {
       }
     }
 
-    if (!sec.isDungeon && galaxy.current !== 'R-1-boss') {
+    // Арена — без общего амбиентного PvE (ни домашних патрулей, ни "ring"-спавна
+    // PvP-карт, ни сектор-босса/блуждающего босса/именной элиты) — см. план, риск #1.
+    if (!sec.isDungeon && !sec.arenaMode && galaxy.current !== 'R-1-boss') {
       const isMap12  = Lmax <= 20;            // карты 1-2 каждой корп — большинство мобов пассивны
       const isMap345 = Lmax > 20 && !sec.pvp; // карты 3-5 — добавляем блуждающего босса
       const passOpts = isMap12 ? { passive: true } : {};
@@ -1807,6 +1864,7 @@ export default class GameScene extends Phaser.Scene {
   _currentRealtimeRoomKey() {
     const sec = SECTORS[galaxy.current];
     if (!sec || sec.personal) return null;
+    if (sec.arenaMode) return this._arenaMatchKey || null;  // 'arena:<matchId>', см. arena_match_found
     if (sec.isDungeon) {
       const grp = this.groupSystem;
       return grp?.inGroup ? `group:${grp.instanceId}` : null;
@@ -1848,6 +1906,27 @@ export default class GameScene extends Phaser.Scene {
   // момента входа в комнату (см. комментарий в recomputeStats).
   _onPlayerStatsChanged() {
     if (this._realtimeRoomKey) this.pvpClient?.updateLoadout(this._pvpLoadoutSnapshot());
+  }
+
+  // Пассивный реген (щит после 6с без урона, авто-ремонт корпуса после 10с, ship-
+  // специфичный hullRegenPerSec — см. Player.js update()) считается ЦЕЛИКОМ локально,
+  // никогда не долетал до сервера — на своём экране игрок видел честный, растущий hull/
+  // shield, а сервер (и через него — соперник: нашивка над кораблём и HUD-панель цели)
+  // оставался с устаревшим, заниженным значением (баг из диалога: "актуально — полная
+  // жизнь... над кораблём врага и на экране — неактуально"). Троттлим раз в секунду —
+  // не гоняем полный лоадаут-снимок каждый кадр ради пары чисел.
+  _updatePvpHpSync(dt) {
+    if (!this._realtimeRoomKey) return;
+    const p = this.player;
+    if (!p?.alive) return;
+    this._pvpHpSyncAccum = (this._pvpHpSyncAccum || 0) + dt;
+    if (this._pvpHpSyncAccum < 1.0) return;
+    this._pvpHpSyncAccum = 0;
+    if (p.hull > (this._lastSyncedHull ?? 0) || p.shield > (this._lastSyncedShield ?? 0)) {
+      this._lastSyncedHull = p.hull;
+      this._lastSyncedShield = p.shield;
+      this.pvpClient?.updateLoadout(this._pvpLoadoutSnapshot());
+    }
   }
 
   _dungeonDiff() {
@@ -2625,10 +2704,8 @@ export default class GameScene extends Phaser.Scene {
     });
     this._checkTimeTrials(key);
     const nextSec = SECTORS[key];
-    const nextPvp = nextSec.pvp === true;
     const nextDungeon = nextSec.isDungeon === true;
-    const nextPersonal = nextSec.personal === true;
-    const nextScale = nextPvp ? PVP_WORLD_SCALE : (nextDungeon || nextPersonal) ? 1.0 : 1.2;
+    const nextScale = this._worldScaleFor(nextSec);
     const nextW = BASE_WORLD.width * nextScale;
     const nextH = BASE_WORLD.height * nextScale;
     const mx = nextW / 2 - 320, my = nextH / 2 - 320;
@@ -2815,7 +2892,17 @@ export default class GameScene extends Phaser.Scene {
 
     this.input.keyboard.on('keydown-TAB', (e) => { e.preventDefault(); if (this._autoTargetEnabled !== false) this.cycleTarget(); });
     this.input.keyboard.on('keydown-S', () => { this.toggleOverlay('SettingsScene'); });
-    this.input.keyboard.on('keydown-ESC', () => { this._exitToSpace(); });
+    this.input.keyboard.on('keydown-ESC', () => {
+      // Ручной выход с арены — страховка (см. диалог: "непонятно как выйти") сверх
+      // авто-выброса после arena_match_end: если матч уже void/завис (напр. долго ждём
+      // 2-минутный дисконнект-таймер соперника), не обязаны ждать — ESC без открытых
+      // меню на арене выходит немедленно, засчитывая уход как voluntary leave.
+      if (SECTORS[galaxy.current]?.arenaMode && this._arenaController && !this.atBase) {
+        this._confirmLeaveArena();
+        return;
+      }
+      this._exitToSpace();
+    });
     this.input.keyboard.on('keydown-F', () => {
       if (!this.player.alive) return;
       if (this.atBase) return; // F = Друзья (обрабатывается в HudScene)
@@ -3098,6 +3185,9 @@ export default class GameScene extends Phaser.Scene {
   }
 
   _useConsumable(type, now) {
+    // Арена: носитель флага/груза не может использовать расходники (правило "расходники
+    // и способности невидимости не работают", см. ArenaController._refreshCarrierDebuff).
+    if (this.player?._arenaCarrier) { this.log('🚫 Недоступно с грузом на борту'); return; }
     const barKey  = `use:${type}`;
     const cdEnd   = this.skillCooldowns[barKey] || 0;
     const buffEnd = (this._consBuffEndTimes || {})[barKey] || 0;
@@ -3629,7 +3719,7 @@ export default class GameScene extends Phaser.Scene {
     this.isFiring = false;
     this.atBase = false;
     if (galaxy.current === 'shadow_arena') { this.exitShadowBattle(); return; }
-    for (const o of ['GarageScene','CargoScene','MapScene','MissionsScene','ShopScene','CorpScene','BaseMenuScene','SkillScene','ClanScene','ShadowBattleScene','SettingsScene','ProfileScene','MailScene'])
+    for (const o of ['GarageScene','CargoScene','MapScene','MissionsScene','ShopScene','CorpScene','BaseMenuScene','SkillScene','ClanScene','ShadowBattleScene','SettingsScene','ProfileScene','MailScene','ArenaLobbyScene'])
       if (this._sceneExists(o) && this.scene.isActive(o)) this.scene.stop(o);
   }
 
@@ -3640,6 +3730,10 @@ export default class GameScene extends Phaser.Scene {
 
   toggleOverlay(key, data) {
     document.getElementById('sd-guild-search')?.remove(); // always clean up HTML overlay on any scene switch
+    // ArenaLobbyScene НЕ в этом списке намеренно — она открывается/закрывается отдельно
+    // (см. HudScene._showBaseNav), поверх любого из этих меню, не закрывая и не будучи
+    // закрытой ими (см. диалог: "открыть арену поверх гаража/клана, при закрытии
+    // вернуться к тому же меню").
     const overlays = ['GarageScene', 'CargoScene', 'MapScene', 'MissionsScene', 'ShopScene', 'CorpScene', 'ClanScene', 'SkillScene', 'ShadowBattleScene', 'SettingsScene', 'ProfileScene', 'MailScene'];
     for (const o of overlays) { if (o !== key && this._sceneExists(o) && this.scene.isActive(o)) this.scene.stop(o); }
     if (!this._sceneExists(key)) return;
@@ -3668,6 +3762,8 @@ export default class GameScene extends Phaser.Scene {
     const idx = alive.indexOf(this.target); this.target = alive[(idx + 1) % alive.length];
   }
   firePlayerWeapon() {
+    // Арена: 5с обратный отсчёт перед боем — стрельба заблокирована (см. ArenaController.countdownActive)
+    if (this._arenaController?.countdownActive) return;
     // Импульсная мина Синдиката: оружие полностью глушится на 3с (движки — см. основной update)
     if ((this._playerStunUntil || 0) > this.time.now) return;
     const p = this.player;
@@ -3754,11 +3850,19 @@ export default class GameScene extends Phaser.Scene {
     // только заявляет выстрел и рисует визуал, никакого локального takeDamage.
     // Вне реальных PvP-секторов другие игроки — союзники (см. _isPvpSector), не цель.
     // Игрок своего корпа — тоже союзник ВЕЗДЕ (дом/пвп/данж/босс-карта), дружественный
-    // огонь запрещён; единственное исключение будет отдельная арена с записью/очередью
-    // (дуэли не по корпам) — её пока нет как отдельного сектора, добавить проверку
-    // сюда, когда появится.
+    // огонь запрещён. Арена — единственное исключение: команда матча (не корп) решает
+    // союзник/враг, и на своей базе (safe zone) атаковать нельзя даже врага (сервер
+    // проверяет то же самое авторитетно, см. main.py pvp_fire_claim — это только UX).
     if (t.isRemotePlayer) {
-      if (!this._isPvpSector || (t.corp && t.corp === this.playerCorp)) {
+      const arena = this._arenaController;
+      if (arena) {
+        if (arena.teamOf(t.userId) === arena.myTeam) {
+          this._warnThrottle('ally_fire', 'Нельзя атаковать союзника'); return;
+        }
+        if (arena.isEnemyOnOwnBase(t, arena.teamOf(t.userId))) {
+          this._warnThrottle('base_safe', 'Игрок в безопасной зоне базы'); return;
+        }
+      } else if (!this._isPvpSector || (t.corp && t.corp === this.playerCorp)) {
         this._warnThrottle('ally_fire', 'Нельзя атаковать союзника'); return;
       }
       const ammoMult = this._consumeAmmo('cannon', cannonCount);
@@ -3848,22 +3952,232 @@ export default class GameScene extends Phaser.Scene {
   // hull/shield жертвы — локально показываем 0, а не эти значения: визуально корабль
   // должен выглядеть мёртвым до момента фактического респавна через диалог ремонта
   // (as _showRepairDialog/Player.respawn() — та же цепочка, что при смерти от моба).
-  // Луч чужого выстрела (не своего — тот уже рисуется локально в момент нажатия,
-  // см. _fireLaser) был виден только жертве/наблюдателям как hitFlash попадания — сам
-  // выстрел (луч атакующий→цель) не рисовался вовсе (баг из диалога: "выстрел лазера
-  // от врага не видно визуально"). Пока только лазер (hitscan, один кадр VFX) — снаряды
-  // пушки требуют полноценного летящего объекта для наблюдателей, отдельная задача.
+  // Выстрел чужого игрока (не своего — тот уже рисуется локально в момент нажатия, см.
+  // _fireLaser/_fireCannon) был виден только жертве/наблюдателям как hitFlash попадания —
+  // сам выстрел (атакующий→цель) не рисовался вовсе (баг из диалога: "не видно чужих
+  // выстрелов, ни лазера, ни плазмы"). Лазер — hitscan-луч (_laserBeam), пушка/плазма —
+  // тот же чисто визуальный "снаряд", что уже существует для локального игрока
+  // (_fireVisualBolt, "не заходит в damage-pipeline") — тут просто раньше не вызывался
+  // для наблюдателя, урон уже разрешён сервером в pvp_hit_result, снаряд чисто косметика.
   _drawRemotePvpFireVfx(msg, targetEntity) {
     if (msg.attackerUserId === this.myUserId) return; // уже нарисовано локально при выстреле
-    if (msg.weaponType !== 'laser') return;
     if (!targetEntity) return;
     const attacker = this.pvpClient?.players?.get(msg.attackerUserId);
-    if (!attacker?.alive) return;
-    const beamColor = msg.isCrit ? 0xffff44 : 0xffaa00;
-    const width = msg.isCrit ? 6 : 3;
-    this._laserBeam(attacker.x, attacker.y, targetEntity.x, targetEntity.y,
-      beamColor, msg.dodged ? 0.25 : 1.0, width, 200, attacker, targetEntity);
-    this.muzzleFlash(attacker.x, attacker.y, beamColor, attacker);
+    // Раньше тут ещё проверялось attacker?.alive — если RemotePlayer-модель атакующего
+    // на наблюдателе почему-то отставала с alive=false (десинк), это тихо резало ВЕСЬ
+    // VFX выстрела, включая лазер (баг из диалога: "не видно вообще никаких выстрелов").
+    // Урон уже реально нанесён (пришёл pvp_hit_result) — раз атакующий вообще известен
+    // (найден в pvpClient.players), рисуем выстрел независимо от текущего alive-флага.
+    if (!attacker) return;
+    if (msg.weaponType === 'laser') {
+      const beamColor = msg.isCrit ? 0xffff44 : 0xffaa00;
+      const width = msg.isCrit ? 6 : 3;
+      this._laserBeam(attacker.x, attacker.y, targetEntity.x, targetEntity.y,
+        beamColor, msg.dodged ? 0.25 : 1.0, width, 200, attacker, targetEntity);
+      this.muzzleFlash(attacker.x, attacker.y, beamColor, attacker);
+    } else if (msg.weaponType === 'argus_pulsar') {
+      // Раньше способности Аргуса рисовались как обычный пушечный болт наблюдателю
+      // (падали в ветку else ниже — weaponType не 'laser') — противник видел "просто
+      // выстрел пушки" вместо реального эффекта (баг из диалога). Цвет/стиль как у
+      // локального вращающегося луча пульсара (см. ArgusController._updatePulsar).
+      // Наблюдатель видит один прямой луч атакующий→жертва по факту попадания, не
+      // полную 8-лучевую вращающуюся геометрию — угол/фаза вращения не передаётся по
+      // сети (см. диалог: "эффект — синий толстый лазер, но не лучи пульсара" —
+      // подтверждено ожидаемым упрощением, не багом).
+      this._laserBeam(attacker.x, attacker.y, targetEntity.x, targetEntity.y,
+        0x00d4ff, msg.dodged ? 0.25 : 0.9, 8, 150, attacker, targetEntity);
+      this.muzzleFlash(attacker.x, attacker.y, 0x00d4ff, attacker);
+    } else if (msg.weaponType === 'argus_missile') {
+      // Тот же баг, что у пульсара — наблюдатель не видел ракету, только болт пушки.
+      // Первая попытка переиспользовала _fireVisualBolt как есть — его длительность
+      // считается от PROJECTILE.speed (обычный снаряд пушки, быстрый), из-за чего ракета
+      // всё равно выглядела как мгновенный выстрел турели (баг из диалога). Берём
+      // MISSILE_SPEED (см. ArgusController._activateMissiles, 580 px/s) — та же скорость,
+      // что у реальной локальной ракеты — и взрыв ПОСЛЕ долёта, а не сразу.
+      const MISSILE_SPEED = 580;
+      const dist = Phaser.Math.Distance.Between(attacker.x, attacker.y, targetEntity.x, targetEntity.y);
+      const duration = Math.min(1600, (dist / MISSILE_SPEED) * 1000);
+      const spr = this.add.image(attacker.x, attacker.y, 'bolt_sprite').setDepth(60)
+        .setTint(0xff8800).setBlendMode(Phaser.BlendModes.ADD).setDisplaySize(30, 11);
+      spr.rotation = Math.atan2(targetEntity.y - attacker.y, targetEntity.x - attacker.x);
+      this.tweens.add({
+        targets: spr, x: targetEntity.x, y: targetEntity.y, duration, ease: 'Linear',
+        onComplete: () => { spr.destroy(); if (!msg.dodged) this.explosion?.(targetEntity.x, targetEntity.y, 0.4); },
+      });
+      this.muzzleFlash(attacker.x, attacker.y, 0xff4400, attacker);
+    } else {
+      const boltColor = msg.isCrit ? 0xffee66 : PROJECTILE.playerColor;
+      this._fireVisualBolt(attacker.x, attacker.y, targetEntity.x, targetEntity.y, boltColor);
+      this.muzzleFlash(attacker.x, attacker.y, boltColor, attacker);
+    }
+  }
+
+  // ── Арена — очередь живёт на GameScene (не на ArenaLobbyScene!) — окно записи можно
+  // закрыть (см. диалог: "открыть арену поверх гаража/клана... закрыть меню арены,
+  // затем снова видеть предыдущее меню"), а запись при этом должна продолжаться в
+  // фоне. Таймаут 3 мин без соперника — отмена + запись в лог независимо от того,
+  // открыто ли сейчас окно (см. диалог: "отмена записи в фоне и запись в лог").
+  _arenaQueueJoin(mode) {
+    this._arenaQueueMode = mode;
+    this.pvpClient?.arenaQueueJoin(mode);
+    this._arenaQueueTimer?.remove(false);
+    this._arenaQueueTimer = this.time.delayedCall(ARENA_QUEUE_TIMEOUT_MS, () => this._arenaQueueTimeout());
+  }
+
+  _arenaQueueCancel() {
+    this._arenaQueueTimer?.remove(false);
+    this._arenaQueueTimer = null;
+    if (this._arenaQueueMode) { this.pvpClient?.arenaQueueLeave(); this._arenaQueueMode = null; }
+  }
+
+  _arenaQueueTimeout() {
+    if (!this._arenaQueueMode) return;
+    this.pvpClient?.arenaQueueLeave();
+    this._arenaQueueMode = null;
+    this._arenaQueueTimer = null;
+    this.log('⚠ Арена: запишитесь заново, противник не подобран.');
+    this._arenaLobbyOverlay?.onQueueUpdate?.({ ok: false, reason: 'Запишитесь заново, противник не подобран.' });
+  }
+
+  // Делегат из HudScene._connectChatWS (см. pvpClient.onArenaQueueUpdate). ok===false —
+  // сервер отказал (разброс уровней, лидер вышел из группы и т.п.) — чистим очередь-
+  // состояние ЗДЕСЬ (не только в оверлее, который мог быть уже закрыт) и логируем,
+  // если окно записи сейчас не открыто (иначе лог дублировал бы текст в панели).
+  _onArenaQueueUpdate(msg) {
+    if (msg.ok === false) {
+      this._arenaQueueTimer?.remove(false);
+      this._arenaQueueTimer = null;
+      this._arenaQueueMode = null;
+      if (!this._arenaLobbyOverlay) this.log(`⚠ Арена: ${msg.reason || 'запись невозможна'}`);
+    }
+    this._arenaLobbyOverlay?.onQueueUpdate?.(msg);
+  }
+
+  // Матч найден — приходит, пока игрок ещё НЕ в арена-секторе (лобби/домашняя база).
+  // Стартуем прыжок так же, как обычный джампгейт-переход, но без гейта: msg.spawn —
+  // уже абсолютные мировые координаты (сервер считает их по тем же BASE_WORLD/scale,
+  // см. server ARENA_SPAWNS), msg.roomKey/team несём через restart(), чтобы
+  // _currentRealtimeRoomKey()/ArenaController увидели их сразу в create().
+  _onArenaMatchFound(msg) {
+    // Игрок стоит на базе (atBase=true, меню открыто, движение заблокировано), когда
+    // приходит матч — БЕЗ явного _exitToSpace() atBase персистирует через scene.restart()
+    // (см. create(): this.atBase = this.atBase ?? false — сохраняет старое значение, не
+    // сбрасывает), и после прыжка в арену игрок так и остаётся "пристыкован": видно меню
+    // базы, двигаться нельзя, хотя galaxy.current уже сменился. Обычный джампгейт-переход
+    // никогда не бьёт этот путь, т.к. случается только УЖЕ в космосе (atBase уже false).
+    this._arenaQueueTimer?.remove(false);
+    this._arenaQueueTimer = null;
+    this._arenaQueueMode = null;
+    this._exitToSpace();
+    this._arenaLobbyOverlay?.close?.();
+    // Запоминаем сектор ДО арены — тем же паттерном, что _shadowPrevSector у Боя с
+    // тенью (см. _persistState ниже: currentSector никогда не сохраняется как arena_*,
+    // и redirect в _applyLoadedState — двойная защита от "ожившего мёртвого матча").
+    this._arenaPrevSector = galaxy.current;
+
+    // Карта арены НЕ подгружена заранее: createJumpgates() прогревает текстуры только
+    // для соседей по графу галактики (neighbors()), а арена-секторы намеренно вне графа
+    // (нет рёбер/гейтов, см. galaxy.js) — без этого BackgroundScene.update() молча
+    // остаётся на СТАРОЙ текстуре навсегда (меняет текстуру, только если новая уже
+    // загружена, см. BackgroundScene.js:32), даже после перезахода/рефреша страницы.
+    // Тот же приём, что LoginScene использует для СТАРТОВОГО сектора.
+    const _proceed = () => {
+      galaxy.current = msg.sectorKey;
+      document.getElementById('scene-overlay')?.classList.add('active');
+      this._arenaPendingMatch = msg;
+      this.scene.restart({ startX: msg.spawn.x, startY: msg.spawn.y, arenaMatchKey: msg.roomKey, arenaTeam: msg.team });
+    };
+    const _mapKey = SECTORS[msg.sectorKey]?.map;
+    if (_mapKey && !this.textures.exists(_mapKey)) {
+      this.load.image(_mapKey, `assets/maps/${_mapKey}.jpg`);
+      this.load.once('complete', _proceed);
+      this.load.start();
+    } else {
+      _proceed();
+    }
+  }
+
+  _onArenaRespawn(msg) { this._arenaController?.onRespawn(msg); }
+  _onArenaObjectiveSync(msg) { this._arenaController?.onObjectiveSync(msg); }
+  _onArenaScore(msg) { this._arenaController?.onScore(msg); }
+  _onArenaMatchEnd(msg) { this._arenaController?.onMatchEnd(msg); }
+
+  // Подтверждение перед ручным выходом (см. диалог: "выход должен быть с
+  // подтверждением") — если соперник ещё в матче, выход = поражение (см. main.py
+  // pvp_leave, arena-ветка), об этом предупреждаем текстом.
+  _confirmLeaveArena() {
+    if (this._arenaLeaveConfirmObjs) return;
+    const { width, height } = this.scale;
+    const cx = width / 2, cy = height / 2;
+    const TF = { fontFamily: 'Orbitron', resolution: UI_RES };
+    const dim   = this.add.rectangle(cx, cy, width, height, 0x000000, 0.5).setScrollFactor(0).setDepth(600).setInteractive();
+    const panel = this.add.rectangle(cx, cy, 420, 170, 0x0a0e18).setStrokeStyle(2, 0xef5350, 0.9).setScrollFactor(0).setDepth(601);
+    const title = this.add.text(cx, cy - 40, 'ПОКИНУТЬ АРЕНУ?', { ...TF, fontSize: '20px', color: '#ef5350' }).setOrigin(0.5).setScrollFactor(0).setDepth(602);
+    const sub   = this.add.text(cx, cy - 8, 'Если соперник ещё в матче — засчитывается поражение.',
+      { ...TF, fontSize: '13px', color: '#aabbcc', wordWrap: { width: 380 } }).setOrigin(0.5).setScrollFactor(0).setDepth(602);
+    const yesBtn = this.add.rectangle(cx - 90, cy + 50, 150, 44, 0x2a0d0d).setStrokeStyle(2, 0xef5350, 0.9).setScrollFactor(0).setDepth(602).setInteractive();
+    const yesTxt = this.add.text(cx - 90, cy + 50, 'ПОКИНУТЬ', { ...TF, fontSize: '15px', color: '#ff8080' }).setOrigin(0.5).setScrollFactor(0).setDepth(603);
+    const noBtn  = this.add.rectangle(cx + 90, cy + 50, 150, 44, 0x0d1a2a).setStrokeStyle(2, COLORS.primary, 0.9).setScrollFactor(0).setDepth(602).setInteractive();
+    const noTxt  = this.add.text(cx + 90, cy + 50, 'ОСТАТЬСЯ', { ...TF, fontSize: '15px', color: '#4dd0e1' }).setOrigin(0.5).setScrollFactor(0).setDepth(603);
+    this._arenaLeaveConfirmObjs = [dim, panel, title, sub, yesBtn, yesTxt, noBtn, noTxt];
+    const close = () => { this._arenaLeaveConfirmObjs?.forEach(o => o?.destroy()); this._arenaLeaveConfirmObjs = null; };
+    yesBtn.on('pointerdown', (pointer, lx, ly, event) => { if (event) event.stopPropagation(); close(); this._leaveArenaManually(); });
+    noBtn.on('pointerdown',  (pointer, lx, ly, event) => { if (event) event.stopPropagation(); close(); });
+    dim.on('pointerdown',    (pointer, lx, ly, event) => { if (event) event.stopPropagation(); close(); });
+  }
+
+  // Ручной выход с арены (ESC) — засчитывается как voluntary leave: сервер получает
+  // pvp_leave и (для arena-комнат) сразу стартует тот же 2-минутный void-таймер, что и
+  // настоящий дисконнект (см. main.py pvp_leave), так что соперник не виснет вечно в
+  // ожидании ушедшего. Сами мы выходим немедленно, не дожидаясь void от сервера.
+  _leaveArenaManually() {
+    this.log('🚪 Вы покинули арену.');
+    this.pvpClient?.leaveSector();
+    this._leaveArenaToPrevSector();
+  }
+
+  // Выброс с арены обратно на сектор ДО матча (или домашнюю базу, если тот недоступен) —
+  // вызывается и автоматически (~4с после arena_match_end, см. ArenaController.onMatchEnd),
+  // и вручную (_leaveArenaManually). Без этого игрок бесконечно висел в арена-инстансе,
+  // из которого некуда было деться (баг из диалога).
+  _leaveArenaToPrevSector() {
+    if (!SECTORS[galaxy.current]?.arenaMode) return; // уже вышли раньше
+    // HudScene — отдельная сцена, которая НЕ рестартует вместе с GameScene (см.
+    // main.js) — счёт-баннер (setArenaScore) переживал выход с арены и висел
+    // поверх экрана в следующем секторе (баг из диалога: "покинул арену — вверху
+    // остался счёт синие и красные"). showArenaMatchEnd() уже чистит его для
+    // случая победы/поражения — здесь тот же клинап для добровольного/ручного
+    // выхода, который arena_match_end не проходит.
+    this.scene.get('HudScene')?.clearArenaScore?.();
+    const corp = (this.playerCorp && this.playerCorp !== 'neutral') ? this.playerCorp : 'helios';
+    const homeKey = `${corp}_1`;
+    const target = (this._arenaPrevSector && SECTORS[this._arenaPrevSector]) ? this._arenaPrevSector : homeKey;
+    galaxy.current = target;
+    const scale = this._worldScaleFor(SECTORS[target]);
+    const w1 = BASE_WORLD.width * scale, h1 = BASE_WORLD.height * scale;
+    document.getElementById('scene-overlay')?.classList.add('active');
+    // PvP-сектор (pvp_1..pvp_5) — база НЕ в центре карты (см. homeBasePositions), центр
+    // мира там может быть где угодно (открытый космос, чужая территория и т.п.) — раньше
+    // сюда безусловно передавался центр мира как startX/startY, что для дом. секторов
+    // верно (база и есть центр), но для настоящего PvP-сектора высаживало игрока в
+    // произвольную точку вместо базы (баг из диалога: "выкидывает... нужно на базу,
+    // если были на пвп — там база не по центру карты"). _reconnectPvpCorp — тот же
+    // механизм, что уже используется на реконнект (см. create() выше): подставляет
+    // реальную позицию базы ПОСЛЕ restart(), когда homeBasePositions уже посчитан для
+    // ЦЕЛЕВОГО сектора (до restart() он ещё для арены, использовать здесь нельзя).
+    if (SECTORS[target]?.pvp) this._reconnectPvpCorp = corp;
+    this.scene.restart({ startX: w1 / 2, startY: h1 / 2 + 80 });
+  }
+
+  // Самолечение (см. PvpClient.selfHealClaim, server pvp_self_heal_claim) — кастер
+  // (isMe) уже применил хил локально в момент активации (ArgusController._activateCocoon),
+  // это сообщение для НЕГО просто эхо подтверждения, игнорируем; наблюдателям —
+  // единственный способ узнать о новом hull/shield цели (иначе бар оставался
+  // "неактуальным" до следующего боевого попадания, см. диалог).
+  _onPvpPlayerHealed(msg) {
+    if (msg.userId === this.myUserId) return;
+    const rp = this.pvpClient?.players?.get(msg.userId);
+    rp?.applyState({ hull: msg.hull, shield: msg.shield, maxHull: msg.maxHull, maxShield: msg.maxShield });
   }
 
   _onPvpHitResult(msg) {
@@ -3872,14 +4186,26 @@ export default class GameScene extends Phaser.Scene {
       const p = this.player;
       this._drawRemotePvpFireVfx(msg, p);
       if (msg.dodged) { this.showDodge(p.x, p.y); return; }
-      const hullHit   = msg.killed ? p.hull   : Math.max(0, p.hull   - msg.hull);
-      const shieldHit = msg.killed ? p.shield : Math.max(0, p.shield - msg.shield);
+      // На kill раньше показывали p.hull/p.shield (весь остаток HP ДО этого попадания),
+      // а не реальный урон — для обычных кораблей (few thousand HP) разница была почти
+      // незаметна, но у Аргуса (500000 HP) добивающий тик пульсара/ракеты (900/2000)
+      // против недолеченного с прошлого боя остатка показывал "87 тысяч урона" вместо
+      // настоящих 900 (баг из диалога). msg.dmg — реальный урон этого попадания, сервер
+      // его всегда прикладывает (см. _apply_pvp_damage: 'dmg': round(amount)).
+      const hullHit   = msg.killed ? msg.dmg : Math.max(0, p.hull   - msg.hull);
+      const shieldHit = msg.killed ? 0       : Math.max(0, p.shield - msg.shield);
       p.hull = msg.killed ? 0 : msg.hull;
       p.shield = msg.killed ? 0 : msg.shield;
       // КРИТИЧНО: без этого passive-реген (Player.update, гейтится по sinceDamage)
       // считал урон "давним" (lastDamageAt тут никогда не трогался) и мгновенно
       // накатывал щит обратно на следующем же кадре.
       p.lastDamageAt = this.time.now;
+      // Сервер только что сам узнал точный hull/shield из этого попадания — обнуляем
+      // базу для _updatePvpHpSync, иначе после урона реген не считался бы "ростом"
+      // (сравнивался бы со СТАРЫМ, более высоким пиком до этого хита) и завис бы,
+      // не долетая до наблюдателей, пока не превысит прошлый максимум.
+      this._lastSyncedHull = p.hull;
+      this._lastSyncedShield = p.shield;
       this.hitFlash(p.x, p.y, hullHit > 0, p);
       this.showDamage(p.x, p.y, { shieldHit, hullHit, killed: msg.killed }, msg.maxHull, msg.isCrit);
       this._shakeForHit({ hullHit }, msg.maxHull);
@@ -3899,8 +4225,11 @@ export default class GameScene extends Phaser.Scene {
     if (!rp) return;
     this._drawRemotePvpFireVfx(msg, rp);
     if (msg.dodged) { this.showDodge(rp.x, rp.y); return; }
-    const hullHit   = msg.killed ? rp.hull   : Math.max(0, rp.hull   - msg.hull);
-    const shieldHit = msg.killed ? rp.shield : Math.max(0, rp.shield - msg.shield);
+    // На kill — msg.dmg (реальный урон), не rp.hull/rp.shield (остаток ДО попадания) —
+    // та же поправка, что и в ветке isMe выше (см. комментарий там, баг из диалога
+    // "первый урон 87 тысяч, потом по 900").
+    const hullHit   = msg.killed ? msg.dmg : Math.max(0, rp.hull   - msg.hull);
+    const shieldHit = msg.killed ? 0       : Math.max(0, rp.shield - msg.shield);
     // На kill сервер шлёт уже восстановленный (после внутреннего "респавна" в своей
     // бухгалтерии) hull/shield жертвы — та же ловушка, что в ветке isMe выше (см.
     // комментарий там): раньше здесь msg.hull/msg.shield применялись как есть, из-за чего
@@ -4573,10 +4902,18 @@ export default class GameScene extends Phaser.Scene {
     }
 
     // PvP: как в _fireCannon — сервер решает исход, клиент только рисует луч и заявляет
-    // выстрел. Вне реальных PvP-секторов И свой корпус — везде союзники (см. комментарий
-    // в _fireCannon про будущую арену-исключение).
+    // выстрел. Вне реальных PvP-секторов И свой корпус — везде союзники; арена — по
+    // команде матча + safe zone на базе (см. комментарий в _fireCannon).
     if (t.isRemotePlayer) {
-      if (!this._isPvpSector || (t.corp && t.corp === this.playerCorp)) {
+      const arena = this._arenaController;
+      if (arena) {
+        if (arena.teamOf(t.userId) === arena.myTeam) {
+          this._warnThrottle('ally_fire', 'Нельзя атаковать союзника'); return;
+        }
+        if (arena.isEnemyOnOwnBase(t, arena.teamOf(t.userId))) {
+          this._warnThrottle('base_safe', 'Игрок в безопасной зоне базы'); return;
+        }
+      } else if (!this._isPvpSector || (t.corp && t.corp === this.playerCorp)) {
         this._warnThrottle('ally_fire', 'Нельзя атаковать союзника'); return;
       }
       const beamColor = isOC ? 0xffcc00 : p.allLasers ? 0xce93d8 : 0xffaa00;
@@ -5697,6 +6034,14 @@ export default class GameScene extends Phaser.Scene {
       }
     }
     this.target = null;
+    // Арена — НЕ платный ремонт-диалог: 3на3 респаунится по таймеру с сервера
+    // (arena_respawn, 5с, см. ArenaController.onRespawn/_arena_tick_loop), дуэль вообще
+    // не респаунится (ждёт arena_match_end). playerRespawning сбрасывает сам
+    // ArenaController.onRespawn — здесь просто не планируем диалог.
+    if (SECTORS[galaxy.current]?.arenaMode) {
+      this._arenaController?.onLocalDeath();
+      return;
+    }
     this.time.delayedCall(2000, () => this._showRepairDialog(deathX, deathY));
   }
   _showRepairDialog(deathX, deathY) {
@@ -5774,9 +6119,7 @@ export default class GameScene extends Phaser.Scene {
 
     // Compute corp-base position within the parent sector, mirroring _spawnHomeBase() logic.
     const parentSec        = parentSecKey ? SECTORS[parentSecKey] : null;
-    const parentIsDung     = parentSec?.isDungeon === true;
-    const parentIsPersonal = parentSec?.personal === true;
-    const parentScale      = parentSec?.pvp ? PVP_WORLD_SCALE : (parentIsDung || parentIsPersonal) ? 1.0 : 1.2;
+    const parentScale      = parentSec ? this._worldScaleFor(parentSec) : 1.2;
     const parentW          = BASE_WORLD.width  * parentScale;
     const parentH          = BASE_WORLD.height * parentScale;
 
@@ -6213,6 +6556,16 @@ export default class GameScene extends Phaser.Scene {
       this.movement.setWaypoint(wpt.x, wpt.y, false);
     }
     if (!this.jumping && this.player.alive) this.movement.update(dt, inSafe);
+    // Лабиринт арены: movement.update() выше только выставляет body.velocity —
+    // саму позицию интегрирует Arcade Physics, у которой collideWorldBounds нигде
+    // в проекте не включён (нет ни setCollideWorldBounds, ни world.on('worldbounds')),
+    // так что ничто не мешало кораблю улетать в буфер за пределами коробки
+    // лабиринта и облетать его целиком (баг из диалога: "облет вокруг лабиринта —
+    // не исправлено"). clampToWorld() раньше вызывался только из фонового
+    // bgFallbackTick (вкладка свёрнута) — здесь тот же клэмп на каждом реальном
+    // кадре, только для arenaMaze-секторов (не трогает обычные сектора, где
+    // никогда не было хардкапа на границу мира и менять это неоправданно рискованно).
+    if (this._arenaMazeBounds && this.player.alive) this.movement.clampToWorld();
     // Импульсная мина Синдиката: полная остановка двигателей (сильнее обычного EMP-замедления)
     if (this.player.alive && (this._playerStunUntil || 0) > this.time.now) {
       this.player.sprite.body.setVelocity(0, 0);
@@ -6290,6 +6643,7 @@ export default class GameScene extends Phaser.Scene {
     if (this._eventNoticeAccum >= 3) { this._eventNoticeAccum = 0; this._checkEventNotices(); }
     this._updateAttachedFx();
     this._updateTrackedBeams();
+    this._updatePvpHpSync(dt);
     this._updateLowHpVignette(dt);
     this._updateRangeRing();
     this._updateMagnet(dt);
@@ -6298,6 +6652,7 @@ export default class GameScene extends Phaser.Scene {
     this.plasmateDeposits.forEach(d => d.update(now2));
     if (this.pendingGate && Phaser.Math.Distance.Between(this.player.x, this.player.y, this.pendingGate.x, this.pendingGate.y) < 60) { this.pendingGate = null; }
     this.argusCtrl?.update(dt);
+    this._arenaController?.update(now2);
     this.confedGuards?.update(dt, this.player);
     if (this._apophisRings) this._updateApophisRings(dt);
     this._updateRingDamage(dt);
@@ -6778,7 +7133,7 @@ export default class GameScene extends Phaser.Scene {
     this._corridorChests   = [];
     this.gravTraps         = [];
     this.mines             = [];
-    if (!sec.isDungeon) return;
+    if (!sec.isDungeon && !sec.arenaMaze) return;
 
     this.dungeonBossDoor    = null;
     this.dungeonBossDoorVis = null;
@@ -6794,6 +7149,9 @@ export default class GameScene extends Phaser.Scene {
       dungeon_5:    { type: 'energy',   fill: 0x020c14, fillA: 0.80, edge: 0x4dd0e1 },
       dungeon_prem: { type: 'ancient',   fill: 0x020a04, fillA: 0.92, edge: 0x00c853 },
       'R-1-boss':   { type: 'boss',     fill: 0x060a06, fillA: 0.88, edge: 0xc8a800 },
+      arena_points: { type: 'metal',    fill: 0x0a1420, fillA: 0.90, edge: 0x5b8fc7 },  // сталь-синий (Arena-1)
+      arena_cargo:  { type: 'metal',    fill: 0x10151c, fillA: 0.90, edge: 0x8fa0b0 },  // станционный серый (Arena-2)
+      arena_flag:   { type: 'energy',   fill: 0x1a0f28, fillA: 0.88, edge: 0xb388ff },  // туманность-фиолет (Arena-3)
     };
     const ws = WALL_STYLES[galaxy.current] ?? WALL_STYLES['dungeon_5'];
 
@@ -6802,11 +7160,29 @@ export default class GameScene extends Phaser.Scene {
     const LINE_T = 60, LINE_VIS = 150;
     // Клип отрезка кругами клиренса (650px: центр мира + гейты). Физика, LOS и визуал
     // режутся синхронно — иначе получится «пролететь можно, а прострелить нельзя».
+    // Арена (arenaMode) — свой, куда меньший радиус: 650 был подобран под дангжевые
+    // гейты (широкие площадки), а у арены нет гейтов вовсе (this.gates пуст) — тот же
+    // радиус вокруг ЦЕНТРА КАРТЫ съедал ~1300px (по 650 на обе зеркальные половины)
+    // ровно на шве между двумя авторенными половинами лабиринта (mirrorX/rot180,
+    // см. arenaLayouts.js), из-за чего на миникарте выглядело как ДВА отдельных
+    // лабиринта с большим разрывом посередине, а не один на всю карту (баг из
+    // диалога: "зачем два лабиринта? он должен быть один но на всю карту"). Меньшего
+    // радиуса достаточно, чтобы не зажать саму точку/спавн груза в центре (для
+    // arena_flag там вообще нет объектива — просто чуть более открытый пятачок шва).
     const clipLine = (x1, y1, x2, y2) => {
       let parts = [[x1, y1, x2, y2]];
       const circles = [[cx, cy], ...(this.gates ?? []).map(gt => [gt.x, gt.y])];
+      // Захват точек: A/C сидят на случайном (за матч) смещении от центра
+      // (server ARENA_POINT_OFFSET_CHOICES/point_offset, см. диалог: "точки сделать
+      // случайный разброс") — статические лабиринты авторены под ОДНУ позицию, так
+      // что клиренс для реальной позиции этого матча режем здесь же, в рантайме,
+      // тем же алгоритмом, вместо перезаписи 3 вариантов лабиринта под 3 офсета.
+      const pointOffset = this._arenaPendingMatch?.pointOffset;
+      if (sec.arenaMode === 'points' && pointOffset) {
+        circles.push([cx - pointOffset, cy - ARENA_POINT_ROW_OFFSET], [cx + pointOffset, cy + ARENA_POINT_ROW_OFFSET]);
+      }
       for (const [ccx, ccy] of circles) {
-        const R = 650;
+        const R = sec.arenaMode ? 260 : 650;
         const next = [];
         for (const [ax, ay, bx, by] of parts) {
           const dx = bx - ax, dy = by - ay;
@@ -6880,12 +7256,81 @@ export default class GameScene extends Phaser.Scene {
       this._wallSolids.push({ type: 'rect', x0, y0, x1: dx1, y1: dy1, bossDoor: true });
     };
 
-    // ── Раскладка стен: данные (D1–D5, prem) или литеральная ветка (R-1-boss) ──
-    const layout = DUNGEON_LAYOUTS[galaxy.current];
+    // ── Раскладка стен: данные (D1–D5, prem, арена) или литеральная ветка (R-1-boss) ──
+    const layout = DUNGEON_LAYOUTS[galaxy.current] ?? ARENA_LAYOUTS[galaxy.current];
     if (layout) {
-      for (const [x1, y1, x2, y2] of layout.walls) addLineWall(cx + x1, cy + y1, cx + x2, cy + y2);
-      const [bx, by, bw, bh] = layout.bossDoor;
-      addBossDoor(cx + bx, cy + by, bw, bh);
+      // Арена: несколько вариантов лабиринта на режим (см. arenaLayouts.js) — выбор НА
+      // МАТЧ (сервер кидает кубик при создании матча и шлёт индекс в arena_match_found,
+      // см. server arena.py ArenaMatch.maze_variant — арену переигрывают куда чаще
+      // одного данжа в день, дневной сид как у DUNGEON_LAYOUTS смотрелся бы одинаково
+      // весь день, см. диалог: "все берём, выбор — рандом"). this._arenaPendingMatch ещё
+      // не потреблён на этом шаге create() (см. чуть ниже — ArenaController строится и
+      // очищает его ПОСЛЕ createDungeonWalls()). Стены варианта раньше вообще не
+      // читались — createDungeonWalls всегда брал layout.walls верхнего уровня, у данжей
+      // variants несут только раскладку мобов, не стены; variant.walls есть только у
+      // арены, для данжей остаётся undefined и падаем на layout.walls как раньше.
+      const variantIdx = layout.variants?.length > 1
+        ? (this._arenaPendingMatch?.mazeVariant ?? 0) % layout.variants.length
+        : 0;
+      const wallSource = layout.variants?.[variantIdx]?.walls ?? layout.walls;
+      for (const [x1, y1, x2, y2] of wallSource) addLineWall(cx + x1, cy + y1, cx + x2, cy + y2);
+      if (layout.bossDoor) {  // арена-лэйауты его не имеют
+        const [bx, by, bw, bh] = layout.bossDoor;
+        addBossDoor(cx + bx, cy + by, bw, bh);
+      }
+
+      // Арена: лабиринт сидит в середине куда большего мира (worldWidth/Height —
+      // те же, что у обычного PvP-сектора, см. _worldScaleFor), оставляя снаружи
+      // своей же ограждающей стены буферную полосу в неск. сотен px до истинного
+      // края мира. Стены самого лабиринта уже образуют замкнутый прямоугольник
+      // (с "дверьми" только у баз) — НО этот буфер снаружи полностью открыт и
+      // непрерывен по всему периметру, так что корабль, выйдя через дверь базы
+      // наружу, может просто облететь ВЕСЬ лабиринт по этому кольцу и попасть к
+      // чужой базе, ни разу не заходя внутрь (баг из диалога: "лабиринт можно
+      // облететь вокруг" — воспроизведено на 2 разных вариантах лабиринта).
+      // Первая попытка чинить это через this.physics.world.setBounds() была
+      // НЕ-ОП: реальный clamp движения живёт в Movement.js clampToWorld()/
+      // setWaypoint(), который клэмпит по this.scene.worldWidth/worldHeight
+      // напрямую и вообще не смотрит на physics.world.bounds (grep подтвердил —
+      // setCollideWorldBounds нигде в проекте не используется). Правильный фикс —
+      // сложить тесную коробку лабиринта сюда, а Movement.js уже её использует
+      // вместо worldWidth/worldHeight, когда сектор arenaMaze. Камера границ не
+      // имеет (см. "Камера БЕЗ границ" выше), так что это чисто игровой клэмп, без
+      // визуальных побочных эффектов. Коробка — из wallSource (макс/мин по всем
+      // концам отрезков), не хардкод — авто-подстраивается под любой вариант/офсет.
+      if (sec.arenaMaze && wallSource.length) {
+        const PAD = 40;
+        let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+        for (const [x1, y1, x2, y2] of wallSource) {
+          minX = Math.min(minX, x1, x2); maxX = Math.max(maxX, x1, x2);
+          minY = Math.min(minY, y1, y2); maxY = Math.max(maxY, y1, y2);
+        }
+        // Базы сидят ровно на краю коробки лабиринта (это и есть их "дверь") — их
+        // собственное кольцо безопасной зоны (ARENA_BASE_SAFE_R) торчит НАРУЖУ за
+        // эту тесную коробку на ~180px, так что чистый прямоугольный клэмп срезал
+        // половину каждой базы (баг из диалога: "базы наполовину за границей карты
+        // — это халтура", прямое следствие клэмпа выше). Фикс — не расширять сам
+        // прямоугольник (это снова открыло бы облёт по всему периметру), а дать
+        // Movement.js точечное исключение: свободное движение в локальном "пузыре"
+        // вокруг каждой базы, даже если он чуть высовывается за коробку — пузырь
+        // не тянется вдоль всего периметра, так что кольцевой облёт всё равно
+        // невозможен, только сама база стала полностью достижима.
+        const bubbles = [];
+        if (layout.bases) {
+          const BR = ARENA_BASE_SAFE_R + PAD;
+          for (const team of ['a', 'b']) {
+            const bpos = layout.bases[team];
+            if (bpos) bubbles.push({ x: cx + bpos[0], y: cy + bpos[1], r: BR });
+          }
+        }
+        this._arenaMazeBounds = {
+          x0: cx + minX - PAD, y0: cy + minY - PAD,
+          x1: cx + maxX + PAD, y1: cy + maxY + PAD,
+          bubbles,
+        };
+      } else {
+        this._arenaMazeBounds = null;
+      }
 
     } else if (galaxy.current === 'R-1-boss') {
       // Вертикальная 5-конечная звезда: толстые стены коридоров (150px) + кольцо арены
@@ -8574,6 +9019,8 @@ export default class GameScene extends Phaser.Scene {
     this._trackedBeams = [];
     this.argusCtrl?.destroy();
     this.argusCtrl = null;
+    this._arenaController?.destroy();
+    this._arenaController = null;
     this.confedGuards?.destroy();
     this.confedGuards = null;
     this._apophisPulseTween?.stop();
@@ -8630,7 +9077,9 @@ export default class GameScene extends Phaser.Scene {
       respeckCount:        this.respeckCount        || 0,
       skillAchievementSP:  this.skillAchievementSP  || 0,
       skillSpHighWater:    this.skillSpHighWater    || 0,
-      currentSector:       galaxy.current === 'shadow_arena' ? (this._shadowPrevSector || 'helios_1') : galaxy.current,
+      currentSector:       galaxy.current === 'shadow_arena' ? (this._shadowPrevSector || 'helios_1')
+                           : SECTORS[galaxy.current]?.arenaMode ? (this._arenaPrevSector || 'helios_1')
+                           : galaxy.current,
       playerCorp:          this.playerCorp          || 'neutral',
       lootBySector:        this._serializeLoot(),
       missionState:        this.missionState        || {},
@@ -8688,8 +9137,13 @@ export default class GameScene extends Phaser.Scene {
     if (s.skillSpHighWater   != null) this.skillSpHighWater   = s.skillSpHighWater;
     if (s.currentSector != null && SECTORS[s.currentSector]) {
       const restoredSec = SECTORS[s.currentSector];
-      if (s.currentSector === 'R-1-boss' || s.currentSector === 'shadow_arena') {
-        // Персональные/boss арены без базы: редирект на домашний сектор
+      if (s.currentSector === 'R-1-boss' || s.currentSector === 'shadow_arena' || restoredSec.arenaMode) {
+        // Персональные/boss арены без базы, а также Арена (arenaMode) — эфемерный
+        // инстанс конкретного матча, который не переживает дисконнект/релогин (сервер
+        // не хранит его вечно, ArenaController на клиенте не персистится вовсе). Без
+        // этого редиректа игрок, чей матч оборвался (вкладка закрыта/дисконнект),
+        // при следующем входе попадал бы прямо в мёртвый arena_* сектор — один, без
+        // ArenaController, без соперника (баг из диалога: "корабль на арене один").
         const corp  = s.playerCorp || 'helios';
         const level = levelInfo(s.pilotXp || 0).level;
         galaxy.current = _bestHomeSector(corp, level);

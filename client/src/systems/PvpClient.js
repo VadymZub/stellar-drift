@@ -23,10 +23,18 @@ export class PvpClient {
         this.players = new Map();   // userId -> RemotePlayer
 
         this._posAccum = 0;
-        this._posIntervalMs = 100;  // ~10Hz — держим канал лёгким при частом update()
+        // ~16Hz (было 10Hz) — 100мс между сэмплами heading оказался слишком грубым для
+        // быстро крутящихся кораблей (Аргус): интерполяция на клиенте либо ощутимо
+        // отставала от реального разворота, либо (при агрессивном лерпе) успевала
+        // "доехать" до цели и замирала в ожидании следующего сэмпла — выглядело
+        // дискретно/дёргано вместо плавного вращения (баг из диалога). Более частые
+        // сэмплы сокращают этот зазор без необходимости dead-reckoning по угловой
+        // скорости (которая вообще не передаётся по сети).
+        this._posIntervalMs = 60;
 
         // Callbacks — assigned from HudScene._connectChatWS, same pattern as GroupSystem's.
         this.onHitResult    = null; // (msg) => void — игрок-игрок
+        this.onPlayerHealed = null; // (msg) => void — pvp_self_heal_claim применился (Аргус: кокон)
         this.onMobHitResult = null; // (msg) => void — игрок-моб (общий HP-леджер)
         this.onLootSpawned  = null; // (msg) => void — новый общий лут-бокс мне видим
         this.onLootResult   = null; // (msg) => void — ответ на мою claimLoot
@@ -48,6 +56,14 @@ export class PvpClient {
                                         // без client-claim заявки; клиент только рисует визуал и синкает HP.
         this.onWorldEventReward = null; // (msg) => void — {weKey,credits,xp,gold} — моя доля пропорциональной
                                          // награды за расчистку волны нашествия (см. worldEventClearClaim)
+
+        // ── Арена (см. ArenaController) ──────────────────────────────────────
+        this.onArenaQueueUpdate    = null; // (msg) => void — {mode,ok,waiting,reason?}
+        this.onArenaMatchFound     = null; // (msg) => void — {matchId,roomKey,mode,sectorKey,team,teammates,enemies,spawn}
+        this.onArenaRespawn        = null; // (msg) => void — {userId,x,y,at}
+        this.onArenaObjectiveSync  = null; // (msg) => void — {flags?,points?,cargo?}
+        this.onArenaScore          = null; // (msg) => void — {a,b}
+        this.onArenaMatchEnd       = null; // (msg) => void — {outcome,winningTeam}
     }
 
     // ── Outgoing ─────────────────────────────────────────────────────────────
@@ -103,6 +119,18 @@ export class PvpClient {
     abilityFireClaim(targetUserId, ability, dmg) {
         if (!this.sector) return;
         this._send({ type: 'pvp_ability_fire_claim', targetUserId, ability, dmg });
+    }
+
+    /** Самолечение (Аргус: "Фазовый кокон", см. server main.py pvp_self_heal_claim) —
+     * раньше ArgusController._activateCocoon лечил и включал неуязвимость ЧИСТО
+     * локально, сервер (и другие клиенты) никогда об этом не узнавали: следующий хит
+     * считался от старого hull, а неуязвимость не мешала серверу засчитать полный урон
+     * (баг из диалога: "бар хп/щита у противника неактуальный"). Сумму хила считает
+     * сам сервер от своего max_hull/max_shield — здесь только факт активации,
+     * ability — 'argus_cocoon'. */
+    selfHealClaim(ability) {
+        if (!this.sector) return;
+        this._send({ type: 'pvp_self_heal_claim', ability });
     }
 
     /** maxHull/maxShield — сервер лениво создаёт HP-запись мобa по этим значениям при
@@ -274,6 +302,47 @@ export class PvpClient {
         this._send(payload);
     }
 
+    // ── Арена: очередь/матч (см. server arena.py, ArenaController) ───────────
+    // Очередь НЕ room-scoped (нет this.sector-гейта) — жмётся из лобби ДО входа в
+    // арена-сектор, в отличие от остальных методов этого класса.
+    arenaQueueJoin(mode) {
+        this._send({ type: 'arena_queue_join', mode });
+    }
+
+    arenaQueueLeave() {
+        this._send({ type: 'arena_queue_leave' });
+    }
+
+    arenaFlagPickup() {
+        if (!this.sector) return;
+        this._send({ type: 'arena_flag_pickup' });
+    }
+
+    arenaFlagCapture() {
+        if (!this.sector) return;
+        this._send({ type: 'arena_flag_capture' });
+    }
+
+    arenaFlagReturn() {
+        if (!this.sector) return;
+        this._send({ type: 'arena_flag_return' });
+    }
+
+    arenaCargoPickup() {
+        if (!this.sector) return;
+        this._send({ type: 'arena_cargo_pickup' });
+    }
+
+    arenaCargoDeliver() {
+        if (!this.sector) return;
+        this._send({ type: 'arena_cargo_deliver' });
+    }
+
+    arenaPointClaim(pointId) {
+        if (!this.sector) return;
+        this._send({ type: 'arena_point_claim', pointId });
+    }
+
     // ── Incoming (call from WS onmessage handler, routed by HudScene) ────────
 
     handleMessage(msg) {
@@ -341,6 +410,14 @@ export class PvpClient {
 
             case 'pvp_hit_result':
                 this.onHitResult?.(msg);
+                break;
+
+            // Самолечение (см. selfHealClaim выше) — приходит и себе (эхо, кастер уже
+            // применил хил локально при активации — этот приход просто игнорируется на
+            // isMe, см. GameScene._onPvpPlayerHealed), и наблюдателям, у которых
+            // RemotePlayer этого игрока иначе не узнал бы о новом hull/shield.
+            case 'pvp_player_healed':
+                this.onPlayerHealed?.(msg);
                 break;
 
             case 'pvp_mob_hit_result':
@@ -418,6 +495,30 @@ export class PvpClient {
             case 'pvp_mob_attack_result':
                 this.onMobAttackResult?.(msg);
                 break;
+
+            case 'arena_queue_update':
+                this.onArenaQueueUpdate?.(msg);
+                break;
+
+            case 'arena_match_found':
+                this.onArenaMatchFound?.(msg);
+                break;
+
+            case 'arena_respawn':
+                this.onArenaRespawn?.(msg);
+                break;
+
+            case 'arena_objective_sync':
+                this.onArenaObjectiveSync?.(msg);
+                break;
+
+            case 'arena_score':
+                this.onArenaScore?.(msg);
+                break;
+
+            case 'arena_match_end':
+                this.onArenaMatchEnd?.(msg);
+                break;
         }
     }
 
@@ -430,11 +531,16 @@ export class PvpClient {
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     _spawn(data) {
-        // Красный (враждебный) только в реальном PvP-секторе И чужой корпус — на
-        // остальных realtime-картах (домашняя/PvE/групповой данж) и игроков СВОЕГО
-        // корпа даже в PvP другие игроки союзники, красить в "враг" некорректно (и
-        // атаковать их нельзя, см. GameScene._fireCannon/_fireLaser ally-fire чек).
-        const isHostile = !!this.scene._isPvpSector && data.corp !== (this.scene.playerCorp || 'neutral');
+        // Арена — враждебность по КОМАНДЕ матча, не по корпорации (арена принципиально
+        // некорповая, см. ArenaController.teamOf). Вне арены — красный (враждебный)
+        // только в реальном PvP-секторе И чужой корпус — на остальных realtime-картах
+        // (домашняя/PvE/групповой данж) и игроков СВОЕГО корпа даже в PvP другие игроки
+        // союзники, красить в "враг" некорректно (и атаковать их нельзя, см.
+        // GameScene._fireCannon/_fireLaser ally-fire чек).
+        const arena = this.scene._arenaController;
+        const isHostile = arena
+            ? arena.teamOf(data.userId) !== arena.myTeam
+            : !!this.scene._isPvpSector && data.corp !== (this.scene.playerCorp || 'neutral');
         this.players.set(data.userId, new RemotePlayer(this.scene, data, isHostile));
     }
 

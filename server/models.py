@@ -163,6 +163,21 @@ class DungeonLives(Base):
     updated_at  = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
+class ArenaDaily(Base):
+    # Дневной счётчик награждённых арен — авторитетен на сервере (в отличие от чисто
+    # клиентских суточных лимитов типа PLASMATE_DAILY_MAX), т.к. исход матча (win/draw/
+    # void) сервер знает сам (он вёл матч), и лимит легко обойти при клиентском счётчике.
+    # Один общий счётчик на все 4 варианта арены (флаг/точки/груз/дуэль) — см.
+    # /arena/match-complete. day_key — как у DungeonLives (локальная дата клиента).
+    __tablename__ = "arena_daily"
+
+    id             = Column(Integer, primary_key=True)
+    user_id        = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    day_key        = Column(String(10), nullable=False, index=True)
+    rewarded_count = Column(Integer, nullable=False, default=0)   # 0..ARENA_DAILY_CAP
+    updated_at     = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
 class MiningBaseState(Base):
     # Общий (не привязанный к юзеру) объект — база живёт в мире и её владеют/атакуют
     # разные игроки. Один JSON-блоб = ровно то, что клиент строит в

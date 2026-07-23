@@ -15,7 +15,7 @@ function _resolveStartSector(state) {
   return corp === 'neutral' ? 'helios_1' : `${corp}_1`;
 }
 
-const DEV_MODE = true;
+const DEV_MODE = false;
 
 export default class LoginScene extends Phaser.Scene {
   constructor() { super('LoginScene'); }

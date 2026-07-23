@@ -58,6 +58,43 @@ export const BASE_WORLD = {
 
 export const PVP_WORLD_SCALE = 2.4; // Площадь ×4 относительно PvE (PvE=1.2 → PvP=2.4, ratio площадей = 2.4²/1.2² = 4)
 
+// Арена (захват флага/точек/груза 3на3 + дуэль 1на1) — площадь задана относительно
+// домашнего сектора (scale=1.2, площадь×1.44): 3на3 = 50% (0.85²≈0.72), 1на1 = 25%
+// (0.6²=0.36 точно). См. GameScene._worldScaleFor. Абсолютные координаты баз/точек/
+// груза ДОЛЖНЫ совпадать с server/main.py ARENA_SPAWNS/ARENA_POINT_POSITIONS/
+// ARENA_CARGO_SPAWN (те считаются от того же BASE_WORLD/scale, см. arenaLayouts.js).
+export const ARENA_3V3_WORLD_SCALE = 0.85;
+export const ARENA_1V1_WORLD_SCALE = 0.6;
+export const ARENA_TEAM_COLOR = { a: 0x2196f3, b: 0xf44336 };  // синий/красный — НЕ цвета корпораций
+export const ARENA_DAILY_CAP = 10;
+export const ARENA_RESPAWN_MS = 5000;
+export const ARENA_CARRIER_SPEED_MULT = 0.75;  // -25% носителю флага/груза
+// Уменьшено втрое (см. диалог: "круг базы и круг для флага - уменьшить каждый в 3
+// раза по радиусу") — ARENA_CAPTURE_R ниже считается ОТ этого значения (тоже /3),
+// так что каскадом уменьшается и он, оба круга нужного размера одним изменением.
+export const ARENA_BASE_SAFE_R = 650 / 3;
+export const ARENA_CAPTURE_R = ARENA_BASE_SAFE_R / 3;
+export const ARENA_PICKUP_R = 180;             // дальность поднятия флага/груза — зеркалит server ARENA_PICKUP_R
+// Груз — сбор каналится 10с в радиусе, как обычный лут (см. GameScene.updateLoot/
+// PICKUP_TIME), а не мгновенно по дистанции — див диалог. Чисто клиентский таймер
+// (тот же уровень доверия, что и у обычного лута — сервер и там не проверяет тайминг,
+// только финальную заявку по дистанции, см. main.py arena_cargo_pickup).
+export const ARENA_CARGO_PICKUP_MS = 10000;
+export const ARENA_POINT_R = 220;              // дальность захвата точки — зеркалит server ARENA_POINT_R
+// A/C раньше сидели на той же строке сетки лабиринта, что и обе базы (y=0) — весь
+// матч сводился к полёту по одному горизонтальному коридору (баг из диалога: "3
+// точки на одной линии - нет смысла летать кроме как по одной линии"). Разносим их
+// по разным рядам лабиринта (шаг сетки ~583, см. arenaLayouts.js), B остаётся в
+// истинном центре. Зеркалит server ARENA_POINT_ROW_OFFSET.
+export const ARENA_POINT_ROW_OFFSET = 583;
+export const ARENA_QUEUE_TIMEOUT_MS = 3 * 60 * 1000;  // 3 мин без соперника — авто-отмена записи
+export const ARENA_MODES = {
+  flag:   { sector: 'arena_flag',   team: '3v3', mapKey: 'Arena-3', score: 5, label: 'Захват флага' },
+  points: { sector: 'arena_points', team: '3v3', mapKey: 'Arena-1', label: 'Захват точек' },
+  cargo:  { sector: 'arena_cargo',  team: '3v3', mapKey: 'Arena-2', score: 3, label: 'Захват груза' },
+  duel:   { sector: 'arena_duel',   team: '1v1', mapKey: 'Arena-1', label: 'Дуэль 1на1' },
+};
+
 // Множители сложности данжей. Применяются к мобам, наградам и ресурсам.
 export const DUNGEON_DIFF = {
   normal: { mobCount: 1.0, mobHP: 1.0, mobDamage: 1.0, deposits: 1.0, goldMult: 1.0, xpMult: 1.0, dropRate: 0.10 },
@@ -449,7 +486,7 @@ export const HONOR = {
   PVP_HIGHER:  100,  // victim level > player level
   PVP_EQUAL:   50,
   PVP_LOWER:   10,
-  ARENA_WIN:   50,   // будущая арена с записью/очередью — значение задано, ещё не подключено (нет сектора), см. диалог
+  ARENA_WIN:   50,   // победа на арене (флаг/точки/груз/дуэль) — см. ARENA_MODES, ArenaController
   APOPHYSIS:   200,
   // Аргус честь больше не считает по отдельной константе — как у обычного босса в
   // групповом данже (BOSS_HIGHER/EQUAL/LOWER по уровню), см. ArgusController._onArgusDied.

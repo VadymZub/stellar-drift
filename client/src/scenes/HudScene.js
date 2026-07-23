@@ -1,5 +1,5 @@
 import * as Phaser from 'https://cdn.jsdelivr.net/npm/phaser@4.2.1/dist/phaser.esm.js';
-import { COLORS, UI_RES, BASE_SCAN_RADIUS, DPR, ARMORED_TRAIN_SECTORS } from '../constants.js';
+import { COLORS, UI_RES, BASE_SCAN_RADIUS, DPR, ARMORED_TRAIN_SECTORS, ARENA_TEAM_COLOR } from '../constants.js';
 import { i18n } from '../i18n.js';
 import { levelInfo, MAX_LEVEL } from '../leveling.js';
 import { minimapRect, fit } from '../systems/minimap.js';
@@ -87,6 +87,24 @@ export default class HudScene extends Phaser.Scene {
 
     this.bars = this.add.graphics().setDepth(100);
     this.miniGfx = this.add.graphics().setDepth(101);   // миникарта — векторные блипы
+
+    // Кнопка "ПОКИНУТЬ АРЕНУ" — раньше выход был только по ESC (см. GameScene keydown-ESC
+    // → _confirmLeaveArena), без видимой кнопки на экране игрок не догадывался, как выйти
+    // (баг из диалога: "выход с арены не вижу кнопки"). Видна только в arenaMode-секторе
+    // (см. update() ниже), фиксированная позиция верх-справа — не завязана на счёт-баннер
+    // (которого нет в дуэли, см. ArenaController.onScore).
+    this._leaveArenaBg = this.add.rectangle(0, 0, 190, 40, 0x1a0808, 0.92)
+      .setStrokeStyle(1.5, 0xef5350, 0.85).setDepth(400).setScrollFactor(0)
+      .setInteractive({ useHandCursor: true }).setVisible(false);
+    this._leaveArenaTxt = this.add.text(0, 0, '✕ ПОКИНУТЬ АРЕНУ', {
+      fontFamily: 'Orbitron, sans-serif', fontSize: '13px', color: '#ef9a9a', resolution: UI_RES,
+    }).setOrigin(0.5).setDepth(401).setScrollFactor(0).setVisible(false);
+    this._leaveArenaBg.on('pointerover', () => this._leaveArenaBg.setFillStyle(0x2a0c0c, 0.95));
+    this._leaveArenaBg.on('pointerout',  () => this._leaveArenaBg.setFillStyle(0x1a0808, 0.92));
+    this._leaveArenaBg.on('pointerdown', (pointer, lx, ly, event) => {
+      if (event) event.stopPropagation();
+      this.gs?._confirmLeaveArena?.();
+    });
     // Дёрти-чек кэш (см. update() ниже, "Graphics.clear()+перерисовка... дорогая
     // операция") — обычные поля сцены, ПЕРЕЖИВАЮТ scene.restart() (это тот же JS-объект,
     // restart() пересоздаёт только display-объекты типа this.bars выше). Без сброса —
@@ -631,6 +649,7 @@ export default class HudScene extends Phaser.Scene {
       { label: 'СКИЛЛЫ  K',  key: 'SkillScene'  },
       { label: 'СКЛАД  C',   key: 'CargoScene'  },
       { label: 'БОЙ С ТЕНЬЮ', key: 'ShadowBattleScene' },
+      { label: 'АРЕНА',      key: 'ArenaLobbyScene' },
     ];
 
     const totalW = ITEMS.length * BTN_W + (ITEMS.length - 1) * GAP + GAP + EXIT_W;
@@ -652,6 +671,15 @@ export default class HudScene extends Phaser.Scene {
       btn.on('pointerover',  () => { if (!this.scene.isActive(key)) { btn.setFillStyle(0x0f2535); txt.setTint(0x4dd0e1); this.tweens.add({ targets: [btn, txt], scaleY: 1.06, duration: 80, ease: 'Sine.easeOut' }); } });
       btn.on('pointerout',   () => { if (!this.scene.isActive(key)) { btn.setFillStyle(0x081420); txt.setTint(0x3a8aaa); this.tweens.add({ targets: [btn, txt], scaleY: 1.0, duration: 80, ease: 'Sine.easeOut' }); } });
       btn.on('pointerdown',  () => {
+        // Арена — НЕ обычный взаимоисключающий оверлей: должна открываться ПОВЕРХ уже
+        // открытого меню (Гараж/Клан/etc, см. диалог), не закрывая его и не выходя из
+        // него по _exitToSpace(). toggleOverlay() тут не годится (он гасит все прочие
+        // оверлеи) — просто лаунчим/стопаем ArenaLobbyScene саму по себе.
+        if (key === 'ArenaLobbyScene') {
+          if (this.scene.isActive(key)) this.scene.stop(key);
+          else this.scene.launch(key);
+          return;
+        }
         if (this.scene.isActive('DonateScene')) this.scene.stop('DonateScene');
         if (this.scene.isActive(key)) this.gs._exitToSpace();
         else this.gs.toggleOverlay(key);
@@ -701,6 +729,24 @@ export default class HudScene extends Phaser.Scene {
   }
 
   update(time, delta) {
+    // Видимость кнопки выхода с арены — см. create() выше.
+    const inArena = !!SECTORS[galaxy.current]?.arenaMode;
+    if (this._leaveArenaBg.visible !== inArena) {
+      this._leaveArenaBg.setVisible(inArena);
+      this._leaveArenaTxt.setVisible(inArena);
+    }
+    if (inArena) {
+      // Раньше фиксированная (width-105, 46) перекрывала миникарту (та же зона
+      // верх-справа, см. диалог: "кнопка... перекрывает часть миникарты") — берём
+      // РЕАЛЬНЫЙ прямоугольник миникарты (тот же расчёт, что drawMinimap) и ставим
+      // кнопку под ним. +31 — плашка подписи сектора/координат под миникартой (см.
+      // drawMinimap: "Тёмная плашка под миникартой"), первая правка попадала ПРЯМО
+      // на неё вместо отступа ниже (баг из диалога: "закрывает название карты").
+      const mm = minimapRect(this, getMinimapDims(loadSettings().minimapSize));
+      const bx = mm.x + mm.w / 2, by = mm.y + mm.h + 31 + 26;
+      this._leaveArenaBg.setPosition(bx, by);
+      this._leaveArenaTxt.setPosition(bx, by);
+    }
     // Обновляем счётчик независимо от того, есть ли уже игрок (полезен и на базе/в
     // меню) — раз в ~0.5с, а не каждый кадр: и число дороже читать при 60 обновлениях/
     // сек, и не нужно платить текстовую аллокацию (см. тот же принцип у info panel выше).
@@ -1030,11 +1076,16 @@ export default class HudScene extends Phaser.Scene {
       g.fillStyle(COLORS.primary, 0.9); g.fillCircle(bx, by, 3);
     }
 
-    // Стены данжа на миникарте — всегда видны, цвет по типу
-    if (sec.isDungeon && gs.walls) {
+    // Стены данжа/арены на миникарте — всегда видны, цвет по типу. Раньше условие было
+    // `sec.isDungeon` без `sec.arenaMaze` — стены арены (arenaMode-секторы несут
+    // pvp:true, НЕ isDungeon:true) физически рисовались в мире (createDungeonWalls
+    // уже поддерживает arenaMaze), но полностью выпадали из миникарты (баг из диалога:
+    // "на миникарте не нарисованы стены — критично").
+    if ((sec.isDungeon || sec.arenaMaze) && gs.walls) {
       const DUNGEON_WALL_COLOR = {
         dungeon_1: 0x8b3a1a, dungeon_2: 0x3a6a3a, dungeon_3: 0x505080,
         dungeon_4: 0x3a5a3a, dungeon_5: 0x4dd0e1, dungeon_prem: 0x00c853, 'R-1-boss': 0xc8a800,
+        arena_points: 0x5b8fc7, arena_cargo: 0x8fa0b0, arena_flag: 0xb388ff,
       };
       const wc = DUNGEON_WALL_COLOR[galaxy.current] ?? 0x4dd0e1;
       g.fillStyle(wc, 0.35);
@@ -1045,6 +1096,47 @@ export default class HudScene extends Phaser.Scene {
         const sh = Math.max(1, wall.height * f.s);
         g.fillRect(wx - sw / 2, wy - sh / 2, sw, sh);
         g.strokeRect(wx - sw / 2, wy - sh / 2, sw, sh);
+      }
+    }
+
+    // Арена: базы команд + точки/флаг/груз на миникарте — раньше миникарта не
+    // рисовала ничего из этого вовсе (только стены выше), см. диалог: "рисовать
+    // точки на миникарте". Всегда видны (не зависят от scan radius — свои же базы/
+    // объективы матча, не спрятанный контент).
+    const arenaCtl = sec.arenaMode && gs._arenaController;
+    if (arenaCtl) {
+      for (const team of ['a', 'b']) {
+        const base = arenaCtl.bases?.[team];
+        if (!base) continue;
+        const bx = f.ox + base.x * f.s, by = f.oy + base.y * f.s;
+        const c = ARENA_TEAM_COLOR[team];
+        g.lineStyle(1.5, c, 0.8);
+        g.strokeCircle(bx, by, 6);
+        g.fillStyle(c, team === arenaCtl.myTeam ? 0.9 : 0.5);
+        g.fillCircle(bx, by, 3);
+      }
+      if (arenaCtl.points) {
+        for (const p of arenaCtl.points) {
+          const px3 = f.ox + p.x * f.s, py3 = f.oy + p.y * f.s;
+          const c = (p.owner === 'a' || p.owner === 'b') ? ARENA_TEAM_COLOR[p.owner] : 0x888888;
+          g.lineStyle(1.5, c, 0.85);
+          g.strokeCircle(px3, py3, 4.5);
+        }
+      }
+      if (arenaCtl.flags) {
+        for (const team of ['a', 'b']) {
+          const flag = arenaCtl.flags[team];
+          if (!flag || !flag.alive) continue;
+          const fx = f.ox + flag.x * f.s, fy = f.oy + flag.y * f.s;
+          const c = ARENA_TEAM_COLOR[team];
+          g.fillStyle(c, 0.9);
+          g.fillPoints([{ x: fx, y: fy - 4 }, { x: fx + 4, y: fy }, { x: fx, y: fy + 4 }, { x: fx - 4, y: fy }], true);
+        }
+      }
+      if (arenaCtl.cargo?.available) {
+        const cgx = f.ox + arenaCtl.cargo.x * f.s, cgy = f.oy + arenaCtl.cargo.y * f.s;
+        g.fillStyle(0xffee44, 0.9);
+        g.fillPoints([{ x: cgx, y: cgy - 4 }, { x: cgx + 4, y: cgy }, { x: cgx, y: cgy + 4 }, { x: cgx - 4, y: cgy }], true);
       }
     }
 
@@ -1837,6 +1929,9 @@ export default class HudScene extends Phaser.Scene {
     this.pvpClient.onHitResult = (msg) => {
       this.scene.get('GameScene')?._onPvpHitResult(msg);
     };
+    this.pvpClient.onPlayerHealed = (msg) => {
+      this.scene.get('GameScene')?._onPvpPlayerHealed(msg);
+    };
     this.pvpClient.onMobHitResult = (msg) => {
       this.scene.get('GameScene')?._onPvpMobHitResult(msg);
     };
@@ -1943,6 +2038,28 @@ export default class HudScene extends Phaser.Scene {
     // накопленному вкладу, раньше каждый клиент выдавал себе полную награду локально.
     this.pvpClient.onWorldEventReward = (msg) => {
       this.scene.get('GameScene')?._onWorldEventReward(msg);
+    };
+    // Арена (см. ArenaController/ArenaLobbyOverlay) — очередь/матч-нашёлся/респаун/
+    // синк целей/счёт/конец матча. Те же getter'ы this.scene.get('GameScene'), что и
+    // остальные колбэки этого блока — GameScene пересоздаётся на каждый restart(),
+    // делегат должен резолвиться заново на каждый вызов, не кэшироваться.
+    this.pvpClient.onArenaQueueUpdate = (msg) => {
+      this.scene.get('GameScene')?._onArenaQueueUpdate(msg);
+    };
+    this.pvpClient.onArenaMatchFound = (msg) => {
+      this.scene.get('GameScene')?._onArenaMatchFound(msg);
+    };
+    this.pvpClient.onArenaRespawn = (msg) => {
+      this.scene.get('GameScene')?._onArenaRespawn(msg);
+    };
+    this.pvpClient.onArenaObjectiveSync = (msg) => {
+      this.scene.get('GameScene')?._onArenaObjectiveSync(msg);
+    };
+    this.pvpClient.onArenaScore = (msg) => {
+      this.scene.get('GameScene')?._onArenaScore(msg);
+    };
+    this.pvpClient.onArenaMatchEnd = (msg) => {
+      this.scene.get('GameScene')?._onArenaMatchEnd(msg);
     };
     this.pvpClient.onTrainForceSpawn = (msg) => {
       const gs = this.scene.get('GameScene');
@@ -2086,8 +2203,13 @@ export default class HudScene extends Phaser.Scene {
         this.groupSystem?.handleMessage(d);
         return;
       }
-      // PvP-сообщения (присутствие/позиции/бой) роутим в PvpClient
-      if (d.type?.startsWith('pvp_')) {
+      // PvP-сообщения (присутствие/позиции/бой) роутим в PvpClient. Арена (см.
+      // ArenaController) шлёт свой префикс 'arena_' — БЕЗ этой ветки arena_match_found/
+      // arena_queue_update/etc. молча проваливались сквозь общий чат-диспетчер ниже
+      // (никакой d.type тут не совпадает, сообщение просто терялось без единой ошибки —
+      // именно поэтому "встал в очередь" ничего не давало: сервер матчил и слал
+      // arena_match_found, клиент никогда не вызывал pvpClient.handleMessage для него).
+      if (d.type?.startsWith('pvp_') || d.type?.startsWith('arena_')) {
         this.pvpClient?.handleMessage(d);
         return;
       }
@@ -3106,6 +3228,51 @@ export default class HudScene extends Phaser.Scene {
         this._tickerObjs = null; this._tickerTween = null;
       },
     });
+  }
+
+  // Арена — счёт-баннер (обновляется по arena_score, см. ArenaController.onScore) +
+  // краткий баннер исхода матча. Полноценное лобби записи — см. ArenaLobbyOverlay.
+  // По цвету команды (a=синие, b=красные, см. ARENA_TEAM_COLOR), НЕ "мы"/"они" —
+  // левая половина всегда синяя, правая всегда красная, независимо от того, за кого
+  // играет смотрящий (см. диалог: "не нужно мы/они", "слева синим будет синие").
+  // Только 3на3 — дуэль не вызывает этот метод вовсе (см. ArenaController.onScore).
+  setArenaScore(scores) {
+    const W = this.scale.width;
+    if (!this._arenaScoreBlueTxt) {
+      const style = { fontFamily: 'Orbitron, sans-serif', fontSize: '20px', resolution: UI_RES, stroke: '#000', strokeThickness: 4 };
+      this._arenaScoreBlueTxt = this.add.text(W / 2 - 6, 46, '', { ...style, color: '#2196f3' }).setOrigin(1, 0.5).setDepth(400).setScrollFactor(0);
+      this._arenaScoreSepTxt  = this.add.text(W / 2, 46, ':', { ...style, color: '#e0e0e0' }).setOrigin(0.5).setDepth(400).setScrollFactor(0);
+      this._arenaScoreRedTxt  = this.add.text(W / 2 + 6, 46, '', { ...style, color: '#f44336' }).setOrigin(0, 0.5).setDepth(400).setScrollFactor(0);
+    }
+    this._arenaScoreBlueTxt.setText(`СИНИЕ ${scores.a}`);
+    this._arenaScoreRedTxt.setText(`${scores.b} КРАСНЫЕ`);
+  }
+
+  // Уничтожает баннер счёта (если есть) — общий клинап и для конца матча
+  // (showArenaMatchEnd), и для добровольного/ручного выхода с арены
+  // (GameScene._leaveArenaToPrevSector), у которого arena_match_end не приходит.
+  clearArenaScore() {
+    this._arenaScoreBlueTxt?.destroy(); this._arenaScoreBlueTxt = null;
+    this._arenaScoreSepTxt?.destroy();  this._arenaScoreSepTxt = null;
+    this._arenaScoreRedTxt?.destroy();  this._arenaScoreRedTxt = null;
+  }
+
+  showArenaMatchEnd(outcome, winnerName) {
+    this.clearArenaScore();
+    const labels = {
+      win: '🏆 ПОБЕДА', lose: '☠ ПОРАЖЕНИЕ', draw: '🤝 НИЧЬЯ',
+      void: '⚠ МАТЧ ОТМЕНЁН — соперник отключился более чем на 2 мин',
+    };
+    // Ник победителя — только проигравшему/при ничьей нет смысла (сам факт "я выиграл"
+    // уже ясен из label); раньше сюда попадал сырой сервер-outcome ('win_a') из-за
+    // отсутствующей персонализации на сервере (см. диалог: "выводить ник, а не wins_a").
+    const label = (outcome === 'lose' && winnerName) ? `${labels[outcome]}\nПобедил: ${winnerName}` : (labels[outcome] ?? outcome);
+    const W = this.scale.width, H = this.scale.height;
+    const txt = this.add.text(W / 2, H / 2 - 80, label, {
+      fontFamily: 'Orbitron, sans-serif', fontSize: '32px', color: '#ffd54f', resolution: UI_RES,
+      stroke: '#000', strokeThickness: 6, align: 'center',
+    }).setOrigin(0.5).setDepth(410).setScrollFactor(0);
+    this.time.delayedCall(4000, () => txt.destroy());
   }
 
   // Раньше строило Set (map+filter) и разворачивало его в массив через [...] КАЖДЫЙ

@@ -31,18 +31,46 @@ export default class Movement {
   // Половина корпуса корабля — отступ от края мира, чтобы спрайт не вылезал за границу.
   worldMargin() { return (this.player.displaySize || 100) / 2; }
 
+  // Границы клэмпа — обычно весь мир, но в лабиринте арены (arenaMaze) сектор
+  // намного больше самого лабиринта (буфер до истинного края мира), и без более
+  // тесного клэмпа корабль может выйти через "дверь" базы наружу и облететь ВЕСЬ
+  // лабиринт по этому буферу, минуя его целиком (баг из диалога: "облет вокруг
+  // лабиринта — не исправлено" — GameScene.createDungeonWalls считает точную
+  // коробку лабиринта в this._arenaMazeBounds под этот самый клэмп).
+  _clampBounds() {
+    const b = this.scene._arenaMazeBounds;
+    return b ? { x0: b.x0, y0: b.y0, x1: b.x1, y1: b.y1 }
+             : { x0: 0, y0: 0, x1: this.scene.worldWidth, y1: this.scene.worldHeight };
+  }
+
+  // Базы сидят ровно на краю тесной коробки лабиринта — их полное кольцо
+  // безопасной зоны торчит за неё, так что прямой прямоугольный клэмп срезал
+  // половину базы (баг из диалога: "базы наполовину за границей карты"). Если
+  // точка лежит внутри пузыря какой-то базы — координата не трогается вовсе,
+  // даже когда она снаружи тесной коробки: пузырь локальный (не тянется вдоль
+  // всего периметра), так что кольцевой облёт всё равно закрыт, а сама база
+  // становится полностью достижимой.
+  _inArenaBaseBubble(x, y) {
+    const bubbles = this.scene._arenaMazeBounds?.bubbles;
+    return !!bubbles?.some(bb => Phaser.Math.Distance.Between(x, y, bb.x, bb.y) <= bb.r);
+  }
+
   // Зажать позицию корабля в границах мира (камера теперь не ограничена миром).
   clampToWorld() {
     const m = this.worldMargin(), p = this.player;
-    const ww = this.scene.worldWidth, wh = this.scene.worldHeight;
-    p.sprite.x = Phaser.Math.Clamp(p.sprite.x, m, ww - m);
-    p.sprite.y = Phaser.Math.Clamp(p.sprite.y, m, wh - m);
+    if (this._inArenaBaseBubble(p.sprite.x, p.sprite.y)) return;
+    const b = this._clampBounds();
+    p.sprite.x = Phaser.Math.Clamp(p.sprite.x, b.x0 + m, b.x1 - m);
+    p.sprite.y = Phaser.Math.Clamp(p.sprite.y, b.y0 + m, b.y1 - m);
   }
 
   setWaypoint(x, y, showArrow = false) {
-    const m = this.worldMargin();
-    const ww = this.scene.worldWidth, wh = this.scene.worldHeight;
-    this.player.waypoint = { x: Phaser.Math.Clamp(x, m, ww - m), y: Phaser.Math.Clamp(y, m, wh - m) };
+    if (this._inArenaBaseBubble(x, y)) {
+      this.player.waypoint = { x, y };  // цель внутри пузыря базы — клэмп не нужен
+    } else {
+      const m = this.worldMargin(), b = this._clampBounds();
+      this.player.waypoint = { x: Phaser.Math.Clamp(x, b.x0 + m, b.x1 - m), y: Phaser.Math.Clamp(y, b.y0 + m, b.y1 - m) };
+    }
     this.showArrow = showArrow;
     this.player.boosting = false;
     if (!showArrow) this.courseArrow.setVisible(false);
@@ -56,6 +84,8 @@ export default class Movement {
       this.courseArrow.setVisible(false);
       return;
     }
+    // Арена: носитель флага/груза не может форсировать (правило "форсаж не работает").
+    if (this.player._arenaCarrier) { this.scene.log('🚫 Форсаж недоступен с грузом на борту'); return; }
     // В безопасной зоне форсаж бесплатный и доступен даже при нулевом щите.
     // Снаружи — нужен щит (иначе нечего жечь).
     const safe = this.scene.inSafeZone(this.player.x, this.player.y);
@@ -71,6 +101,13 @@ export default class Movement {
   update(dt, inSafeZone) {
     const p = this.player;
     if (!p.alive) { this.courseArrow.setVisible(false); p.speed = 0; return; }
+    // Арена: 5с обратный отсчёт перед боем — движение заблокировано (см. ArenaController.countdownActive)
+    if (this.scene._arenaController?.countdownActive) {
+      p.speed = 0;
+      p.sprite.body?.setVelocity(0, 0);
+      this.courseArrow.setVisible(false);
+      return;
+    }
 
     if (!p.waypoint) {
       p.speed = Math.max(0, p.speed - HANDLING.accel * dt); // плавное торможение

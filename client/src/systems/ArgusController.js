@@ -272,6 +272,11 @@ export default class ArgusController {
     p.hull   = Math.min(p.maxHull,   p.hull   + hullHeal);
     p.shield = Math.min(p.maxShield, p.shield + shieldHeal);
     p.invulnerable = true;
+    // Раньше хил+неуязвимость были чисто локальными — сервер не узнавал о них вовсе
+    // (бар HP/щита у противника выглядел "неактуальным", сам кокон не мешал серверу
+    // засчитать урон, см. server pvp_self_heal_claim). Сумму хила сервер считает сам
+    // от своего max_hull/max_shield — здесь только заявка на активацию.
+    if (gs._realtimeRoomKey) gs.pvpClient?.selfHealClaim('argus_cocoon');
 
     this._cocoonGfx?.destroy();
     this._cocoonGfx   = gs.add.graphics().setDepth(49);
