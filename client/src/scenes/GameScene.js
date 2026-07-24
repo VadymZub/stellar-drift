@@ -6,10 +6,11 @@ import { i18n } from '../i18n.js';
 import Player from '../entities/Player.js';
 import Mob, { applySeparation } from '../entities/Mob.js';
 import Projectile from '../entities/Projectile.js';
-import Loot from '../entities/Loot.js';       
+import Loot from '../entities/Loot.js';
+import ShieldDrone from '../entities/ShieldDrone.js';
 import Movement from '../systems/Movement.js';
 import { EXP_CLASSES, MOD_ICON_FILES, NPC_PORTRAITS } from './BootScene.js'; 
-import { rollLootForMob, rollHomeSectorLoot, dropChance, itemName, rollStarGold, starterCannon, starterShield, rollCannon, rollShield, rollEngine, rollLaser, rollArmor, rollApophisLoot, PLASMATE_PER_SLOT, PLASMATE_DAILY_MAX, addPlasmateToInventory, totalPlasmateInInventory, removePlasmateFromInventory, CONSUMABLES, addConsumableToInventory, countConsumableInInventory, removeConsumableFromInventory, rollConsumableDrop, rollAmmoDrop, MATERIAL_NAMES, RESOURCE_NAMES } from '../items.js';
+import { rollLootForMob, rollHomeSectorLoot, dropChance, itemName, rollStarGold, starterCannon, starterShield, rollCannon, rollShield, rollEngine, rollLaser, rollArmor, rollApophisLoot, PLASMATE_PER_SLOT, PLASMATE_DAILY_MAX, addPlasmateToInventory, totalPlasmateInInventory, removePlasmateFromInventory, CONSUMABLES, addConsumableToInventory, countConsumableInInventory, rollConsumableDrop, rollAmmoDrop, MATERIAL_NAMES, RESOURCE_NAMES } from '../items.js';
 import { rollBoard, rollConnector } from '../boards.js';
 import PlasmateDeposit from '../entities/PlasmateDeposit.js';
 import AnomalySignal, { ANOMALY_SCAN_RADIUS, ANOMALY_SCAN_TIME_MS } from '../entities/AnomalySignal.js';
@@ -360,6 +361,11 @@ export default class GameScene extends Phaser.Scene {
     this.mobs = [];
     this.projectiles = [];
     this.loot = [];
+    // Щит-дроны, видимые в этом секторе (мои + чужие) — ownerUserId → ShieldDrone.
+    // Плоское присваивание (не ??/||) — намеренно НЕ переживает scene.restart() (прыжок
+    // сектора): сервер тоже сбрасывает PvpPlayerState.shield_drone_* на новый pvp_enter
+    // (см. main.py PvpRoomManager.enter), так что клиент и сервер остаются согласованы.
+    this._shieldDrones = new Map();
     this.plasmateDeposits = [];
     this.anomaly = null;
     this._anomalyRespawnAt = 0;
@@ -410,8 +416,14 @@ export default class GameScene extends Phaser.Scene {
         // скорость идёт только от baseSpeed(450) корабля, без бонуса от модуля.
         const maxCannon = { type: 'cannon', tier: 4, damage: 210, penetration: 0.20, fireRate: 1.0, starLvl: 5 };
         this.equipped.weapon = Array(15).fill(null).map(() => ({...maxCannon}));
-        this.equipped.shield = [];
-        this.equipped.engine = [];
+        // НЕ трогаем equipped.shield/engine — Аргус сам по себе sSlots:0/eSlots:0 (см.
+        // ships.js), так что recomputeStats()/slotRow() и так режут их до 0 через
+        // .slice(0, ship.xSlots), реальные модули щита/двигателя остаются НЕТРОНУТЫМИ и
+        // видны при возврате на обычный корабль. Раньше здесь стояло `= []` — навсегда
+        // обнуляло массив, и после возврата с Аргуса equip() второго щита/двигателя
+        // всегда просто ЗАМЕНЯЛ слот 0 (findIndex на пустом/укороченном массиве не находит
+        // null), баг из диалога: "не могу поставить больше 1 щита/брони и больше 1
+        // двигателя" — воспроизводился на ЛЮБОМ корабле после первого же захода на Аргуса.
         this.player.applyShip(SHIP_BY_KEY['argus']);
         this.player.hull = this.player.maxHull;
         this.player.shield = this.player.maxShield;
@@ -2793,6 +2805,17 @@ export default class GameScene extends Phaser.Scene {
         }
       }
 
+      // Щит-дрон — проверяем ДО владельца-игрока (более мелкая/специфичная цель рядом с
+      // кораблём, тот же приём, что turretAt проверяется раньше baseAt) — иначе клик по
+      // дрону почти всегда попадал бы в более широкий радиус клика владельца (см.
+      // remotePlayerAt/isOverBoostChevron ниже — та же логика "точнее — раньше").
+      const drone = this.shieldDroneAt(wx, wy);
+      if (drone) {
+        this.selectTarget(drone);
+        if (isDouble && this._isPvpSector) this.isFiring = true;
+        return;
+      }
+
       // Другой живой игрок — та же логика клика, что и Shadow Arena бот выше. Вне
       // реальных PvP-секторов это союзник — можно выбрать (посмотреть неймплейт),
       // но авто-огонь по двойному клику не включаем, атаковать всё равно нельзя.
@@ -3104,7 +3127,7 @@ export default class GameScene extends Phaser.Scene {
   // ── Active skill system ────────────────────────────────────────────────
 
   _skillCooldownMs(key) {
-    const CONS_CD = { repair_pack: 90000, speed_boost: 120000, scanner_pulse: 180000, emergency_warp: 600000 };
+    const CONS_CD = { repair_pack: 90000, speed_boost: 120000, scanner_pulse: 180000, emergency_warp: 600000, shield_drone: 300000 };
     if (key.startsWith('use:')) return CONS_CD[key.slice(4)] ?? 60000;
     if (key === 'argus:pulsar')       return 25000;
     if (key === 'argus:cocoon')       return 60000;
@@ -3184,6 +3207,16 @@ export default class GameScene extends Phaser.Scene {
     }
   }
 
+  // Возвращает 1 штуку обратно в слот боеприпасов/расходников (не в трюм) — используется,
+  // когда _useConsumable уже списал заряд из слота, но применить эффект не удалось
+  // (варп в данже / щит-дрон вне PvP) — иначе такой "отказ" тихо перекладывал бы
+  // расходник назад в трюм, разряжая слот без реального использования.
+  _refundConsumableToSlot(type) {
+    const slots = this.ammoSlots || [];
+    const slot = slots.find(s => s.type === type) || slots.find(s => !s.type);
+    if (slot) { slot.type = type; slot.count = (slot.count || 0) + 1; }
+  }
+
   _useConsumable(type, now) {
     // Арена: носитель флага/груза не может использовать расходники (правило "расходники
     // и способности невидимости не работают", см. ArenaController._refreshCarrierDebuff).
@@ -3194,16 +3227,15 @@ export default class GameScene extends Phaser.Scene {
     if (now < cdEnd)   { this.log(`⏳ КД: ${Math.ceil((cdEnd - now) / 1000)}с`); return; }
     if (now < buffEnd) { this.log(`⏳ Действует: ${Math.ceil((buffEnd - now) / 1000)}с`); return; }
 
-    // Check ammo slots first, then cargo
-    const inv = this.inventory || [];
+    // Расходник должен быть ЗАРЯЖЕН в слот боеприпасов/расходников (gs.ammoSlots) — само
+    // по себе нахождение в трюме недостаточно (диалог: "нельзя использовать с актив
+    // панели если не установлен в слот... в танке в запасе лежит снаряд но он не заряжен
+    // и стрелять им не получится"). Загрузка — вручную, клик по ячейке в трюме гаража
+    // (см. GarageScene._loadAmmoToSlot).
     const _ammoSlot = (this.ammoSlots || []).find(s => s.type === type && s.count > 0);
-    if (_ammoSlot) {
-      _ammoSlot.count--;
-      if (_ammoSlot.count <= 0) { _ammoSlot.type = null; _ammoSlot.count = 0; }
-    } else {
-      if (countConsumableInInventory(inv, type) <= 0) { this.log('❌ Расходник закончился'); return; }
-      removeConsumableFromInventory(inv, type, 1);
-    }
+    if (!_ammoSlot) { this.log('❌ Не заряжен в слот — загрузи в гараже (клик по ячейке в трюме)'); return; }
+    _ammoSlot.count--;
+    if (_ammoSlot.count <= 0) { _ammoSlot.type = null; _ammoSlot.count = 0; }
 
     switch (type) {
       case 'repair_pack': {
@@ -3251,7 +3283,7 @@ export default class GameScene extends Phaser.Scene {
       }
       case 'emergency_warp': {
         const sec = SECTORS[galaxy.current];
-        if (sec.isDungeon) { this.log('🚫 Варп недоступен здесь'); addConsumableToInventory(inv, type, 1, this._cargoMax()); return; }
+        if (sec.isDungeon) { this.log('🚫 Варп недоступен здесь'); this._refundConsumableToSlot(type); return; }
         this.skillCooldowns[barKey] = now + this._skillCooldownMs(barKey);
         let cx, cy;
         if (sec.pvp) {
@@ -3265,6 +3297,22 @@ export default class GameScene extends Phaser.Scene {
         if (this.player.sprite.body) this.player.sprite.body.reset(cx, cy);
         this.muzzleFlash(cx, cy, 0x8888ff, this.player);
         this.log(sec.pvp ? '🌀 Варп: телепорт к родной базе' : '🌀 Аварийный прыжок: телепорт на базу');
+        break;
+      }
+      case 'shield_drone': {
+        // Сервер-авторитетно (см. main.py pvp_shield_drone_activate) — вне realtime-комнаты
+        // (нет pvpClient.sector) активировать нечего, отдаём расходник назад, как и
+        // emergency_warp выше в недоступном месте.
+        if (!this.pvpClient?.sector) {
+          this.log('🚫 Щит-дрон работает только в PvP-секторах');
+          this._refundConsumableToSlot(type);
+          return;
+        }
+        // КД НЕ стартует здесь — только когда дрон реально перестанет действовать
+        // (истечёт 1 мин или будет уничтожен уроном), см. _despawnShieldDrone. _consBuffEndTimes
+        // выставляется в _spawnShieldDrone (приходит эхом от сервера сразу после этого вызова).
+        this.pvpClient.activateShieldDrone();
+        this.log('🔵 Щит-дрон развёрнут — 1 мин, отражает 90% урона на себя');
         break;
       }
     }
@@ -3402,7 +3450,6 @@ export default class GameScene extends Phaser.Scene {
   _doShipDroverScan(now, cd) {
     const p = this.player;
     if (!p?.alive) return;
-    this.skillCooldowns['ship:drover_scan'] = now + cd;
     this._consBuffEndTimes['ship:drover_scan'] = now + 30000;
     this._scannerActive = true;
 
@@ -3431,6 +3478,7 @@ export default class GameScene extends Phaser.Scene {
     this.time.delayedCall(30000, () => {
       this._scannerActive = false;
       this._consBuffEndTimes['ship:drover_scan'] = 0;
+      this.skillCooldowns['ship:drover_scan'] = this.time.now + cd;
     });
   }
 
@@ -3456,12 +3504,12 @@ export default class GameScene extends Phaser.Scene {
   _doShipStilettoAfterburner(now, cd) {
     const p = this.player;
     if (!p?.alive) return;
-    this.skillCooldowns['ship:stiletto_afterburner'] = now + cd;
     this._consBuffEndTimes['ship:stiletto_afterburner'] = now + 4000;
     p.baseSpeed = Math.round(p.baseSpeed * 2);
     this.log('🔥 Форсаж! (+100% скорость, 4 с)');
     this.time.delayedCall(4000, () => {
       this._consBuffEndTimes['ship:stiletto_afterburner'] = 0;
+      this.skillCooldowns['ship:stiletto_afterburner'] = this.time.now + cd;
       if (p?.alive) p.recomputeStats();
     });
   }
@@ -3469,12 +3517,12 @@ export default class GameScene extends Phaser.Scene {
   _doShipAnvilLockdown(now, cd) {
     const p = this.player;
     if (!p?.alive) return;
-    this.skillCooldowns['ship:anvil_lockdown'] = now + cd;
     this._consBuffEndTimes['ship:anvil_lockdown'] = now + 10000;
     p._lockdownMult = 0.40;
     this.log('🛡 Уплотнение! (-60% урон, 10 с)');
     this.time.delayedCall(10000, () => {
       this._consBuffEndTimes['ship:anvil_lockdown'] = 0;
+      this.skillCooldowns['ship:anvil_lockdown'] = this.time.now + cd;
       if (p) p._lockdownMult = null;
     });
   }
@@ -3482,7 +3530,6 @@ export default class GameScene extends Phaser.Scene {
   _doShipAegisDome(now, cd) {
     const p = this.player;
     if (!p?.alive) return;
-    this.skillCooldowns['ship:aegis_dome'] = now + cd;
     this._consBuffEndTimes['ship:aegis_dome'] = now + 6000;
     p.shield = p.maxShield;
     this._aegisDomeEndTime = now + 6000;
@@ -3490,6 +3537,7 @@ export default class GameScene extends Phaser.Scene {
     this.time.delayedCall(6000, () => {
       this._consBuffEndTimes['ship:aegis_dome'] = 0;
       this._aegisDomeEndTime = 0;
+      this.skillCooldowns['ship:aegis_dome'] = this.time.now + cd;
     });
   }
 
@@ -3500,7 +3548,6 @@ export default class GameScene extends Phaser.Scene {
       this.log('⚠ Маскировка: 3 с без атаки');
       return;
     }
-    this.skillCooldowns['ship:phantom_cloak'] = now + cd;
     this._consBuffEndTimes['ship:phantom_cloak'] = now + 10000;
     p.baseSpeed = Math.round(p.baseSpeed * 1.3);
     p.sprite.setAlpha(0.28);
@@ -3513,6 +3560,10 @@ export default class GameScene extends Phaser.Scene {
     if (!this._phantomCloakEndTime) return;
     this._phantomCloakEndTime = 0;
     this._consBuffEndTimes['ship:phantom_cloak'] = 0;
+    // КД стартует, когда маскировка РЕАЛЬНО закончилась (естественно или снята досрочно
+    // атакой, см. вызов на ~6707) — не в момент активации, тот же принцип "сначала
+    // действие, потом КД", что и у остальных длящихся способностей (диалог с пользователем).
+    this.skillCooldowns['ship:phantom_cloak'] = this.time.now + this._skillCooldownMs('ship:phantom_cloak');
     const p = this.player;
     if (p?.alive) { p.sprite.setAlpha(1); p.recomputeStats(); }
     this.log('👁 Маскировка снята');
@@ -3630,6 +3681,68 @@ export default class GameScene extends Phaser.Scene {
       if (d < 70 && d < bestD) { best = rp; bestD = d; }
     }
     return best;
+  }
+  // Щит-дроны (мои + чужие, видимые в этом секторе) — таргетятся так же, как игроки,
+  // но с меньшим радиусом (см. ShieldDrone.js DISPLAY_SIZE=30, тот же приём, что mobAt).
+  shieldDroneAt(wx, wy) {
+    let best = null, bestD = Infinity;
+    for (const d of this._shieldDrones.values()) {
+      if (!d.alive) continue;
+      const dist = Phaser.Math.Distance.Between(wx, wy, d.x, d.y);
+      if (dist < 30 && dist < bestD) { best = d; bestD = dist; }
+    }
+    return best;
+  }
+  // Спавн визуала щит-дрона (см. pvpClient.onShieldDroneSpawn) — owner: Player (свой)
+  // или RemotePlayer (чужой). Идемпотентно — повторная активация на уже существующем
+  // (не должна случаться при исправном КД, но не падаем, если всё же придёт) просто
+  // пересоздаёт дрон с полным HP.
+  _spawnShieldDrone(msg) {
+    this._shieldDrones.get(msg.ownerUserId)?.destroy();
+    const owner = msg.ownerUserId === this.myUserId ? this.player : this.pvpClient?.players?.get(msg.ownerUserId);
+    if (!owner) return;
+    const drone = new ShieldDrone(this, msg.ownerUserId, owner, msg.maxHull, msg.maxShield,
+      msg.hull ?? msg.maxHull, msg.shield ?? msg.maxShield);
+    drone.corp = owner.corp ?? this.playerCorp;
+    this._shieldDrones.set(msg.ownerUserId, drone);
+    // durationSec — секунды жизни ОТ ЭТОГО момента (свежая активация — полная 1 мин;
+    // снапшот позднего джойна — уже остаток, см. PvpClient._spawn/server to_public
+    // droneRemainingSec). Локальный wall-clock таймер, тот же приём, что
+    // _consBuffEndTimes у остальных расходников — не полагаемся на серверные часы.
+    drone._expireAt = this.time.now + (msg.durationSec ?? 60) * 1000;
+    if (msg.ownerUserId === this.myUserId) {
+      this.muzzleFlash(owner.x, owner.y, 0x4dd0e1, owner);
+      // "Действует: Nс" на панели (см. _useConsumable guard buffEnd) — КД сам по себе НЕ
+      // стартует здесь (см. _despawnShieldDrone) — правило "сначала действие, потом КД".
+      this._consBuffEndTimes['use:shield_drone'] = drone._expireAt;
+    }
+  }
+  _onShieldDroneExpire(msg) {
+    this._despawnShieldDrone(msg.ownerUserId, false);
+  }
+  // Наблюдатель узнаёт о PvE-уроне ПО ЧУЖОМУ дрону (см. PvpClient.shieldDronePveDamage) —
+  // сам владелец уже применил это локально в Player.takeDamage, это сообщение только для
+  // остальных в комнате (иначе их вид дрона не совпадал бы с реальным после PvE-хитов).
+  _onShieldDroneSync(msg) {
+    if (msg.ownerUserId === this.myUserId) return;
+    const d = this._shieldDrones.get(msg.ownerUserId);
+    if (!d) return;
+    d.applyDamage({ hull: msg.hull, shield: msg.shield });
+    if (msg.destroyed) this._despawnShieldDrone(msg.ownerUserId, true);
+  }
+  _updateShieldDrones(dt) {
+    const now = this.time.now;
+    for (const [ownerUserId, d] of this._shieldDrones) {
+      // Защита от утечки: владелец вышел из сектора/отключился без явного
+      // pvp_shield_drone_expire (см. PvpClient._despawn — не эмитит колбэк наружу) —
+      // если это чужой дрон и его владельца больше нет среди RemotePlayer, снимаем.
+      const ownerGone = ownerUserId !== this.myUserId && !this.pvpClient?.players?.has(ownerUserId);
+      if (ownerGone || now >= (d._expireAt ?? Infinity)) {
+        this._despawnShieldDrone(ownerUserId, false);
+        continue;
+      }
+      d.update(dt);
+    }
   }
   lootAt(wx, wy) {
     let best = null, bestD = Infinity;
@@ -3843,6 +3956,30 @@ export default class GameScene extends Phaser.Scene {
     // этой проверки урон продолжал бы засчитываться по невидимой за краем карты турели.
     if (t.isTrainTurretTarget && !t.canBeAttacked) {
       this.target = null; this.isFiring = false;
+      return;
+    }
+
+    // Щит-дрон — прицельный огонь ПО САМОМУ ДРОНУ (не по владельцу), см.
+    // shieldDroneAt/ShieldDrone.isShieldDrone. Тот же ally-fire чек, что у RemotePlayer
+    // ниже (дрон наследует corp владельца), но fireClaim с targetType='drone' — сервер
+    // применяет свой (более мягкий, 30%) множитель снижения урона, см. main.py.
+    if (t.isShieldDrone) {
+      const arena = this._arenaController;
+      if (arena) {
+        if (arena.teamOf(t.ownerUserId) === arena.myTeam) {
+          this._warnThrottle('ally_fire', 'Нельзя атаковать союзника'); return;
+        }
+      } else if (!this._isPvpSector || (t.corp && t.corp === this.playerCorp)) {
+        this._warnThrottle('ally_fire', 'Нельзя атаковать союзника'); return;
+      }
+      const ammoMult = this._consumeAmmo('cannon', cannonCount);
+      const perkMult = this._offensivePerkMult(p, t, true);
+      const dmg = Math.round(p.cannonDamage * skillMult * ammoMult * perkMult);
+      this._fireVisualBolt(p.x, p.y, t.x, t.y, isOC ? 0xff8800 : PROJECTILE.playerColor);
+      this.muzzleFlash(p.x, p.y, isOC ? 0xff8800 : 0x8fe6ff, p);
+      this._cannonMuzzleFx(p, t, isOC);
+      this.sfx?.play('sfx_cannon_fire', { cooldownMs: 60 });
+      this.pvpClient?.fireClaim(t.ownerUserId, 'cannon', dmg, 'drone');
       return;
     }
 
@@ -4180,7 +4317,59 @@ export default class GameScene extends Phaser.Scene {
     rp?.applyState({ hull: msg.hull, shield: msg.shield, maxHull: msg.maxHull, maxShield: msg.maxShield });
   }
 
+  // Прямой выстрел по щит-дрону (targetType='drone', см. shieldDroneAt/_fireCannon) —
+  // полностью отдельная ветка от обычного попадания по кораблю: msg.hull/msg.shield тут
+  // ВСЕГДА равны текущим (владелец не тронут), реальный урон/уничтожение — в droneHull/
+  // droneShield/droneDestroyed (см. server main.py _resolve_pvp_hit target_type='drone').
+  _onShieldDroneHit(msg) {
+    const d = this._shieldDrones.get(msg.targetUserId);
+    if (!d) return;
+    if (msg.dodged) { this.showDodge(d.x, d.y); return; }
+    d.applyDamage({ hull: msg.droneHull, shield: msg.droneShield, maxHull: msg.droneMaxHull, maxShield: msg.droneMaxShield });
+    this.hitFlash(d.x, d.y, true, d);
+    this.showDamage(d.x, d.y, { shieldHit: 0, hullHit: msg.dmg, killed: msg.droneDestroyed }, msg.droneMaxHull, msg.isCrit);
+    if (msg.droneDestroyed) this._despawnShieldDrone(msg.targetUserId, true);
+  }
+
+  // Побочный эффект перенаправления урона (targetType='ship', владелец жертвы носит
+  // активный дрон, см. server SHIELD_DRONE_REDIRECT_PCT) — своя плавающая цифра НАД
+  // ДРОНОМ (не только над кораблём владельца, см. _onPvpHitResult ниже) — раньше HP-бар
+  // дрона синкался молча, без визуального фидбека, сколько именно урона на него ушло
+  // (баг из диалога: "отображать урон который идёт на дрона над дроном").
+  _syncDroneFromHitResult(msg) {
+    if (msg.dodged || msg.droneActive === undefined) return;
+    const d = this._shieldDrones.get(msg.targetUserId);
+    if (!d) return;
+    const hullHit   = Math.max(0, d.hull   - msg.droneHull);
+    const shieldHit = Math.max(0, d.shield - msg.droneShield);
+    d.applyDamage({ hull: msg.droneHull, shield: msg.droneShield, maxHull: msg.droneMaxHull, maxShield: msg.droneMaxShield });
+    if (hullHit > 0 || shieldHit > 0) {
+      this.hitFlash(d.x, d.y, hullHit > 0, d);
+      this.showDamage(d.x, d.y, { shieldHit, hullHit, killed: msg.droneDestroyed }, msg.droneMaxHull, msg.isCrit);
+    }
+    if (msg.droneDestroyed) this._despawnShieldDrone(msg.targetUserId, true);
+  }
+
+  _despawnShieldDrone(ownerUserId, explode = false) {
+    const d = this._shieldDrones.get(ownerUserId);
+    if (!d) return;
+    if (explode) this.explosion(d.x, d.y, 0.5);
+    if (this.target === d) { this.target = null; this.isFiring = false; }
+    d.destroy();
+    this._shieldDrones.delete(ownerUserId);
+    // Дрон реально ПЕРЕСТАЛ действовать (истёк по времени или уничтожен уроном, из
+    // PvP ИЛИ PvE) — вот теперь стартует 5-минутный КД, не в момент активации (диалог:
+    // "сначала отсчёт активности, потом отсчёт кулдауна" — то же правило, что у
+    // остальных длящихся способностей, см. _doShip*/_doStealthSprint/_doBerserker).
+    if (ownerUserId === this.myUserId) {
+      this._consBuffEndTimes['use:shield_drone'] = 0;
+      this.skillCooldowns['use:shield_drone'] = this.time.now + this._skillCooldownMs('use:shield_drone');
+    }
+  }
+
   _onPvpHitResult(msg) {
+    if (msg.targetType === 'drone') { this._onShieldDroneHit(msg); return; }
+    this._syncDroneFromHitResult(msg);
     const isMe = msg.targetUserId === this.myUserId;
     if (isMe) {
       const p = this.player;
@@ -4901,6 +5090,27 @@ export default class GameScene extends Phaser.Scene {
       return;
     }
 
+    // Щит-дрон — см. симметричную ветку в _fireCannon (тот же ally-fire чек, targetType='drone').
+    if (t.isShieldDrone) {
+      const arena = this._arenaController;
+      if (arena) {
+        if (arena.teamOf(t.ownerUserId) === arena.myTeam) {
+          this._warnThrottle('ally_fire', 'Нельзя атаковать союзника'); return;
+        }
+      } else if (!this._isPvpSector || (t.corp && t.corp === this.playerCorp)) {
+        this._warnThrottle('ally_fire', 'Нельзя атаковать союзника'); return;
+      }
+      const beamColor = isOC ? 0xffcc00 : p.allLasers ? 0xce93d8 : 0xffaa00;
+      const perkMult = this._offensivePerkMult(p, t, false);
+      const dmg = Math.round(p.laserDamage * skillMult * perkMult);
+      this._laserBeam(p.x, p.y, t.x, t.y, beamColor, 1.0, isOC ? 12 : 3, 200, p, t);
+      this.muzzleFlash(p.x, p.y, beamColor, p);
+      this.sfx?.play('sfx_laser_fire', { cooldownMs: 60 });
+      this._consumeAmmo('laser');
+      this.pvpClient?.fireClaim(t.ownerUserId, 'laser', dmg, 'drone');
+      return;
+    }
+
     // PvP: как в _fireCannon — сервер решает исход, клиент только рисует луч и заявляет
     // выстрел. Вне реальных PvP-секторов И свой корпус — везде союзники; арена — по
     // команде матча + safe zone на базе (см. комментарий в _fireCannon).
@@ -5027,7 +5237,11 @@ export default class GameScene extends Phaser.Scene {
     return 1.0;
   }
 
-  // Try to add item amount to matching ammo slots (any item type). Returns how many were added.
+  // Дозаполняет уже НАЗНАЧЕННЫЕ слоты боеприпасов/расходников этим типом (покупка в
+  // магазине, подбор лута) — НЕ занимает пустой слот сам по себе (диалог: "только
+  // дозаполняем если вставлен, если не вставлен - ставим руками" — пустой слот заполняется
+  // только вручную, через "→ слот" в гараже, см. _loadAmmoToSlot). Возвращает, сколько
+  // реально долетело до слотов — остаток вызывающий код кладёт в трюм как обычно.
   _tryAddToAmmoSlots(type, amount) {
     const slots = this.ammoSlots;
     if (!slots?.length) return 0;
@@ -5040,13 +5254,6 @@ export default class GameScene extends Phaser.Scene {
       if (slot.type === type && slot.count < maxPer) {
         const add = Math.min(maxPer - slot.count, rem);
         slot.count += add; rem -= add;
-      }
-    }
-    for (const slot of slots) {
-      if (rem <= 0) break;
-      if (!slot.type) {
-        const add = Math.min(maxPer, rem);
-        slot.type = type; slot.count = add; rem -= add;
       }
     }
     return amount - rem;
@@ -6616,6 +6823,7 @@ export default class GameScene extends Phaser.Scene {
         );
       }
     }
+    if (this._shieldDrones.size) this._updateShieldDrones(dt);
     if (this.player.alive && galaxy.current === 'dungeon_3') this._updateSyndicateEMP(dt);
 
     this.miningBases.forEach(b => b.update(dt));

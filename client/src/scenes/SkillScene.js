@@ -93,7 +93,7 @@ const SKILLS_DEF = [
     effects: ['+35% скор + стелс 8c, КД 55c'] },
 ];
 
-const SKILL_MAP = {};
+export const SKILL_MAP = {};
 for (const s of SKILLS_DEF) SKILL_MAP[s.key] = s;
 
 // ─── Per-branch node grid positions (relative to branch center x, tree start y) ──
@@ -657,7 +657,13 @@ export default class SkillScene extends Phaser.Scene {
     if (emptyIdx !== -1) {
       bar[emptyIdx] = key;
     } else {
-      bar.shift(); bar.push(key); // push off oldest
+      // Раньше слепо вытесняло слот 0 (bar.shift()+push) независимо от того, что там
+      // стояло — баг из диалога "не нравится механизм заполнения панели": игрок терял
+      // произвольный слот без предупреждения. Панель полна — используй ▲ над нужным
+      // слотом в HUD (см. HudScene._toggleAbPicker), там назначение явно на КОНКРЕТНЫЙ
+      // слот, а не наугад в слот 0.
+      this._gs.log?.('❌ Панель действий заполнена — открой панель в бою и нажми ▲ над нужным слотом, чтобы заменить его');
+      return;
     }
     this._redraw();
   }

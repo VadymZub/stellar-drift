@@ -132,6 +132,74 @@ game consumable icon style, high contrast, digital illustration
 
 ---
 
+## Переделка — старые иконки 256×256 выглядят мягко/размыто рядом со щит-дроном (~1000px+)
+
+Все 8 иконок выше (4 бустера) и 4 базовых расходника ниже сейчас лежат в
+`client/assets/consumables/` как PNG **256×256** — заметно мягче нового арта
+щит-дрона (`consumable_shield_drone.png`, ~1064×1144). Причина не в
+downscale-коде (`prerenderTex.js` уже делает качественный step-halving), а в
+низком исходном разрешении самих файлов. Регенерировать теми же промтами (для
+4 бустеров — см. выше), но **на 1024×1024** вместо 512×512; для 4 базовых
+расходников ниже — новые промты (документации по ним раньше не было).
+
+---
+
+### Repair Pack — «Ремонтный пакет» (+30% HP мгновенно)
+
+```
+Sci-fi space game consumable item icon, emergency nano-repair canister,
+compact armored medkit-style container with a bold red-orange cross emblem
+glowing on the front panel, weathered gunmetal casing with warning stripes,
+small pressure-release valve on top, warm amber-orange inner glow through
+seams, sturdy field-repair-kit silhouette,
+dark space background #080814, no text, square 1024x1024,
+game consumable icon style, high contrast, digital illustration
+```
+
+---
+
+### Speed Boost — «Ускоритель» (+50% скорость 15с)
+
+```
+Sci-fi space game consumable item icon, engine overdrive injector ampoule,
+sleek aerodynamic capsule with a bright yellow-white energy core,
+motion-streak lines etched into the glass surface, small turbine-fin
+details on the cap, electric-yellow inner glow with speed-trail particles
+swirling around the container,
+dark space background #080814, no text, square 1024x1024,
+game consumable icon style, high contrast, digital illustration
+```
+
+---
+
+### Scanner Pulse — «Импульс сканера» (радиус сканирования ×2, 20с)
+
+```
+Sci-fi space game consumable item icon, sensor pulse emitter canister,
+compact radar-dish detailing wrapped around a cylindrical container,
+concentric cyan-green scan-ring holograms projected faintly above the cap,
+small blinking sensor lights, cool teal-green inner glow,
+technical grid-line engravings on the surface,
+dark space background #080814, no text, square 1024x1024,
+game consumable icon style, high contrast, digital illustration
+```
+
+---
+
+### Emergency Warp — «Аварийный варп» (мгновенный варп на базу)
+
+```
+Sci-fi space game consumable item icon, emergency warp beacon capsule,
+compact device with a swirling violet-blue wormhole hologram projected
+above an angular metallic base, folding-space energy tendrils wrapping the
+container, deep indigo-violet inner glow, urgent warning chevrons on the
+casing,
+dark space background #080814, no text, square 1024x1024,
+game consumable icon style, high contrast, digital illustration
+```
+
+---
+
 ## Иконка приложения (App Icon — Tauri desktop, taskbar/favicon)
 
 Сейчас в `src-tauri/icons/` (корень репо — папка вынесена из `client/`, см.

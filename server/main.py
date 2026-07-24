@@ -457,6 +457,27 @@ ABILITY_HEAL_PCT = {'argus_cocoon': 0.30}
 ARGUS_COCOON_COOLDOWN_FLOOR = 55.0
 ARGUS_COCOON_INVULN_SEC = 2.0
 
+# Щит-дрон (расходник, покупка только в магазине, см. память roadmap-future) — визуально
+# видимый всем в комнате дрон, который владелец разворачивает рядом с собой на 1 мин (или
+# до уничтожения). Позиция дрона НЕ синкается отдельно — каждый клиент рисует его как
+# оффсет (сбоку/сзади в зависимости от скорости, см. client ShieldDrone.js) от уже
+# реплицируемой позиции владельца (pvp_pos/RemotePlayer), сервер хранит только
+# HP-бухгалтерию и авторитетно решает урон, тем же контрактом pvp_hit_result, что и
+# обычный выстрел по кораблю (см. _resolve_pvp_hit ниже). Одна активная копия на игрока —
+# новая активация до истечения старой невозможна (кулдаун-флор длиннее длительности).
+SHIELD_DRONE_MAX_HULL = 10000.0
+SHIELD_DRONE_MAX_SHIELD = 15000.0
+SHIELD_DRONE_DURATION_SEC = 60.0
+SHIELD_DRONE_COOLDOWN_FLOOR = 300.0  # 5 мин
+# Обычный выстрел по КОРАБЛЮ владельца при активном дроне: 90% урона уходит на дрон (и
+# дополнительно снижен вдвое), 10% — на владельца как есть (см. диалог с пользователем).
+SHIELD_DRONE_REDIRECT_PCT = 0.90
+SHIELD_DRONE_REDIRECT_REDUCTION = 0.50
+# Прямое прицеливание на САМ дрон (см. GameScene shieldDroneAt/isShieldDrone) — снижение
+# слабее (30%, не 50%) — так дрон дешевле выбить прицельным огнём, чем полагаться только
+# на перенаправление с владельца (по дизайну пользователя).
+SHIELD_DRONE_DIRECT_REDUCTION = 0.30
+
 # Турели добывающих баз — залп НЕ привязан к личному оружию/лоадауту конкретного
 # игрока (иначе конфликтовал бы с cooldown/range того игрока, чей клиент случайно
 # первым отправил заявку). Каждый игрок, видящий базу, крутит свою локальную копию
@@ -572,8 +593,17 @@ class PvpPlayerState:
         # (кокон визуально защищал, а сервер всё равно засчитывал полный урон). См.
         # pvp_self_heal_claim.
         self.invulnerable_until = 0.0
+        # Щит-дрон (см. SHIELD_DRONE_* выше) — 0.0 active_until = нет активного дрона.
+        # last_use — свой кулдаун-флор, отдельный от respawn_grace/invulnerable (тот же
+        # принцип, что ability_last_fire — своя механика, свой таймер).
+        self.shield_drone_last_use = 0.0
+        self.shield_drone_active_until = 0.0
+        self.shield_drone_hull = 0.0
+        self.shield_drone_shield = 0.0
 
     def to_public(self) -> dict:
+        now = time.time()
+        drone_active = self.shield_drone_active_until > now
         return {
             'userId': self.user_id, 'name': self.username, 'shipKey': self.ship_key,
             'corp': self.corp, 'level': self.level,
@@ -581,6 +611,15 @@ class PvpPlayerState:
             'x': self.x, 'y': self.y, 'heading': self.heading,
             'hull': self.hull, 'maxHull': self.max_hull,
             'shield': self.shield, 'maxShield': self.max_shield,
+            # Снапшот для клиента, ПРИСОЕДИНИВШЕГОСЯ к комнате, пока чей-то дрон уже
+            # летает (pvp_room_snapshot/pvp_player_joined) — без этого поздний джойнер
+            # не узнал бы о нём вообще (нет отдельного "спавн всем" при входе задним числом).
+            'droneActive': drone_active,
+            'droneHull': self.shield_drone_hull if drone_active else 0.0,
+            'droneMaxHull': SHIELD_DRONE_MAX_HULL,
+            'droneShield': self.shield_drone_shield if drone_active else 0.0,
+            'droneMaxShield': SHIELD_DRONE_MAX_SHIELD,
+            'droneRemainingSec': max(0.0, self.shield_drone_active_until - now) if drone_active else 0.0,
         }
 
 
@@ -1299,6 +1338,37 @@ async def _resource_tick_loop():
                 })
 
 
+SHIELD_DRONE_TICK_MS = 2000  # достаточно часто для "исчез максимум на 2с позже времени" ощущения
+
+
+async def _shield_drone_tick_loop():
+    """Дрон истекает по времени (30с), а не только от урона — без фонового тика клиенты
+    узнали бы об истечении только на следующем pvp_hit_result по этому владельцу (или
+    никогда, если его больше не атаковали), и висел бы виден всем бесконечно после
+    настоящего истечения. Дешёвый обход всех комнат раз в SHIELD_DRONE_TICK_MS — то же
+    решение, что и _resource_tick_loop для респавна депозитов."""
+    while True:
+        await asyncio.sleep(SHIELD_DRONE_TICK_MS / 1000)
+        now_ts = time.time()
+        for sector, room in list(pvp_room_manager.rooms.items()):
+            room_uids = None
+            for state in room.values():
+                if state.shield_drone_active_until and state.shield_drone_active_until <= now_ts:
+                    state.shield_drone_active_until = 0.0
+                    state.shield_drone_hull = 0.0
+                    state.shield_drone_shield = 0.0
+                    # КД (SHIELD_DRONE_COOLDOWN_FLOOR) отсчитывается от момента, когда дрон
+                    # РЕАЛЬНО перестал действовать — не от активации (см. диалог: "сначала
+                    # действие, потом КД"), поэтому last_use обновляется именно тут, а не
+                    # в pvp_shield_drone_activate.
+                    state.shield_drone_last_use = now_ts
+                    if room_uids is None:
+                        room_uids = [p.user_id for p in room.values()]
+                    await chat_manager.broadcast_to_uids(room_uids, {
+                        'type': 'pvp_shield_drone_expire', 'ownerUserId': state.user_id,
+                    })
+
+
 @app.on_event("startup")
 async def _start_mob_tick_loop():
     asyncio.create_task(_mob_tick_loop())
@@ -1306,6 +1376,7 @@ async def _start_mob_tick_loop():
     asyncio.create_task(_resource_tick_loop())
     asyncio.create_task(_train_weapon_tick_loop())
     asyncio.create_task(_arena_tick_loop())
+    asyncio.create_task(_shield_drone_tick_loop())
 
 
 def _split_reward_top5(damage_by: dict[int, float], pools: dict[str, float]) -> dict[int, dict[str, int]]:
@@ -1361,36 +1432,25 @@ def _argus_phase_invincible(hull_frac: float) -> bool:
     return (time.time() % period) < ARGUS_FLICKER_DURATION
 
 
-def _apply_pvp_damage(claimed_dmg: float, ceiling: float, penetration: float,
-                       victim_hull: float, victim_shield: float,
-                       victim_max_hull: float, victim_max_shield: float,
-                       crit_chance: float = 0.0, crit_mult: float = 2.0,
-                       victim_evasion: float = 0.0,
-                       shield_mult: float = 1.0, hull_mult: float = 1.0,
-                       burst_mult: float = PVP_BURST_MULT) -> dict:
-    """Мирроит shield/hull split из Player.takeDamage (client/src/entities/Player.js).
-    Урон — заявка клиента (claimed_dmg, реальный посчитанный урон выстрела со всеми
-    баффами/перками), зажатая потолком ceiling*burst_mult — не плоское число на
-    весь визит в комнату, но и не слепое доверие. Крит и уклонение всё равно решает
-    сервер своим роллом (по статам АТАКУЮЩЕГО — crit_chance/crit_mult, не фиксированные
-    для всех), не заявка клиента. Общий расчёт для игрок→игрок и игрок→моб — обе жертвы
-    описываются просто парой hull/shield, дальше не важно, чьи они. victim_evasion=0
-    для мобов — их движение клиент-локальное, сервер не знает скорость, чтобы честно
-    её учитывать. shield_mult/hull_mult — см. _weapon_mults (асимметрия лазера).
-    burst_mult по умолчанию PVP_BURST_MULT (слэк на баффы поверх СТАТИЧНОГО
-    loadout.dmg у обычного оружия) — способности (ABILITY_DAMAGE_CEILING) передают
-    burst_mult=1.0 явно: их ceiling уже САМ ПО СЕБЕ финальный урон одного тика/ракеты,
-    не "статичная база до баффов", лишний ×3 сверху не нужен и раньше давал урон
-    способности на порядок выше задуманного (баг из диалога: "ракетный залп нанёс
-    более 400 тыс урона")."""
+def _roll_pvp_shot(claimed_dmg: float, ceiling: float, crit_chance: float, crit_mult: float,
+                    victim_evasion: float, burst_mult: float = PVP_BURST_MULT) -> dict:
+    """Уклонение/крит/потолок-клэмп одного выстрела — вынесено из _apply_pvp_damage, чтобы
+    щит-дрон (см. SHIELD_DRONE_* выше) мог разделить ОДИН и тот же ролл между двумя
+    жертвами (дрон + владелец), не роллируя крит/уклонение дважды на один выстрел."""
     if victim_evasion > 0 and random.random() < victim_evasion:
-        return {'isCrit': False, 'dmg': 0, 'killed': False, 'dodged': True,
-                'hull': victim_hull, 'shield': victim_shield}
-
+        return {'isCrit': False, 'dodged': True, 'amount': 0.0}
     base = max(0.0, min(claimed_dmg, ceiling * burst_mult))
     is_crit = random.random() < crit_chance
-    amount = base * (crit_mult if is_crit else 1.0)
+    return {'isCrit': is_crit, 'dodged': False, 'amount': base * (crit_mult if is_crit else 1.0)}
 
+
+def _split_pvp_damage(amount: float, penetration: float,
+                       victim_hull: float, victim_shield: float,
+                       victim_max_hull: float, victim_max_shield: float,
+                       shield_mult: float = 1.0, hull_mult: float = 1.0) -> dict:
+    """Shield/hull split одной уже-посчитанной (после крита/потолка) суммы урона — вынесено
+    из _apply_pvp_damage, чтобы щит-дрон мог применить СВОЮ долю урона к своему собственному
+    hull/shield-пулу тем же алгоритмом, что и обычная жертва (см. _resolve_pvp_hit)."""
     direct = amount * penetration
     to_shield_raw = amount - direct
     hull_hit = direct * hull_mult
@@ -1414,31 +1474,151 @@ def _apply_pvp_damage(claimed_dmg: float, ceiling: float, penetration: float,
         # там не используется, но killed=True/hull=0 в самом сообщении уже отражает смерть.
         hull, shield = victim_max_hull, victim_max_shield
 
-    return {'isCrit': is_crit, 'dmg': round(amount), 'killed': killed, 'dodged': False, 'hull': hull, 'shield': shield}
+    return {'dmg': round(amount), 'killed': killed, 'hull': hull, 'shield': shield}
+
+
+def _apply_pvp_damage(claimed_dmg: float, ceiling: float, penetration: float,
+                       victim_hull: float, victim_shield: float,
+                       victim_max_hull: float, victim_max_shield: float,
+                       crit_chance: float = 0.0, crit_mult: float = 2.0,
+                       victim_evasion: float = 0.0,
+                       shield_mult: float = 1.0, hull_mult: float = 1.0,
+                       burst_mult: float = PVP_BURST_MULT) -> dict:
+    """Мирроит shield/hull split из Player.takeDamage (client/src/entities/Player.js).
+    Урон — заявка клиента (claimed_dmg, реальный посчитанный урон выстрела со всеми
+    баффами/перками), зажатая потолком ceiling*burst_mult — не плоское число на
+    весь визит в комнату, но и не слепое доверие. Крит и уклонение всё равно решает
+    сервер своим роллом (по статам АТАКУЮЩЕГО — crit_chance/crit_mult, не фиксированные
+    для всех), не заявка клиента. Общий расчёт для игрок→игрок и игрок→моб — обе жертвы
+    описываются просто парой hull/shield, дальше не важно, чьи они. victim_evasion=0
+    для мобов — их движение клиент-локальное, сервер не знает скорость, чтобы честно
+    её учитывать. shield_mult/hull_mult — см. _weapon_mults (асимметрия лазера).
+    burst_mult по умолчанию PVP_BURST_MULT (слэк на баффы поверх СТАТИЧНОГО
+    loadout.dmg у обычного оружия) — способности (ABILITY_DAMAGE_CEILING) передают
+    burst_mult=1.0 явно: их ceiling уже САМ ПО СЕБЕ финальный урон одного тика/ракеты,
+    не "статичная база до баффов", лишний ×3 сверху не нужен и раньше давал урон
+    способности на порядок выше задуманного (баг из диалога: "ракетный залп нанёс
+    более 400 тыс урона"). Тонкая обёртка над _roll_pvp_shot+_split_pvp_damage (см.
+    выше) — оставлена как есть ради всех существующих вызывающих (моб/турель/абилки)."""
+    roll = _roll_pvp_shot(claimed_dmg, ceiling, crit_chance, crit_mult, victim_evasion, burst_mult)
+    if roll['dodged']:
+        return {'isCrit': False, 'dmg': 0, 'killed': False, 'dodged': True,
+                'hull': victim_hull, 'shield': victim_shield}
+    r = _split_pvp_damage(roll['amount'], penetration, victim_hull, victim_shield,
+                           victim_max_hull, victim_max_shield, shield_mult, hull_mult)
+    return {'isCrit': roll['isCrit'], 'dodged': False, **r}
+
+
+def _drone_public(victim: "PvpPlayerState") -> dict:
+    """Снапшот текущего состояния дрона жертвы для pvp_hit_result — клиент рисует
+    HP-бар/деспавн дрона по этим полям (см. GameScene._onPvpHitResult), а не по
+    отдельному сообщению, чтобы урон и обновление дрона всегда приходили атомарно."""
+    active = victim.shield_drone_active_until > time.time()
+    return {
+        'droneActive': active,
+        'droneHull': victim.shield_drone_hull if active else 0.0,
+        'droneMaxHull': SHIELD_DRONE_MAX_HULL,
+        'droneShield': victim.shield_drone_shield if active else 0.0,
+        'droneMaxShield': SHIELD_DRONE_MAX_SHIELD,
+    }
 
 
 def _resolve_pvp_hit(attacker: PvpPlayerState, victim: PvpPlayerState, claimed_dmg: float,
-                      weapon_type: str = 'cannon') -> dict:
+                      weapon_type: str = 'cannon', target_type: str = 'ship') -> "dict | None":
     # Грейс-период после "ремонта на месте" ИЛИ активный "Фазовый кокон" (см.
     # PvpPlayerState.invulnerable_until, pvp_self_heal_claim) — короткое замыкание ДО
     # _apply_pvp_damage, тем же контрактом ответа, что дожд ("dodged"), которым уже
     # пользуется клиент (_onPvpHitResult → showDodge), без урона и без изменения
-    # hull/shield жертвы.
+    # hull/shield жертвы. Применяется и к прямому выстрелу по дрону — фазовый кокон/грейс
+    # владельца логично защищает и его дрон тоже (тот же "неуязвимый момент").
     if victim.respawn_grace_until > time.time() or victim.invulnerable_until > time.time():
         return {
             'isCrit': False, 'dmg': 0, 'killed': False, 'dodged': True,
             'hull': victim.hull, 'shield': victim.shield,
             'maxHull': victim.max_hull, 'maxShield': victim.max_shield,
-            'damageBy': None, 'bountyBonus': None,
+            'damageBy': None, 'bountyBonus': None, **_drone_public(victim), 'droneDestroyed': False,
         }
     shield_mult, hull_mult = _weapon_mults(weapon_type)
-    r = _apply_pvp_damage(claimed_dmg, attacker.loadout['dmg'], attacker.loadout['penetration'],
+    now_ts = time.time()
+    drone_active = victim.shield_drone_active_until > now_ts and (
+        victim.shield_drone_hull > 0 or victim.shield_drone_shield > 0)
+
+    # ── Прямой выстрел ПО ДРОНУ (клиент явно выбрал дрон целью, см.
+    #    GameScene shieldDroneAt/isShieldDrone) — не трогает hull/shield владельца
+    #    вообще, свой (более мягкий, 30%) множитель снижения урона.
+    if target_type == 'drone':
+        if not drone_active:
+            return None  # дрон уже не существует — невалидная заявка, вызывающий код игнорирует
+        roll = _roll_pvp_shot(claimed_dmg, attacker.loadout['dmg'], attacker.loadout['critChance'],
+                               attacker.loadout['critMult'], 0.0)
+        if roll['dodged']:  # victim_evasion=0.0 выше — дрон не уклоняется, ветка чисто симметрии ради
+            return {
+                'isCrit': False, 'dmg': 0, 'killed': False, 'dodged': True,
+                'hull': victim.hull, 'shield': victim.shield,
+                'maxHull': victim.max_hull, 'maxShield': victim.max_shield,
+                'damageBy': None, 'bountyBonus': None, **_drone_public(victim), 'droneDestroyed': False,
+            }
+        amount = roll['amount'] * (1 - SHIELD_DRONE_DIRECT_REDUCTION)
+        d = _split_pvp_damage(amount, attacker.loadout['penetration'],
+                               victim.shield_drone_hull, victim.shield_drone_shield,
+                               SHIELD_DRONE_MAX_HULL, SHIELD_DRONE_MAX_SHIELD, shield_mult, hull_mult)
+        victim.shield_drone_hull, victim.shield_drone_shield = d['hull'], d['shield']
+        drone_destroyed = d['killed']
+        if drone_destroyed:
+            victim.shield_drone_active_until = 0.0
+            victim.shield_drone_hull = 0.0
+            victim.shield_drone_shield = 0.0
+            victim.shield_drone_last_use = now_ts  # КД — от момента реального конца, см. _shield_drone_tick_loop
+        if not roll['dodged'] and d['dmg'] > 0:
+            victim.damage_by[attacker.user_id] = victim.damage_by.get(attacker.user_id, 0.0) + d['dmg']
+        return {
+            'isCrit': roll['isCrit'], 'dmg': d['dmg'], 'killed': False, 'dodged': False,
+            'hull': victim.hull, 'shield': victim.shield,
+            'maxHull': victim.max_hull, 'maxShield': victim.max_shield,
+            'damageBy': None, 'bountyBonus': None, **_drone_public(victim), 'droneDestroyed': drone_destroyed,
+        }
+
+    # ── Обычный выстрел ПО КОРАБЛЮ владельца — если у него активен дрон, перенаправляем
+    #    90% (сниженных вдвое) на дрон, 10% остаётся на владельце как обычно. Крит/
+    #    уклонение роллятся ОДИН раз на весь выстрел (владелец либо уклонился целиком —
+    #    дрон в таком случае тоже не задет, это один и тот же промах).
+    roll = _roll_pvp_shot(claimed_dmg, attacker.loadout['dmg'], attacker.loadout['critChance'],
+                           attacker.loadout['critMult'], victim.loadout['evasion'])
+    if roll['dodged']:
+        return {
+            'isCrit': False, 'dmg': 0, 'killed': False, 'dodged': True,
+            'hull': victim.hull, 'shield': victim.shield,
+            'maxHull': victim.max_hull, 'maxShield': victim.max_shield,
+            'damageBy': None, 'bountyBonus': None, **_drone_public(victim), 'droneDestroyed': False,
+        }
+
+    drone_destroyed = False
+    if drone_active:
+        drone_amount = roll['amount'] * SHIELD_DRONE_REDIRECT_PCT * (1 - SHIELD_DRONE_REDIRECT_REDUCTION)
+        owner_amount = roll['amount'] * (1 - SHIELD_DRONE_REDIRECT_PCT)
+        d = _split_pvp_damage(drone_amount, attacker.loadout['penetration'],
+                               victim.shield_drone_hull, victim.shield_drone_shield,
+                               SHIELD_DRONE_MAX_HULL, SHIELD_DRONE_MAX_SHIELD, shield_mult, hull_mult)
+        victim.shield_drone_hull, victim.shield_drone_shield = d['hull'], d['shield']
+        drone_destroyed = d['killed']
+        if drone_destroyed:
+            victim.shield_drone_active_until = 0.0
+            victim.shield_drone_hull = 0.0
+            victim.shield_drone_shield = 0.0
+            victim.shield_drone_last_use = now_ts  # КД — от момента реального конца, см. _shield_drone_tick_loop
+    else:
+        owner_amount = roll['amount']
+
+    r = _split_pvp_damage(owner_amount, attacker.loadout['penetration'],
                            victim.hull, victim.shield, victim.max_hull, victim.max_shield,
-                           attacker.loadout['critChance'], attacker.loadout['critMult'],
-                           victim.loadout['evasion'], shield_mult, hull_mult)
+                           shield_mult, hull_mult)
     victim.hull, victim.shield = r['hull'], r['shield']
-    if not r['dodged'] and r['dmg'] > 0:
-        victim.damage_by[attacker.user_id] = victim.damage_by.get(attacker.user_id, 0.0) + r['dmg']
+    # Репортим ПОЛНЫЙ урон выстрела (roll['amount']), не только долю, доставшуюся кораблю —
+    # честь/лут-элигибл считаются по факту "участвовал в бою", не по тому, куда физически
+    # ушёл урон (иначе стрельба по игроку с дроном выглядела бы как урон в 10 раз меньше).
+    total_dmg = round(roll['amount'])
+    if total_dmg > 0:
+        victim.damage_by[attacker.user_id] = victim.damage_by.get(attacker.user_id, 0.0) + total_dmg
     damage_by_out = None
     bounty_bonus = None
     if r['killed']:
@@ -1459,7 +1639,13 @@ def _resolve_pvp_hit(attacker: PvpPlayerState, victim: PvpPlayerState, claimed_d
             mult = 2 if b.get('kills', 1) >= 10 else 1
             bounty_bonus = {'honorMult': 3 * mult, 'gold': 20 * mult}
             del bounties[victim.user_id]
-    return {**r, 'maxHull': victim.max_hull, 'maxShield': victim.max_shield, 'damageBy': damage_by_out, 'bountyBonus': bounty_bonus}
+    return {
+        'isCrit': roll['isCrit'], 'dmg': total_dmg, 'killed': r['killed'], 'dodged': False,
+        'hull': r['hull'], 'shield': r['shield'],
+        'maxHull': victim.max_hull, 'maxShield': victim.max_shield,
+        'damageBy': damage_by_out, 'bountyBonus': bounty_bonus,
+        **_drone_public(victim), 'droneDestroyed': drone_destroyed,
+    }
 
 
 # ── Арена: персонализированный arena_match_end ──────────────────────────
@@ -3163,11 +3349,18 @@ async def chat_ws(
 
                 claimed_dmg = max(0.0, float(data.get('dmg', 0) or 0))
                 weapon_type = str(data.get('weaponType', 'cannon'))[:20]
-                result = _resolve_pvp_hit(attacker, victim, claimed_dmg, weapon_type)
+                # Щит-дрон (см. SHIELD_DRONE_* выше): targetType='drone' — клиент явно
+                # выбрал дрон целью (не корабль владельца), см. GameScene shieldDroneAt.
+                target_type = str(data.get('targetType', 'ship'))[:10]
+                if target_type not in ('ship', 'drone'):
+                    target_type = 'ship'
+                result = _resolve_pvp_hit(attacker, victim, claimed_dmg, weapon_type, target_type)
+                if result is None:
+                    continue  # targetType='drone', но дрон уже не существует — невалидная заявка
                 out = {
                     'type': 'pvp_hit_result',
                     'attackerUserId': attacker.user_id, 'targetUserId': victim.user_id,
-                    'weaponType': weapon_type,
+                    'weaponType': weapon_type, 'targetType': target_type,
                     **result,
                 }
                 room_uids = [attacker.user_id] + [p.user_id for p in pvp_room_manager.others(sector, attacker.user_id)]
@@ -3303,6 +3496,68 @@ async def chat_ws(
                     'type': 'pvp_player_healed', 'userId': user.id,
                     'hull': state.hull, 'shield': state.shield,
                     'maxHull': state.max_hull, 'maxShield': state.max_shield,
+                })
+
+            # ── Щит-дрон (расходник, см. SHIELD_DRONE_* выше) — активация. Клиент уже
+            # списал расходник (КД на своей стороне НЕ включает сразу — стартует только
+            # когда дрон реально перестанет действовать, см. GameScene._despawnShieldDrone
+            # и диалог "сначала действие, потом КД") — здесь серверный кулдаун-флор
+            # (страховка от спама/читерского клиента) и сама HP-бухгалтерия. last_use
+            # обновляется НЕ тут, а в момент истечения/уничтожения дрона (см.
+            # _shield_drone_tick_loop/_resolve_pvp_hit) — тот же принцип "от конца
+            # действия, не от активации". Видимость всем в комнате (не только владельцу) —
+            # через broadcast, а не lazy-реконструкцию, потому что дрон недолговечен (1 мин)
+            # и эфемерен (не персистится нигде) — в отличие от hiredSecurity/registerMob,
+            # которые переживают сектор через БД, тут нечему "пересоздаваться" у нового
+            # джойнера — тот подхватит уже активный дрон через to_public() (см. выше).
+            elif msg_type == 'pvp_shield_drone_activate':
+                sector = pvp_room_manager.player_sector.get(user.id)
+                if not sector:
+                    continue
+                state = pvp_room_manager.get(sector, user.id)
+                if not state:
+                    continue
+                now_ts = time.time()
+                if state.shield_drone_active_until > now_ts:
+                    continue  # уже активен — повторная активация до истечения невозможна
+                if now_ts - state.shield_drone_last_use < SHIELD_DRONE_COOLDOWN_FLOOR:
+                    continue  # чаще заявленного КД — молча игнорируем, тот же паттерн, что и остальные КД
+                state.shield_drone_active_until = now_ts + SHIELD_DRONE_DURATION_SEC
+                state.shield_drone_hull = SHIELD_DRONE_MAX_HULL
+                state.shield_drone_shield = SHIELD_DRONE_MAX_SHIELD
+                room_uids = [user.id] + [p.user_id for p in pvp_room_manager.others(sector, user.id)]
+                await chat_manager.broadcast_to_uids(room_uids, {
+                    'type': 'pvp_shield_drone_spawn', 'ownerUserId': user.id,
+                    'maxHull': SHIELD_DRONE_MAX_HULL, 'maxShield': SHIELD_DRONE_MAX_SHIELD,
+                    'durationSec': SHIELD_DRONE_DURATION_SEC,
+                })
+
+            # ── Щит-дрон: урон от PvE (моб/AOE/мина) — целиком клиент-локальный бой (см.
+            # комментарий у DungeonRun — весь PvE-прогресс доверенный), сервер тут не
+            # пересчитывает сплит сам, только принимает уже посчитанный владельцем итог
+            # (hull/shield, не дельту) и ретранслирует комнате — иначе PvE-урон по дрону
+            # был бы виден только самому владельцу (pvp_hit_result для PvE не шлётся
+            # вообще, см. Player.js takeDamage). Клэмп — та же защита от абсурдных
+            # значений, что и у остального PvP-урона, не полноценная валидация.
+            elif msg_type == 'pvp_shield_drone_pve_damage':
+                sector = pvp_room_manager.player_sector.get(user.id)
+                if not sector:
+                    continue
+                state = pvp_room_manager.get(sector, user.id)
+                if not state or state.shield_drone_active_until <= time.time():
+                    continue
+                hull = max(0.0, min(float(data.get('hull', 0) or 0), SHIELD_DRONE_MAX_HULL))
+                shield = max(0.0, min(float(data.get('shield', 0) or 0), SHIELD_DRONE_MAX_SHIELD))
+                state.shield_drone_hull = hull
+                state.shield_drone_shield = shield
+                destroyed = hull <= 0
+                if destroyed:
+                    state.shield_drone_active_until = 0.0
+                    state.shield_drone_last_use = time.time()
+                room_uids = [user.id] + [p.user_id for p in pvp_room_manager.others(sector, user.id)]
+                await chat_manager.broadcast_to_uids(room_uids, {
+                    'type': 'pvp_shield_drone_sync', 'ownerUserId': user.id,
+                    'hull': hull, 'shield': shield, 'destroyed': destroyed,
                 })
 
             # ── Доска розыска: жертва (после своей смерти) вешает розыск на убийцу —

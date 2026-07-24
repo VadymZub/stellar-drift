@@ -142,13 +142,19 @@ export default class GarageScene extends Phaser.Scene {
 
 // Картинка корабля для Гаража: геройский арт (garageKey) если есть, иначе игровой спрайт.
   // Вписываем в box с сохранением пропорций (арт не квадратный). Возвращает image для тинта.
+  // Рендерим текстуру в 2× от финального размера показа (targetMax = displaySize × 2, тот
+  // же приём, что _prepShipTex/память sprite_rendering_quality и фикс мыла в ShopScene) —
+  // WebGL после этого делает чистый 2× bilinear downscale вместо отображения 1:1
+  // CPU-даунскейленной текстуры, которая на практике выглядела мыльно (диалог: "гелион,
+  // аргоси, дрифтер - гараж маленькие иконки - размазаны... тоже замазано" — те же
+  // корабли, что чаще всего смотрели в этой сессии, приём общий для всех кораблей).
   shipImg(cx, cy, box, ship) {
     const key = ship.garageKey || ship.key;
     const src = this.textures.get(key).getSourceImage();
     const scale = box / Math.max(src.width, src.height);
     const dw = Math.round(src.width  * scale);
     const dh = Math.round(src.height * scale);
-    return this.add.image(cx, cy, prerenderTex(this, key, dw, dh)).setDisplaySize(dw, dh);
+    return this.add.image(cx, cy, prerenderTex(this, key, dw * 2, dh * 2)).setDisplaySize(dw, dh);
   }
 
   priceStr(ship) {
@@ -467,8 +473,9 @@ export default class GarageScene extends Phaser.Scene {
           const iconImg = iconK
             ? this.add.image(sx + SZ / 2, sy + BODY_H / 2 - 5, prerenderTex(this, iconK, 38, 38)).setDisplaySize(38, 38).setOrigin(0.5)
             : null;
+          // Без "/лимит" (диалог: "не нужно писать /100000 или слеш 10000... в трюме и складе").
           const countTxt = this.add.text(sx + SZ / 2, sy + BODY_H - 10,
-            `${item.amount}/${PLASMATE_PER_SLOT}`, this.F('10px', '#88eeff')).setOrigin(0.5);
+            `${item.amount.toLocaleString()}`, this.F('10px', '#88eeff')).setOrigin(0.5);
           const canExch = item.amount >= PLASMATE_GOLD_RATE;
           const strip = this.add.rectangle(sx, sy + BODY_H, SZ, SELL_H,
             canExch ? 0x072030 : 0x0d1018, 0.9).setOrigin(0, 0)
@@ -500,43 +507,61 @@ export default class GarageScene extends Phaser.Scene {
           continue;
         }
 
-        // Consumable or ammo: → слот strip (universal quick-slot)
+        // Consumable or ammo: клик прямо по ячейке грузит в слот — тот же паттерн
+        // одного клика, что и экипировка оружия/щита/двигателя (см. `eq` ниже), не
+        // отдельная кнопка-полоска (диалог: "боеприпасы и расходники - не нужно писать в
+        // слот, кнопка не нужна, перемещать как пушки - 1 одним кликом").
         if (CONSUMABLES[item.type]) {
           const def    = CONSUMABLES[item.type];
           const isAmmo = def.category === 'ammo';
+          const isCons = def.category === 'consumable';
           const info   = isAmmo ? AMMO_ICON[item.type] : null;
           const hexC   = info?.color ?? 0x44aacc;
           const clrS   = `#${hexC.toString(16).padStart(6, '0')}`;
-          const box    = this.add.rectangle(sx, sy, SZ, BODY_H, 0x0a1a2a, 0.95).setOrigin(0, 0)
-            .setStrokeStyle(2, hexC, 0.8);
+          // Слот боеприпасов/расходников (gs.ammoSlots) — ОБЩИЙ и под патроны, и под
+          // обычные расходники (диалог: "слот боеприпасов - слот куда можно ставить и
+          // боеприпас и расходник"), материалы/дандж-ресурсы сюда не попадают вообще
+          // (isAmmo/isCons оба false для них — отдельная жалоба из диалога: "клановые
+          // ресурсы можно отправить в слот расходники/боеприпасы, зачем?"). ⚠
+          // HudScene._abPickerCandidates (панель действий) сканирует и gs.ammoSlots, не
+          // только gs.inventory — иначе расходник, загруженный сюда, был бы невидим для
+          // назначения на панель (тот самый баг "щит-дрон не влезает").
+          const canLoad = (isAmmo || isCons) && (gs.ammoSlots || []).some(s => s.type === item.type || !s.type);
+          const box = this.add.rectangle(sx, sy, SZ, SZ, 0x0a1a2a, 0.95).setOrigin(0, 0)
+            .setStrokeStyle(2, canLoad ? hexC : 0x2a3040, canLoad ? 0.8 : 0.5);
           let iconEl;
+          // 46px (было 36) — после переноса "→ слот" на клик по всей ячейке снизу
+          // освободилось место под полоской-кнопкой (диалог: "иконка... можно увеличить
+          // картинку, освободилось место после удаления кнопки в нижней части ячейки").
+          const isz = 46;
           if (info) {
-            const isz = 36;
             iconEl = this.textures.exists(item.type)
-              ? this.add.image(sx + SZ / 2, sy + BODY_H / 2 - 5, prerenderTex(this, item.type, isz, isz)).setDisplaySize(isz, isz).setOrigin(0.5)
-              : this.add.text(sx + SZ / 2, sy + BODY_H / 2 - 5, info.icon ?? '?', this.O('14px', clrS)).setOrigin(0.5);
+              ? this.add.image(sx + SZ / 2, sy + SZ / 2 - 8, prerenderTex(this, item.type, isz, isz)).setDisplaySize(isz, isz).setOrigin(0.5)
+              : this.add.text(sx + SZ / 2, sy + SZ / 2 - 8, info.icon ?? '?', this.O('14px', clrS)).setOrigin(0.5);
           } else {
-            const iconK = `consumable_${item.type}`;
-            const isz = 36;
-            iconEl = this.textures.exists(iconK)
-              ? this.add.image(sx + SZ / 2, sy + BODY_H / 2 - 5, prerenderTex(this, iconK, isz, isz)).setDisplaySize(isz, isz).setOrigin(0.5)
-              : this.add.text(sx + SZ / 2, sy + BODY_H / 2 - 5, '?', this.O('14px', '#88aacc')).setOrigin(0.5);
+            // itemIconKey() (не голый `consumable_${item.type}`) — дандж/клановые ресурсы
+            // (biomech_fragment/quantum_shard/plasma_strand, category 'dungeonResource')
+            // грузятся БЕЗ префикса consumable_ (см. BootScene.js), а этот блок раньше
+            // всегда добавлял префикс — для них получался несуществующий ключ
+            // consumable_biomech_fragment, textures.exists() падал в '?' (баг: "клановые
+            // ресурсы не отображаются в трюме" — именно в этом гараж-трюм виде, CargoScene
+            // уже использовал itemIconKey() правильно).
+            const iconK = itemIconKey(item);
+            iconEl = iconK && this.textures.exists(iconK)
+              ? this.add.image(sx + SZ / 2, sy + SZ / 2 - 8, prerenderTex(this, iconK, isz, isz)).setDisplaySize(isz, isz).setOrigin(0.5)
+              : this.add.text(sx + SZ / 2, sy + SZ / 2 - 8, '?', this.O('14px', '#88aacc')).setOrigin(0.5);
           }
-          const cntTxt = this.add.text(sx + SZ / 2, sy + BODY_H - 8, `${item.amount}/${def.maxPerSlot}`,
+          // Без "/лимит" (диалог: "не нужно писать /100000 или слеш 10000... в трюме и складе").
+          const cntTxt = this.add.text(sx + SZ / 2, sy + SZ - 8, `${item.amount.toLocaleString()}`,
             this.F('9px', '#aaccdd')).setOrigin(0.5);
-          const ammoSlots = gs.ammoSlots || [];
-          const canLoad   = ammoSlots.some(s => s.type === item.type || !s.type);
-          const strip = this.add.rectangle(sx, sy + BODY_H, SZ, SELL_H,
-            canLoad ? 0x0a1828 : 0x0d1018, 0.9).setOrigin(0, 0)
-            .setStrokeStyle(1, canLoad ? hexC : 0x2a3040, 0.5);
-          const stripT = this.add.text(sx + SZ / 2, sy + BODY_H + SELL_H / 2,
-            canLoad ? '→ слот' : '⚡ нет мест',
-            this.F('9px', canLoad ? clrS : '#556677')).setOrigin(0.5);
+          const cellObjs = [box, iconEl, cntTxt];
           if (canLoad) {
-            strip.setInteractive({ useHandCursor: true });
-            strip.on('pointerdown', () => this._loadAmmoToSlot(item));
+            box.setInteractive({ useHandCursor: true });
+            box.on('pointerover', () => box.setFillStyle(0x142838));
+            box.on('pointerout',  () => box.setFillStyle(0x0a1a2a));
+            box.on('pointerdown', () => this._loadAmmoToSlot(item));
           }
-          container.add([box, iconEl, cntTxt, strip, stripT]);
+          container.add(cellObjs);
           if (overflow) {
             const dg = this.add.graphics();
             dg.fillStyle(0xffa000, 0.85); dg.fillTriangle(sx, sy, sx + 14, sy, sx, sy + 14);
@@ -1169,12 +1194,15 @@ export default class GarageScene extends Phaser.Scene {
             this.add.text(sx + sz / 2, sy + sz / 2 - 4, '?', this.O('12px', '#88aacc')).setOrigin(0.5);
           }
         }
-        this.add.text(sx + sz / 2, sy + sz - 7, `${slot.count.toLocaleString()}`,
+        // Цифра — максимум "9999" (без разделителей тысяч — даже с ними не влезло бы в
+        // 36px ячейку, диалог: "в слоте... писать максимальное число 9999 - больше не
+        // влезет в ячейку (я про цифру)"), точное количество — в хинте по наведению.
+        this.add.text(sx + sz / 2, sy + sz - 7, `${Math.min(slot.count, 9999)}`,
           this.F('8px', '#aaccdd')).setOrigin(0.5);
         const idx = i;
         box.setInteractive({ useHandCursor: true });
-        box.on('pointerover', () => box.setFillStyle(0x1e3240));
-        box.on('pointerout',  () => box.setFillStyle(0x12222e));
+        box.on('pointerover', (p) => { box.setFillStyle(0x1e3240); this._showAmmoSlotTooltip(p.x, p.y, slot.type, slot.count); });
+        box.on('pointerout',  () => { box.setFillStyle(0x12222e); this._hideTooltip(); });
         box.on('pointerdown', () => this._unloadAmmoSlot(idx));
       }
     }
@@ -1283,17 +1311,27 @@ export default class GarageScene extends Phaser.Scene {
 
     const idx = inv.indexOf(item);
     if (idx < 0) return;
-    inv.splice(idx, 1);
 
-    const free = arr.findIndex((x) => !x);
-    if (free < 0) { 
-      const prev = arr[0]; 
-      arr[0] = item; 
-      if (prev) inv.push(prev); 
+    // Свободным считаем любой индекс ДО лимита слотов текущего корабля, даже если
+    // массив короче/полностью занят на своей текущей длине (см. баг из диалога: "не могу
+    // поставить больше 1 щита/брони и больше 1 двигателя" — DEV-хоткей 8 когда-то обнулял
+    // gs.equipped.shield/engine до [], после чего findIndex никогда не находил null и
+    // equip() всегда заменял слот 0 вместо реального добавления — root cause уже
+    // пофикшен, но эта проверка защищает от того же класса бага откуда угодно ещё).
+    const ship = p.ship;
+    const limit = key === 'weapon' ? ship.wSlots : key === 'shield' ? ship.sSlots : (ship.eSlots || 0);
+    let free = arr.findIndex((x) => !x);
+    if (free < 0 && arr.length < limit) free = arr.length;
+
+    inv.splice(idx, 1);
+    if (free < 0 || free >= limit) {
+      const prev = arr[0];
+      arr[0] = item;
+      if (prev) inv.push(prev);
     } else {
       arr[free] = item;
     }
-    
+
     p.recomputeStats();
     this.scene.restart();
   }
@@ -1750,6 +1788,36 @@ export default class GarageScene extends Phaser.Scene {
     if (!this._tooltipObjs) return;
     this._tooltipObjs.forEach(o => o?.destroy());
     this._tooltipObjs = null;
+  }
+
+  // Хинт для слота боеприпасов/расходников (см. _renderAmmoSlotRow) — точное количество
+  // (цифра в самой ячейке урезана до "9999", см. диалог) + название содержимого.
+  // Отдельный от _showTooltip() метод — тот заточен под предметы-модули (tier/perk/
+  // itemStats), тут же просто {type, count} из gs.ammoSlots, не полноценный item.
+  _showAmmoSlotTooltip(wx, wy, type, count) {
+    this._hideTooltip();
+    const W = this.scale.width, H = this.scale.height;
+    const TW = 200, GAP = 5;
+    const lineDefs = [
+      { text: i18n.t(`item.${type}`), sty: this.O('13px', '#ffe0b2') },
+      { text: `${count.toLocaleString()} шт.`, sty: this.F('11px', '#9fb3b8') },
+    ];
+    const textObjs = lineDefs.map(l => this.add.text(-9999, -9999, l.text,
+      { ...l.sty, wordWrap: { width: TW - 20 } }).setDepth(201));
+    const TH = 10 + textObjs.reduce((s, t) => s + t.height + GAP, 0);
+    let tx = wx + 16, ty = wy - TH / 2;
+    if (tx + TW > W - 8) tx = wx - TW - 8;
+    if (ty < 4) ty = 4;
+    if (ty + TH > H - 4) ty = H - TH - 4;
+
+    const g = this.add.graphics().setDepth(200);
+    g.fillStyle(0x08121e, 0.97); g.fillRoundedRect(tx, ty, TW, TH, 6);
+    g.lineStyle(1, 0x1e3a50, 0.9); g.strokeRoundedRect(tx, ty, TW, TH, 6);
+
+    let ly = ty + 8;
+    textObjs.forEach(t => { t.setPosition(tx + 10, ly); ly += t.height + GAP; });
+
+    this._tooltipObjs = [g, ...textObjs];
   }
 
   // ════════════════ ТАБ «ПЛАТЫ» ════════════════════════════════════════════

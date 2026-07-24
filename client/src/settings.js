@@ -48,6 +48,10 @@ export const DEFAULTS = {
   frWinAlphaIdx:  0,
   // Social buttons visibility
   showSocialBtns: true,
+  // Чат полностью убран кнопкой ЧАТ на панели аккаунта (см. HudScene._toggleChatWin) —
+  // персистится, чтобы не вылезал заново при каждом рестарте сцены/перезагрузке
+  // страницы (диалог: "очень раздражает что чат даже в свёрнутом виде постоянно вылазит").
+  chatHidden: false,
 };
 
 // In-memory cache — updated immediately on save/reset, read on every loadSettings() call.

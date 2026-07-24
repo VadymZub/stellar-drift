@@ -141,41 +141,38 @@ export default class ShopScene extends Phaser.Scene {
   _cy0() { return this._py + 46 + 30 + 10; }
 
   // ── Tab: РАСХОДНИКИ И БОЕПРИПАСЫ ─────────────────────────────────────────
+  // Один общий continuous grid для расходников + боеприпасов — без отдельных
+  // подписей секций (та подпись, что была тут раньше, дублировала уже видимое имя
+  // вкладки в шапке магазина). Боеприпасы продолжают ряд сразу после расходников
+  // (row-major), а не начинают свою отдельную сетку с новой строки — при 5
+  // расходниках (после щит-дрона) + 3 патронах = ровно 8, 2 полных ряда по 4.
   _renderConsumables() {
     const { _px: px, _pw: pw, _gs: gs } = this;
-    const ob = this._tabObjects;
     const cy0 = this._cy0();
-
-    ob.push(this.add.text(px + 34, cy0 + 4, 'РАСХОДНИКИ', this.O('12px', '#4dd0e1')));
 
     const buyable = Object.entries(CONSUMABLES)
       .filter(([type, d]) => d.canBuy && d.category !== 'ammo' && !BOOSTER_CONSUMABLE_TYPES.has(type))
       .map(([type, def]) => ({ type, ...def }));
-
-    const COLS = 4, CW = 220, CH = 270, GAP = 18;
-    const gridW = COLS * CW + (COLS - 1) * GAP;
-    const gx = px + (pw - gridW) / 2;
-    const rowY = cy0 + 28;
-
-    buyable.forEach((item, i) => {
-      const col = i % COLS, row = Math.floor(i / COLS);
-      this._drawCard(gx + col * (CW + GAP), rowY + row * (CH + 16), CW, CH, item, gs);
-    });
-
-    // Ammo sub-section
-    const rows = Math.ceil(buyable.length / COLS);
-    const ammoY = rowY + rows * (CH + 16) + 6;
-    ob.push(this.add.text(px + 34, ammoY, 'БОЕПРИПАСЫ', this.O('12px', '#ffb74d')));
 
     const AMMO_ITEMS = [
       { type: 'ammo_plasma',       qty: 1000, price: 10000, currency: 'credits' },
       { type: 'ammo_plasma_elite', qty: 1000, price: 10,    currency: 'gold'    },
       { type: 'ammo_laser',        qty: 1000, price: 15,    currency: 'gold'    },
     ];
-    const agridW = AMMO_ITEMS.length * CW + (AMMO_ITEMS.length - 1) * GAP;
-    const ax = px + (pw - agridW) / 2;
+
+    const COLS = 4, CW = 220, CH = 270, GAP = 18;
+    const gridW = COLS * CW + (COLS - 1) * GAP;
+    const gx = px + (pw - gridW) / 2;
+    const rowY = cy0 + 4;
+
+    buyable.forEach((item, i) => {
+      const col = i % COLS, row = Math.floor(i / COLS);
+      this._drawCard(gx + col * (CW + GAP), rowY + row * (CH + 16), CW, CH, item, gs);
+    });
     AMMO_ITEMS.forEach((item, i) => {
-      this._drawAmmoCard(ax + i * (CW + GAP), ammoY + 26, CW, CH, item, gs);
+      const idx = buyable.length + i;
+      const col = idx % COLS, row = Math.floor(idx / COLS);
+      this._drawAmmoCard(gx + col * (CW + GAP), rowY + row * (CH + 16), CW, CH, item, gs);
     });
   }
 
@@ -457,11 +454,15 @@ export default class ShopScene extends Phaser.Scene {
     g.lineStyle(2, 0x2a6888, 0.8); g.strokeRoundedRect(cx, cy, cw, ch, 10);
     ob.push(g);
 
-    // Icon — 115px (+20% from 96px)
+    // Icon — 115px displayed, но текстура рендерится в 2× (230px) — тот же приём, что
+    // _prepShipTex для корабельных спрайтов (см. память sprite_rendering_quality:
+    // "targetMax = displaySize × 2" — WebGL после этого всегда делает чистый 2× bilinear
+    // downscale вместо 1:1 отображения CPU-даунскейленной текстуры, что на практике даёт
+    // заметно более резкую картинку в самом магазине).
     const iconKey = `consumable_${item.type}`;
     if (this.textures.exists(iconKey)) {
       const img = this.add.image(cx + cw / 2, cy + 68,
-        prerenderTex(this, iconKey, 115, 115)).setDisplaySize(115, 115).setOrigin(0.5);
+        prerenderTex(this, iconKey, 230, 230)).setDisplaySize(115, 115).setOrigin(0.5);
       ob.push(img);
     }
 
@@ -483,35 +484,50 @@ export default class ShopScene extends Phaser.Scene {
       `продажа: ${item.sell} кр./шт.`,
       this.F('12px', '#4a6040')).setOrigin(0.5, 0));
 
-    // Gold buy button only (×10 = 1⭐)
+    // Gold buy button — по умолчанию ×10 = 1⭐ (GOLD_PACK), но предмет может задать свою
+    // пару goldQty/goldPrice (см. shield_drone в items.js — ×1 = 10⭐, штучная покупка
+    // сильного PvP-расходника вместо пачки).
+    const qty   = item.goldQty   ?? GOLD_PACK;
+    const price = item.goldPrice ?? 1;
+    const label = `КУПИТЬ ×${qty}  —  ${price} ⭐`;
+
     const btnH = 38, btnY = cy + ch - 48;
     const btn = this.add.rectangle(cx + cw / 2, btnY + btnH / 2, cw - 28, btnH, 0x2a1a00)
       .setStrokeStyle(1.5, 0xffb74d, 0.85).setInteractive({ useHandCursor: true });
     const btnTxt = this.add.text(cx + cw / 2, btnY + btnH / 2,
-      `КУПИТЬ ×${GOLD_PACK}  —  1 ⭐`, this.O('10px', '#ffb74d')).setOrigin(0.5);
+      label, this.O('10px', '#ffb74d')).setOrigin(0.5);
     ob.push(btn, btnTxt);
 
     btn.on('pointerover', () => btn.setFillStyle(0x4a2a00));
     btn.on('pointerout',  () => btn.setFillStyle(0x2a1a00));
     btn.on('pointerdown', () => {
-      if ((gs.starGold || 0) < 1) {
+      if ((gs.starGold || 0) < price) {
         btn.setFillStyle(0x5a1010);
         this.time.delayedCall(300, () => btn.setFillStyle(0x2a1a00));
         return;
       }
       const inv2 = gs.inventory || [];
       const cargoMax = this._cargoMax(gs);
+      // Сначала — слот боеприпасов/расходников (только ДОЗАПОЛНЯЕТ уже назначенный этим
+      // типом слот, пустой не занимает сама по себе, см. GameScene._tryAddToAmmoSlots и
+      // диалог "только дозаполняем если вставлен, если не вставлен - ставим руками"),
+      // остаток — в трюм как раньше. slotRoom — сколько там реально ещё влезает, чтобы
+      // "трюм полон" не блокировал покупку, когда есть куда положить помимо трюма.
+      const slots = gs.ammoSlots || [];
+      const slotRoom = slots.reduce((s, sl) => s + (sl.type === item.type ? Math.max(0, item.maxPerSlot - sl.count) : 0), 0);
       const space = this._freeConsumableSpace(inv2, item.type, item.maxPerSlot, cargoMax);
-      if (space <= 0) {
+      if (slotRoom <= 0 && space <= 0) {
         btnTxt.setText('ТРЮМ ПОЛОН');
-        this.time.delayedCall(1400, () => btnTxt.setText(`КУПИТЬ ×${GOLD_PACK}  —  1 ⭐`));
+        this.time.delayedCall(1400, () => btnTxt.setText(label));
         return;
       }
-      gs.starGold -= 1;
-      addConsumableToInventory(inv2, item.type, GOLD_PACK, cargoMax);
+      gs.starGold -= price;
+      const toSlots = gs._tryAddToAmmoSlots?.(item.type, qty) ?? 0;
+      const remaining = qty - toSlots;
+      if (remaining > 0) addConsumableToInventory(inv2, item.type, remaining, cargoMax);
       haveTxt.setText(`в трюме: ${countConsumableInInventory(inv2, item.type)}`);
       gs._saveState?.();
-      gs.log?.(`Куплено: ${i18n.t(`item.${item.type}`)} ×${GOLD_PACK} −1 ⭐`);
+      gs.log?.(`Куплено: ${i18n.t(`item.${item.type}`)} ×${qty} −${price} ⭐${toSlots > 0 ? ` (${toSlots} → слот)` : ''}`);
       this._refresh();
     });
   }
@@ -569,26 +585,29 @@ export default class ShopScene extends Phaser.Scene {
     btn.on('pointerdown', () => {
       const inv = gs.inventory || [];
       const cargoMax = this._cargoMax(gs);
+      const maxPerSlot = CONSUMABLES[item.type].maxPerSlot;
+      // Слот боеприпасов дозаполняется ПЕРВЫМ (только уже назначенный этим типом, см.
+      // GameScene._tryAddToAmmoSlots), остаток — в трюм, тот же приём, что и в _drawCard.
+      const slots = gs.ammoSlots || [];
+      const slotRoom = slots.reduce((s, sl) => s + (sl.type === item.type ? Math.max(0, maxPerSlot - sl.count) : 0), 0);
+      const space = this._freeConsumableSpace(inv, item.type, maxPerSlot, cargoMax);
+      if (slotRoom <= 0 && space <= 0) {
+        btnTxt.setText('ТРЮМ ПОЛОН'); this.time.delayedCall(1400, () => btnTxt.setText(`КУПИТЬ 1000  —  ${priceLabel}`)); return;
+      }
       if (item.currency === 'gold') {
         if ((gs.starGold || 0) < item.price) {
           btn.setFillStyle(0x5a1010); this.time.delayedCall(300, () => btn.setFillStyle(btnBg)); return;
-        }
-        const space = this._freeConsumableSpace(inv, item.type, CONSUMABLES[item.type].maxPerSlot, cargoMax);
-        if (space <= 0) {
-          btnTxt.setText('ТРЮМ ПОЛОН'); this.time.delayedCall(1400, () => btnTxt.setText(`КУПИТЬ 1000  —  ${priceLabel}`)); return;
         }
         gs.starGold -= item.price;
       } else {
         if ((gs.credits || 0) < _effPrice) {
           btn.setFillStyle(0x5a1010); this.time.delayedCall(300, () => btn.setFillStyle(btnBg)); return;
         }
-        const space = this._freeConsumableSpace(inv, item.type, CONSUMABLES[item.type].maxPerSlot, cargoMax);
-        if (space <= 0) {
-          btnTxt.setText('ТРЮМ ПОЛОН'); this.time.delayedCall(1400, () => btnTxt.setText(`КУПИТЬ 1000  —  ${priceLabel}`)); return;
-        }
         gs.credits -= _effPrice;
       }
-      addConsumableToInventory(inv, item.type, item.qty, cargoMax);
+      const toSlots = gs._tryAddToAmmoSlots?.(item.type, item.qty) ?? 0;
+      const remaining = item.qty - toSlots;
+      if (remaining > 0) addConsumableToInventory(inv, item.type, remaining, cargoMax);
       gs._saveState?.();
       gs.log?.(`Куплено: ${i18n.t(`item.${item.type}`)} ×${item.qty}`);
       const newSlots = (gs.ammoSlots || []).filter(s => s.type === item.type).reduce((sum, s) => sum + (s.count || 0), 0);
@@ -606,10 +625,11 @@ export default class ShopScene extends Phaser.Scene {
     gfx.lineStyle(2, b.color, 0.7); gfx.strokeRoundedRect(cx, cy, cw, ch, 10);
     ob.push(gfx);
 
-    // Icon — real PNG if loaded, canvas fallback otherwise
+    // Icon — real PNG if loaded, canvas fallback otherwise. 230px pre-render → 115px
+    // display (2× oversample, см. комментарий в _drawCard) — тот же приём для резкости.
     const pngKey = `consumable_${b.consumableKey}`;
     const iconKey = this.textures.exists(pngKey)
-      ? prerenderTex(this, pngKey, 115, 115)
+      ? prerenderTex(this, pngKey, 230, 230)
       : this._ensureBoosterTex(b.key, b.color, b.icon);
     ob.push(this.add.image(cx + cw / 2, cy + 68, iconKey).setDisplaySize(115, 115).setOrigin(0.5));
 

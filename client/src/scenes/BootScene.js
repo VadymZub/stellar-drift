@@ -138,8 +138,13 @@ export default class BootScene extends Phaser.Scene {
     this.load.image('plasmate_icon', 'assets/modules/plasmate_icon.png');
 
     // Consumables & materials icons
-    for (const type of ['repair_pack','speed_boost','scanner_pulse','emergency_warp','biomech_core','quantum_crystal','plasma_coil','damage_booster','hull_booster','shield_booster','xp_booster'])
+    for (const type of ['repair_pack','speed_boost','scanner_pulse','emergency_warp','shield_drone','biomech_core','quantum_crystal','plasma_coil','damage_booster','hull_booster','shield_booster','xp_booster'])
       this.load.image(`consumable_${type}`, `assets/consumables/${type}.png`);
+    // Щит-дрон — мировой спрайт видимой сущности (отдельно от иконки расходника выше,
+    // см. client/assets/consumables/shield_drone_prompts.md), рисуется в игре, а не в
+    // инвентаре/магазине. Ключ текстуры 'shield_drone', без префикса consumable_ — та же
+    // конвенция, что у обычных мобов (см. цикл MOBS чуть выше).
+    this.load.image('shield_drone', 'assets/consumables/shield_drone.png');
 
     // Дандж/клановые ресурсы (biomech_fragment/quantum_shard/plasma_strand) — раньше
     // временно рисовались общей текстурой 'plasmate_crystal' на карте и вообще без

@@ -42,21 +42,21 @@ export const SHIPS = [
 
   // Prestige — за ⭐, гибрид-гейт. corp задаёт принадлежность (для текста требования).
   // Все три: 7/7/2 слота, dmgMod 1.0. Разница — корпус/скорость + пассив + активный скилл.
-  { key: 'helion', nameKey: 'ship.helion', descKey: 'shipdesc.helion', tier: 'T4 elite', levelGate: 45, price: 5000, currency: 'star', prestige: true, corp: 'helios', corpAffinity: 'helios', displaySize: 156, hullMax: 3100, shieldBase: 450, baseSpeed: 220, wSlots: 7, sSlots: 7, eSlots: 2, aSlots: 6, dmgMod: 1.00, garageKey: 'helion_g',  artAngleOffset: -Math.PI / 2,
+  { key: 'helion', nameKey: 'ship.helion', descKey: 'shipdesc.helion', tier: 'T4 elite', levelGate: 45, price: 5000, currency: 'star', prestige: true, corp: 'helios', corpAffinity: 'helios', displaySize: 156, hullMax: 3100, shieldBase: 450, baseSpeed: 220, wSlots: 7, sSlots: 7, eSlots: 2, aSlots: 7, dmgMod: 1.00, garageKey: 'helion_g',  artAngleOffset: -Math.PI / 2,
     passives: { damageBonus: 0.08 },
     activeSkill: { key: 'ship:helion_volley', nameKey: 'skill.ship_helion_volley', icon: 'ЗП', color: 0xffb74d },
     engines: [{ x: -14, y: 62 }, { x: 0, y: 65 }, { x: 14, y: 62 }] },
-  { key: 'argosy',   nameKey: 'ship.argosy',   descKey: 'shipdesc.argosy',   tier: 'T4 elite', levelGate: 45, price: 5000, currency: 'star', prestige: true, corp: 'karax',  corpAffinity: 'karax',  displaySize: 140, hullMax: 3600, shieldBase: 480, baseSpeed: 215, wSlots: 7, sSlots: 7, eSlots: 2, aSlots: 6, dmgMod: 1.00, garageKey: 'argosy_g',  artAngleOffset: -Math.PI / 2,
+  { key: 'argosy',   nameKey: 'ship.argosy',   descKey: 'shipdesc.argosy',   tier: 'T4 elite', levelGate: 45, price: 5000, currency: 'star', prestige: true, corp: 'karax',  corpAffinity: 'karax',  displaySize: 140, hullMax: 3600, shieldBase: 480, baseSpeed: 215, wSlots: 7, sSlots: 7, eSlots: 2, aSlots: 7, dmgMod: 1.00, garageKey: 'argosy_g',  artAngleOffset: -Math.PI / 2,
     passives: { hullRegen: 25 },
     activeSkill: { key: 'ship:argosy_repair', nameKey: 'skill.ship_argosy_repair', icon: 'РМ', color: 0x4fc3f7 },
     engines: [{ x: -24, y: 58 }, { x: 24, y: 58 }] },
-  { key: 'drifter',  nameKey: 'ship.drifter',  descKey: 'shipdesc.drifter',  tier: 'T4 elite', levelGate: 45, price: 5000, currency: 'star', prestige: true, corp: 'tides',  corpAffinity: 'tides',  displaySize: 147, hullMax: 2900, shieldBase: 440, baseSpeed: 265, wSlots: 7, sSlots: 7, eSlots: 2, aSlots: 6, dmgMod: 1.00, garageKey: 'drifter_g',  artAngleOffset: -Math.PI / 2,
+  { key: 'drifter',  nameKey: 'ship.drifter',  descKey: 'shipdesc.drifter',  tier: 'T4 elite', levelGate: 45, price: 5000, currency: 'star', prestige: true, corp: 'tides',  corpAffinity: 'tides',  displaySize: 147, hullMax: 2900, shieldBase: 440, baseSpeed: 265, wSlots: 7, sSlots: 7, eSlots: 2, aSlots: 7, dmgMod: 1.00, garageKey: 'drifter_g',  artAngleOffset: -Math.PI / 2,
     passives: { evasionBonus: 0.15 },
     activeSkill: { key: 'ship:drifter_jump', nameKey: 'skill.ship_drifter_jump', icon: 'ПР', color: 0x4db6ac },
     engines: [{ x: 0, y: 70 }] },
 
   // Admin Ship
-  { key: 'argus',    nameKey: 'ship.argus',    descKey: 'shipdesc.argus',    tier: 'ADMIN',    levelGate: 99, price: 0,      currency: null,      displaySize: 182, hullMax: 500000, shieldBase: 500000, baseSpeed: 450, wSlots: 15, sSlots: 0, eSlots: 0, aSlots: 6, dmgMod: 2.0, artAngleOffset: -Math.PI / 2,
+  { key: 'argus',    nameKey: 'ship.argus',    descKey: 'shipdesc.argus',    tier: 'ADMIN',    levelGate: 99, price: 0,      currency: null,      displaySize: 182, hullMax: 500000, shieldBase: 500000, baseSpeed: 450, wSlots: 15, sSlots: 0, eSlots: 0, aSlots: 7, dmgMod: 2.0, artAngleOffset: -Math.PI / 2,
     engines: [{ x: -35, y: 72 }, { x: -20, y: 74 }, { x: -7, y: 76 }, { x: 7, y: 76 }, { x: 20, y: 74 }, { x: 35, y: 72 }] },
 ];
 

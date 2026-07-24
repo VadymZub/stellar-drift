@@ -529,6 +529,41 @@ export default class Player {
     if ((this.scene._aegisDomeEndTime || 0) > this.scene.time.now) penetration = 0;
     this.lastDamageAt = this.scene.time.now;
 
+    // Щит-дрон (расходник, см. entities/ShieldDrone.js) — редирект урона и В PvE тоже
+    // (диалог: "дрон должен работать и в PVE бою"), не только в PvP: там тот же сплит уже
+    // считает сервер (см. main.py _resolve_pvp_hit) — takeDamage() для урона ОТ ДРУГОГО
+    // ИГРОКА вообще не вызывается, p.hull/p.shield выставляются напрямую из
+    // pvp_hit_result. Здесь же — урон от моба/AOE/DoT — целиком клиент-локальный бой
+    // (см. CLAUDE.md "мобы/PvE ... остаются полностью клиент-локальными"), поэтому дрон
+    // обрабатывается прямо тут, теми же процентами, что и сервер (90% на дрон со
+    // снижением вдвое, 10% на владельца, см. main.py SHIELD_DRONE_REDIRECT_PCT/REDUCTION).
+    const drone = this.scene._shieldDrones?.get(this.scene.myUserId);
+    if (drone?.alive) {
+      const droneAmount = amount * 0.90 * 0.50;
+      const dDirect = droneAmount * penetration;
+      let dHullHit = dDirect * hullMult;
+      const dShieldHitRaw = droneAmount - dDirect;
+      let dShieldHit = 0;
+      if (drone.shield > 0) {
+        const dToShieldEff = dShieldHitRaw * shieldMult;
+        if (dToShieldEff <= drone.shield) { drone.shield -= dToShieldEff; dShieldHit = dToShieldEff; }
+        else { dHullHit += (dToShieldEff - drone.shield) * hullMult; dShieldHit = drone.shield; drone.shield = 0; }
+      } else {
+        dHullHit = droneAmount * hullMult;
+      }
+      drone.hull = Math.max(0, drone.hull - dHullHit);
+      drone.drawBar();
+      // Плавающая цифра урона НАД дроном — раньше HP-бар обновлялся молча (диалог: "не
+      // видно сколько в числах идёт урон на бота от мобов" — PvE-урон никогда не проходит
+      // через _onPvpHitResult/showDamage, тот путь только для PvP-хитов, см. GameScene).
+      const droneKilled = drone.hull <= 0;
+      this.scene.hitFlash?.(drone.x, drone.y, dHullHit > 0, drone);
+      this.scene.showDamage?.(drone.x, drone.y, { shieldHit: dShieldHit, hullHit: dHullHit, killed: droneKilled }, drone.maxHull, false);
+      this.scene.pvpClient?.shieldDronePveDamage(drone.hull, drone.shield);
+      if (droneKilled) this.scene._despawnShieldDrone?.(this.scene.myUserId, true);
+      amount *= 0.10; // остаток — то, что реально доходит до корабля владельца ниже
+    }
+
     const direct       = amount * penetration;
     const toShieldRaw  = amount - direct;
     let hullHit        = direct * hullMult;

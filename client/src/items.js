@@ -226,26 +226,39 @@ const SELL_PRICE = { 1: 200, 2: 550, 3: 1300, 4: 3000 };
 export function itemSellPrice(item) { return SELL_PRICE[item.tier] || 100; }
 
 // ── Consumables & Materials ───────────────────────────────────────────────────
+// maxPerSlot 10000 для обычных расходников/бустеров (было 10-100) — тот же лимит, что и
+// у патронов, см. диалог "максимум для боеприпасов и расходников в слоте подними до
+// 10000 (для слота в трюме и складе тоже)" — одно и то же значение читается и стеком в
+// трюме/складе, и слотом боеприпасов/расходников (gs.ammoSlots).
 export const CONSUMABLES = {
-  repair_pack:     { category: 'consumable', maxPerSlot: 100,   canBuy: true,  price: 3500, sell: 100 },
-  speed_boost:     { category: 'consumable', maxPerSlot: 100,   canBuy: true,  price: 2800, sell: 100 },
-  scanner_pulse:   { category: 'consumable', maxPerSlot: 100,   canBuy: true,  price: 1800, sell: 100 },
-  emergency_warp:  { category: 'consumable', maxPerSlot:  50,   canBuy: true,  price: 5000, sell: 100 },
+  // goldPrice 3 (было 1) — цена за пачку ×10 (GOLD_PACK), см. ShopScene._drawCard.
+  repair_pack:     { category: 'consumable', maxPerSlot: 10000, canBuy: true,  price: 3500, sell: 100, goldPrice: 3 },
+  speed_boost:     { category: 'consumable', maxPerSlot: 10000, canBuy: true,  price: 2800, sell: 100, goldPrice: 3 },
+  scanner_pulse:   { category: 'consumable', maxPerSlot: 10000, canBuy: true,  price: 1800, sell: 100, goldPrice: 3 },
+  emergency_warp:  { category: 'consumable', maxPerSlot: 10000, canBuy: true,  price: 5000, sell: 100, goldPrice: 3 },
+  // Щит-дрон — PvP-расходник, покупка ТОЛЬКО в магазине (см. память roadmap-future) —
+  // намеренно исключён из _USE_KEYS ниже, чтобы не выпадать с мобов как остальные
+  // 'consumable' (иначе слишком силовой PvP-инструмент достался бы бесплатно с лута).
+  // goldQty/goldPrice — штучная продажа (см. ShopScene._drawCard), НЕ пачка ×GOLD_PACK,
+  // как у остальных consumables — 10⭐ за 1 штуку (цена пользователя).
+  shield_drone:    { category: 'consumable', maxPerSlot: 10000, canBuy: true,  price: 8000, sell: 400, goldQty: 1, goldPrice: 10 },
   biomech_core:    { category: 'material',      maxPerSlot:   5,   canBuy: false, price: 0, sell: 0 },
   quantum_crystal: { category: 'material',      maxPerSlot:   5,   canBuy: false, price: 0, sell: 0 },
   plasma_coil:     { category: 'material',      maxPerSlot:   5,   canBuy: false, price: 0, sell: 0 },
-  biomech_fragment: { category: 'dungeonResource', maxPerSlot: 9999, canBuy: false, price: 0, sell: 0 },
-  quantum_shard:    { category: 'dungeonResource', maxPerSlot: 9999, canBuy: false, price: 0, sell: 0 },
-  plasma_strand:    { category: 'dungeonResource', maxPerSlot: 9999, canBuy: false, price: 0, sell: 0 },
+  // 100000 (было 9999) — см. диалог "максимум для ресурсов типа пласмита и клановых
+  // ресурсов в 1 слоте трюма 100000".
+  biomech_fragment: { category: 'dungeonResource', maxPerSlot: 100000, canBuy: false, price: 0, sell: 0 },
+  quantum_shard:    { category: 'dungeonResource', maxPerSlot: 100000, canBuy: false, price: 0, sell: 0 },
+  plasma_strand:    { category: 'dungeonResource', maxPerSlot: 100000, canBuy: false, price: 0, sell: 0 },
   // Часть лазерной пушки — крафт-компонент (см. GarageScene "КРАФТ"), собирается по
   // одной с головного вагона бронепоезда (3%) и с Апофиса (9%, см. GameScene.onMobKilled) —
   // LASER_CANNON_PARTS_NEEDED (24) штук на всю пушку.
   laser_cannon_part: { category: 'craftPart', maxPerSlot: 30, canBuy: false, price: 0, sell: 0 },
   // Boosters — temporary stat multipliers
-  damage_booster: { category: 'consumable', maxPerSlot: 10, canBuy: true,  price: 8000,  sell: 500 },
-  hull_booster:   { category: 'consumable', maxPerSlot: 10, canBuy: true,  price: 6000,  sell: 500 },
-  shield_booster: { category: 'consumable', maxPerSlot: 10, canBuy: true,  price: 6000,  sell: 500 },
-  xp_booster:     { category: 'consumable', maxPerSlot: 10, canBuy: true,  price: 10000, sell: 500 },
+  damage_booster: { category: 'consumable', maxPerSlot: 10000, canBuy: true,  price: 8000,  sell: 500 },
+  hull_booster:   { category: 'consumable', maxPerSlot: 10000, canBuy: true,  price: 6000,  sell: 500 },
+  shield_booster: { category: 'consumable', maxPerSlot: 10000, canBuy: true,  price: 6000,  sell: 500 },
+  xp_booster:     { category: 'consumable', maxPerSlot: 10000, canBuy: true,  price: 10000, sell: 500 },
   // Ammo — auto-consumed on fire; max 10000 per ammo slot
   ammo_plasma:       { category: 'ammo', maxPerSlot: 10000, canBuy: true,  price: 100, sell: 50  },
   ammo_plasma_elite: { category: 'ammo', maxPerSlot: 10000, canBuy: true,  price: 200, sell: 100 },
@@ -366,7 +379,9 @@ export function removeConsumableFromInventory(inventory, type, amount) {
 
 const _CONS_KEYS = Object.keys(CONSUMABLES);
 const _MAT_KEYS  = _CONS_KEYS.filter(k => CONSUMABLES[k].category === 'material');
-const _USE_KEYS  = _CONS_KEYS.filter(k => CONSUMABLES[k].category === 'consumable');
+// shield_drone исключён — только покупка в магазине, не случайный лут с мобов (см.
+// комментарий у CONSUMABLES.shield_drone выше).
+const _USE_KEYS  = _CONS_KEYS.filter(k => CONSUMABLES[k].category === 'consumable' && k !== 'shield_drone');
 
 export function rollConsumableDrop(mob) {
   const chance = (mob.isBoss || mob.tpl.elite) ? 0.07 : 0.03;
@@ -407,7 +422,7 @@ export function itemIconKey(item) {
 }
 
 // ── Plasmate resource ─────────────────────────────────────────────────────────
-export const PLASMATE_PER_SLOT  = 500;   // units per cargo slot
+export const PLASMATE_PER_SLOT  = 100000;   // units per cargo slot (было 500, см. диалог)
 export const PLASMATE_DAILY_MAX = 20000;  // daily collection cap
 export const PLASMATE_GOLD_RATE = 500;   // units → 1 starGold
 

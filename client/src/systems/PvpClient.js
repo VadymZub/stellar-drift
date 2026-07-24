@@ -51,6 +51,9 @@ export class PvpClient {
         this.onMobRoomUpdate = null; // (msg) => void — {roomKey, mobs:[{mobId,targetUserId}]} серверный таргетинг дронов/турелей
         this.onMobAttackVfx  = null; // (msg) => void — {mobId,weaponType,targetUserId} моб/турель бьёт другого игрока комнаты
         this.onMobAttackResult = null; // (msg) => void — {targetUserId,dodged,hullHit,shieldHit,hull,maxHull,shield,maxShield,killed,isCrit}
+        this.onShieldDroneSpawn  = null; // (msg) => void — {ownerUserId,maxHull,maxShield,durationSec,hull?,shield?} — hull/shield только на снапшоте позднего джойна (см. _spawn)
+        this.onShieldDroneExpire = null; // (msg) => void — {ownerUserId} — дрон истёк по времени (1 мин), см. server _shield_drone_tick_loop
+        this.onShieldDroneSync   = null; // (msg) => void — {ownerUserId,hull,shield,destroyed} — PvE-урон другого игрока по СВОЕМУ дрону, см. shieldDronePveDamage
         this.onTrainWeaponFire = null; // (msg) => void — {trainKey,wagonIdx,weapon,hits:[{uid,hits,dmg,hull,shield,maxHull,maxShield,killed}]}
                                         // — сервер САМ решил и применил урон (ракетный залп/поворотная турель поезда),
                                         // без client-claim заявки; клиент только рисует визуал и синкает HP.
@@ -105,10 +108,36 @@ export class PvpClient {
     /** dmg — реально посчитанный урон ЭТОГО выстрела (скилл-баффы/перки/патроны уже
      * применены, крит — нет, крит решает сервер своим роллом по loadout.critChance/
      * critMult). Сервер трактует dmg как заявку, зажатую потолком от loadout при входе
-     * в комнату — не слепое доверие, но и не плоское число на весь визит в комнату. */
-    fireClaim(targetUserId, weaponType, dmg) {
+     * в комнату — не слепое доверие, но и не плоское число на весь визит в комнату.
+     * targetType — 'ship' (по умолчанию) или 'drone' (см. shieldDroneAt/isShieldDrone в
+     * GameScene): прямой выстрел по щит-дрону цели, а не по её кораблю — свой (более
+     * мягкий) множитель снижения урона на сервере, см. main.py _resolve_pvp_hit. */
+    fireClaim(targetUserId, weaponType, dmg, targetType = 'ship') {
         if (!this.sector) return;
-        this._send({ type: 'pvp_fire_claim', targetUserId, weaponType, dmg });
+        const payload = { type: 'pvp_fire_claim', targetUserId, weaponType, dmg };
+        if (targetType !== 'ship') payload.targetType = targetType;
+        this._send(payload);
+    }
+
+    /** Активирует щит-дрон (расходник, см. GameScene._useConsumable case 'shield_drone') —
+     * без параметров: сервер сам решает КД-флор/спавн-параметры (см. main.py
+     * pvp_shield_drone_activate) и рассылает pvp_shield_drone_spawn всей комнате,
+     * включая владельца — тот же паттерн, что registerMob/selfHealClaim выше. */
+    activateShieldDrone() {
+        if (!this.sector) return;
+        this._send({ type: 'pvp_shield_drone_activate' });
+    }
+
+    /** PvE-урон (моб/AOE/мина), перенаправленный на СВОЙ щит-дрон (см. Player.js
+     * takeDamage) — целиком клиент-локальный расчёт (как и весь PvE-бой), сервер здесь
+     * не пересчитывает сплит сам, только хранит итоговый hull/shield дрона и
+     * ретранслирует остальным в комнате, чтобы наблюдатели видели тот же дрон, что и
+     * владелец (без этого PvE-урон был бы виден только владельцу — pvp_hit_result для
+     * PvE вообще не отправляется). hull/shield — уже посчитанные клиентом новые
+     * значения (не дельта), см. server main.py pvp_shield_drone_pve_damage. */
+    shieldDronePveDamage(hull, shield) {
+        if (!this.sector) return;
+        this._send({ type: 'pvp_shield_drone_pve_damage', hull, shield });
     }
 
     /** Активная способность (Аргус: pulsar/missiles, DEV key 8) бьёт другого ИГРОКА —
@@ -496,6 +525,18 @@ export class PvpClient {
                 this.onMobAttackResult?.(msg);
                 break;
 
+            case 'pvp_shield_drone_spawn':
+                this.onShieldDroneSpawn?.(msg);
+                break;
+
+            case 'pvp_shield_drone_expire':
+                this.onShieldDroneExpire?.(msg);
+                break;
+
+            case 'pvp_shield_drone_sync':
+                this.onShieldDroneSync?.(msg);
+                break;
+
             case 'arena_queue_update':
                 this.onArenaQueueUpdate?.(msg);
                 break;
@@ -542,6 +583,16 @@ export class PvpClient {
             ? arena.teamOf(data.userId) !== arena.myTeam
             : !!this.scene._isPvpSector && data.corp !== (this.scene.playerCorp || 'neutral');
         this.players.set(data.userId, new RemotePlayer(this.scene, data, isHostile));
+        // Поздний джойнер (pvp_room_snapshot/pvp_player_joined) — если у этого игрока уже
+        // летает щит-дрон, узнаём об этом только из его собственного снапшота (см. server
+        // PvpPlayerState.to_public), отдельного "заново разослать всем" при входе не будет
+        // (дрон эфемерен, 1 мин — не персистится, см. комментарий у pvp_shield_drone_activate).
+        if (data.droneActive) {
+            this.onShieldDroneSpawn?.({
+                ownerUserId: data.userId, maxHull: data.droneMaxHull, maxShield: data.droneMaxShield,
+                durationSec: data.droneRemainingSec, hull: data.droneHull, shield: data.droneShield,
+            });
+        }
     }
 
     _despawn(userId) {

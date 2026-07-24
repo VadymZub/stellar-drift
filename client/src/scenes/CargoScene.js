@@ -22,7 +22,13 @@ export default class CargoScene extends Phaser.Scene {
     const barKey = `use:${type}`;
     if (bar.includes(barKey)) return;
     const freeIdx = bar.indexOf(null);
-    if (freeIdx < 0) return;
+    if (freeIdx < 0) {
+      // Раньше молча ничего не происходило (баг из диалога: "положил в трюм, но в
+      // свободный слот не встаёт" — на деле свободных слотов просто не было, все 10
+      // заняты другими скиллами/расходниками, но игрок об этом никак не узнавал).
+      gs.log?.('❌ Панель действий заполнена — открой панель в бою и нажми ▲ над нужным слотом, чтобы заменить его');
+      return;
+    }
     bar[freeIdx] = barKey;
     gs.actionBar = bar;
     gs._saveState?.();
@@ -289,8 +295,10 @@ export default class CargoScene extends Phaser.Scene {
         const iconImg = iconK
           ? this.add.image(sx + SZ / 2, sy + boxH / 2 - 6, prerenderTex(this, iconK, 38, 38)).setDisplaySize(38, 38).setOrigin(0.5)
           : null;
+        // Без "/лимит" (диалог: "не нужно писать /100000 или слеш 10000... в трюме и
+        // складе") — лимиты выросли до 100000, "/max" только загромождал ячейку.
         const countTxt = this.add.text(sx + SZ / 2, sy + boxH - 10,
-          `${item.amount}/${PLASMATE_PER_SLOT}`, this.F('10px', '#88eeff')).setOrigin(0.5);
+          `${item.amount.toLocaleString()}`, this.F('10px', '#88eeff')).setOrigin(0.5);
         const els = [box, countTxt];
         if (iconImg) els.push(iconImg);
 
@@ -398,8 +406,9 @@ export default class CargoScene extends Phaser.Scene {
           if (iconK) iconImg = this.add.image(sx + SZ / 2, sy + boxH / 2 - 5, prerenderTex(this, iconK, iconSz, iconSz)).setDisplaySize(iconSz, iconSz).setOrigin(0.5);
         }
         const ammoColor = isAmmo ? `#${(AMMO_ICON[item.type]?.color ?? 0xaaccdd).toString(16).padStart(6,'0')}` : isConsumable ? '#88eeff' : '#ffcc88';
+        // Без "/лимит" — см. комментарий у плазмита выше в этом файле.
         const countTxt = this.add.text(sx + SZ / 2, sy + boxH - 8,
-          `${item.amount}/${def.maxPerSlot}`, this.F('9px', ammoColor)).setOrigin(0.5);
+          `${item.amount.toLocaleString()}`, this.F('9px', ammoColor)).setOrigin(0.5);
         const els = [box, countTxt];
         if (iconImg) els.push(iconImg);
 

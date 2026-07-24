@@ -5,7 +5,7 @@ import { levelInfo, MAX_LEVEL } from '../leveling.js';
 import { minimapRect, fit } from '../systems/minimap.js';
 import { SECTORS, galaxy } from '../galaxy.js';
 import { getActiveMissionSectorTargets } from '../data/missions.js';
-import { countConsumableInInventory, addConsumableToInventory } from '../items.js';
+import { countConsumableInInventory, addConsumableToInventory, CONSUMABLES, itemIconKey } from '../items.js';
 import { prerenderTex } from '../utils/prerenderTex.js';
 import { loadSettings, saveSettings, getMinimapDims } from '../settings.js';
 import { GroupSystem } from '../systems/GroupSystem.js';
@@ -13,6 +13,8 @@ import { PvpClient } from '../systems/PvpClient.js';
 import { blacklistList, blacklistAdd, blacklistRemove, WS_BASE } from '../api.js';
 import { MailClient } from '../systems/MailClient.js';
 import ArmoredTrain from '../entities/ArmoredTrain.js';
+import { SHIP_BY_KEY } from '../ships.js';
+import { SKILL_MAP } from './SkillScene.js';
 
 const BOOSTER_DEFS = [
   { key: 'boost_damage', icon: '⚔', label: 'Урон +10%',  color: '#ff8c40' },
@@ -26,6 +28,7 @@ const AB_TIPS = {
   'use:speed_boost':          { name: 'Ускоритель',            desc: '+50% скорость на 15с\nКД 120с' },
   'use:scanner_pulse':        { name: 'Импульс сканера',       desc: 'Сканирует окружение в радиусе\nКД 180с' },
   'use:emergency_warp':       { name: 'Аварийный варп',        desc: 'Мгновенный варп на ближайшую базу\nКД 10 мин' },
+  'use:shield_drone':        { name: 'Щит-дрон',              desc: 'Отражатель 15000 щит/10000 прочность, видим всем\n90% урона по вам (−50%) уходит на него, 10% — на вас\n1 мин или до уничтожения · КД 5 мин' },
   'use:ammo_plasma':          { name: 'Боеприпасы (плазма)',   desc: 'Стандартный боекомплект для пушек' },
   'use:ammo_plasma_elite':    { name: 'Боеприпасы (элита)',    desc: '+50% урон пушек' },
   'use:ammo_laser':           { name: 'Боеприпасы (лазер)',    desc: 'Боекомплект для лазеров' },
@@ -342,7 +345,33 @@ export default class HudScene extends Phaser.Scene {
       });
       hitZone.on('pointerout',  () => this._cancelAbTip());
 
-      return { sx, sy: barY, SW, SH, R, bg, cdGfx, hk, cdTxt, iconImg: null, _key: null, _pickGfx: null };
+      // ▲ над слотом — открывает список назначения (см. _toggleAbPicker), видима только
+      // в режиме редактирования. Замена старому механизму "авто в первый пустой слот"
+      // (Cargo/Skill) — единая точка назначения ЛЮБОГО типа на КОНКРЕТНЫЙ слот.
+      const arrowBtn = this.add.rectangle(sx + SW / 2, barY - 10, SW, 16, 0x0a1828, 0.9)
+        .setStrokeStyle(1, 0x2a4060).setInteractive({ useHandCursor: true }).setDepth(105).setVisible(false);
+      const arrowTxt = this.add.text(sx + SW / 2, barY - 10, '▲',
+        { fontFamily: 'Inter, sans-serif', fontSize: '10px', color: '#4dd0e1', resolution: UI_RES })
+        .setOrigin(0.5).setDepth(106).setVisible(false);
+      arrowBtn.on('pointerdown', (p) => {
+        if (p.button === 2) return;
+        this._toggleAbPicker(i);
+      });
+      arrowBtn.on('pointerover', () => arrowBtn.setFillStyle(0x142030, 0.95));
+      arrowBtn.on('pointerout',  () => arrowBtn.setFillStyle(0x0a1828, 0.9));
+
+      return { sx, sy: barY, SW, SH, R, bg, cdGfx, hk, cdTxt, iconImg: null, _key: null, _pickGfx: null, arrowBtn, arrowTxt };
+    });
+
+    // Экшн-бар: состояние выпадающего списка назначения (см. _toggleAbPicker ниже).
+    this._abPickerIdx = null;
+    this._abPickerSelectedKey = null;
+    this._abPickerObjs = [];
+    // ПКМ в любом месте экрана, пока список открыт — отмена (по спецификации пользователя).
+    // Не мешает собственным ПКМ-обработчикам слотов (те просто дополнительно тоже сработают,
+    // напр. удаление ДРУГОГО занятого слота под курсором — редкий, приемлемый оверлап).
+    this.input.on('pointerdown', (p) => {
+      if (p.button === 2 && this._abPickerIdx !== null) this._closeAbPicker();
     });
 
     // Edit mode toggle button — right of bar
@@ -425,9 +454,19 @@ export default class HudScene extends Phaser.Scene {
       this._setBarPickHighlight(this._barPickedIdx, false);
       this._barPickedIdx = null;
     }
+    if (!this._barEditMode) this._closeAbPicker();
+    this._abSlots?.forEach(s => { s.arrowBtn?.setVisible(this._barEditMode); s.arrowTxt?.setVisible(this._barEditMode); });
     this._editBtn.setFillStyle(this._barEditMode ? 0x251000 : 0x0a1828, this._barEditMode ? 0.95 : 0.88);
     this._editBtnTxt.setColor(this._barEditMode ? '#ffb74d' : '#3a5a70');
     this._editBtn.setStrokeStyle(1, this._barEditMode ? 0xffb74d : 0x2a4060);
+    // Блокирует клик-по-миру (движение корабля) на время редактирования панели — тот же
+    // флаг/паттерн, что и у прочих модалок GameScene (см. _modalBlockingClicks), иначе
+    // клики по стрелкам/списку назначения ОДНОВРЕМЕННО уводили корабль в точку клика.
+    const gs = this.gs;
+    if (gs) {
+      if (this._barEditMode) gs._modalBlockingClicks = true;
+      else this.time.delayedCall(0, () => { gs._modalBlockingClicks = false; });
+    }
   }
 
   _setBarPickHighlight(idx, on) {
@@ -443,6 +482,168 @@ export default class HudScene extends Phaser.Scene {
     } else {
       slot.iconImg?.setAlpha(1.0);
     }
+  }
+
+  // ── Экшн-бар: выпадающий список назначения (▲ над слотом в режиме редактирования) ──
+  // Единая точка назначения для скиллов/способности корабля/расходников на КОНКРЕТНЫЙ
+  // слот, вместо трёх разных механизмов (Cargo "→ панель" искал первый пустой слот и
+  // молча ничего не делал при заполненной панели; SkillScene слепо вытеснял слот 0) —
+  // баг из диалога: "щит-дрон не влезает" (панель просто была заполнена, три места вели
+  // себя по-разному). Работает и для пустого, и для уже занятого слота — назначение
+  // всегда заменяет текущее содержимое слота целиком.
+  _toggleAbPicker(i) {
+    if (this._abPickerIdx === i) { this._closeAbPicker(); return; }
+    this._closeAbPicker();
+    this._abPickerIdx = i;
+    this._abPickerSelectedKey = null;
+    this._renderAbPickerRows();
+  }
+
+  _closeAbPicker() {
+    this._abPickerObjs.forEach(o => o?.destroy());
+    this._abPickerObjs = [];
+    this._abPickerIdx = null;
+    this._abPickerSelectedKey = null;
+  }
+
+  // Всё, что ЕЩЁ не стоит на панели: способность текущего корабля (4 способности Аргуса
+  // вместо одной — DEV-хоткей 8), активные скиллы с вложенным очком, расходники, реально
+  // лежащие в трюме (не на складе — тот недоступен в полёте).
+  _abPickerCandidates() {
+    const gs = this.gs;
+    const bar = gs.actionBar || [];
+    const out = [];
+
+    if (gs.activeShip === 'argus') {
+      for (const key of ['argus:pulsar', 'argus:cocoon', 'argus:missiles', 'argus:phase_strike']) {
+        if (bar.includes(key)) continue;
+        out.push({ key, label: AB_TIPS[key]?.name ?? key, kind: 'ship' });
+      }
+    } else {
+      const ab = SHIP_BY_KEY[gs.activeShip]?.activeSkill;
+      if (ab && !bar.includes(ab.key)) out.push({ key: ab.key, label: i18n.t(ab.nameKey), kind: 'ship' });
+    }
+
+    for (const s of Object.values(SKILL_MAP)) {
+      if (s.type !== 'active') continue;
+      if (!(gs.skillLevels?.[s.key] > 0)) continue;
+      if (bar.includes(s.key)) continue;
+      out.push({ key: s.key, label: s.nameRu, kind: 'skill', emoji: s.icon });
+    }
+
+    // Расходник может лежать и в трюме (gs.inventory), и в общем слоте боеприпасов/
+    // расходников (gs.ammoSlots, см. GarageScene "→ слот") — сканируем оба, иначе
+    // предмет, загруженный в слот, становился невидим для назначения на панель (баг из
+    // диалога: "щит-дрон не влезает" — реальная причина была именно тут, не в самом
+    // слоте, см. GarageScene.js).
+    const seenCons = new Set();
+    for (const it of (gs.inventory || [])) {
+      const def = CONSUMABLES[it.type];
+      if (!def || def.category !== 'consumable' || seenCons.has(it.type)) continue;
+      const key = `use:${it.type}`;
+      if (bar.includes(key)) continue;
+      seenCons.add(it.type);
+      out.push({ key, label: i18n.t(`item.${it.type}`), kind: 'consumable', type: it.type });
+    }
+    for (const slot of (gs.ammoSlots || [])) {
+      if (!slot.type || slot.count <= 0 || seenCons.has(slot.type)) continue;
+      const def = CONSUMABLES[slot.type];
+      if (!def || def.category !== 'consumable') continue;
+      const key = `use:${slot.type}`;
+      if (bar.includes(key)) continue;
+      seenCons.add(slot.type);
+      out.push({ key, label: i18n.t(`item.${slot.type}`), kind: 'consumable', type: slot.type });
+    }
+
+    return out;
+  }
+
+  _abPickerIconFor(cand) {
+    if (cand.kind === 'ship') return this._ensureShipSkillTex(cand.key);
+    if (cand.kind === 'consumable') {
+      const texKey = itemIconKey({ type: cand.type }) ?? `consumable_${cand.type}`;
+      return this.textures.exists(texKey) ? texKey : null;
+    }
+    const texKey = `skill_${cand.key}`;
+    return this.textures.exists(texKey) ? texKey : null;
+  }
+
+  _renderAbPickerRows() {
+    this._abPickerObjs.forEach(o => o?.destroy());
+    this._abPickerObjs = [];
+    const i = this._abPickerIdx;
+    if (i === null) return;
+    const slot = this._abSlots[i];
+    const candidates = this._abPickerCandidates();
+
+    const ROW_W = 190, ROW_H = 26, GAP = 2;
+    const W = this.scale.width;
+    const rx = Phaser.Math.Clamp(slot.sx + slot.SW / 2 - ROW_W / 2, 4, W - 4 - ROW_W);
+    const arrowTopY = slot.sy - 18;
+
+    if (!candidates.length) {
+      const emptyBg = this.add.rectangle(rx, arrowTopY - ROW_H, ROW_W, ROW_H, 0x0a1828, 0.95)
+        .setOrigin(0, 0).setStrokeStyle(1, 0x2a4060).setDepth(130);
+      const emptyTxt = this.add.text(rx + ROW_W / 2, arrowTopY - ROW_H / 2, 'Нечего назначить',
+        { fontFamily: 'Inter, sans-serif', fontSize: '10px', color: '#4a6070', resolution: UI_RES })
+        .setOrigin(0.5).setDepth(131);
+      this._abPickerObjs.push(emptyBg, emptyTxt);
+      return;
+    }
+
+    candidates.forEach((cand, idx) => {
+      const ry = arrowTopY - (idx + 1) * (ROW_H + GAP);
+      const selected = this._abPickerSelectedKey === cand.key;
+
+      const rowBg = this.add.rectangle(rx, ry, ROW_W, ROW_H, selected ? 0x123018 : 0x0a1828, 0.97)
+        .setOrigin(0, 0).setStrokeStyle(1, selected ? 0x66bb6a : 0x2a4060, 1)
+        .setInteractive({ useHandCursor: true }).setDepth(130);
+      this._abPickerObjs.push(rowBg);
+
+      const iconTex = this._abPickerIconFor(cand);
+      if (iconTex) {
+        const img = this.add.image(rx + 16, ry + ROW_H / 2, prerenderTex(this, iconTex, 20, 20))
+          .setDisplaySize(20, 20).setDepth(131);
+        this._abPickerObjs.push(img);
+      } else if (cand.emoji) {
+        const et = this.add.text(rx + 16, ry + ROW_H / 2, cand.emoji, { fontSize: '14px' }).setOrigin(0.5).setDepth(131);
+        this._abPickerObjs.push(et);
+      }
+
+      const labelT = this.add.text(rx + 32, ry + ROW_H / 2, cand.label,
+        { fontFamily: 'Inter, sans-serif', fontSize: '10px', color: '#c8e0f0', resolution: UI_RES,
+          wordWrap: { width: ROW_W - (selected ? 68 : 40) } }).setOrigin(0, 0.5).setDepth(131);
+      this._abPickerObjs.push(labelT);
+
+      rowBg.on('pointerdown', (p) => {
+        if (p.button === 2) return; // ПКМ — общий сценовый слушатель уже закрыл список
+        this._abPickerSelectedKey = selected ? null : cand.key;
+        this._renderAbPickerRows();
+      });
+
+      if (selected) {
+        const confirmBtn = this.add.rectangle(rx + ROW_W - 20, ry + ROW_H / 2, 24, ROW_H - 4, 0x0a2a10, 0.95)
+          .setStrokeStyle(1, 0x66bb6a).setInteractive({ useHandCursor: true }).setDepth(132);
+        const confirmTxt = this.add.text(rx + ROW_W - 20, ry + ROW_H / 2, '▼',
+          { fontFamily: 'Inter, sans-serif', fontSize: '12px', color: '#66bb6a', resolution: UI_RES })
+          .setOrigin(0.5).setDepth(133);
+        confirmBtn.on('pointerdown', (p) => {
+          if (p.button === 2) return;
+          this._confirmAbPick(i, cand.key);
+        });
+        this._abPickerObjs.push(confirmBtn, confirmTxt);
+      }
+    });
+  }
+
+  _confirmAbPick(i, key) {
+    const gs = this.gs;
+    const bar = gs.actionBar ? [...gs.actionBar] : Array(10).fill(null);
+    bar[i] = key;
+    gs.actionBar = bar;
+    gs._saveState?.();
+    this._closeAbPicker();
+    this._rebuildActionBarIcons();
   }
 
   _rebuildActionBarIcons() {
@@ -503,8 +704,13 @@ export default class HudScene extends Phaser.Scene {
       }
       const texKey = isConsumable ? `consumable_${key.slice(4)}` : `skill_${key}`;
       if (!this.textures.exists(texKey)) return;
-      const iconSz  = isConsumable ? Math.round(40 * DPR) : slot.SW;
-      const iconY   = isConsumable ? slot.sy + slot.SH / 2 - Math.round(5 * DPR) : slot.sy + slot.SH / 2;
+      // Клэмп на размер слота (slot.SW/SH НЕ масштабируются DPR, см. _buildActionBarHUD —
+      // фиксированные 52) — без него при DPR>1 иконка (40×DPR, до 80px) вылезала за
+      // верхний край 52px ячейки (баг из диалога: "картинка дрона слегка вылазит за
+      // верхнюю рамку ячейки" — при DPR=1 края впритык на 1-2px, любой DPR>1 уже overflow).
+      const iconSz  = isConsumable ? Math.min(Math.round(40 * DPR), slot.SW - 8) : slot.SW;
+      const iconYOffset = isConsumable ? Math.min(Math.round(5 * DPR), 4) : 0;
+      const iconY   = slot.sy + slot.SH / 2 - iconYOffset;
       slot.iconImg = this.add.image(slot.sx + slot.SW / 2, iconY,
           prerenderTex(this, texKey, iconSz, iconSz))
         .setDisplaySize(iconSz, iconSz).setDepth(102);
@@ -1558,12 +1764,15 @@ export default class HudScene extends Phaser.Scene {
     this._chatMessages = { general: [], corp: [], clan: [] };
     this._chatTab = 'general';
     this._chatPmTarget = null;
-    this._chatVisible = true;
     // Отдельно от _chatVisible/_chatCollapsed (те переключают "полное окно" ⇄ "маленькая
     // свёрнутая таблетка", см. _rebuildChatPanel) — кнопка ЧАТ на общей панели убирает
     // чат ПОЛНОСТЬЮ, даже без таблетки (правка по просьбе: "при нажатии на иконку чата
-    // на панели - убирать полностью чат, даже маленькое свёрнутое окошко").
-    this._chatHidden = false;
+    // на панели - убирать полностью чат, даже маленькое свёрнутое окошко"). Персистится
+    // (см. settings.js chatHidden) — раньше сбрасывалось в false при каждом
+    // scene.restart()/перезагрузке, из-за чего убранный чат "вылезал" заново (диалог:
+    // "очень раздражает что чат даже в свёрнутом виде постоянно вылазит").
+    this._chatHidden = loadSettings().chatHidden === true;
+    this._chatVisible = !this._chatHidden;
     this._chatDragging  = false;
     this._chatResizing  = false;
     this._chatCollapsed = false;
@@ -2027,6 +2236,20 @@ export default class HudScene extends Phaser.Scene {
     this.pvpClient.onMobAttackResult = (msg) => {
       this.scene.get('GameScene')?._onPvpMobAttackResult(msg);
     };
+    // Щит-дрон (расходник) — кто-то в комнате (я или другой игрок) развернул дрон
+    // (см. main.py pvp_shield_drone_activate) либо мы только что зашли в комнату, где
+    // у кого-то он уже активен (см. PvpClient._spawn/server to_public droneActive).
+    this.pvpClient.onShieldDroneSpawn = (msg) => {
+      this.scene.get('GameScene')?._spawnShieldDrone(msg);
+    };
+    // Дрон истёк по времени (1 мин, см. server _shield_drone_tick_loop) — отдельно от
+    // уничтожения уроном (то приходит через обычный pvp_hit_result/droneDestroyed).
+    this.pvpClient.onShieldDroneExpire = (msg) => {
+      this.scene.get('GameScene')?._onShieldDroneExpire(msg);
+    };
+    this.pvpClient.onShieldDroneSync = (msg) => {
+      this.scene.get('GameScene')?._onShieldDroneSync(msg);
+    };
     // Бронепоезд: ракетный залп/поворотная турель — server-authoritative (сервер сам
     // решил, посчитал и уже применил урон, см. server _train_weapon_tick_loop). Клиент
     // только синкает HP (если цель — я) и рисует визуал залпа для всех наблюдателей.
@@ -2339,7 +2562,11 @@ export default class HudScene extends Phaser.Scene {
       { key: 'grp',  icon: '⚔', tip: 'ГРУППА',       badgeColor: '#4dd0e1', action: () => this._toggleGroupWin() },
       { key: 'fr',   icon: '★', tip: 'ДРУЗЬЯ  [F]',  badgeColor: '#ef5350', action: () => this._toggleFriendsWin() },
       { key: 'mail', icon: '✉', tip: 'ПОЧТА  [B]',   badgeColor: '#ef5350', action: () => this.scene.get('GameScene').toggleOverlay('MailScene') },
-      { key: 'prof', icon: '🪪', tip: 'ПРОФИЛЬ  [U]', badgeColor: null,      action: () => this.scene.get('GameScene').toggleOverlay('ProfileScene') },
+      // iconDy: -3 — у этой эмодзи (детальная цветная картинка ID-карты, в отличие от
+      // простых line-art глифов у соседних кнопок) видимая "картинка" сидит ниже
+      // собственного символьного бокса даже при точном setOrigin(0.5) по центру кнопки
+      // (диалог: "иконка профиль... разместить картинку... по центру" → "немного поднять вверх").
+      { key: 'prof', icon: '🪪', tip: 'ПРОФИЛЬ  [U]', badgeColor: null,      iconDy: -3, action: () => this.scene.get('GameScene').toggleOverlay('ProfileScene') },
       { key: 'chat', icon: '💬', tip: 'ЧАТ',          badgeColor: null,      action: () => this._toggleChatWin() },
       { key: 'set',  icon: '⚙', tip: 'НАСТРОЙКИ',    badgeColor: null,      action: () => this.gs.toggleOverlay('SettingsScene') },
     ];
@@ -2404,7 +2631,7 @@ export default class HudScene extends Phaser.Scene {
       const ly = isV ? GRIP + i * (BH + GAP) : 0;
       const btn = mk(this.add.rectangle(lx, ly, BW, BH, 0x0a1828, 0.92)
         .setOrigin(0).setStrokeStyle(1, 0x1e4060, 0.8).setInteractive({ useHandCursor: true }));
-      const txt = mk(this.add.text(lx + BW / 2, ly + BH / 2, def.icon, F('20px', '#3a7090')).setOrigin(0.5));
+      const txt = mk(this.add.text(lx + BW / 2, ly + BH / 2 + (def.iconDy ?? 0), def.icon, F('20px', '#3a7090')).setOrigin(0.5));
       const badge = def.badgeColor ? mk(this.add.text(lx + BW - 2, ly + 1, '', F('8px', def.badgeColor)).setOrigin(1, 0)) : null;
       this._socialBtns[def.key] = { btn, txt, badge, lx, ly };
 
@@ -2495,6 +2722,9 @@ export default class HudScene extends Phaser.Scene {
       this._chatVisible = true;
       this._chatCollapsed = false;
     }
+    // Персистим состояние (см. settings.js chatHidden) — переживает scene.restart()
+    // (прыжок сектора) и перезагрузку страницы, не только текущую сессию HudScene.
+    const s = loadSettings(); s.chatHidden = this._chatHidden; saveSettings(s);
     this._rebuildChatPanel();
     this._updateSocialBtnStyles();
   }
