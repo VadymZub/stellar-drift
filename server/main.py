@@ -3941,6 +3941,15 @@ async def chat_ws(
                 attacker.respawn_grace_until = 0.0
 
                 mob_id = str(mob_id)[:80]
+                # Наёмная охрана добывающей базы (см. MiningBase._spawnHiredSecurity,
+                # registerMob(mobId, this.corp)) несёт owner_corp — игрок того же корпуса,
+                # что и база, не может бить её охрану (диалог: "запрет атака охраны базы
+                # игроков той же корпорации что и добывающая база"). Дроны/турели бронепоезда
+                # и обычные мобы регистрируются БЕЗ ownerCorp (None) — их бьёт кто угодно,
+                # см. комментарий у ServerMob.owner_corp.
+                _reg_mob = server_mob_manager.rooms.get(sector, {}).get(mob_id)
+                if _reg_mob and _reg_mob.owner_corp and _reg_mob.owner_corp == attacker.corp:
+                    continue
                 # Бронепоезд: бить можно только текущий хвостовой вагон — читер не может
                 # пропустить очередь, отправив fire_claim по mobId середины/головы напрямую.
                 train_key = wagon_idx = None

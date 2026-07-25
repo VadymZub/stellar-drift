@@ -441,6 +441,12 @@ export default class MiningBase {
       [leader, ...drones].forEach((m, i) => {
         m.pvpMobId = `${gs._realtimeRoomKey}:hiredsec:${this.id}:${i}`;
         m.isHiredSecurity = true;
+        // corp — тот же тег, что у ShieldDrone.corp (GameScene.js) — включает уже
+        // существующий ally-fire чек `t.corp && t.corp === this.playerCorp` в
+        // _fireCannon/_fireLaser (ветка t.pvpMobId), который раньше молчал для этих
+        // мобов просто потому, что t.corp был undefined (диалог: "запрет атака охраны
+        // базы игроков той же корпорации что и добывающая база").
+        m.corp = this.corp;
         gs.pvpClient?.registerMob(m.pvpMobId, this.corp);
       });
     }
@@ -855,7 +861,11 @@ export default class MiningBase {
         // Дроны охраны бронепоезда — цель игроков (событие завязано на игроков,
         // убивающих их вручную ради волны/наград), не еда для турелей баз — иначе
         // база бесплатно фармит волну дронов раньше, чем игроки успевают до них дойти.
-        if (!mob.alive || mob.isArmoredTrainDrone) continue;
+        // Наёмная охрана — цель для турелей ЧУЖИХ баз (межкорповая PvP-война остаётся
+        // возможной), но НЕ для турелей СВОЕЙ ЖЕ базы (баг из диалога: "охрана не
+        // атакует свою базу, база не атакует охрану" — раньше турель просто брала
+        // ближайшего живого моба, включая свой гарнизон, если рядом не было врага-игрока ближе).
+        if (!mob.alive || mob.isArmoredTrainDrone || (mob.isHiredSecurity && mob.corp === this.corp)) continue;
         const d = Phaser.Math.Distance.Between(tx, ty, mob.x, mob.y);
         if (d < nearestDist) { nearest = mob; nearestDist = d; }
       }
