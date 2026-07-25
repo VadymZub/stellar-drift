@@ -1014,6 +1014,16 @@ export default class HudScene extends Phaser.Scene {
           label = t.name || '';
         }
         this.tName.setX(W / 2);
+        // Имя цели красным по умолчанию (враг/нейтральный моб) — но союзника (тот же
+        // корп: своя наёмная охрана добывающей базы, своя база/турель) красить не нужно,
+        // это не враг (диалог: "охрана союзной базы - не писать ники мобов красным...
+        // писать синим шрифтом"). RemotePlayer уже решает ally/hostile сам (см.
+        // RemotePlayer._baseColor, его же нашивка в мире) — переиспользуем тот же цвет,
+        // чтобы не разъезжаться с тем, что видно над кораблём.
+        let nameColor = '#ef5350';
+        if (t.isRemotePlayer) nameColor = t._baseColor || nameColor;
+        else if (t.corp && t.corp === this.gs.playerCorp) nameColor = '#4fc3f7';
+        this.tName.setColor(nameColor);
         this._setText(this.tName, label).setVisible(true);
         if (t.maxShield > 0) {
           tsW = Math.ceil(220 * Phaser.Math.Clamp(t.shield / t.maxShield, 0, 1));
