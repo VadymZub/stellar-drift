@@ -1025,6 +1025,12 @@ export default class HudScene extends Phaser.Scene {
         else if (t.corp && t.corp === this.gs.playerCorp) nameColor = '#4fc3f7';
         this.tName.setColor(nameColor);
         this._setText(this.tName, label).setVisible(true);
+        // Тот же ally-цвет и на строку щит/корпус под именем — раньше красился отдельным
+        // жёстким '#ef9a9a' в конструкторе и никогда не пересчитывался (диалог: "внизу
+        // щит корпус для союзников тоже писать синим"). Переиспользуем nameColor целиком
+        // (не только "синий/красный" бинарно) — совпадает 1-в-1 с тем, что видно в имени
+        // (RemotePlayer._baseColor у союзника — свой оттенок '#8ad8ff', не '#4fc3f7').
+        this.tHullTxt.setColor(nameColor === '#ef5350' ? '#ef9a9a' : nameColor);
         if (t.maxShield > 0) {
           tsW = Math.ceil(220 * Phaser.Math.Clamp(t.shield / t.maxShield, 0, 1));
           thW = Math.ceil(220 * Phaser.Math.Clamp(t.hull / t.maxHull, 0, 1));
@@ -1487,12 +1493,15 @@ export default class HudScene extends Phaser.Scene {
       }
     }
 
-    // Мобы (красные; боссы крупнее/оранжевые) — только в радиусе скана
+    // Мобы (красные; боссы крупнее/оранжевые) — только в радиусе скана. Союзная наёмная
+    // охрана (тот же корп, что игрок) — синяя точка, не враг (диалог: "красные точки на
+    // миникарте" — раньше весь gs.mobs красился одинаково, без проверки corp).
     for (const m of gs.mobs) {
       if (!m.alive) continue;
       if (!fullScan && Phaser.Math.Distance.Between(px2, py2, m.x, m.y) > sr) continue;
       const mpx = f.ox + m.x * f.s, mpy = f.oy + m.y * f.s;
       if (m.isBoss) { g.fillStyle(0xff7a6b, 1); g.fillCircle(mpx, mpy, 3.4); }
+      else if (m.corp && m.corp === gs.playerCorp) { g.fillStyle(0x4fc3f7, 0.95); g.fillCircle(mpx, mpy, 2); }
       else { g.fillStyle(COLORS.danger, 0.95); g.fillCircle(mpx, mpy, 2); }
     }
 

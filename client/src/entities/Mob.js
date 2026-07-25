@@ -676,6 +676,17 @@ export default class Mob {
   _updateVisuals() {
     this.sprite.rotation = this.heading + (this.tpl.artAngleOffset ?? ART_ANGLE_OFFSET);
     this.label.setPosition(this.x, this.y + this.sprite.displayHeight * 0.55);
+    // Настоящий надпись-неймплейт моба (не HUD-readout наведённой цели в HudScene.tName —
+    // тот отдельный текст обновляет цвет только пока моб под ретиклом). Красный жёстко
+    // стоял с конструктора и никогда не пересчитывался — из-за этого нанятая охрана
+    // союзной базы (this.corp назначается ПОСЛЕ конструктора, в MiningBase.js) навсегда
+    // оставалась красной. Пересчитываем лениво — setColor() у Phaser.Text перерисовывает
+    // canvas-текстуру, так что дёргаем только когда статус реально меняется.
+    const isAlly = !!(this.corp && this.corp === this.scene.playerCorp);
+    if (isAlly !== this._labelIsAlly) {
+      this._labelIsAlly = isAlly;
+      this.label.setColor(isAlly ? '#4fc3f7' : '#ef5350');
+    }
     // HP/shield-бар рисуется НЕ здесь — см. GameScene._redrawMobBars(): один общий
     // Graphics-канвас на ВСЕХ мобов сразу, а не Graphics-объект на каждого моба.
   }

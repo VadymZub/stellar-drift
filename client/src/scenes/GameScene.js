@@ -170,7 +170,10 @@ export default class GameScene extends Phaser.Scene {
     if (!this._visFlushBound) {
       this._visFlushBound = true;
       document.addEventListener('visibilitychange', () => {
-        if (document.hidden) this._flushSaveState();
+        if (document.hidden) {
+          this._flushSaveState();
+          this.miningBases?.forEach(b => b.flushSave?.());
+        }
       });
     }
 
@@ -6801,6 +6804,17 @@ export default class GameScene extends Phaser.Scene {
           m.update(dt, this.player, true, () => {});
           return;
         }
+      }
+      // Наёмная охрана своей же базы: до ПЕРВОГО серверного таргет-апдейта после
+      // коннекта/релогина (_serverMobTargets[m.pvpMobId] ещё undefined) код выше не
+      // срабатывает и падаем в client-local AI (Mob.js.update), которое НЕ знает про
+      // corp (neutral:false стоит намеренно — охрана ДОЛЖНА агриться на чужие корпуса).
+      // Эти пару секунд после релогина охрана визуально атаковала своего же хозяина
+      // (диалог: "визуально охрана и база нападает на игрока" в первые/последние
+      // секунды после перезапуска страницы). Гасим тем же neutral-обходом, что и выше.
+      if (m.isHiredSecurity && m.corp && m.corp === (this.playerCorp || 'neutral')) {
+        m.update(dt, this.player, true, () => {});
+        return;
       }
       const tgt = (m.escortTarget?.alive) ? m.escortTarget : this.player;
       const victim = (m.escortTarget?.alive) ? this.escortTransport : this.player;

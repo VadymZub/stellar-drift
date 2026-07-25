@@ -12,17 +12,24 @@ export default class VFXManager {
     this.manifest = scene.cache.json.get('vfx_manifest');
   }
 
+  // Спрайтшит мог не догрузиться (сетевой сбой на ~236МБ ассетов) — BootScene всё равно
+  // безусловно вызывает anims.create() для каждого ключа манифеста (см. _loadVFX) даже
+  // если сама текстура не долетела, так что anims.exists(key) само по себе НЕДОСТАТОЧНО:
+  // Animation регистрируется под этим ключом в любом случае, просто с ПУСТЫМ frames
+  // (anims.generateFrameNumbers на несуществующей текстуре). spr.play(key) тогда падает в
+  // Animation.getFirstTick (state.currentFrame undefined) и рвёт весь вызывающий стек —
+  // в т.ч. _applyCannonHitPerks, ломая урон от Splinter, который считается ПОСЛЕ этого
+  // вызова (баг из стектрейса в диалоге — anims.exists(key) уже стоял тут и НЕ спас).
+  // Проверяем реальное наличие кадров, не только регистрацию ключа.
+  _hasFrames(key) {
+    return (this.scene.anims.get(key)?.frames?.length ?? 0) > 0;
+  }
+
   // One-shot effect with full tween envelope from manifest.
   play(key, x, y, { scale = 1, depth = 67 } = {}) {
     const m = this.manifest?.[key];
     if (!m) return null;
-    // Спрайтшит мог не догрузиться (сетевой сбой на ~236МБ ассетов) — BootScene всё равно
-    // безусловно вызывает anims.create() для каждого ключа манифеста (см. _loadVFX), так
-    // что animsManager.exists(key) — единственный надёжный сигнал "реально ли есть кадры".
-    // Без этой проверки spr.play(key) падал в Animation.getFirstTick (undefined.duration) и
-    // рвал весь вызывающий стек — в т.ч. _applyCannonHitPerks, ломая урон от Splinter,
-    // который считается ПОСЛЕ этого вызова (баг из стектрейса в диалоге).
-    if (!this.scene.anims.exists(key)) return null;
+    if (!this._hasFrames(key)) return null;
 
     const sc = this.scene;
     const tw = m.tween;
@@ -58,7 +65,7 @@ export default class VFXManager {
   playLoop(key, x, y, { scale = 1, depth = 48 } = {}) {
     const m = this.manifest?.[key];
     if (!m) return null;
-    if (!this.scene.anims.exists(key)) return null; // см. комментарий в play() выше
+    if (!this._hasFrames(key)) return null; // см. комментарий у _hasFrames/play() выше
 
     const sc = this.scene;
     const tw = m.tween;

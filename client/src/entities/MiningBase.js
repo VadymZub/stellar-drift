@@ -426,6 +426,26 @@ export default class MiningBase {
       { behavior: 'patrol', patrolRadius: GARRISON_ORBIT_RADIUS, neutral: false });
     leader.isConfedBoss = true; // тот же star-gold pity-roll, что был у старого патруля
     leader.noRespawn    = true; // разовый найм, не авто-пополняющийся спавн
+    // corp — БЕЗУСЛОВНО (не только внутри if (gs._realtimeRoomKey) ниже — та ветка чисто
+    // про серверную регистрацию таргетинга, а .corp нужен ВСЕГДА, это чисто клиентский
+    // визуальный/ally-fire тег). Тот же тег, что у ShieldDrone.corp (GameScene.js) —
+    // включает уже существующий ally-fire чек `t.corp && t.corp === this.playerCorp` в
+    // _fireCannon/_fireLaser (ветка t.pvpMobId) и цвет имени/точки на миникарте
+    // (HudScene) — раньше молчали для этих мобов просто потому, что t.corp был
+    // undefined (диалог: "запрет атака охраны базы... той же корпорации" +
+    // "все равно красный текст у нанятой охраны" — .corp был внутри realtime-гейта,
+    // который в момент спавна ещё мог быть не выставлен).
+    leader.corp = this.corp;
+    // isHiredSecurity — тоже БЕЗУСЛОВНО, не только внутри if (gs._realtimeRoomKey) ниже.
+    // Раньше он стоял ТОЛЬКО там вместе с pvpMobId/registerMob — но обе client-side
+    // защиты (bypass в GameScene.js.forEach и turret-exclusion в _updateTurrets ниже)
+    // проверяют именно .isHiredSecurity, а не .corp. Если _realtimeRoomKey ещё не готов
+    // в момент спавна (окно подключения к PvP-комнате при заходе/рестарте сектора —
+    // диалог: "атака при перезапуске в последнюю секунду - все еще происходит"), моб
+    // навсегда остаётся без .isHiredSecurity/pvpMobId (_spawnHiredSecurity выполняется
+    // ОДИН раз за сессию) — обе защиты молчат, и AI Mob.js (neutral:false) бьёт хозяина
+    // без единого корп-чека всю оставшуюся сессию, не только в момент спавна.
+    leader.isHiredSecurity = true;
     gs.mobs.push(leader);
 
     const drones = [];
@@ -433,6 +453,8 @@ export default class MiningBase {
       const drone = new Mob(gs, MOBS.sec_drone, level, leader.x, leader.y,
         { leader, orbitLeader: true, neutral: false });
       drone.noRespawn = true;
+      drone.corp = this.corp;
+      drone.isHiredSecurity = true;
       gs.mobs.push(drone);
       drones.push(drone);
     }
@@ -440,13 +462,6 @@ export default class MiningBase {
     if (gs._realtimeRoomKey) {
       [leader, ...drones].forEach((m, i) => {
         m.pvpMobId = `${gs._realtimeRoomKey}:hiredsec:${this.id}:${i}`;
-        m.isHiredSecurity = true;
-        // corp — тот же тег, что у ShieldDrone.corp (GameScene.js) — включает уже
-        // существующий ally-fire чек `t.corp && t.corp === this.playerCorp` в
-        // _fireCannon/_fireLaser (ветка t.pvpMobId), который раньше молчал для этих
-        // мобов просто потому, что t.corp был undefined (диалог: "запрет атака охраны
-        // базы игроков той же корпорации что и добывающая база").
-        m.corp = this.corp;
         gs.pvpClient?.registerMob(m.pvpMobId, this.corp);
       });
     }
@@ -574,6 +589,19 @@ export default class MiningBase {
       }
 
       for (const tt of this.turretTargets) tt?.update(dt, now);
+
+      // Ленивая регистрация гарнизона на сервере, если _spawnHiredSecurity отработал
+      // ДО того, как gs._realtimeRoomKey стал готов (окно подключения к PvP-комнате) —
+      // без этого retry мобы навсегда оставались бы без pvpMobId/серверного таргетинга
+      // на всю сессию (_spawnHiredSecurity выполняется один раз за наём).
+      if (this._garrison && gs._realtimeRoomKey && !this._garrison.leader.pvpMobId) {
+        [this._garrison.leader, ...this._garrison.drones].forEach((m, i) => {
+          if (m.alive) {
+            m.pvpMobId = `${gs._realtimeRoomKey}:hiredsec:${this.id}:${i}`;
+            gs.pvpClient?.registerMob(m.pvpMobId, this.corp);
+          }
+        });
+      }
 
       // Гарнизон потерян (лидер погиб) — освобождаем наём, владелец может нанять
       // заново (см. hireSecurity/_spawnHiredSecurity выше).
@@ -1126,6 +1154,22 @@ export default class MiningBase {
       const saved = _registry.get(this.id);
       if (saved) miningBaseSave(this.id, this.sector, saved).catch(() => {});
     });
+  }
+
+  // Форс-флаш отложенного (2с) сохранения — вызывается при уходе вкладки в фон/
+  // закрытии/релоаде (см. GameScene visibilitychange listener). Этот таймер — Phaser
+  // this.scene.time.delayedCall, привязан к часам сцены и просто не долетает, если
+  // страница перезагружается раньше 2 сек — смена corp (захват) или найм охраны в
+  // последние пару секунд перед релоадом терялась молча, сервер откатывался на
+  // предыдущее сохранённое состояние (диалог: "база в последнюю секунду из каракс
+  // превращается в гелиос и атакует охрану и игрока" — на самом деле не "превращается",
+  // а откатывается на устаревшие серверные данные, раз свежий capture не успел сохраниться).
+  flushSave() {
+    if (!this._serverSaveTimer) return;
+    this._serverSaveTimer.remove();
+    this._serverSaveTimer = null;
+    const saved = _registry.get(this.id);
+    if (saved) miningBaseSave(this.id, this.sector, saved).catch(() => {});
   }
 
   // Применяет состояние, загруженное с сервера (GameScene._loadMiningBaseState) —
