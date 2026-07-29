@@ -814,7 +814,7 @@ export default class SkillScene extends Phaser.Scene {
     // Escalation info
     const esc = this.add.text(cx, cy + mh / 2 - 16,
       'Платная: 50→100→200→400→800 ⭐  ·  Сброс каждую пятницу',
-      { ...TFS, fontSize: '9px', color: '#1e2e3a' }).setOrigin(0.5, 1).setDepth(DEPTH + 2);
+      { ...TFS, fontSize: '10px', color: '#1e2e3a' }).setOrigin(0.5, 1).setDepth(DEPTH + 2);
     created.push(esc);
   }
 

@@ -482,7 +482,7 @@ export default class GarageScene extends Phaser.Scene {
             .setStrokeStyle(1, 0x2a6888, 0.5);
           const stripT = this.add.text(sx + SZ / 2, sy + BODY_H + SELL_H / 2,
             canExch ? '⭐ 500→1' : '— плазмит —',
-            this.F('9px', canExch ? '#ffcc44' : '#334455')).setOrigin(0.5);
+            this.F('10px', canExch ? '#ffcc44' : '#334455')).setOrigin(0.5);
           if (canExch) {
             strip.setInteractive({ useHandCursor: true });
             strip.on('pointerdown', () => {
@@ -553,7 +553,7 @@ export default class GarageScene extends Phaser.Scene {
           }
           // Без "/лимит" (диалог: "не нужно писать /100000 или слеш 10000... в трюме и складе").
           const cntTxt = this.add.text(sx + SZ / 2, sy + SZ - 8, `${item.amount.toLocaleString()}`,
-            this.F('9px', '#aaccdd')).setOrigin(0.5);
+            this.F('10px', '#aaccdd')).setOrigin(0.5);
           const cellObjs = [box, iconEl, cntTxt];
           if (canLoad) {
             box.setInteractive({ useHandCursor: true });
@@ -584,7 +584,7 @@ export default class GarageScene extends Phaser.Scene {
           .setStrokeStyle(1, goldLocked ? 0x444422 : 0x664422, 0.5);
         const slT = this.add.text(sx + SZ / 2, sy + BODY_H + SELL_H / 2,
           goldLocked ? '⭐ блок' : `₵ ${itemSellPrice(item)}`,
-          this.F('9px', goldLocked ? '#666644' : '#aa7744')).setOrigin(0.5);
+          this.F('10px', goldLocked ? '#666644' : '#aa7744')).setOrigin(0.5);
         if (!goldLocked) {
           sl.setInteractive({ useHandCursor: true });
           sl.on('pointerdown', () => this.showSellConfirm(item));
@@ -612,7 +612,7 @@ export default class GarageScene extends Phaser.Scene {
         const moveLbl = this.add.rectangle(sx, sy + BODY_H, SZ, SELL_H, 0x0a1a0a, 0.9).setOrigin(0, 0)
           .setStrokeStyle(1, 0x2a6840, 0.4);
         const moveTxt = this.add.text(sx + SZ / 2, sy + BODY_H + SELL_H / 2, '→ трюм',
-          this.F('9px', '#4a9860')).setOrigin(0.5);
+          this.F('10px', '#4a9860')).setOrigin(0.5);
         const iconK = itemIconKey(item);
         const iconImg = iconK
           ? this.add.image(sx + SZ / 2, sy + BODY_H / 2, prerenderTex(this, iconK, 48, 48)).setDisplaySize(48, 48).setOrigin(0.5)
@@ -2033,7 +2033,7 @@ export default class GarageScene extends Phaser.Scene {
         enabled ? 0x0a1826 : 0x070c12, 0.92)
         .setStrokeStyle(1, enabled ? color : 0x1a2a3a, 0.75).setDepth(15);
       const bt = this.add.text(lx + lw / 2, bY + 11, label,
-        this.F('9px', enabled ? `#${color.toString(16).padStart(6,'0')}` : '#1e3040'))
+        this.F('10px', enabled ? `#${color.toString(16).padStart(6,'0')}` : '#1e3040'))
         .setOrigin(0.5).setDepth(16);
       this._listObjs.push(bg, bt);
       if (enabled) {
@@ -2601,7 +2601,7 @@ export default class GarageScene extends Phaser.Scene {
       this.scene.restart();
     });
     if (!ready) {
-      this.add.text(cx, btnY + 34, `Не хватает: ${need - have}`, this.F('11px', '#556677')).setOrigin(0.5).setDepth(14);
+      this.add.text(cx, btnY + 34, `Не хватает: ${need - have}`, this.F('11px', '#8fa8ba')).setOrigin(0.5).setDepth(14);
     }
   }
 }

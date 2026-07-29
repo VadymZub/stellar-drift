@@ -161,7 +161,7 @@ export default class MailScene extends Phaser.Scene {
         .setInteractive({ useHandCursor: true }));
       track(this.add.text(this._listX + 8, y + 6, t.username, this._F('11px', '#c8f0d0')).setDepth(4));
       const preview = (t.last_text || '').slice(0, 26);
-      track(this.add.text(this._listX + 8, y + 21, preview, this._F('9px', '#5a7a85')).setDepth(4));
+      track(this.add.text(this._listX + 8, y + 21, preview, this._F('10px', '#5a7a85')).setDepth(4));
       if (unread > 0) {
         track(this.add.text(this._listX + this._listW - 8, y + 6, `${unread}`,
           this._F('10px', '#ef5350')).setOrigin(1, 0).setDepth(4));
@@ -215,7 +215,7 @@ export default class MailScene extends Phaser.Scene {
     let y = this._contentY + 92;
     const friends = this._friends();
     if (friends.length) {
-      track(this.add.text(this._listX, y, 'Быстрый выбор:', this._F('9px', '#5a7a85')).setDepth(3));
+      track(this.add.text(this._listX, y, 'Быстрый выбор:', this._F('10px', '#5a7a85')).setDepth(3));
       y += 18;
       const rowH = 26;
       for (const f of friends) {

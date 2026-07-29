@@ -334,7 +334,7 @@ export default class HudScene extends Phaser.Scene {
       });
 
       const cdGfx = this.add.graphics().setDepth(103);
-      const hkStyle = { fontFamily: 'Inter, sans-serif', fontSize: '9px', color: '#4a6680', resolution: UI_RES };
+      const hkStyle = { fontFamily: 'Inter, sans-serif', fontSize: '10px', color: '#4a6680', resolution: UI_RES };
       const hk = this.add.text(sx + 3, barY + 2, i < 9 ? `${i + 1}` : '0', hkStyle).setDepth(104);
       const cdStyle = { fontFamily: 'Orbitron, sans-serif', fontSize: '12px', color: '#ffffff', resolution: UI_RES };
       const cdTxt = this.add.text(sx + SW / 2, barY + SH / 2, '', cdStyle).setOrigin(0.5).setDepth(104);
@@ -2974,7 +2974,7 @@ export default class HudScene extends Phaser.Scene {
         const chipBg = add(this.add.rectangle(cx, y + 2, chipW, 18, 0x0a2030, 1)
           .setOrigin(0).setStrokeStyle(1, 0x1a6040, 0.8).setInteractive({ useHandCursor: true }));
         const label = f.name.length > 7 ? f.name.slice(0, 6) + '…' : f.name;
-        add(this.add.text(cx + chipW / 2, y + 11, '● ' + label, F('9px', '#4CAF50')).setOrigin(0.5));
+        add(this.add.text(cx + chipW / 2, y + 11, '● ' + label, F('10px', '#4CAF50')).setOrigin(0.5));
         chipBg.on('pointerover', () => chipBg.setFillStyle(0x0d2e40));
         chipBg.on('pointerout',  () => chipBg.setFillStyle(0x0a2030));
         chipBg.on('pointerdown', () => this._setGroupInviteTarget(f.name));
@@ -3003,7 +3003,7 @@ export default class HudScene extends Phaser.Scene {
     // ── Pending invites ──────────────────────────────────────────────────────
     pendingRows.forEach(name => {
       add(this.add.text(PAD, y + 4, `⌛ ${name}`, F('11px', '#7a9a6a')));
-      add(this.add.text(PW - PAD, y + 4, 'ожидание', F('9px', '#4a5a3a')).setOrigin(1, 0));
+      add(this.add.text(PW - PAD, y + 4, 'ожидание', F('10px', '#4a5a3a')).setOrigin(1, 0));
       y += 20;
     });
 
@@ -3015,7 +3015,7 @@ export default class HudScene extends Phaser.Scene {
       const ratio = Math.max(0, Math.min(1, this._groupBossHpRatio));
       const bCol  = ratio > 0.5 ? 0xef5350 : ratio > 0.25 ? 0xff7043 : 0xffa726;
       add(this.add.rectangle(PAD, y + 14, Math.round(BW * ratio), BH, bCol, 1).setOrigin(0));
-      add(this.add.text(PAD + BW, y + 12, `${Math.round(ratio * 100)}%`, F('9px', '#ef9a9a')).setOrigin(1, 0));
+      add(this.add.text(PAD + BW, y + 12, `${Math.round(ratio * 100)}%`, F('10px', '#ef9a9a')).setOrigin(1, 0));
       y += 28;
     }
 
@@ -3041,7 +3041,7 @@ export default class HudScene extends Phaser.Scene {
     // ── Group event log ──────────────────────────────────────────────────────
     if (logEntries.length > 0) {
       add(this.add.rectangle(0, y, PW, 1, 0x1a4060, 0.25).setOrigin(0)); y += 1;
-      add(this.add.text(PAD, y + 2, 'Лог:', F('9px', '#2a4a60'))); y += 14;
+      add(this.add.text(PAD, y + 2, 'Лог:', F('10px', '#2a4a60'))); y += 14;
       // wordWrap — раньше длинные строки (напр. старая подсказка про приглашение)
       // просто вылезали за правый край панели вместо переноса (баг из диалога: "текст
       // очень мелко и не влазит в окно"). Высота панели (contentH выше) всё ещё
@@ -3219,11 +3219,11 @@ export default class HudScene extends Phaser.Scene {
     const tabW = PW / 2;
     const frTabBg = add(this.add.rectangle(0, y, tabW, TAB_H, tab === 'friends' ? 0x0d2035 : 0x050d18, 1)
       .setOrigin(0).setInteractive({ useHandCursor: true }));
-    add(this.add.text(tabW / 2, y + TAB_H / 2, 'ДРУЗЬЯ', F('9px', tab === 'friends' ? '#4dd0e1' : '#4a8899')).setOrigin(0.5));
+    add(this.add.text(tabW / 2, y + TAB_H / 2, 'ДРУЗЬЯ', F('10px', tab === 'friends' ? '#4dd0e1' : '#4a8899')).setOrigin(0.5));
     frTabBg.on('pointerdown', () => { this._frWinTab = 'friends'; this._rebuildFriendsWin(); });
     const blTabBg = add(this.add.rectangle(tabW, y, tabW, TAB_H, tab === 'blacklist' ? 0x0d2035 : 0x050d18, 1)
       .setOrigin(0).setInteractive({ useHandCursor: true }));
-    add(this.add.text(tabW + tabW / 2, y + TAB_H / 2, `🚫 ЧС${blocked.length ? ` (${blocked.length})` : ''}`, F('9px', tab === 'blacklist' ? '#4dd0e1' : '#4a8899')).setOrigin(0.5));
+    add(this.add.text(tabW + tabW / 2, y + TAB_H / 2, `🚫 ЧС${blocked.length ? ` (${blocked.length})` : ''}`, F('10px', tab === 'blacklist' ? '#4dd0e1' : '#4a8899')).setOrigin(0.5));
     blTabBg.on('pointerdown', () => { this._frWinTab = 'blacklist'; this._rebuildFriendsWin(); });
     y += TAB_H;
     add(this.add.rectangle(0, y, PW, 1, 0x1a4060, 0.5).setOrigin(0));
@@ -3239,7 +3239,7 @@ export default class HudScene extends Phaser.Scene {
           add(this.add.text(PAD + 16, y + 3, b.username, F('11px', '#cfd8dc')));
           const remBtn = add(this.add.rectangle(PW - PAD - 46, y + 1, 46, 16, 0x100008, 0.8).setOrigin(0)
             .setStrokeStyle(1, 0x280010, 0.6).setInteractive({ useHandCursor: true }));
-          add(this.add.text(PW - PAD - 23, y + 9, 'убрать', F('9px', '#78909c')).setOrigin(0.5));
+          add(this.add.text(PW - PAD - 23, y + 9, 'убрать', F('10px', '#78909c')).setOrigin(0.5));
           remBtn.on('pointerdown', () => this._removeFromBlacklist(b.username));
           y += 20;
         }
@@ -3249,7 +3249,7 @@ export default class HudScene extends Phaser.Scene {
       y += 1;
       const addBlBtn = add(this.add.rectangle(PAD, y + 5, PW - PAD * 2, 24, 0x0a1828, 1).setOrigin(0)
         .setStrokeStyle(1, 0x1e4060, 0.5).setInteractive({ useHandCursor: true }));
-      add(this.add.text(PW / 2, y + 17, '+ Добавить в ЧС  /чс [ник]', F('9px', '#4dd0e1')).setOrigin(0.5));
+      add(this.add.text(PW / 2, y + 17, '+ Добавить в ЧС  /чс [ник]', F('10px', '#4dd0e1')).setOrigin(0.5));
       addBlBtn.on('pointerover', () => addBlBtn.setFillStyle(0x0d2e40));
       addBlBtn.on('pointerout',  () => addBlBtn.setFillStyle(0x0a1828));
       addBlBtn.on('pointerdown', () => {
@@ -3300,7 +3300,7 @@ export default class HudScene extends Phaser.Scene {
 
       const invBtn = add(this.add.rectangle(PW - PAD - 56, y + 2, 30, 18, 0x0a2030, isBlocked ? 0.4 : 1).setOrigin(0)
         .setStrokeStyle(1, 0x1a4060, isBlocked ? 0.3 : 0.8));
-      add(this.add.text(PW - PAD - 41, y + 11, '→Гр', F('9px', isBlocked ? '#3a4a55' : '#4dd0e1')).setOrigin(0.5));
+      add(this.add.text(PW - PAD - 41, y + 11, '→Гр', F('10px', isBlocked ? '#3a4a55' : '#4dd0e1')).setOrigin(0.5));
       if (!isBlocked) {
         invBtn.setInteractive({ useHandCursor: true });
         invBtn.on('pointerover', () => invBtn.setFillStyle(0x0d2e40));
@@ -3347,7 +3347,7 @@ export default class HudScene extends Phaser.Scene {
     y += 1;
     const addBtn = add(this.add.rectangle(PAD, y + 5, PW - PAD * 2, 24, 0x0a1828, 1).setOrigin(0)
       .setStrokeStyle(1, 0x1e4060, 0.5).setInteractive({ useHandCursor: true }));
-    add(this.add.text(PW / 2, y + 17, '+ Добавить друга  /добавить [ник]', F('9px', '#4dd0e1')).setOrigin(0.5));
+    add(this.add.text(PW / 2, y + 17, '+ Добавить друга  /добавить [ник]', F('10px', '#4dd0e1')).setOrigin(0.5));
     addBtn.on('pointerover', () => addBtn.setFillStyle(0x0d2e40));
     addBtn.on('pointerout',  () => addBtn.setFillStyle(0x0a1828));
     addBtn.on('pointerdown', () => {

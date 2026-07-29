@@ -231,7 +231,7 @@ export default class SettingsScene extends Phaser.Scene {
       const sg = this._track(this.add.graphics().setDepth(3), T);
       sg.fillStyle(0x060f1e, 1).fillRect(LX, y, RX - LX, SEC_H);
       this._track(
-        this.add.text(LX + 6, y + SEC_H / 2, secLabel, this._F('9px', '#2a6a7a')).setOrigin(0, 0.5).setDepth(4),
+        this.add.text(LX + 6, y + SEC_H / 2, secLabel, this._F('10px', '#2a6a7a')).setOrigin(0, 0.5).setDepth(4),
         T
       );
       y += SEC_H;

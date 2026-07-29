@@ -2517,7 +2517,7 @@ export default class GameScene extends Phaser.Scene {
     // Контракты-модификаторы: необязательные тумблеры, можно выбрать несколько сразу,
     // стакуются друг с другом и с выбранной сложностью выше (см. GameScene._dungeonDiff()).
     objs.push(this.add.text(ox + 24, oy + modsHeaderY, 'МОДИФИКАТОРЫ (необязательно)', {
-      fontFamily: 'Orbitron, sans-serif', fontSize: '10px', color: '#556677', resolution: 2,
+      fontFamily: 'Orbitron, sans-serif', fontSize: '10px', color: '#8fa8ba', resolution: 2,
     }).setOrigin(0, 0).setDepth(201).setScrollFactor(0));
 
     const labelWrapW = OW - 54 - 24;
@@ -2528,14 +2528,14 @@ export default class GameScene extends Phaser.Scene {
         .setOrigin(0.5).setStrokeStyle(1, 0x2a3a4a, 0.8).setDepth(201).setScrollFactor(0)
         .setInteractive({ useHandCursor: true });
       const check = this.add.text(ox + 32, my + 6, '☐', {
-        fontFamily: 'Inter, sans-serif', fontSize: '13px', color: '#556677', resolution: 2,
+        fontFamily: 'Inter, sans-serif', fontSize: '13px', color: '#8fa8ba', resolution: 2,
       }).setOrigin(0, 0).setDepth(202).setScrollFactor(0);
       const label = this.add.text(ox + 54, my + 5, `${mod.label} — ${mod.hint}`, {
         fontFamily: 'Inter, sans-serif', fontSize: '10px', color: '#8ab0bc', resolution: 2,
         wordWrap: { width: labelWrapW },
       }).setOrigin(0, 0).setDepth(202).setScrollFactor(0);
       bg.on('pointerdown', () => {
-        if (selectedMods.has(key)) { selectedMods.delete(key); check.setText('☐').setColor('#556677'); bg.setStrokeStyle(1, 0x2a3a4a, 0.8); }
+        if (selectedMods.has(key)) { selectedMods.delete(key); check.setText('☐').setColor('#8fa8ba'); bg.setStrokeStyle(1, 0x2a3a4a, 0.8); }
         else { selectedMods.add(key); check.setText('☑').setColor('#4dd0e1'); bg.setStrokeStyle(1, 0x4dd0e1, 0.8); }
       });
       objs.push(bg, check, label);

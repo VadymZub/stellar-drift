@@ -561,7 +561,14 @@ class PvpPlayerState:
         self.shield      = float(loadout.get('shield', 0))
         self.max_shield  = max(0.0, float(loadout.get('maxShield', 0)))
         self.loadout = _clamp_pvp_loadout(loadout)
-        self.last_shot_at = 0.0
+        # Per-weapon-type, не одно число — корабль может нести и пушки, и лазеры разом,
+        # и firePlayerWeapon() на клиенте бьёт из ОБОИХ в один и тот же тик (см.
+        # GameScene.js). Один общий таймер/КД на всё оружие означал, что второй
+        # (лазерный) fire_claim того же тика ВСЕГДА проваливал "now_ts - last_shot_at <
+        # cooldown" сразу после первого (пушечного) — луч рисовался локально у клиента
+        # (визуал не спрашивает сервер), а урон никогда не засчитывался (баг из диалога:
+        # "1 плазма+6 лазеров — лазер стреляет визуально, урона нет; 7 лазеров — норм").
+        self.last_shot_at: dict[str, float] = {}
         # Пассивный реген (щит/корпус, см. Player.js update()) считается целиком на
         # клиенте — pvp_update_loadout периодически репортит РОСТ hull/shield (см. диалог:
         # "актуально — полная жизнь... над кораблём врага и на экране — неактуально"),
@@ -3336,19 +3343,20 @@ async def chat_ws(
                     # не авторитетен.
                     if attacker.corp == victim.corp:
                         continue
+                # Извлекаем ДО гейта КД — см. last_shot_at (per weapon_type, не одно число).
+                weapon_type = str(data.get('weaponType', 'cannon'))[:20]
                 now_ts = time.time()
-                if now_ts - attacker.last_shot_at < attacker.loadout['cooldown']:
+                if now_ts - attacker.last_shot_at.get(weapon_type, 0.0) < attacker.loadout['cooldown']:
                     continue  # чаще заявленного КД — молча игнорируем (см. план: без ложных банов)
                 dist = math.hypot(victim.x - attacker.x, victim.y - attacker.y)
                 if dist > attacker.loadout['range']:
                     continue  # вне заявленной дальности — молча игнорируем
-                attacker.last_shot_at = now_ts
+                attacker.last_shot_at[weapon_type] = now_ts
                 # Открытие огня самим атакующим снимает ЕГО СОБСТВЕННУЮ грейс-неуязвимость
                 # после ремонта на месте (см. respawn_grace_until) — "если сам не атакуешь".
                 attacker.respawn_grace_until = 0.0
 
                 claimed_dmg = max(0.0, float(data.get('dmg', 0) or 0))
-                weapon_type = str(data.get('weaponType', 'cannon'))[:20]
                 # Щит-дрон (см. SHIELD_DRONE_* выше): targetType='drone' — клиент явно
                 # выбрал дрон целью (не корабль владельца), см. GameScene shieldDroneAt.
                 target_type = str(data.get('targetType', 'ship'))[:10]
@@ -3921,6 +3929,9 @@ async def chat_ws(
                 ability = str(ability)[:30] if ability else None
                 if ability and ability not in ABILITY_DAMAGE_CEILING:
                     continue
+                # Извлекаем ДО гейта КД — см. last_shot_at (per weapon_type, не одно число,
+                # тот же фикс, что и в pvp_fire_claim выше).
+                weapon_type = ability if ability else str(data.get('weaponType', 'cannon'))[:20]
                 now_ts = time.time()
                 if ability:
                     last = attacker.ability_last_fire.get(ability, 0.0)
@@ -3928,14 +3939,14 @@ async def chat_ws(
                         continue
                     attacker.ability_last_fire[ability] = now_ts
                 else:
-                    if now_ts - attacker.last_shot_at < attacker.loadout['cooldown']:
+                    if now_ts - attacker.last_shot_at.get(weapon_type, 0.0) < attacker.loadout['cooldown']:
                         continue
                     mob_x, mob_y = data.get('mobX'), data.get('mobY')
                     if mob_x is not None and mob_y is not None:
                         dist = math.hypot(float(mob_x) - attacker.x, float(mob_y) - attacker.y)
                         if dist > attacker.loadout['range']:
                             continue
-                    attacker.last_shot_at = now_ts
+                    attacker.last_shot_at[weapon_type] = now_ts
                 # Огонь по мобу/базе/турели/бронепоезду — тоже "сам атакуешь", снимает
                 # грейс-неуязвимость после ремонта на месте, как и огонь по игроку выше.
                 attacker.respawn_grace_until = 0.0
@@ -3979,7 +3990,6 @@ async def chat_ws(
                 if mob_id.endswith(':argus'):
                     hull_frac = mob_state.hull / mob_state.max_hull if mob_state.max_hull > 0 else 1.0
                     evasion = 1.0 if _argus_phase_invincible(hull_frac) else 0.0
-                weapon_type = ability if ability else str(data.get('weaponType', 'cannon'))[:20]
                 shield_mult, hull_mult = _weapon_mults(weapon_type)
                 ceiling = ABILITY_DAMAGE_CEILING[ability] if ability else attacker.loadout['dmg']
                 penetration = 0.0 if ability else attacker.loadout['penetration']

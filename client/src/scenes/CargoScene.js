@@ -314,7 +314,7 @@ export default class CargoScene extends Phaser.Scene {
           const strip = this.add.rectangle(sx, sy + BODY_H, SZ, STRIP_H, stripBg, 0.95).setOrigin(0, 0)
             .setStrokeStyle(1, 0x2a6888, 0.5).setInteractive({ useHandCursor: true });
           const stripT = this.add.text(sx + SZ / 2, sy + BODY_H + STRIP_H / 2,
-            stripLabel, this.F('9px', stripColor)).setOrigin(0.5);
+            stripLabel, this.F('10px', stripColor)).setOrigin(0.5);
           strip.on('pointerdown', () => {
             if (canExchange) {
               const inv = gs.inventory || [];
@@ -408,7 +408,7 @@ export default class CargoScene extends Phaser.Scene {
         const ammoColor = isAmmo ? `#${(AMMO_ICON[item.type]?.color ?? 0xaaccdd).toString(16).padStart(6,'0')}` : isConsumable ? '#88eeff' : '#ffcc88';
         // Без "/лимит" — см. комментарий у плазмита выше в этом файле.
         const countTxt = this.add.text(sx + SZ / 2, sy + boxH - 8,
-          `${item.amount.toLocaleString()}`, this.F('9px', ammoColor)).setOrigin(0.5);
+          `${item.amount.toLocaleString()}`, this.F('10px', ammoColor)).setOrigin(0.5);
         const els = [box, countTxt];
         if (iconImg) els.push(iconImg);
 
@@ -417,7 +417,7 @@ export default class CargoScene extends Phaser.Scene {
           const strip = this.add.rectangle(sx, stripY, SZ, s.h, s.bg, 0.95).setOrigin(0, 0)
             .setStrokeStyle(1, 0x2a6888, 0.5).setInteractive({ useHandCursor: true });
           const stripT = this.add.text(sx + SZ / 2, stripY + s.h / 2, s.label,
-            this.F('9px', s.color)).setOrigin(0.5);
+            this.F('10px', s.color)).setOrigin(0.5);
           strip.on('pointerdown', s.action);
           els.push(strip, stripT);
           stripY += s.h;
@@ -434,7 +434,7 @@ export default class CargoScene extends Phaser.Scene {
         const strip = this.add.rectangle(sx, sy + BODY_H, SZ, STRIP_H, 0x071828, 0.9).setOrigin(0, 0)
           .setStrokeStyle(1, 0x2a6888, 0.5).setInteractive({ useHandCursor: true });
         const stripT = this.add.text(sx + SZ / 2, sy + BODY_H + STRIP_H / 2, '→ склад',
-          this.F('9px', '#4aa8cc')).setOrigin(0.5);
+          this.F('10px', '#4aa8cc')).setOrigin(0.5);
         strip.on('pointerdown', () => this._moveToWarehouse(item));
         const iconK = itemIconKey(item);
         const iconImg = iconK
@@ -455,14 +455,14 @@ export default class CargoScene extends Phaser.Scene {
           const sellStrip = this.add.rectangle(sx, sy + BODY_H, SZ, STRIP_H, 0x0a1f0a, 0.9).setOrigin(0, 0)
             .setStrokeStyle(1, 0x2a6a2a, 0.6).setInteractive({ useHandCursor: true });
           const sellT = this.add.text(sx + SZ / 2, sy + BODY_H + STRIP_H / 2,
-            `💰 ${sellPrice.toLocaleString()}`, this.F('9px', '#81c784')).setOrigin(0.5);
+            `💰 ${sellPrice.toLocaleString()}`, this.F('10px', '#81c784')).setOrigin(0.5);
           sellStrip.on('pointerdown', () => { this._hideTooltip(); this._showRemoteSellModal(item); });
           container.add([box, sellStrip, sellT, iconImg]);
         } else {
           const dropStrip = this.add.rectangle(sx, sy + BODY_H, SZ, STRIP_H, 0x1a0808, 0.9).setOrigin(0, 0)
             .setStrokeStyle(1, 0x6a2020, 0.5).setInteractive({ useHandCursor: true });
           const dropT = this.add.text(sx + SZ / 2, sy + BODY_H + STRIP_H / 2, '× выкинуть',
-            this.F('9px', '#ef9a9a')).setOrigin(0.5);
+            this.F('10px', '#ef9a9a')).setOrigin(0.5);
           dropStrip.on('pointerdown', () => this._showDropConfirm(item));
           container.add([box, dropStrip, dropT, iconImg]);
         }
@@ -499,7 +499,7 @@ export default class CargoScene extends Phaser.Scene {
           .setStrokeStyle(1, actBdr, 0.4)
           .setInteractive({ useHandCursor: actActive && !goldLocked });
         const stripT = this.add.text(sx + SZ / 2, sy + BODY_H + STRIP_H / 2, actLbl,
-          this.F('9px', actClr)).setOrigin(0.5);
+          this.F('10px', actClr)).setOrigin(0.5);
         strip.on('pointerdown', () => {
           if (!actActive) return;
           if (guildMode) {
@@ -807,13 +807,13 @@ export default class CargoScene extends Phaser.Scene {
     const btnYes = this.add.rectangle(ox + 10, bY, BW, BH, 0x0a2010).setOrigin(0, 0)
       .setStrokeStyle(1, 0x3a8040, 0.9).setInteractive({ useHandCursor: true }).setDepth(200);
     const btnYesTxt = this.add.text(ox + 10 + BW / 2, bY + BH / 2, 'Продать',
-      { fontFamily: 'Orbitron, sans-serif', fontSize: '9px', color: '#4dc060',
+      { fontFamily: 'Orbitron, sans-serif', fontSize: '10px', color: '#4dc060',
         resolution: UI_RES }).setOrigin(0.5).setDepth(201);
 
     const btnNo = this.add.rectangle(ox + OW - BW - 10, bY, BW, BH, 0x200808).setOrigin(0, 0)
       .setStrokeStyle(1, 0x884040, 0.9).setInteractive({ useHandCursor: true }).setDepth(200);
     const btnNoTxt = this.add.text(ox + OW - BW / 2 - 10, bY + BH / 2, 'Отмена',
-      { fontFamily: 'Orbitron, sans-serif', fontSize: '9px', color: '#c06060',
+      { fontFamily: 'Orbitron, sans-serif', fontSize: '10px', color: '#c06060',
         resolution: UI_RES }).setOrigin(0.5).setDepth(201);
 
     this._sellConfirmObjs = [bg, lbl, btnYes, btnYesTxt, btnNo, btnNoTxt];
@@ -904,7 +904,7 @@ export default class CargoScene extends Phaser.Scene {
       // Плашка редкости
       const labelBg = this.add.rectangle(mx + 12, nextY, 0, 18, rarHex, 0.18).setOrigin(0, 0).setDepth(201);
       const labelTxt = this.add.text(mx + 16, nextY + 2, rarLabel,
-        { fontFamily: 'Orbitron, sans-serif', fontSize: '9px', color: rarColor, resolution: UI_RES }).setDepth(202);
+        { fontFamily: 'Orbitron, sans-serif', fontSize: '10px', color: rarColor, resolution: UI_RES }).setDepth(202);
       labelBg.width = labelTxt.width + 8;
       objs.push(labelBg, labelTxt);
       nextY += 22;

@@ -314,7 +314,7 @@ export default class BaseMenuScene extends Phaser.Scene {
       const fillClr = opt.ok ? 0x101c28 : 0x120d0d;
       const brdClr  = opt.ok ? 0x336688 : 0x442222;
       const txtClr  = opt.ok ? '#ccddee' : '#664444';
-      const subClr  = opt.ok ? (opt.type === 'cannon2' ? '#ffcc44' : '#556677') : '#443333';
+      const subClr  = opt.ok ? (opt.type === 'cannon2' ? '#ffcc44' : '#8fa8ba') : '#443333';
       const btn = this.add.rectangle(cx, by, pw - 62, 55, fillClr).setStrokeStyle(1, brdClr, 0.8).setInteractive();
       const lbl = this.add.text(cx, by - 10, opt.label, { ...TF, fontSize: '17px', color: txtClr }).setOrigin(0.5);
       const sub = this.add.text(cx, by + 12, opt.desc,  { ...TF, fontSize: '14px', color: subClr }).setOrigin(0.5);
