@@ -25,6 +25,15 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
+      # Version = 1.1.<commit count at the tagged commit> — computed here, not hand-edited,
+      # so it can never drift from the tag the way manual bumps did (stalled at 1.1.343 for
+      # 8+ commits before this workflow step existed). scripts/bump_version.py patches both
+      # tauri.conf.json and Cargo.toml in this ephemeral checkout only (not committed back —
+      # the version is only ever displayed inside a built Tauri app, never in the repo's
+      # working tree during dev, so there's nothing to keep in sync locally).
+      - name: Bump version to match commit count
+        run: python scripts/bump_version.py
+
       # No beforeBuildCommand/frontendDist build step: client/ has no bundler —
       # tauri.conf.json's build.frontendDist already points straight at the
       # plain ES-module source tree. src-tauri lives at the REPO ROOT (sibling
