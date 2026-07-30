@@ -1,8 +1,28 @@
 import * as Phaser from 'https://cdn.jsdelivr.net/npm/phaser@4.2.1/dist/phaser.esm.js';
 import { ART_ANGLE_OFFSET, COLORS, UI_RES, MOB_REGEN, BOSS } from '../constants.js';
 import { i18n } from '../i18n.js';
+import { prerenderTex } from '../utils/prerenderTex.js';
 
 function scaleStat(base, level) { return Math.round(base * (1 + 0.5 * (level - 1))); }
+
+// Иконка AI-класса моба рядом с именем — раньше все мобы выглядели одинаково для
+// игрока, разница в поведении (рывок/щит-аура/стелс/мины) была видна только по факту
+// боя (диалог: "игрок не видит разницы... нет подсказки этот моб телепортируется за
+// спину/ставит мины"). 'gunner' — самый частый базовый архетип, без иконки (не
+// захламляем неймплейт над обычными стрелками). Картинки, не эмодзи (диалог: "нужны
+// реальные иконки, эмодзи не подходят, не солидно") — промпты в
+// docs/ai_class_icons_prompts.md, ключ текстуры = значение ниже, грузится в BootScene.
+const AI_CLASS_ICON = {
+  dasher: 'ai_icon_dasher', berserker: 'ai_icon_berserker',
+  shielder: 'ai_icon_shielder', cloaker: 'ai_icon_cloaker',
+  directedMine: 'ai_icon_directedMine', stunMine: 'ai_icon_stunMine',
+  swarmDrone: 'ai_icon_swarmDrone', bomb: 'ai_icon_bomb',
+  // 'sniper' — AI-логика (держит дистанцию, отступает при сближении, см. update() ниже
+  // "держит дистанцию: убегает если игрок подошёл слишком близко") уже реализована и
+  // рабочая, но пока НИ ОДИН моб в constants.js не помечен этим aiClass — мёртвый код
+  // до тех пор, пока кто-то не заведёт снайпера как реальный тип моба.
+  sniper: 'ai_icon_sniper',
+};
 
 // Взаимное отталкивание группы (изначально — только у дронов бронепоезда,
 // см. ArmoredTrain.js:_updateDrones, диалог: "не толпиться в одном месте") — вынесено
@@ -114,6 +134,17 @@ export default class Mob {
       fontFamily: 'Inter, sans-serif', fontSize: '12px', color: '#ef5350', resolution: UI_RES,
     }).setOrigin(0.5, 0).setDepth(41);
 
+    // AI-класс — картинка-иконка слева от имени, НЕ эмодзи (диалог: "нужны реальные
+    // иконки, эмодзи не подходят, не солидно"). Промпты — docs/ai_class_icons_prompts.md.
+    // Файла может пока не быть — тот же паттерн, что и у SFX/consumable-иконок (Phaser
+    // пропускает недостающие текстуры), просто не создаём объект без готовой картинки.
+    const aiIconKey = AI_CLASS_ICON[template.aiClass];
+    // 2×-оверсэмплинг (prerenderTex до 2× целевого размера, потом setDisplaySize) — та же
+    // техника, что уже спасала блюр иконок в магазине/гараже.
+    this.aiIcon = (aiIconKey && scene.textures.exists(aiIconKey))
+      ? scene.add.image(x - this.label.width / 2 - 12, y + 8, prerenderTex(scene, aiIconKey, 36, 36)).setDisplaySize(18, 18).setOrigin(0.5).setDepth(41)
+      : null;
+
     this.fireCooldown  = 0;
     this.lastDamageAt  = -100000;
     this.isBoss  = !!template.boss;
@@ -217,6 +248,13 @@ export default class Mob {
       if (this.leader) { this.leader.neutral = false; this.leader.state = 'aggro'; }
       this.group.forEach(m => { m.neutral = false; m.state = 'aggro'; });
     }
+    // Обычный враждебный моб (не passive/neutral — те уже разобраны выше), получивший
+    // урон, но ещё не в aggro — раньше state менялся ТОЛЬКО по дистанции (update(),
+    // проверка this.tpl.aggro), не по факту попадания. Дрейфующие/roaming боссы,
+    // подстреленные издалека (или ушедшие роумингом за пределы aggro-радиуса), молча
+    // получали урон и продолжали дрейфовать, вообще не реагируя на атаку игрока
+    // (диалог: "дрейфующие боссы не реагируют на атаку игрока").
+    if (this.state !== 'aggro' && !this.neutral) this.state = 'aggro';
 
     const shieldMult = opts.shieldMult ?? 1;
     const hullMult   = opts.hullMult   ?? 1;
@@ -252,6 +290,7 @@ export default class Mob {
     this.alive = false;
     this.sprite.setVisible(false);
     this.label.setVisible(false);
+    this.aiIcon?.setVisible(false);
     if (this.leader) {
       const idx = this.leader.group.indexOf(this);
       if (idx !== -1) this.leader.group.splice(idx, 1);
@@ -263,6 +302,7 @@ export default class Mob {
     this.shield = this.maxShield;
     this.sprite.setPosition(this.spawnX, this.spawnY).setVisible(true).clearTint();
     this.label.setVisible(true);
+    this.aiIcon?.setVisible(true);
     this.alive   = true;
     this.state   = 'idle';
     this.neutral = this.tpl.neutral || false;
@@ -676,6 +716,7 @@ export default class Mob {
   _updateVisuals() {
     this.sprite.rotation = this.heading + (this.tpl.artAngleOffset ?? ART_ANGLE_OFFSET);
     this.label.setPosition(this.x, this.y + this.sprite.displayHeight * 0.55);
+    if (this.aiIcon) this.aiIcon.setPosition(this.x - this.label.width / 2 - 12, this.y + this.sprite.displayHeight * 0.55 + 8);
     // Настоящий надпись-неймплейт моба (не HUD-readout наведённой цели в HudScene.tName —
     // тот отдельный текст обновляет цвет только пока моб под ретиклом). Красный жёстко
     // стоял с конструктора и никогда не пересчитывался — из-за этого нанятая охрана
@@ -1125,6 +1166,6 @@ export default class Mob {
   // мобов — "экономия на редраве" не помогает, если объект всё равно рендерится).
 
   destroy() {
-    this.sprite.destroy(); this.label.destroy();
+    this.sprite.destroy(); this.label.destroy(); this.aiIcon?.destroy();
   }
 }

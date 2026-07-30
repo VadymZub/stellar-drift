@@ -36,6 +36,15 @@ RULES = [
     # them here. Resizing breaks frameWidth/frameHeight slicing in vfx_manifest.json.
 ]
 
+# Spritesheets loaded via load.spritesheet(..., {frameWidth, frameHeight}) — resizing
+# breaks that fixed-size frame slicing (BootScene.js reads exact pixel dimensions).
+# The comment above already warned about this; this set is what actually enforces it —
+# 2026-07-30: ui/*.png's blanket rule resized arrow_cruise_anim.png anyway (comment alone
+# didn't stop it), corrupting cruise_flow's frames and crashing Movement.js's
+# sprite.play('cruise_flow') on every GameScene.create() (Animation.getFirstTick reading
+# undefined). Restored from git; excluding by relative path now so this can't recur.
+SPRITESHEET_EXCLUDE = {'ui/arrow_cruise_anim.png'}
+
 # Photographic content — convert to JPEG (no alpha, 8-15x savings over PNG).
 # The .png source is deleted after a successful .jpg write.
 JPEG_RULES = [
@@ -108,6 +117,9 @@ def main():
     for pattern, max_px in RULES:
         for path in sorted(ROOT.glob(pattern)):
             if not path.is_file():
+                continue
+            if path.relative_to(ROOT).as_posix() in SPRITESHEET_EXCLUDE:
+                skipped += 1
                 continue
             old, new = process_png(path, max_px)
             if old == 0:

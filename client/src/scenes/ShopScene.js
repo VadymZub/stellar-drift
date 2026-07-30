@@ -643,11 +643,12 @@ export default class ShopScene extends Phaser.Scene {
     ob.push(this.add.text(cx + cw / 2, cy + 174, 'действие: 1 час',
       this.F('12px', '#3a7a6a')).setOrigin(0.5, 0));
 
-    // Active status
-    const now = Date.now();
-    const expiry = gs.activeBoosters?.[b.key] || 0;
-    const isActive = expiry > now;
-    const remainMin = isActive ? Math.ceil((expiry - now) / 60000) : 0;
+    // Active status — activeBoosters[key] хранит ОСТАВШИЕСЯ мс (тикает только в реальном
+    // игровом кадре, см. GameScene.update()), не абсолютный Date.now()-expiry — бустер не
+    // сгорает, пока игрок не в игре (диалог: "расходуется только в игровое время").
+    const remainingMs = gs.activeBoosters?.[b.key] || 0;
+    const isActive = remainingMs > 0;
+    const remainMin = isActive ? Math.ceil(remainingMs / 60000) : 0;
     const statusTxt = this.add.text(cx + cw / 2, cy + 196,
       isActive ? `АКТИВЕН  ${remainMin} мин.` : '',
       this.O('10px', '#5aff80')).setOrigin(0.5, 0);
@@ -669,10 +670,10 @@ export default class ShopScene extends Phaser.Scene {
       }
       gs.starGold -= 20;
       gs.activeBoosters = gs.activeBoosters || {};
-      // Stack on existing time if already active
-      const base = Math.max(Date.now(), gs.activeBoosters[b.key] || 0);
-      gs.activeBoosters[b.key] = base + 3_600_000;
-      const rem = Math.ceil((gs.activeBoosters[b.key] - Date.now()) / 60000);
+      // Копим ОСТАВШИЕСЯ мс поверх уже накопленных (не Date.now()-expiry) — см. комментарий
+      // у объявления remainingMs выше.
+      gs.activeBoosters[b.key] = (gs.activeBoosters[b.key] || 0) + 3_600_000;
+      const rem = Math.ceil(gs.activeBoosters[b.key] / 60000);
       statusTxt.setText(`АКТИВЕН  ${rem} мин.`);
       gs._saveState?.();
       gs.log?.(`Куплен бустер: ${b.label} −20 ⭐`);

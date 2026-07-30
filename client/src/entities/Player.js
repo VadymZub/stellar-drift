@@ -335,13 +335,15 @@ export default class Player {
       return a + Math.round(base * (1 + upgF + platF));
     }, 0);
 
-    // ── Step 6: Active booster % (shop purchases, keyed by expiry timestamp) ───
+    // ── Step 6: Active booster % (shop purchases, keyed by REMAINING ms, decremented
+    // only during real game ticks — см. GameScene.update() — не Date.now()-expiry, чтобы
+    // не жечь оплаченное время, пока вкладка закрыта/игрок не в игре, диалог: "проверить
+    // расходуется ли только в игровое время - так будет честнее") ───
     const _ab  = this.scene.activeBoosters || {};
-    const _now = Date.now();
-    const boostDmg    = _ab.boost_damage > _now ? 0.10 : 0;
-    const boostHull   = _ab.boost_hull   > _now ? 0.20 : 0;
-    const boostShield = _ab.boost_shield > _now ? 0.20 : 0;
-    const boostXp     = _ab.boost_xp    > _now ? 0.25 : 0;
+    const boostDmg    = _ab.boost_damage > 0 ? 0.10 : 0;
+    const boostHull   = _ab.boost_hull   > 0 ? 0.20 : 0;
+    const boostShield = _ab.boost_shield > 0 ? 0.20 : 0;
+    const boostXp     = _ab.boost_xp    > 0 ? 0.25 : 0;
     // Consumed-item speed multipliers (speed_boost consumable, stealth)
     const speedBoostPct = (this.scene._speedBoostMult ?? 1.0) * (this.scene._stealthMult ?? 1.0) - 1.0;
     // Session mini-boosters (corridor chests in R-1-boss): reset on map exit

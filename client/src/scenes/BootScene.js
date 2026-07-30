@@ -108,6 +108,13 @@ export default class BootScene extends Phaser.Scene {
     // нет в кэше — игра работает молча, без ошибок, до тех пор пока их не положат.
     for (const key of SFX_KEYS) this.load.audio(key, `assets/sfx/${key}.mp3`);
 
+    // Иконки AI-класса моба рядом с неймплейтом (см. Mob.js AI_CLASS_ICON, промпты —
+    // docs/ai_class_icons_prompts.md) — файлов может пока не быть, тот же паттерн, что
+    // и у SFX выше: Phaser пропускает недостающие текстуры молча, Mob.js сам проверяет
+    // textures.exists() перед созданием иконки.
+    for (const cls of ['dasher', 'berserker', 'shielder', 'cloaker', 'directedMine', 'stunMine', 'swarmDrone', 'bomb', 'sniper'])
+      this.load.image(`ai_icon_${cls}`, `assets/ui/ai_icon_${cls}.png`);
+
     // Иконки рангов (7 тиров)
     for (let t = 1; t <= 7; t++) this.load.image(`rank_tier${t}`, `assets/ranks/rank_tier${t}.png`);
     for (const c of ['helios', 'karax', 'tides']) this.load.image(`emblem_${c}`, `assets/corps/emblem_${c}.png`);

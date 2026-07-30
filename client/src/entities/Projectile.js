@@ -11,10 +11,14 @@ export default class Projectile {
   // в сторону, в отличие от бесконечного самонаведения (см. диалог: "90 градусов
   // самонаведения" у веерной турели поезда). По умолчанию Infinity — не меняет поведение
   // ни одного существующего вызова (обычные снаряды/ракеты по-прежнему без потолка).
-  constructor(scene, owner, fromX, fromY, toX, toY, victim, damage, penetration, color, turnRate = 0, type = 'plasma', isCrit = false, maxTurnRad = Infinity) {
+  // sourceMob — опционально: Mob-инстанс, выпустивший снаряд (только owner==='mob'),
+  // для Death Recap (диалог: "кто убил, откуда прилетело") — раньше снаряд нёс только
+  // категорию 'player'|'mob', конкретный моб-виновник урона игроку нигде не сохранялся.
+  constructor(scene, owner, fromX, fromY, toX, toY, victim, damage, penetration, color, turnRate = 0, type = 'plasma', isCrit = false, maxTurnRad = Infinity, sourceMob = null) {
     this.scene = scene;
     this.owner = owner;          // 'player' | 'mob'
     this.victim = victim;
+    this.sourceMob = sourceMob;
     this.damage = damage;
     this.penetration = penetration;
     this.turnRate = turnRate;    // рад/сек; 0 = прямолинейный

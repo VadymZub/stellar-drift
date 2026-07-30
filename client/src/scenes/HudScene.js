@@ -1181,6 +1181,11 @@ export default class HudScene extends Phaser.Scene {
         if (this._savedLogCollapsed === false) { this._logCollapsed = false; this._refreshLogPanel();  }
         this._hideBaseNav();
       }
+      // Временное авто-сворачивание у базы не должно ЗАПИСЫВАТЬ поверх пользовательского
+      // сохранённого предпочтения (см. _toggleInfoPanel/_toggleLogPanel — те персистят,
+      // это временное состояние — намеренно НЕ зовёт _saveInfoPos/_saveLogPos), но кнопки
+      // в общей панели должны визуально следовать текущему фактическому состоянию.
+      this._updateSocialBtnStyles();
     }
 
     // ── Cargo indicator ──
@@ -1595,14 +1600,18 @@ export default class HudScene extends Phaser.Scene {
     const SH = this.scale.height;
 
     const SW = this.scale.width;
-    let lpx = 10, lpy = SH - 185;
+    let lpx = 10, lpy = SH - 185, lpCollapsed = false;
     try {
       const s = JSON.parse(localStorage.getItem('sd_hud_log_pos') || 'null');
-      if (s) { lpx = s.x; lpy = s.y; }
+      if (s) { lpx = s.x; lpy = s.y; lpCollapsed = !!s.collapsed; }
     } catch {}
     this._logX = Math.max(0, Math.min(SW - 310, lpx));
     this._logY = Math.max(0, Math.min(SH - 185, lpy));
-    this._logCollapsed = false;
+    // Раньше сворачивание/разворачивание лога никогда не сохранялось (только позиция) —
+    // при каждой перезагрузке лог всегда открывался заново, даже если игрок только что
+    // его свернул (диалог: "прячут соответствующие окна... положение скрыт/раскрыт
+    // запоминать").
+    this._logCollapsed = lpCollapsed;
 
     this._logBg = this.add.graphics().setDepth(100);
 
@@ -1627,14 +1636,25 @@ export default class HudScene extends Phaser.Scene {
     this.input.on('pointerup', () => {
       if (!dragging) return;
       dragging = false;
-      if (!moved) {
-        this._logCollapsed = !this._logCollapsed;
-        this._refreshLogPanel();
-      }
-      try { localStorage.setItem('sd_hud_log_pos', JSON.stringify({ x: this._logX, y: this._logY })); } catch {}
+      if (!moved) this._toggleLogPanel();
+      else this._saveLogPos();
     });
 
     this._refreshLogPanel();
+  }
+
+  _saveLogPos() {
+    try { localStorage.setItem('sd_hud_log_pos', JSON.stringify({ x: this._logX, y: this._logY, collapsed: this._logCollapsed })); } catch {}
+  }
+
+  // Общий toggle — дёргается и внутренней кнопкой-ручкой лога, и кнопкой "ЛОГ" в общей
+  // панели соцкнопок (см. _buildHudSocialButtons), по образцу чата (диалог: "прячут
+  // соответствующие окна по подобию чата").
+  _toggleLogPanel() {
+    this._logCollapsed = !this._logCollapsed;
+    this._refreshLogPanel();
+    this._saveLogPos();
+    this._updateSocialBtnStyles();
   }
 
   _refreshLogPanel() {
@@ -1661,14 +1681,15 @@ export default class HudScene extends Phaser.Scene {
     const O = (s, c) => ({ fontFamily: 'Orbitron, sans-serif', fontSize: s, color: c, resolution: UI_RES });
 
     const SW = this.scale.width, SH = this.scale.height;
-    let ipx = 10, ipy = 90;
+    let ipx = 10, ipy = 90, ipCollapsed = false;
     try {
       const s = JSON.parse(localStorage.getItem('sd_hud_info_pos') || 'null');
-      if (s) { ipx = s.x; ipy = s.y; }
+      if (s) { ipx = s.x; ipy = s.y; ipCollapsed = !!s.collapsed; }
     } catch {}
     this._ipx = Math.max(0, Math.min(SW - 160, ipx));
     this._ipy = Math.max(0, Math.min(SH - 200, ipy));
-    this._ipCollapsed = false;
+    // Раньше сворачивание не сохранялось (только позиция) — см. тот же фикс у лога выше.
+    this._ipCollapsed = ipCollapsed;
     this._ipXpFrac = 0;
 
     // Panel background (persistent graphics, cleared when collapsed)
@@ -1703,14 +1724,23 @@ export default class HudScene extends Phaser.Scene {
     this.input.on('pointerup', () => {
       if (!dragging) return;
       dragging = false;
-      if (!moved) {
-        this._ipCollapsed = !this._ipCollapsed;
-        this._refreshInfoPanel();
-      }
-      try { localStorage.setItem('sd_hud_info_pos', JSON.stringify({ x: this._ipx, y: this._ipy })); } catch {}
+      if (!moved) this._toggleInfoPanel();
+      else this._saveInfoPos();
     });
 
     this._refreshInfoPanel();
+  }
+
+  _saveInfoPos() {
+    try { localStorage.setItem('sd_hud_info_pos', JSON.stringify({ x: this._ipx, y: this._ipy, collapsed: this._ipCollapsed })); } catch {}
+  }
+
+  // Общий toggle — см. _toggleLogPanel (тот же паттерн, кнопка "ИНФО" в панели соцкнопок).
+  _toggleInfoPanel() {
+    this._ipCollapsed = !this._ipCollapsed;
+    this._refreshInfoPanel();
+    this._saveInfoPos();
+    this._updateSocialBtnStyles();
   }
 
   _refreshInfoPanel() {
@@ -2587,6 +2617,16 @@ export default class HudScene extends Phaser.Scene {
       // (диалог: "иконка профиль... разместить картинку... по центру" → "немного поднять вверх").
       { key: 'prof', icon: '🪪', tip: 'ПРОФИЛЬ  [U]', badgeColor: null,      iconDy: -3, action: () => this.scene.get('GameScene').toggleOverlay('ProfileScene') },
       { key: 'chat', icon: '💬', tip: 'ЧАТ',          badgeColor: null,      action: () => this._toggleChatWin() },
+      // Инфо/лог/бустеры — раньше у каждого была своя разношёрстная кнопка-ручка
+      // ("i ◀"/"L ◀" внутри самих панелей, отдельная плавающая ⚡ у бустеров) без
+      // единого места и без сохранения скрыт/раскрыт (диалог: "панель с кнопками...
+      // нужно также добавить: информация, лог, бустеры — 3 отдельные кнопки, прячут
+      // соответствующие окна по подобию чата, положение скрыт/раскрыт запоминать").
+      // Внутренние ручки-кнопки остаются (перетаскивание панелей), просто теперь
+      // ещё и отсюда доступно тем же способом, что и чат.
+      { key: 'info', icon: 'ℹ', tip: 'ИНФОРМАЦИЯ',   badgeColor: null,      action: () => this._toggleInfoPanel() },
+      { key: 'log',  icon: '📜', tip: 'ЛОГ',          badgeColor: null,      action: () => this._toggleLogPanel() },
+      { key: 'bst',  icon: '⚡', tip: 'БУСТЕРЫ',      badgeColor: null,      action: () => this._toggleBoosterWidget() },
       { key: 'set',  icon: '⚙', tip: 'НАСТРОЙКИ',    badgeColor: null,      action: () => this.gs.toggleOverlay('SettingsScene') },
     ];
 
@@ -2722,6 +2762,9 @@ export default class HudScene extends Phaser.Scene {
     // Подсвечена, пока чат виден в ЛЮБОМ виде (окно или свёрнутая таблетка) — гаснет
     // только когда убран полностью этой же кнопкой (см. _toggleChatWin/_chatHidden).
     setBtn('chat', !this._chatHidden, false);
+    setBtn('info', !this._ipCollapsed, false);
+    setBtn('log', !this._logCollapsed, false);
+    setBtn('bst', !this._bstClosed, false);
 
     const setOn = this.scene.isActive('SettingsScene');
     setBtn('set', setOn, false);
@@ -3426,29 +3469,34 @@ export default class HudScene extends Phaser.Scene {
     c.add(this._bstEmptyTxt);
 
     c.setVisible(false);
-
-    // Постоянная кнопка-раскрывашка — НЕ часть контейнера плашки (тот целиком
-    // прячется при !anyActive/_bstClosed), живёт отдельно и видна всегда, иначе
-    // закрытую крестиком (или свернувшуюся из-за отсутствия активных бустеров)
-    // плашку было решительно нечем открыть обратно, кроме как ждать активации
-    // НОВОГО бустера (см. диалог — раньше это был единственный путь).
-    const tbSize = 26;
-    const tbX = W - tbSize - 10, tbY = 10;
-    this._bstToggleBtn = this.add.rectangle(tbX, tbY, tbSize, tbSize, 0x0c1a2e, 0.9)
-      .setOrigin(0).setStrokeStyle(1.5, 0xffd54f, 0.7).setInteractive({ useHandCursor: true }).setDepth(106);
-    this._bstToggleTxt = this.add.text(tbX + tbSize / 2, tbY + tbSize / 2, '⚡', { fontSize: '14px', resolution: UI_RES }).setOrigin(0.5).setDepth(107);
-    this._bstToggleBtn.on('pointerover', () => this._bstToggleBtn.setFillStyle(0x1a2a3e, 0.95));
-    this._bstToggleBtn.on('pointerout',  () => this._bstToggleBtn.setFillStyle(0x0c1a2e, 0.9));
-    this._bstToggleBtn.on('pointerdown', () => {
-      this._bstClosed = false;
-      this._bstForceOpen = true;
-      this._bstSavePos();
-    });
+    // _createBoosterWidget() запускается ПОСЛЕ _buildHudSocialButtons() в create() —
+    // без этого кнопка "БУСТЕРЫ" рисовалась бы с дефолтной подсветкой ДО того, как
+    // this._bstClosed вообще определён.
+    this._updateSocialBtnStyles();
   }
 
   _bstSavePos() {
     const c = this._bstCon;
     try { localStorage.setItem('sd_booster_win', JSON.stringify({ x: Math.round(c.x), y: Math.round(c.y), closed: this._bstClosed })); } catch {}
+  }
+
+  // Раньше "раскрывашка" была отдельной плавающей кнопкой ⚡ в углу экрана — теперь
+  // это кнопка "БУСТЕРЫ" в общей панели соцкнопок (диалог: "панель с кнопками...
+  // нужно также добавить: информация, лог, бустеры — 3 отдельные кнопки, прячут
+  // соответствующие окна по подобию чата"), полноценный toggle (не только открыть,
+  // но и закрыть тем же кликом), т.к. раньше закрыть можно было только крестиком
+  // внутри самой плашки.
+  _toggleBoosterWidget() {
+    if (this._bstClosed) {
+      this._bstClosed = false;
+      this._bstForceOpen = true;
+    } else {
+      this._bstClosed = true;
+      this._bstForceOpen = false;
+      this._bstCon.setVisible(false);
+    }
+    this._bstSavePos();
+    this._updateSocialBtnStyles();
   }
 
   // Бегущая строка вверху экрана — важные ивенты (нашествие/бронепоезд) за 15/5
@@ -3530,13 +3578,17 @@ export default class HudScene extends Phaser.Scene {
   // в GC-паузы, что и строковые сигнатуры баров (см. profилировку — "пила" JS heap
   // не сходила, пока не убрали ВСЕ такие безусловные аллокации, не только строки).
   _updateBoosterWidget() {
-    const now = Date.now();
+    // Бустеры хранят ОСТАВШИЕСЯ мс (не абсолютный expiry от Date.now()) — тикают только
+    // пока реально идёт игровой кадр (см. GameScene.update()), т.е. НЕ расходуются, пока
+    // вкладка закрыта/свёрнута (диалог: "проверить расходуется ли только в игровое время
+    // - так будет честнее"). Раньше `ab[key] > Date.now()` жёг время и в оффлайне, и даже
+    // не переживало релогин вовсе (activeBoosters не было в _serializeState).
     const ab  = this.gs.activeBoosters || {};
     if (!this._bstPrevActive) this._bstPrevActive = {};
 
     let anyActive = false, newlyActivated = false;
     for (const d of BOOSTER_DEFS) {
-      const active = (ab[d.key] || 0) > now;
+      const active = (ab[d.key] || 0) > 0;
       if (active) anyActive = true;
       if (active && !this._bstPrevActive[d.key]) newlyActivated = true;
       this._bstPrevActive[d.key] = active;
@@ -3558,11 +3610,11 @@ export default class HudScene extends Phaser.Scene {
 
     let visCount = 0;
     for (const row of this._bstRows) {
-      const expiry = ab[row.key] || 0;
-      const active = expiry > now;
+      const remainingMs = ab[row.key] || 0;
+      const active = remainingMs > 0;
       row.icon.setVisible(active); row.label.setVisible(active); row.timer.setVisible(active);
       if (active) {
-        const rem = Math.ceil((expiry - now) / 1000);
+        const rem = Math.ceil(remainingMs / 1000);
         this._setText(row.timer, `${String(Math.floor(rem / 60)).padStart(2, '0')}:${String(rem % 60).padStart(2, '0')}`);
         visCount++;
       }
