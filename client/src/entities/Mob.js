@@ -228,33 +228,7 @@ export default class Mob {
       }
     }
 
-    // Пассивные мобы агрятся при атаке игрока
-    if (this.passive) {
-      this.passive = false;
-      this.state   = 'aggro';
-      // Ближайшие пассивные союзники в 600px тоже реагируют
-      if (this.scene.mobs) {
-        this.scene.mobs.forEach(m => {
-          if (m !== this && m.alive && m.passive) {
-            const d = Phaser.Math.Distance.Between(this.x, this.y, m.x, m.y);
-            if (d < 600) { m.passive = false; m.state = 'aggro'; }
-          }
-        });
-      }
-    }
-    if (this.neutral && !this.passive) {
-      this.neutral = false;
-      this.state   = 'aggro';
-      if (this.leader) { this.leader.neutral = false; this.leader.state = 'aggro'; }
-      this.group.forEach(m => { m.neutral = false; m.state = 'aggro'; });
-    }
-    // Обычный враждебный моб (не passive/neutral — те уже разобраны выше), получивший
-    // урон, но ещё не в aggro — раньше state менялся ТОЛЬКО по дистанции (update(),
-    // проверка this.tpl.aggro), не по факту попадания. Дрейфующие/roaming боссы,
-    // подстреленные издалека (или ушедшие роумингом за пределы aggro-радиуса), молча
-    // получали урон и продолжали дрейфовать, вообще не реагируя на атаку игрока
-    // (диалог: "дрейфующие боссы не реагируют на атаку игрока").
-    if (this.state !== 'aggro' && !this.neutral) this.state = 'aggro';
+    this._triggerAggro();
 
     const shieldMult = opts.shieldMult ?? 1;
     const hullMult   = opts.hullMult   ?? 1;
@@ -284,6 +258,44 @@ export default class Mob {
     let killed = false;
     if (this.hull <= 0) { this.hull = 0; killed = true; this.die(); }
     return { shieldHit, hullHit, killed };
+  }
+
+  // Переводит в aggro при получении урона — переехало сюда из takeDamage(), т.к.
+  // мобы с pvpMobId (т.е. ПОЧТИ ВСЕ в любой реальной комнате — add() в spawnMobs()
+  // навешивает pvpMobId любому мобу, если есть realtime-комната) на самом деле
+  // получают урон НЕ через takeDamage() — через _onPvpMobHitResult в GameScene.js,
+  // серверную заявку/ответ, который пишет hull/shield/lastDamageAt напрямую и
+  // takeDamage() не вызывает вовсе. Раньше agro-переключение жило только в
+  // takeDamage(), так что мобы с pvpMobId (диалог: "дрейфующий босс - постоянно
+  // пассивен, даже когда его атакуют" — воспроизведено на нескольких боссах/картах
+  // одинаково, независимо от типа/зоны/дистанции — debug-лог подтвердил: passive
+  // оставался true при recentlyHit=true, то есть урон долетал, а агро-переключение
+  // просто ни разу не вызывалось) никогда не агрились от урона — только по чистой
+  // дистанции (update()). Теперь зовётся и отсюда, и из _onPvpMobHitResult.
+  _triggerAggro() {
+    if (this.passive) {
+      this.passive = false;
+      this.state   = 'aggro';
+      // Ближайшие пассивные союзники в 600px тоже реагируют
+      if (this.scene.mobs) {
+        this.scene.mobs.forEach(m => {
+          if (m !== this && m.alive && m.passive) {
+            const d = Phaser.Math.Distance.Between(this.x, this.y, m.x, m.y);
+            if (d < 600) { m.passive = false; m.state = 'aggro'; }
+          }
+        });
+      }
+    }
+    if (this.neutral && !this.passive) {
+      this.neutral = false;
+      this.state   = 'aggro';
+      if (this.leader) { this.leader.neutral = false; this.leader.state = 'aggro'; }
+      this.group.forEach(m => { m.neutral = false; m.state = 'aggro'; });
+    }
+    // Обычный враждебный моб (не passive/neutral — те уже разобраны выше), получивший
+    // урон, но ещё не в aggro — раньше state менялся ТОЛЬКО по дистанции (update(),
+    // проверка this.tpl.aggro), не по факту попадания.
+    if (this.state !== 'aggro' && !this.neutral) this.state = 'aggro';
   }
 
   die() {
@@ -376,14 +388,26 @@ export default class Mob {
     const playerStealthed = (this.scene._stealthEndTime || 0) > now || (this.scene._phantomCloakEndTime || 0) > now;
 
     // ── Смена состояний ───────────────────────────────────────────────────────
-    if (this.passive || playerInSafeZone || !player.alive || playerStealthed) {
+    // Недавно получил урон — держим агро даже если игрок вне штатного радиуса дистанции
+    // ИЛИ формально в safe zone своей базы. Раньше playerInSafeZone безусловно форсил
+    // idle для ЛЮБОГО моба независимо от того, что игрок его только что атаковал — можно
+    // было безопасно снайпить босса из зоны восстановления без единого ответного выстрела
+    // (диалог: "стою рядом и стреляю - босс не реагирует", воспроизводится у ШТАБ TIDES
+    // "зона восстановления"; тот же класс бага и у дальней стрельбы — dist > aggro*1.6
+    // откатывал aggro обратно на следующем кадре, диалог "дрейфующий босс - постоянно
+    // пассивен, даже когда его атакуют", подтверждено на нескольких разных боссах/картах
+    // одинаково — общая причина, не привязанная к конкретному типу моба). Safe zone
+    // по-прежнему блокирует НЕСПРОВОЦИРОВАННУЮ агрессию (мирно стоящего игрока), просто
+    // не даёт полный иммунитет от ответа, если сам открыл огонь первым.
+    const recentlyHit = (now - (this.lastDamageAt ?? -1e9)) < 8000;
+    if (this.passive || (playerInSafeZone && !recentlyHit) || !player.alive || playerStealthed) {
       this.state = 'idle';
     } else if (this._returning) {
       this.state = 'idle'; // во время возврата игнорируем агро
     } else if (dist < this.tpl.aggro * (player.aggroRadiusMod ?? 1) &&
                !this.scene._hasWallBetween?.(this.x, this.y, player.x, player.y)) {
       if (!this.neutral) this.state = 'aggro';
-    } else if (dist > this.tpl.aggro * (player.aggroRadiusMod ?? 1) * 1.6) {
+    } else if (dist > this.tpl.aggro * (player.aggroRadiusMod ?? 1) * 1.6 && !recentlyHit) {
       this.state = 'idle';
     }
 

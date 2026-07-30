@@ -321,6 +321,12 @@ export default class Player {
     }
     coopShieldPct = Math.min(0.60, coopShieldPct);
     packAuraPct   = Math.min(0.40, packAuraPct);
+    // quickRecoveryMult (perk_quick_recovery) — единственный из соседних щитовых перков
+    // без потолка: множится по КАЖДОМУ щитовому модулю с этим перком, стек в 2-3+ модуля
+    // легко схлопывал shieldRegenDelaySec почти до пола в 1 сек (диалог: "восстановление
+    // прочности и щита автоматом прямо во время боя... секунда или две"). Потолок подобран
+    // так, чтобы навык (макс) + перк вместе давали ровно 3.5 сек (8 * 0.4375).
+    quickRecoveryMult = Math.max(0.4375, quickRecoveryMult);
     this.energyShuntPct  = energyShuntPct;
     this.lastStandPct    = lastStandPct;
     this.phaseShifterPct = phaseShifterPct;
@@ -377,8 +383,9 @@ export default class Player {
     this.shieldRegenPerSec = Math.round(BASE_regen * (1 + regenUpgPct + regenPerkPct + BF('shieldRegen')));
 
     // fast_regen skill overrides regen formula when no shield modules equipped
+    // База 10 сек (без навыка/перка); макс. навык (ур.4) -0.5/ур. = 8 сек; +перк-кап = 3.5 сек.
     const fastRegen = sl('fast_regen');
-    this.shieldRegenDelaySec = Math.max(1, (6 - fastRegen * 0.25) * quickRecoveryMult);
+    this.shieldRegenDelaySec = Math.max(1, (10 - fastRegen * 0.5) * quickRecoveryMult);
     if (!shieldItems.length && !isAdmin && fastRegen > 0) {
       this.shieldRegenPerSec = Math.round(this.maxShield * (0.03 + fastRegen * 0.0175));
     }
@@ -686,8 +693,8 @@ export default class Player {
     const sinceDamage = now - this.lastDamageAt;
     const sinceBoost = now - this.lastBoostAt;
 
-    // Реген щита: 6 с после урона И после окончания форсажа (оба условия, одна задержка).
-    const regenDelayMs = (this.shieldRegenDelaySec ?? 6) * 1000;
+    // Реген щита: задержка после урона И после окончания форсажа (оба условия, одна задержка).
+    const regenDelayMs = (this.shieldRegenDelaySec ?? 10) * 1000;
     if (!this.boosting && sinceDamage > regenDelayMs &&
         sinceBoost > regenDelayMs && this.shield < this.maxShield) {
       // Energy Shunt (shield perk): временный буст реген-скорости после убийства моба.
