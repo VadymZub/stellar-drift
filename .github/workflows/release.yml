@@ -22,6 +22,11 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v5
+        with:
+          # Default fetch-depth is 1 (shallow) — scripts/bump_version.py needs the
+          # full commit history for `git rev-list --count HEAD` to mean anything;
+          # a shallow checkout made it always compute 1, shipping "1.1.1" builds.
+          fetch-depth: 0
 
       - uses: dtolnay/rust-toolchain@stable
 
