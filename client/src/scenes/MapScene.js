@@ -44,7 +44,7 @@ export default class MapScene extends Phaser.Scene {
     this.add.rectangle(0, 0, W, H, 0x04060d, 0.88).setOrigin(0).setInteractive();
     this.uiHeader = this.add.container(0, 0).setDepth(100);
     this.uiHeader.add(this.add.text(W / 2, 28, i18n.t('map.title'), this.O('24px', '#4dd0e1')).setOrigin(0.5, 0));
-    this.uiHeader.add(this.add.text(W / 2, 64, i18n.t('map.hint'), this.F('12px', '#7e9398')).setOrigin(0.5, 0));
+    this.uiHeader.add(this.add.text(W / 2, 64, i18n.t(this.gs.devMode ? 'map.hint' : 'map.hint_prod'), this.F('12px', '#7e9398')).setOrigin(0.5, 0));
 
     // Легенда корпорации
     this._drawLegend(W, H, playerCorp);
@@ -245,11 +245,23 @@ export default class MapScene extends Phaser.Scene {
 
     this.mapContainer.add([r, tName, tLvl, tBadge]);
 
-    if (canJump) {
+    // Мгновенный прыжок кликом по карте — удобно для теста, но обходит физический
+    // полёт до портала (см. gateAt()/_startJumpAnimation в GameScene.js), которым и
+    // должны пользоваться реальные игроки (диалог: "прыжки по картам через навигацию
+    // - оставить только в дев режиме... для остальных - только телепорты"). DEV_MODE
+    // здесь — тот же флаг, что и dev-хоткеи/TestProfileScene (см. GameScene.js), так
+    // что это работает и локально, и для admin.html Test Mode, но не в собранном
+    // Tauri-приложении у реальных игроков.
+    if (canJump && this.gs.devMode) {
       r.setInteractive({ useHandCursor: true }).on('pointerdown', (p, lx, ly, event) => {
         if (event) event.stopPropagation();
         this.scene.stop();
         this.gs.travelTo(key);
+      });
+    } else if (canJump) {
+      r.setInteractive({ useHandCursor: true }).on('pointerdown', (p, lx, ly, event) => {
+        if (event) event.stopPropagation();
+        this.gs.log(i18n.t('map.fly_to_gate_hint'));
       });
     }
   }
