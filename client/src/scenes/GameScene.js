@@ -478,7 +478,9 @@ export default class GameScene extends Phaser.Scene {
         if (!password) return;
         try {
           const data = await apiPost('/auth/register', {
-            username, password, email: `${username}@stellardrift.local`,
+            // .local — зарезервированный TLD (RFC 6761), email-validator его отклоняет
+            // ("special-use or reserved name") — используем наш настоящий домен вместо него.
+            username, password, email: `${username}@stellar-drift-mmo.duckdns.org`,
           });
           setSession(data.access_token, data.username);
           await apiPut('/player/state', this._serializeState());
