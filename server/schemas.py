@@ -8,6 +8,14 @@ class AdminRefundRequest(BaseModel):
     starGold: int = 0
 
 
+class AdminXpAdjustRequest(BaseModel):
+    delta: int
+
+
+class AdminHonorPenaltyRequest(BaseModel):
+    pct: int  # 25/50/100 — снимает pct% от ТЕКУЩЕЙ чести (не абсолютное значение)
+
+
 def validate_username_format(v: str) -> str:
     # Общее правило формата ника — используется и при регистрации, и при смене ника
     # (см. ChangeUsernameRequest), чтобы правила не могли разойтись между ними.

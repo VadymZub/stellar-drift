@@ -742,7 +742,10 @@ async function loadPlayers() {
           ? `<button class="btn btn-ghost btn-sm" onclick="adminPlayerAction(${p.id},'unmute')">Размутить</button>`
           : `<button class="btn btn-amber btn-sm" onclick="adminPlayerAction(${p.id},'mute')">Мут</button>`}
         <button class="btn btn-ghost btn-sm" onclick="adminPlayerAction(${p.id},'kick')" ${p.online ? '' : 'disabled'}>Кик</button>
-        <button class="btn btn-ghost btn-sm" onclick="adminRefund(${p.id},'${p.username}')">Возврат</button>
+        <button class="btn btn-ghost btn-sm" onclick="adminAdjustCredits(${p.id},'${p.username}')" title="Изменить кредиты">💰 Кредиты</button>
+        <button class="btn btn-ghost btn-sm" onclick="adminAdjustGold(${p.id},'${p.username}')" title="Изменить золото">⭐ Золото</button>
+        <button class="btn btn-ghost btn-sm" onclick="adminAdjustXp(${p.id},'${p.username}')" title="Изменить опыт">📈 Опыт</button>
+        <button class="btn btn-amber btn-sm" onclick="adminHonorPenaltyPrompt(${p.id},'${p.username}')" title="Штраф чести">⚠ Честь</button>
       </td>
     </tr>`;
   }).join('');
@@ -757,19 +760,44 @@ async function adminPlayerAction(userId, action) {
   } catch(e) { alert('Ошибка: ' + e.message); }
 }
 
-async function adminRefund(userId, username) {
-  const credits = parseInt(prompt(`Возврат кредитов для ${username} (может быть отрицательным):`, '0'));
-  if (Number.isNaN(credits)) return;
-  const starGold = parseInt(prompt(`Возврат ⭐ для ${username}:`, '0'));
-  if (Number.isNaN(starGold)) return;
+async function _adminPost(userId, path, body) {
   try {
-    const res = await fetch(`/api/admin/players/${userId}/refund`, {
+    const res = await fetch(`/api/admin/players/${userId}/${path}`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ credits, starGold }),
+      body: JSON.stringify(body),
     });
-    if (!res.ok) { alert('Ошибка: ' + (await res.text())); return; }
-    loadPlayers();
-  } catch(e) { alert('Ошибка: ' + e.message); }
+    if (!res.ok) { alert('Ошибка: ' + (await res.text())); return false; }
+    return true;
+  } catch(e) { alert('Ошибка: ' + e.message); return false; }
+}
+
+// Кредиты/золото/опыт — раздельные кнопки-действия (раньше было одно "Возврат" на оба
+// сразу двумя последовательными prompt'ами — по просьбе разделили).
+async function adminAdjustCredits(userId, username) {
+  const v = parseInt(prompt(`Изменить кредиты для ${username} (+ добавить, - забрать):`, '0'));
+  if (Number.isNaN(v) || v === 0) return;
+  if (await _adminPost(userId, 'refund', { credits: v, starGold: 0 })) loadPlayers();
+}
+
+async function adminAdjustGold(userId, username) {
+  const v = parseInt(prompt(`Изменить ⭐ золото для ${username} (+ добавить, - забрать):`, '0'));
+  if (Number.isNaN(v) || v === 0) return;
+  if (await _adminPost(userId, 'refund', { credits: 0, starGold: v })) loadPlayers();
+}
+
+async function adminAdjustXp(userId, username) {
+  const v = parseInt(prompt(`Изменить опыт (XP) для ${username} (+ добавить, - забрать):`, '0'));
+  if (Number.isNaN(v) || v === 0) return;
+  if (await _adminPost(userId, 'xp', { delta: v })) loadPlayers();
+}
+
+// Штраф чести — процент от ТЕКУЩЕЙ чести, не абсолютное значение (100% = полное
+// обнуление). Наказание за нарушение правил, не обычная корректировка баланса.
+async function adminHonorPenaltyPrompt(userId, username) {
+  const pct = parseInt(prompt(`Штраф чести для ${username} — введите 25, 50 или 100 (%):`, '25'));
+  if (![25, 50, 100].includes(pct)) { alert('Нужно ввести ровно 25, 50 или 100'); return; }
+  if (!confirm(`Снять ${pct}% чести у ${username}? Это необратимо.`)) return;
+  if (await _adminPost(userId, 'honor_penalty', { pct })) loadPlayers();
 }
 
 // ══ AUDIT LOG ════════════════════════════════════════════════════════

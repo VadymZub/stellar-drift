@@ -29,7 +29,7 @@ from schemas import (
     DungeonCorridorStateRequest, DungeonDeathRequest, DungeonDeathResponse,
     DungeonCompleteRequest, MiningBaseSaveRequest, MiningBaseSectorResponse,
     ArenaStatusResponse, ArenaMatchCompleteRequest, ArenaMatchCompleteResponse,
-    AdminRefundRequest,
+    AdminRefundRequest, AdminXpAdjustRequest, AdminHonorPenaltyRequest,
 )
 from auth import hash_password, verify_password, create_token, decode_token
 from mailer import send_verification_code
@@ -2634,12 +2634,19 @@ async def admin_kick(user_id: int, db: AsyncSession = Depends(get_db)):
     return {"ok": True}
 
 
-@app.post("/admin/players/{user_id}/refund")
-async def admin_refund(user_id: int, body: AdminRefundRequest, db: AsyncSession = Depends(get_db)):
-    user = await _admin_get_user(user_id, db)
+async def _admin_get_player_state(user_id: int, db: AsyncSession) -> PlayerState:
     ps = (await db.execute(select(PlayerState).where(PlayerState.user_id == user_id))).scalar_one_or_none()
     if not ps:
         raise HTTPException(status_code=400, detail="Player has no saved state yet")
+    return ps
+
+
+@app.post("/admin/players/{user_id}/refund")
+async def admin_refund(user_id: int, body: AdminRefundRequest, db: AsyncSession = Depends(get_db)):
+    # Отдельные экшены на фронте (Кредиты/Золото) шлют сюда только ОДНО поле ненулевым —
+    # эндпоинт общий, но UI больше не заставляет вводить оба значения одним потоком.
+    user = await _admin_get_user(user_id, db)
+    ps = await _admin_get_player_state(user_id, db)
     state = dict(ps.state or {})
     state["credits"] = max(0, (state.get("credits") or 0) + body.credits)
     state["starGold"] = max(0, (state.get("starGold") or 0) + body.starGold)
@@ -2647,6 +2654,33 @@ async def admin_refund(user_id: int, body: AdminRefundRequest, db: AsyncSession 
     _admin_log(db, "ADMIN_REFUND", user, {"credits_delta": body.credits, "starGold_delta": body.starGold})
     await db.commit()
     return {"ok": True, "credits": state["credits"], "starGold": state["starGold"]}
+
+
+@app.post("/admin/players/{user_id}/xp")
+async def admin_adjust_xp(user_id: int, body: AdminXpAdjustRequest, db: AsyncSession = Depends(get_db)):
+    user = await _admin_get_user(user_id, db)
+    ps = await _admin_get_player_state(user_id, db)
+    state = dict(ps.state or {})
+    state["pilotXp"] = max(0, (state.get("pilotXp") or 0) + body.delta)
+    ps.state = state
+    _admin_log(db, "ADMIN_XP_ADJUST", user, {"xp_delta": body.delta})
+    await db.commit()
+    return {"ok": True, "pilotXp": state["pilotXp"]}
+
+
+@app.post("/admin/players/{user_id}/honor_penalty")
+async def admin_honor_penalty(user_id: int, body: AdminHonorPenaltyRequest, db: AsyncSession = Depends(get_db)):
+    if body.pct not in (25, 50, 100):
+        raise HTTPException(status_code=400, detail="pct must be 25, 50 or 100")
+    user = await _admin_get_user(user_id, db)
+    ps = await _admin_get_player_state(user_id, db)
+    state = dict(ps.state or {})
+    before = state.get("pilotHonor") or 0
+    state["pilotHonor"] = round(before * (1 - body.pct / 100))
+    ps.state = state
+    _admin_log(db, "ADMIN_HONOR_PENALTY", user, {"pct": body.pct, "honor_before": before, "honor_after": state["pilotHonor"]})
+    await db.commit()
+    return {"ok": True, "pilotHonor": state["pilotHonor"]}
 
 
 # ── Данж-инстансы ─────────────────────────────────────────────────────
