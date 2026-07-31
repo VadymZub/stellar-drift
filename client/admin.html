@@ -301,19 +301,19 @@
 
     <div class="stat-grid">
       <div class="stat-card">
-        <div class="s-label">Online</div>
+        <div class="s-label">Игроков онлайн</div>
+        <div class="s-val" id="dash-real-online" style="color:var(--muted)">—</div>
+        <div class="s-sub">реальные WS-подключения на сервере</div>
+      </div>
+      <div class="stat-card">
+        <div class="s-label">Всего аккаунтов</div>
+        <div class="s-val" id="dash-real-total" style="color:var(--muted)">—</div>
+        <div class="s-sub" id="dash-real-sub">—</div>
+      </div>
+      <div class="stat-card">
+        <div class="s-label">Test Tab</div>
         <div class="s-val" id="dash-online" style="color:var(--muted)">0</div>
-        <div class="s-sub" id="dash-online-sub">нет подключения</div>
-      </div>
-      <div class="stat-card">
-        <div class="s-label">MAU</div>
-        <div class="s-val">1 240</div>
-        <div class="s-sub">+8.3% WoW</div>
-      </div>
-      <div class="stat-card">
-        <div class="s-label">Revenue</div>
-        <div class="s-val">$3 820</div>
-        <div class="s-sub">этот месяц</div>
+        <div class="s-sub" id="dash-online-sub">нет подключения (BroadcastChannel)</div>
       </div>
       <div class="stat-card">
         <div class="s-label">Аргус</div>
@@ -321,9 +321,9 @@
         <div class="s-sub">boss controller</div>
       </div>
       <div class="stat-card">
-        <div class="s-label">Audit Events</div>
-        <div class="s-val" id="dash-audit-count">0</div>
-        <div class="s-sub">в localStorage</div>
+        <div class="s-label">MAU / Revenue</div>
+        <div class="s-val" style="font-size:14px;color:var(--muted)">мок</div>
+        <div class="s-sub">см. Analytics — не реальные данные</div>
       </div>
     </div>
 
@@ -432,10 +432,34 @@
 
     <!-- Live player card -->
     <div class="card" id="live-player-card" style="display:none">
-      <div class="card-title">⚡ Live — подключённый игрок</div>
+      <div class="card-title">⚡ Live — Test Tab (BroadcastChannel)</div>
       <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:12px" id="live-player-grid"></div>
     </div>
-    <div class="tip" id="live-player-offline">Игра не подключена. Запустите игру в соседней вкладке браузера.</div>
+    <div class="tip" id="live-player-offline">Test Mode вкладка не подключена (для Argus Control/локального мониторинга — не обязательно для списка ниже).</div>
+
+    <div class="card" style="margin-top:16px">
+      <div class="card-title">👥 Все аккаунты (реальные данные с сервера)</div>
+      <div class="row" style="margin-bottom:12px">
+        <button class="btn btn-ghost btn-sm" onclick="loadPlayers()">↺ Обновить</button>
+      </div>
+      <div style="overflow-x:auto">
+        <table id="players-table" style="width:100%;border-collapse:collapse;font-size:12px">
+          <thead>
+            <tr style="text-align:left;color:var(--muted)">
+              <th style="padding:6px 8px">ID</th>
+              <th style="padding:6px 8px">Логин</th>
+              <th style="padding:6px 8px">Email</th>
+              <th style="padding:6px 8px">Статус</th>
+              <th style="padding:6px 8px">Корп</th>
+              <th style="padding:6px 8px">Кредиты</th>
+              <th style="padding:6px 8px">⭐</th>
+              <th style="padding:6px 8px">Действия</th>
+            </tr>
+          </thead>
+          <tbody id="players-tbody"></tbody>
+        </table>
+      </div>
+    </div>
 
   </section>
 
@@ -492,8 +516,10 @@ function nav(sec) {
   document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
   document.getElementById('s-' + sec)?.classList.add('active');
   document.querySelector(`.nav-item[data-sec="${sec}"]`)?.classList.add('active');
-  if (sec === 'audit')     loadAudit();
-  if (sec === 'analytics') renderAnalytics();
+  if (sec === 'audit')      loadAudit();
+  if (sec === 'analytics')  renderAnalytics();
+  if (sec === 'players')   loadPlayers();
+  if (sec === 'dashboard') loadDashboard();
 }
 document.querySelectorAll('.nav-item').forEach(el =>
   el.addEventListener('click', () => nav(el.dataset.sec))
@@ -639,55 +665,134 @@ function argusHealCustom() {
 }
 
 
+// ══ DASHBOARD (реальные данные) ═════════════════════════════════════
+async function loadDashboard() {
+  try {
+    const res = await fetch('/api/admin/dashboard');
+    if (!res.ok) return;
+    const d = await res.json();
+    document.getElementById('dash-real-online').textContent = d.online_now;
+    document.getElementById('dash-real-online').style.color = d.online_now > 0 ? 'var(--emerald)' : 'var(--muted)';
+    document.getElementById('dash-real-total').textContent = d.total_users;
+    document.getElementById('dash-real-sub').textContent = `забанено: ${d.banned_users} · в муте: ${d.muted_users}`;
+  } catch(_) {}
+}
+loadDashboard();
+
+// ══ PLAYERS (реальные данные) ═══════════════════════════════════════
+async function loadPlayers() {
+  const tbody = document.getElementById('players-tbody');
+  tbody.innerHTML = '<tr><td colspan="8" style="padding:12px;color:var(--muted)">Загрузка…</td></tr>';
+  let players = [];
+  try {
+    const res = await fetch('/api/admin/players');
+    if (res.ok) players = await res.json();
+  } catch(_) {}
+  if (!players.length) { tbody.innerHTML = '<tr><td colspan="8" style="padding:12px;color:var(--muted)">Нет данных</td></tr>'; return; }
+  tbody.innerHTML = players.map(p => {
+    const statusBadges = [
+      p.online ? '<span style="color:var(--emerald)">● online</span>' : '<span style="color:var(--muted)">○ offline</span>',
+      p.is_banned ? '<span style="color:var(--danger)">БАН</span>' : '',
+      p.is_muted  ? '<span style="color:var(--amber)">МУТ</span>' : '',
+      p.is_admin  ? '<span style="color:var(--cyan)">admin</span>' : '',
+    ].filter(Boolean).join(' · ');
+    return `<tr style="border-top:1px solid var(--border)">
+      <td style="padding:6px 8px">${p.id}</td>
+      <td style="padding:6px 8px">${p.username}</td>
+      <td style="padding:6px 8px;color:var(--muted)">${p.email ?? '—'}</td>
+      <td style="padding:6px 8px">${statusBadges}</td>
+      <td style="padding:6px 8px">${p.corp ?? '—'}</td>
+      <td style="padding:6px 8px">${p.credits ?? '—'}</td>
+      <td style="padding:6px 8px">${p.starGold ?? '—'}</td>
+      <td style="padding:6px 8px;white-space:nowrap">
+        ${p.is_banned
+          ? `<button class="btn btn-ghost btn-sm" onclick="adminPlayerAction(${p.id},'unban')">Разбанить</button>`
+          : `<button class="btn btn-danger btn-sm" onclick="adminPlayerAction(${p.id},'ban')">Бан</button>`}
+        ${p.is_muted
+          ? `<button class="btn btn-ghost btn-sm" onclick="adminPlayerAction(${p.id},'unmute')">Размутить</button>`
+          : `<button class="btn btn-amber btn-sm" onclick="adminPlayerAction(${p.id},'mute')">Мут</button>`}
+        <button class="btn btn-ghost btn-sm" onclick="adminPlayerAction(${p.id},'kick')" ${p.online ? '' : 'disabled'}>Кик</button>
+        <button class="btn btn-ghost btn-sm" onclick="adminRefund(${p.id},'${p.username}')">Возврат</button>
+      </td>
+    </tr>`;
+  }).join('');
+}
+
+async function adminPlayerAction(userId, action) {
+  try {
+    const res = await fetch(`/api/admin/players/${userId}/${action}`, { method: 'POST' });
+    if (!res.ok) { alert('Ошибка: ' + (await res.text())); return; }
+    loadPlayers();
+    loadDashboard();
+  } catch(e) { alert('Ошибка: ' + e.message); }
+}
+
+async function adminRefund(userId, username) {
+  const credits = parseInt(prompt(`Возврат кредитов для ${username} (может быть отрицательным):`, '0'));
+  if (Number.isNaN(credits)) return;
+  const starGold = parseInt(prompt(`Возврат ⭐ для ${username}:`, '0'));
+  if (Number.isNaN(starGold)) return;
+  try {
+    const res = await fetch(`/api/admin/players/${userId}/refund`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ credits, starGold }),
+    });
+    if (!res.ok) { alert('Ошибка: ' + (await res.text())); return; }
+    loadPlayers();
+  } catch(e) { alert('Ошибка: ' + e.message); }
+}
+
 // ══ AUDIT LOG ════════════════════════════════════════════════════════
+// Раньше это был чисто localStorage-мок (действия самого admin.html, никогда не
+// уходившие на сервер). Теперь основной источник — /api/admin/audit (реальная
+// таблица audit_log через ban/mute/kick/refund ниже); auditLocal() оставлен
+// только для локальных Argus-команд (BroadcastChannel, серверу они не видны).
 function auditLocal(action, params) {
   try {
     const log = JSON.parse(localStorage.getItem('sd_audit') || '[]');
-    log.unshift({ ts: new Date().toISOString(), action, params: { ...params, _src: 'admin.html' } });
+    log.unshift({ ts: new Date().toISOString(), action, params: { ...params, _src: 'admin.html (локально, Argus)' } });
     if (log.length > 200) log.length = 200;
     localStorage.setItem('sd_audit', JSON.stringify(log));
-    updateAuditCount();
   } catch(_) {}
 }
 
-function updateAuditCount() {
-  try {
-    const log = JSON.parse(localStorage.getItem('sd_audit') || '[]');
-    document.getElementById('dash-audit-count').textContent = log.length;
-  } catch(_) {}
-}
-
-function loadAudit() {
+async function loadAudit() {
   const list  = document.getElementById('audit-list');
   const empty = document.getElementById('audit-empty');
+  const localLog = (() => { try { return JSON.parse(localStorage.getItem('sd_audit') || '[]'); } catch(_) { return []; } })();
+  let serverLog = [];
   try {
-    const log = JSON.parse(localStorage.getItem('sd_audit') || '[]');
-    if (!log.length) { list.innerHTML = ''; empty.style.display = 'block'; return; }
-    empty.style.display = 'none';
-    list.innerHTML = log.map(e => {
-      const cat = e.action.startsWith('ARGUS')  ? 'argus'
-                : e.action.startsWith('TEST')   ? 'test'
-                : e.action.startsWith('PLAYER') ? 'player' : '';
-      const ts  = new Date(e.ts).toLocaleString('ru');
-      const par = JSON.stringify(e.params || {});
-      return `<div class="audit-entry ${cat}">
-        <span class="audit-ts">${ts}</span>
-        <span class="audit-action" style="color:${cat==='argus'?'var(--danger)':cat==='player'?'var(--amber)':'var(--cyan)'}">${e.action}</span>
-        <span class="audit-params">${par}</span>
-      </div>`;
-    }).join('');
-    updateAuditCount();
-  } catch(_) { list.innerHTML = '<div style="color:var(--danger)">Ошибка чтения localStorage</div>'; }
+    const res = await fetch('/api/admin/audit?limit=200');
+    if (res.ok) serverLog = await res.json();
+  } catch(_) {}
+  const combined = [
+    // row.ts — SQLAlchemy DateTime, FastAPI сериализует как ISO-строку (не unix timestamp).
+    ...serverLog.map(e => ({ ts: new Date(e.ts).toISOString(), action: e.action, params: { ...(e.params || {}), username: e.username, sector: e.sector } })),
+    ...localLog,
+  ].sort((a, b) => new Date(b.ts) - new Date(a.ts));
+  if (!combined.length) { list.innerHTML = ''; empty.style.display = 'block'; return; }
+  empty.style.display = 'none';
+  list.innerHTML = combined.map(e => {
+    const cat = e.action.startsWith('ARGUS')  ? 'argus'
+              : e.action.startsWith('TEST')   ? 'test'
+              : e.action.startsWith('PLAYER') ? 'player' : '';
+    const ts  = new Date(e.ts).toLocaleString('ru');
+    const par = JSON.stringify(e.params || {});
+    return `<div class="audit-entry ${cat}">
+      <span class="audit-ts">${ts}</span>
+      <span class="audit-action" style="color:${cat==='argus'?'var(--danger)':cat==='player'?'var(--amber)':'var(--cyan)'}">${e.action}</span>
+      <span class="audit-params">${par}</span>
+    </div>`;
+  }).join('');
 }
 
 function clearAudit() {
-  if (!confirm('Очистить весь Audit Log?')) return;
+  // Реальный серверный audit_log НЕ трогаем — это история действий, не мусор для
+  // очистки одной кнопкой. Кнопка чистит только локальный Argus-лог (localStorage).
+  if (!confirm('Очистить только ЛОКАЛЬНЫЙ лог Argus-команд (сохранённые на сервере записи не удаляются)?')) return;
   localStorage.removeItem('sd_audit');
   loadAudit();
-  updateAuditCount();
 }
-
-updateAuditCount();
 
 // ══ ANALYTICS ════════════════════════════════════════════════════════
 function renderAnalytics() {

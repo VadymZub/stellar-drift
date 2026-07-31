@@ -13,6 +13,9 @@ class User(Base):
     password_hash = Column(String(200), nullable=False)
     created_at   = Column(DateTime, default=datetime.utcnow)
     username_changed_at = Column(DateTime, nullable=True)  # для суточного кулдауна смены ника
+    is_admin     = Column(Integer, nullable=False, default=0)  # bool as int — гейтит /audit (см. get_current_admin)
+    is_banned    = Column(Integer, nullable=False, default=0)  # bool as int — блокирует /auth/login
+    is_muted     = Column(Integer, nullable=False, default=0)  # bool as int — блокирует отправку в /ws/chat
 
 
 class EmailVerificationToken(Base):

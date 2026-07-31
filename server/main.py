@@ -29,6 +29,7 @@ from schemas import (
     DungeonCorridorStateRequest, DungeonDeathRequest, DungeonDeathResponse,
     DungeonCompleteRequest, MiningBaseSaveRequest, MiningBaseSectorResponse,
     ArenaStatusResponse, ArenaMatchCompleteRequest, ArenaMatchCompleteResponse,
+    AdminRefundRequest,
 )
 from auth import hash_password, verify_password, create_token, decode_token
 from mailer import send_verification_code
@@ -1879,6 +1880,16 @@ async def get_current_user(
     return user
 
 
+async def get_current_admin(user: User = Depends(get_current_user)) -> User:
+    # GET /audit раньше не проверял роль вообще — любой залогиненный игрок мог прочитать
+    # чужую историю действий (диалог: "закрыть дыру для обычных игроков"). /audit сейчас
+    # не вызывается ни одним клиентским экраном (grep не нашёл ни одного апи-вызова) —
+    # эта дыра была чисто теоретической, но закрываем до того, как кто-то её использует.
+    if not user.is_admin:
+        raise HTTPException(status_code=403, detail="Admin only")
+    return user
+
+
 # ── Auth ─────────────────────────────────────────────────────────────
 
 VERIFICATION_CODE_TTL_MIN = 30
@@ -1939,6 +1950,8 @@ async def login(body: LoginRequest, db: AsyncSession = Depends(get_db)):
     user = (await db.execute(select(User).where(User.username == body.username))).scalar_one_or_none()
     if not user or not await asyncio.to_thread(verify_password, body.password, user.password_hash):
         raise HTTPException(status_code=401, detail="Invalid username or password")
+    if user.is_banned:
+        raise HTTPException(status_code=403, detail="Account banned")
     return TokenResponse(access_token=create_token(user.id), username=user.username,
                           email_verified=not _needs_verification(user))
 
@@ -2453,7 +2466,7 @@ async def mark_pm_read(
 @app.get("/audit", response_model=list[AuditEntryResponse])
 async def get_audit(
     limit: int = 200,
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db),
 ):
     rows = (await db.execute(
@@ -2485,6 +2498,141 @@ async def add_audit(
 @app.get("/")
 def root():
     return {"status": "ok", "service": "Stellar Drift API"}
+
+
+# ── Admin API (admin.html) ──────────────────────────────────────────────
+# ВАЖНО: эти эндпоинты НЕ проверяют JWT/is_admin в Python — они защищены
+# исключительно nginx-ом (location /api/admin/ с тем же auth_basic, что и
+# сам /admin.html, см. /etc/nginx/sites-available/stellar-drift на VPS).
+# admin.html — статическая страница без своего логин-флоу, у неё нет
+# Bearer-токена, чтобы пройти get_current_user; Basic Auth на уровне nginx —
+# единственный барьер. Не выставлять этот роутер напрямую без nginx перед ним.
+
+@app.get("/admin/dashboard")
+async def admin_dashboard(db: AsyncSession = Depends(get_db)):
+    total = (await db.execute(select(func.count(User.id)))).scalar_one()
+    banned = (await db.execute(select(func.count(User.id)).where(User.is_banned == 1))).scalar_one()
+    muted = (await db.execute(select(func.count(User.id)).where(User.is_muted == 1))).scalar_one()
+    return {
+        "total_users": total,
+        "banned_users": banned,
+        "muted_users": muted,
+        "online_now": len(chat_manager.active),
+    }
+
+
+@app.get("/admin/players")
+async def admin_list_players(db: AsyncSession = Depends(get_db)):
+    users = (await db.execute(select(User).order_by(User.id))).scalars().all()
+    states = {
+        ps.user_id: ps.state
+        for ps in (await db.execute(select(PlayerState))).scalars().all()
+    }
+    online_uids = {m['uid'] for m in chat_manager.active.values()}
+    result = []
+    for u in users:
+        st = states.get(u.id) or {}
+        result.append({
+            "id": u.id, "username": u.username, "email": u.email,
+            "email_verified": bool(u.email_verified),
+            "is_admin": bool(u.is_admin), "is_banned": bool(u.is_banned), "is_muted": bool(u.is_muted),
+            "online": u.id in online_uids,
+            "credits": st.get("credits"), "starGold": st.get("starGold"),
+            "corp": st.get("playerCorp"), "premium": st.get("premium"),
+            "pilotXp": st.get("pilotXp"), "pilotHonor": st.get("pilotHonor"),
+        })
+    return result
+
+
+@app.get("/admin/audit")
+async def admin_audit(limit: int = 200, db: AsyncSession = Depends(get_db)):
+    rows = (await db.execute(
+        select(AuditLog).order_by(AuditLog.ts.desc()).limit(max(1, min(limit, 500)))
+    )).scalars().all()
+    result = []
+    for row in rows:
+        u = await db.get(User, row.user_id) if row.user_id else None
+        result.append({
+            "id": row.id, "action": row.action, "params": row.params,
+            "sector": row.sector, "ts": row.ts, "username": u.username if u else None,
+        })
+    return result
+
+
+async def _admin_get_user(user_id: int, db: AsyncSession) -> User:
+    user = await db.get(User, user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    return user
+
+
+def _admin_log(db: AsyncSession, action: str, target: User, params: dict | None = None):
+    # user_id=None — это ДЕЙСТВИЕ АДМИНА, не игрока; целевой юзер идёт в params,
+    # т.к. AuditLog.user_id по всему остальному коду значит "кто сделал", не "над кем".
+    db.add(AuditLog(user_id=None, action=action,
+                     params={"target_user_id": target.id, "target_username": target.username, **(params or {})}))
+
+
+@app.post("/admin/players/{user_id}/ban")
+async def admin_ban(user_id: int, db: AsyncSession = Depends(get_db)):
+    user = await _admin_get_user(user_id, db)
+    user.is_banned = 1
+    _admin_log(db, "ADMIN_BAN", user)
+    await db.commit()
+    return {"ok": True}
+
+
+@app.post("/admin/players/{user_id}/unban")
+async def admin_unban(user_id: int, db: AsyncSession = Depends(get_db)):
+    user = await _admin_get_user(user_id, db)
+    user.is_banned = 0
+    _admin_log(db, "ADMIN_UNBAN", user)
+    await db.commit()
+    return {"ok": True}
+
+
+@app.post("/admin/players/{user_id}/mute")
+async def admin_mute(user_id: int, db: AsyncSession = Depends(get_db)):
+    user = await _admin_get_user(user_id, db)
+    user.is_muted = 1
+    _admin_log(db, "ADMIN_MUTE", user)
+    await db.commit()
+    return {"ok": True}
+
+
+@app.post("/admin/players/{user_id}/unmute")
+async def admin_unmute(user_id: int, db: AsyncSession = Depends(get_db)):
+    user = await _admin_get_user(user_id, db)
+    user.is_muted = 0
+    _admin_log(db, "ADMIN_UNMUTE", user)
+    await db.commit()
+    return {"ok": True}
+
+
+@app.post("/admin/players/{user_id}/kick")
+async def admin_kick(user_id: int, db: AsyncSession = Depends(get_db)):
+    user = await _admin_get_user(user_id, db)  # 404 если юзера вообще нет
+    for ws, m in list(chat_manager.active.items()):
+        if m.get('uid') == user_id:
+            await ws.close(code=4009, reason='kicked_by_admin')
+    _admin_log(db, "ADMIN_KICK", user)
+    await db.commit()
+    return {"ok": True}
+
+
+@app.post("/admin/players/{user_id}/refund")
+async def admin_refund(user_id: int, body: AdminRefundRequest, db: AsyncSession = Depends(get_db)):
+    user = await _admin_get_user(user_id, db)
+    ps = (await db.execute(select(PlayerState).where(PlayerState.user_id == user_id))).scalar_one_or_none()
+    if not ps:
+        raise HTTPException(status_code=400, detail="Player has no saved state yet")
+    state = dict(ps.state or {})
+    state["credits"] = max(0, (state.get("credits") or 0) + body.credits)
+    state["starGold"] = max(0, (state.get("starGold") or 0) + body.starGold)
+    ps.state = state
+    _admin_log(db, "ADMIN_REFUND", user, {"credits_delta": body.credits, "starGold_delta": body.starGold})
+    await db.commit()
+    return {"ok": True, "credits": state["credits"], "starGold": state["starGold"]}
 
 
 # ── Данж-инстансы ─────────────────────────────────────────────────────
@@ -2882,6 +3030,12 @@ async def chat_ws(
                 db_ch = _to_db_ch(fe_ch, corp_ch, clan_ch)
                 ts = time.time()
                 async with SessionLocal() as db:
+                    # Перечитываем is_muted на КАЖДОЕ сообщение (не кэшируем на connect) —
+                    # иначе мут не подействует, пока игрок не переподключится сам.
+                    fresh_user = await db.get(User, user.id)
+                    if fresh_user and fresh_user.is_muted:
+                        await ws.send_json({'type': 'error', 'message': 'Вы в муте и не можете писать в чат'})
+                        continue
                     db.add(ChatMessage(channel=db_ch, user_id=user.id, username=user.username, text=text, ts=ts))
                     await db.commit()
                 await chat_manager.broadcast(db_ch, {

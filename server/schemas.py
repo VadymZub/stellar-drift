@@ -3,6 +3,11 @@ from typing import Any, Optional
 from datetime import datetime
 
 
+class AdminRefundRequest(BaseModel):
+    credits: int = 0
+    starGold: int = 0
+
+
 def validate_username_format(v: str) -> str:
     # Общее правило формата ника — используется и при регистрации, и при смене ника
     # (см. ChangeUsernameRequest), чтобы правила не могли разойтись между ними.
