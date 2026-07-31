@@ -229,6 +229,22 @@ export default class TestProfileScene extends Phaser.Scene {
           </div>
         </div>
 
+        <div class="tp-divider"></div>
+
+        <div class="row">
+          <label>СОХРАНИТЬ КАК РЕАЛЬНЫЙ АККАУНТ (необязательно)</label>
+        </div>
+        <div class="tp-2col">
+          <div class="row">
+            <label>ЛОГИН</label>
+            <input id="tp-save-user" type="text" placeholder="оставь пустым, чтобы не сохранять">
+          </div>
+          <div class="row">
+            <label>ПАРОЛЬ</label>
+            <input id="tp-save-pass" type="password">
+          </div>
+        </div>
+
         <button id="tp-launch">▶ ЗАПУСТИТЬ</button>
       </div>
     `;
@@ -320,6 +336,9 @@ export default class TestProfileScene extends Phaser.Scene {
 
       galaxy.current = CORP_HOME[this._corp] ?? 'helios_1';
 
+      const saveUser = div.querySelector('#tp-save-user').value.trim();
+      const savePass = div.querySelector('#tp-save-pass').value;
+
       window.TEST_PROFILE = {
         level,
         rankOverride: rank,
@@ -331,6 +350,10 @@ export default class TestProfileScene extends Phaser.Scene {
         ship:         shipKey,
         boardTier:    this._boardTier,
         skillLevels,
+        // Опционально: GameScene.create() зарегистрирует и сразу сохранит этот
+        // профиль как настоящий аккаунт, без ручного хоткея V (тот же путь,
+        // см. GameScene.js _saveTestSessionAsAccount).
+        saveAsAccount: (saveUser && savePass) ? { username: saveUser, password: savePass } : null,
       };
 
       this._cleanup();

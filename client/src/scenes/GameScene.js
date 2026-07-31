@@ -471,23 +471,12 @@ export default class GameScene extends Phaser.Scene {
       // дать админу право создать акаунт с заданными параметрами". Не дублирует расчёт
       // стартовых статов на Python — просто регистрирует юзера и сохраняет то, что этот
       // же клиентский код УЖЕ насчитал (_serializeState(), тот же путь, что обычный автосейв).
-      this.input.keyboard.on('keydown-V', async () => {
+      this.input.keyboard.on('keydown-V', () => {
         const username = window.prompt('DEV: логин для нового реального аккаунта:');
         if (!username) return;
         const password = window.prompt('DEV: пароль:');
         if (!password) return;
-        try {
-          const data = await apiPost('/auth/register', {
-            // .local — зарезервированный TLD (RFC 6761), email-validator его отклоняет
-            // ("special-use or reserved name") — используем наш настоящий домен вместо него.
-            username, password, email: `${username}@stellar-drift-mmo.duckdns.org`,
-          });
-          setSession(data.access_token, data.username);
-          await apiPut('/player/state', this._serializeState());
-          this.log(`DEV: аккаунт "${username}" создан и сохранён с текущим тестовым профилем`);
-        } catch (e) {
-          this.log(`DEV: не удалось создать аккаунт — ${e.message}`);
-        }
+        this._saveTestSessionAsAccount(username, password);
       });
     }
 
@@ -561,6 +550,9 @@ export default class GameScene extends Phaser.Scene {
       Object.values(SHIP_BY_KEY).find(s => s.prestige && this.ownedShips.has(s.key))?.corp ||
       'neutral';
     if (tp?.corp) this.playerCorp = tp.corp;
+    // Отложено до конца create() (весь стейт должен быть насчитан до _serializeState()) —
+    // см. вызов this._saveTestSessionAsAccount(...) там же.
+    this._pendingSaveAsAccount = tp?.saveAsAccount ?? null;
     if (tp) window.TEST_PROFILE = null; // consume after first use
     this.corpSwitchCount = this.corpSwitchCount || 0;
 
@@ -809,6 +801,14 @@ export default class GameScene extends Phaser.Scene {
     this.time.delayedCall(1, () => {
       document.getElementById('scene-overlay')?.classList.remove('active');
     });
+
+    // TestProfileScene "СОХРАНИТЬ КАК РЕАЛЬНЫЙ АККАУНТ" — эквивалент ручного хоткея V,
+    // но не нужно ждать входа в игру и печатать логин/пароль в window.prompt.
+    if (this._pendingSaveAsAccount) {
+      const { username, password } = this._pendingSaveAsAccount;
+      this._pendingSaveAsAccount = null;
+      this._saveTestSessionAsAccount(username, password);
+    }
   }
 
   _bgPreloadDeferred() {
@@ -9567,6 +9567,28 @@ export default class GameScene extends Phaser.Scene {
     const state = this._serializeState();
     try { localStorage.setItem('stellar_drift_state_' + getUsername(), JSON.stringify(state)); } catch (_) {}
     apiPut('/player/state', state).catch(() => {});
+  }
+
+  // Персистит текущую Test Mode сессию (TestProfileScene "СОХРАНИТЬ КАК РЕАЛЬНЫЙ
+  // АККАУНТ" или ручной хоткей V) как настоящий залогиненный аккаунт — по просьбе
+  // "на проде из админ панели нужно дать админу право создать акаунт с заданными
+  // параметрами". Не дублирует расчёт стартовых статов на Python — просто
+  // регистрирует юзера и сохраняет то, что этот же клиентский код УЖЕ насчитал
+  // (_serializeState(), тот же путь, что обычный автосейв).
+  async _saveTestSessionAsAccount(username, password) {
+    try {
+      const data = await apiPost('/auth/register', {
+        // .local — зарезервированный TLD (RFC 6761), email-validator его отклоняет
+        // ("special-use or reserved name") — используем наш настоящий домен вместо него.
+        // main.py/_auth/register также auto-verifies этот домен без письма.
+        username, password, email: `${username}@stellar-drift-mmo.duckdns.org`,
+      });
+      setSession(data.access_token, data.username);
+      await apiPut('/player/state', this._serializeState());
+      this.log(`DEV: аккаунт "${username}" создан и сохранён с текущим тестовым профилем`);
+    } catch (e) {
+      this.log(`DEV: не удалось создать аккаунт — ${e.message}`);
+    }
   }
 
   _serializeLoot() {

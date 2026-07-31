@@ -1918,12 +1918,20 @@ async def register(body: RegisterRequest, db: AsyncSession = Depends(get_db)):
     # bcrypt намеренно медленный (CPU-bound) — в тред-пул, иначе блокирует event loop
     # на ~100-300мс на КАЖДУЮ регистрацию (см. диалог про нагрузочный тест).
     password_hash = await asyncio.to_thread(hash_password, body.password)
-    user = User(username=body.username, email=body.email, password_hash=password_hash, email_verified=0)
+    # Аккаунты из GameScene.js keydown-V (admin "сохранить Test Mode как реальный
+    # аккаунт") используют email на НАШЕМ ЖЕ домене как заглушку — реальной почты там
+    # нет и код верификации всё равно никуда не долетит, так что для этого домена
+    # верификацию сразу пропускаем, а не гоняем по кругу "код отправлен в никуда".
+    is_admin_test_account = body.email.lower().endswith('@stellar-drift-mmo.duckdns.org')
+    user = User(username=body.username, email=body.email, password_hash=password_hash,
+                email_verified=1 if is_admin_test_account else 0)
     db.add(user)
     await db.commit()
     await db.refresh(user)
-    await _issue_verification_code(user, db)
-    return TokenResponse(access_token=create_token(user.id), username=user.username, email_verified=False)
+    if not is_admin_test_account:
+        await _issue_verification_code(user, db)
+    return TokenResponse(access_token=create_token(user.id), username=user.username,
+                          email_verified=is_admin_test_account)
 
 
 @app.post("/auth/login", response_model=TokenResponse)
