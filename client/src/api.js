@@ -8,7 +8,7 @@
 // фронтенд, не наш http.server), так что location.hostname не укажет ни на что реальное.
 // В dev-режиме (браузер ИЛИ `cargo tauri dev`, у которого devUrl = localhost:8080)
 // hostname остаётся 'localhost' как раньше — эта ветка вообще не участвует.
-const isTauriProd = location.hostname === 'tauri.localhost';
+export const isTauriProd = location.hostname === 'tauri.localhost';
 // Webdock VPS (193.180.215.8), не Render — см. память deployment_hosting_plan.
 // nginx проксирует /api/ -> 127.0.0.1:8000/ (префикс срезается), backend-роуты
 // сами по себе БЕЗ /api (main.py: /auth/login, /player/state, /ws/chat, ...).

@@ -1,7 +1,7 @@
 import * as Phaser from 'https://cdn.jsdelivr.net/npm/phaser@4.2.1/dist/phaser.esm.js';
 import { COLORS, UI_RES } from '../constants.js';
 import { i18n } from '../i18n.js';
-import { apiPost, apiGet, setSession, clearSession, getToken, getUsername, verifyEmail, resendVerification, changeEmail } from '../api.js';
+import { apiPost, apiGet, setSession, clearSession, getToken, getUsername, verifyEmail, resendVerification, changeEmail, isTauriProd } from '../api.js';
 import { galaxy, SECTORS } from '../galaxy.js';
 import * as vault from '../vault.js';
 
@@ -15,7 +15,9 @@ function _resolveStartSector(state) {
   return corp === 'neutral' ? 'helios_1' : `${corp}_1`;
 }
 
-const DEV_MODE = false;
+// Тот же признак, что и GameScene.js/api.js — было захардкожено в false, что
+// заодно гасило skip-auth/TestProfileScene и в локальной разработке, не только в проде.
+const DEV_MODE = !isTauriProd;
 
 export default class LoginScene extends Phaser.Scene {
   constructor() { super('LoginScene'); }
