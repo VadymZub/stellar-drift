@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Stellar Drift — скачать</title>
+  <style>
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0; padding: 0; height: 100%;
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      background: #04060d;
+    }
+    body {
+      display: flex; align-items: center; justify-content: center;
+      background-image: linear-gradient(rgba(2,4,10,0.55), rgba(2,4,10,0.75)),
+                         url('assets/UI BACKGROUNDS/login_main_menu.jpg');
+      background-size: cover; background-position: center;
+    }
+    .card {
+      background: rgba(5,10,25,0.92);
+      border: 1px solid rgba(77,208,225,0.25);
+      border-radius: 10px;
+      padding: 40px 48px;
+      width: 420px;
+      max-width: 90vw;
+      text-align: center;
+      color: #cfd8dc;
+    }
+    h1 {
+      font-family: 'Orbitron', system-ui, sans-serif;
+      color: #4dd0e1;
+      letter-spacing: 3px;
+      font-size: 32px;
+      margin: 0 0 6px;
+    }
+    .subtitle {
+      color: #78909c;
+      letter-spacing: 2px;
+      font-size: 12px;
+      margin-bottom: 28px;
+    }
+    .version {
+      font-size: 12px;
+      color: #607d8b;
+      margin-bottom: 20px;
+      min-height: 16px;
+    }
+    .btn-download {
+      display: block;
+      width: 100%;
+      background: #4dd0e1;
+      color: #03070f;
+      border: none;
+      border-radius: 4px;
+      padding: 16px;
+      font-size: 15px;
+      font-weight: 700;
+      letter-spacing: 1px;
+      text-decoration: none;
+      cursor: pointer;
+      margin-bottom: 12px;
+    }
+    .btn-download:hover { background: #6fdcea; }
+    .btn-download.disabled {
+      background: #263238; color: #607d8b; pointer-events: none;
+    }
+    .btn-secondary {
+      display: inline-block;
+      color: #7eb8c8;
+      font-size: 12px;
+      text-decoration: none;
+      margin: 4px 8px;
+    }
+    .btn-secondary:hover { color: #4dd0e1; }
+    .hint {
+      font-size: 11px;
+      color: #455a64;
+      margin-top: 20px;
+      line-height: 1.5;
+    }
+    .error { color: #ef5350; font-size: 12px; margin-bottom: 12px; display: none; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>STELLAR DRIFT</h1>
+    <div class="subtitle">СКАЧАТЬ ИГРУ</div>
+    <div class="version" id="version">Загрузка…</div>
+    <div class="error" id="error"></div>
+    <a class="btn-download disabled" id="btn-exe" href="#">⬇ СКАЧАТЬ ДЛЯ WINDOWS</a>
+    <div>
+      <a class="btn-secondary" id="link-msi" href="#" style="display:none">.msi (альтернативный установщик)</a>
+      <a class="btn-secondary" href="https://github.com/vadimmorion-commits/stellar-drift-releases/releases/latest" target="_blank">Все версии на GitHub</a>
+    </div>
+    <div class="hint">
+      Скачается установщик (.exe) — запусти его, игра установится сама.<br>
+      Обновления в дальнейшем приходят автоматически внутри приложения.
+    </div>
+  </div>
+
+  <script>
+    (async () => {
+      const versionEl = document.getElementById('version');
+      const errorEl = document.getElementById('error');
+      const btnExe = document.getElementById('btn-exe');
+      const linkMsi = document.getElementById('link-msi');
+      try {
+        const res = await fetch('/api/download/latest');
+        if (!res.ok) throw new Error('bad response');
+        const data = await res.json();
+        if (!data.exe_url) throw new Error('no exe url');
+        versionEl.textContent = `Версия ${data.version}`;
+        btnExe.href = data.exe_url;
+        btnExe.classList.remove('disabled');
+        if (data.msi_url) {
+          linkMsi.href = data.msi_url;
+          linkMsi.style.display = 'inline-block';
+        }
+      } catch (e) {
+        versionEl.textContent = '';
+        errorEl.textContent = 'Не удалось получить прямую ссылку — воспользуйся ссылкой ниже.';
+        errorEl.style.display = 'block';
+        btnExe.href = 'https://github.com/vadimmorion-commits/stellar-drift-releases/releases/latest';
+        btnExe.target = '_blank';
+        btnExe.textContent = '⬇ ОТКРЫТЬ СТРАНИЦУ РЕЛИЗОВ';
+        btnExe.classList.remove('disabled');
+      }
+    })();
+  </script>
+</body>
+</html>

@@ -1,4 +1,5 @@
 import asyncio
+import json
 import math
 import random
 import time
@@ -2502,6 +2503,43 @@ async def add_audit(
 @app.get("/")
 def root():
     return {"status": "ok", "service": "Stellar Drift API"}
+
+
+# ── Download page (client/download.html) ────────────────────────────────
+# Публичная информация (версия + прямые ссылки на .exe/.msi последнего релиза),
+# нет смысла тащить httpx как новую зависимость ради одного редкого запроса —
+# urllib из стандартной библиотеки + asyncio.to_thread (тот же приём, что bcrypt
+# в /auth/register, не блокирует event loop на время сетевого запроса).
+_LATEST_RELEASE_URL = "https://github.com/vadimmorion-commits/stellar-drift-releases/releases/latest/download/latest.json"
+_download_info_cache: dict = {"data": None, "ts": 0.0}
+DOWNLOAD_INFO_CACHE_TTL_SEC = 600  # 10 минут — не дёргаем GitHub на каждый визит страницы
+
+
+def _fetch_latest_release_sync() -> dict:
+    import urllib.request
+    with urllib.request.urlopen(_LATEST_RELEASE_URL, timeout=10) as resp:
+        return json.loads(resp.read())
+
+
+@app.get("/download/latest")
+async def download_latest():
+    now = time.time()
+    if _download_info_cache["data"] is None or now - _download_info_cache["ts"] > DOWNLOAD_INFO_CACHE_TTL_SEC:
+        try:
+            raw = await asyncio.to_thread(_fetch_latest_release_sync)
+            platforms = raw.get("platforms", {})
+            _download_info_cache["data"] = {
+                "version": raw.get("version"),
+                "exe_url": platforms.get("windows-x86_64-nsis", {}).get("url"),
+                "msi_url": platforms.get("windows-x86_64-msi", {}).get("url"),
+            }
+            _download_info_cache["ts"] = now
+        except Exception:
+            # GitHub недоступен/rate-limit — отдаём последнее закэшированное значение,
+            # если есть; иначе фронт сам покажет резервную ссылку на releases-страницу.
+            if _download_info_cache["data"] is None:
+                raise HTTPException(status_code=502, detail="Could not fetch release info")
+    return _download_info_cache["data"]
 
 
 # ── Admin API (admin.html) ──────────────────────────────────────────────
