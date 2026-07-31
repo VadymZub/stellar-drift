@@ -442,6 +442,8 @@
       <div class="row" style="margin-bottom:8px;align-items:center">
         <input id="players-search" type="text" placeholder="Поиск по логину…" style="max-width:330px"
                oninput="_playersSearchDebounced()">
+        <input id="players-search-id" type="number" placeholder="ID…" style="max-width:100px"
+               oninput="_playersSearchDebounced()">
         <button class="btn btn-ghost btn-sm" onclick="loadPlayers()">↺ Обновить</button>
         <span id="players-count" style="color:var(--muted);font-size:12px;margin-left:auto"></span>
       </div>
@@ -778,6 +780,7 @@ async function loadPlayers() {
   const tbody = document.getElementById('players-tbody');
   tbody.innerHTML = `<tr><td colspan="${PLAYERS_COLUMNS.length}" style="padding:12px;color:var(--muted)">Загрузка…</td></tr>`;
   const q = document.getElementById('players-search').value.trim();
+  const idSearch = document.getElementById('players-search-id').value.trim();
   const corp = document.getElementById('players-filter-corp').value;
   const banned = document.getElementById('players-filter-banned').value;
   const muted = document.getElementById('players-filter-muted').value;
@@ -790,6 +793,7 @@ async function loadPlayers() {
       q, page: _playersPage, pageSize: PLAYERS_PAGE_SIZE,
       sort: _playersSort, dir: _playersDir,
     });
+    if (idSearch) params.set('id', idSearch);
     if (corp) params.set('corp', corp);
     if (banned) params.set('banned', banned);
     if (muted) params.set('muted', muted);

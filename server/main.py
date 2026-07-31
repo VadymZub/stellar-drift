@@ -2529,7 +2529,7 @@ ADMIN_PLAYERS_SORT_FIELDS = {
 
 @app.get("/admin/players")
 async def admin_list_players(
-    q: str = "", page: int = 1, pageSize: int = 50,
+    q: str = "", id: int | None = None, page: int = 1, pageSize: int = 50,
     banned: bool | None = None, muted: bool | None = None, premium: bool | None = None,
     online: bool | None = None, corp: str = "",
     sort: str = "id", dir: str = "asc",
@@ -2549,6 +2549,8 @@ async def admin_list_players(
     query = select(User)
     if q.strip():
         query = query.where(User.username.ilike(f"%{q.strip()}%"))
+    if id is not None:
+        query = query.where(User.id == id)
     if banned is not None:
         query = query.where(User.is_banned == (1 if banned else 0))
     if muted is not None:
