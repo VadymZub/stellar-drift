@@ -439,8 +439,11 @@
 
     <div class="card" style="margin-top:16px">
       <div class="card-title">👥 Все аккаунты (реальные данные с сервера)</div>
-      <div class="row" style="margin-bottom:12px">
+      <div class="row" style="margin-bottom:12px;align-items:center">
+        <input id="players-search" type="text" placeholder="Поиск по логину…" style="max-width:220px"
+               oninput="_playersSearchDebounced()">
         <button class="btn btn-ghost btn-sm" onclick="loadPlayers()">↺ Обновить</button>
+        <span id="players-count" style="color:var(--muted);font-size:12px;margin-left:auto"></span>
       </div>
       <div style="overflow-x:auto">
         <table id="players-table" style="width:100%;border-collapse:collapse;font-size:12px">
@@ -458,6 +461,11 @@
           </thead>
           <tbody id="players-tbody"></tbody>
         </table>
+      </div>
+      <div class="row" style="margin-top:12px;justify-content:center;gap:12px;align-items:center">
+        <button class="btn btn-ghost btn-sm" onclick="playersPage(-1)">‹ Назад</button>
+        <span id="players-page-lbl" style="color:var(--muted);font-size:12px"></span>
+        <button class="btn btn-ghost btn-sm" onclick="playersPage(1)">Вперёд ›</button>
       </div>
     </div>
 
@@ -680,14 +688,36 @@ async function loadDashboard() {
 loadDashboard();
 
 // ══ PLAYERS (реальные данные) ═══════════════════════════════════════
+let _playersPage = 1;
+const PLAYERS_PAGE_SIZE = 50;
+
+let _playersSearchT = null;
+function _playersSearchDebounced() {
+  clearTimeout(_playersSearchT);
+  _playersSearchT = setTimeout(() => { _playersPage = 1; loadPlayers(); }, 300);
+}
+
+function playersPage(delta) {
+  _playersPage = Math.max(1, _playersPage + delta);
+  loadPlayers();
+}
+
 async function loadPlayers() {
   const tbody = document.getElementById('players-tbody');
   tbody.innerHTML = '<tr><td colspan="8" style="padding:12px;color:var(--muted)">Загрузка…</td></tr>';
-  let players = [];
+  const q = document.getElementById('players-search').value.trim();
+  let players = [], total = 0;
   try {
-    const res = await fetch('/api/admin/players');
-    if (res.ok) players = await res.json();
+    const params = new URLSearchParams({ q, page: _playersPage, pageSize: PLAYERS_PAGE_SIZE });
+    const res = await fetch('/api/admin/players?' + params);
+    if (res.ok) {
+      const data = await res.json();
+      players = data.players; total = data.total;
+    }
   } catch(_) {}
+  document.getElementById('players-count').textContent = `Всего: ${total}`;
+  const maxPage = Math.max(1, Math.ceil(total / PLAYERS_PAGE_SIZE));
+  document.getElementById('players-page-lbl').textContent = `Страница ${_playersPage} / ${maxPage}`;
   if (!players.length) { tbody.innerHTML = '<tr><td colspan="8" style="padding:12px;color:var(--muted)">Нет данных</td></tr>'; return; }
   tbody.innerHTML = players.map(p => {
     const statusBadges = [

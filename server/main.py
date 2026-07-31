@@ -2522,17 +2522,31 @@ async def admin_dashboard(db: AsyncSession = Depends(get_db)):
 
 
 @app.get("/admin/players")
-async def admin_list_players(db: AsyncSession = Depends(get_db)):
-    users = (await db.execute(select(User).order_by(User.id))).scalars().all()
-    states = {
-        ps.user_id: ps.state
-        for ps in (await db.execute(select(PlayerState))).scalars().all()
-    }
+async def admin_list_players(
+    q: str = "", page: int = 1, pageSize: int = 50,
+    db: AsyncSession = Depends(get_db),
+):
+    page = max(1, page)
+    pageSize = max(1, min(pageSize, 200))
+    query = select(User)
+    if q.strip():
+        query = query.where(User.username.ilike(f"%{q.strip()}%"))
+    total = (await db.execute(select(func.count()).select_from(query.subquery()))).scalar_one()
+    query = query.order_by(User.id).offset((page - 1) * pageSize).limit(pageSize)
+    users = (await db.execute(query)).scalars().all()
+
+    user_ids = [u.id for u in users]
+    states = {}
+    if user_ids:
+        states = {
+            ps.user_id: ps.state
+            for ps in (await db.execute(select(PlayerState).where(PlayerState.user_id.in_(user_ids)))).scalars().all()
+        }
     online_uids = {m['uid'] for m in chat_manager.active.values()}
-    result = []
+    players = []
     for u in users:
         st = states.get(u.id) or {}
-        result.append({
+        players.append({
             "id": u.id, "username": u.username, "email": u.email,
             "email_verified": bool(u.email_verified),
             "is_admin": bool(u.is_admin), "is_banned": bool(u.is_banned), "is_muted": bool(u.is_muted),
@@ -2541,7 +2555,7 @@ async def admin_list_players(db: AsyncSession = Depends(get_db)):
             "corp": st.get("playerCorp"), "premium": st.get("premium"),
             "pilotXp": st.get("pilotXp"), "pilotHonor": st.get("pilotHonor"),
         })
-    return result
+    return {"players": players, "total": total, "page": page, "pageSize": pageSize}
 
 
 @app.get("/admin/audit")
