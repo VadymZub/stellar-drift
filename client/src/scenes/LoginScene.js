@@ -1,9 +1,10 @@
 import * as Phaser from 'https://cdn.jsdelivr.net/npm/phaser@4.2.1/dist/phaser.esm.js';
 import { COLORS, UI_RES } from '../constants.js';
 import { i18n } from '../i18n.js';
-import { apiPost, apiGet, setSession, clearSession, getToken, getUsername, verifyEmail, resendVerification, changeEmail, isTauriProd } from '../api.js';
+import { apiPost, apiGet, setSession, clearSession, getToken, getUsername, verifyEmail, resendVerification, changeEmail, DEV_MODE } from '../api.js';
 import { galaxy, SECTORS } from '../galaxy.js';
 import * as vault from '../vault.js';
+import { domConfirm } from '../domConfirm.js';
 
 // Determine the sector the player should start in from their saved state.
 // Mirrors the redirect logic in GameScene._applyLoadedState.
@@ -15,9 +16,10 @@ function _resolveStartSector(state) {
   return corp === 'neutral' ? 'helios_1' : `${corp}_1`;
 }
 
-// Тот же признак, что и GameScene.js/api.js — было захардкожено в false, что
-// заодно гасило skip-auth/TestProfileScene и в локальной разработке, не только в проде.
-const DEV_MODE = !isTauriProd;
+// DEV_MODE теперь общий, см. api.js — раньше было `!isTauriProd` локально, что
+// включало skip-auth/TestProfileScene для ЛЮБОГО браузера на проде, не только для
+// настоящего теста (диалог: "акаунт в дев режиме, 41 уровень" — про GameScene.js,
+// тот же баг, тот же признак, тут заодно поправили и его использование).
 
 export default class LoginScene extends Phaser.Scene {
   constructor() { super('LoginScene'); }
@@ -245,8 +247,11 @@ export default class LoginScene extends Phaser.Scene {
           // предупреждает (409 EMAIL_ALREADY_USED); подтвердил — шлём тот же запрос
           // повторно с confirm_duplicate_email:true (диалог: "разреши несколько аков
           // на 1 почту... просто предупреди что такая уже есть и желаете ли продолжить").
+          // domConfirm — свой оверлей, не window.confirm() (диалог: "могу попробовать
+          // с браузера" — заработало в браузере, но не в собранном Tauri-приложении,
+          // похоже на ненадёжность нативных диалогов внутри WebView2).
           if (e.status === 409 && e.message === 'EMAIL_ALREADY_USED' &&
-              confirm('Эта почта уже используется другим аккаунтом. Всё равно создать новый аккаунт с ней же?')) {
+              await domConfirm('Эта почта уже используется другим аккаунтом. Всё равно создать новый аккаунт с ней же?')) {
             data = await apiPost(endpoint, { ...payload, confirm_duplicate_email: true });
           } else {
             throw e;

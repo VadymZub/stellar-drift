@@ -29,7 +29,7 @@ import { BASE_CONFIG } from '../bases.js';
 import HomeBase from '../entities/HomeBase.js';
 import ArgusController from '../systems/ArgusController.js';
 import ConfedGuardSystem, { getLastResetTime } from '../systems/ConfedGuardSystem.js';
-import { getUsername, getToken, apiPut, apiGet, apiPost, setSession, dungeonEnter, dungeonMobKilled, dungeonLootDrop, dungeonLootCollected, dungeonCorridorState, dungeonDeath, dungeonComplete, miningBaseSector, isTauriProd } from '../api.js';
+import { getUsername, getToken, apiPut, apiGet, apiPost, setSession, dungeonEnter, dungeonMobKilled, dungeonLootDrop, dungeonLootCollected, dungeonCorridorState, dungeonDeath, dungeonComplete, miningBaseSector, DEV_MODE } from '../api.js';
 import { prepShipTex, removeWhiteBg } from '../utils/prepShipTex.js';
 import { MISSIONS, getMissionSectorTarget, matchKillObjective, dailyBracketFor } from '../data/missions.js';
 import { DUNGEON_LAYOUTS, DUNGEON_BOSS_KIT } from '../data/dungeonLayouts.js';
@@ -47,12 +47,9 @@ const PICKUP_TIME = 2000;
 // считается: жертва должна быть минимум на столько уровней ниже обидчика.
 const BOUNTY_LEVEL_GAP = 3;
 
-// Захардкоженное DEV_MODE=true уходило и в собранный prod-инсталлятор (client/
-// без сборщика — один и тот же исходник и для браузерного дева, и для Tauri prod),
-// так что реальные игроки стартовали с dev-кредитами/честью (диалог: "создал игрока
-// а он сразу 41 уровня") и всеми dev-хоткеями активными. isTauriProd (см. api.js)
-// уже используется для того же переключения (PROD_HOST) — тот же признак сюда.
-const DEV_MODE = !isTauriProd;
+// DEV_MODE теперь общий, вычисляется в api.js (см. комментарий там) — раньше было
+// `!isTauriProd` локально в этом файле, что ловило и обычных браузерных игроков на
+// проде, не только реальный dev/Test Mode.
 
 export function xpForLevel(L) {
   let total = 0;

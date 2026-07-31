@@ -3,6 +3,7 @@ import { COLORS, UI_RES, CORP_META } from '../constants.js';
 import { i18n } from '../i18n.js';
 import { profileGetMine, profileUpdate, apiGet, getUsername, changePassword, changeEmail, changeUsername, setSession, verifyEmail, resendVerification } from '../api.js';
 import { SHIP_BY_KEY } from '../ships.js';
+import { domConfirm } from '../domConfirm.js';
 
 // Вкладки: Профиль (текстовые поля + приватность + поиск чужого профиля) / Аккаунт
 // (ник/пароль/email + любимый корабль + живая статистика: корпорация/звание/опыт/
@@ -556,7 +557,7 @@ export default class ProfileScene extends Phaser.Scene {
         } catch (e) {
           // Почта не unique — предупреждаем, а не блокируем (см. LoginScene.js регистрацию).
           if (e.status === 409 && e.message === 'EMAIL_ALREADY_USED' &&
-              confirm('Эта почта уже используется другим аккаунтом. Всё равно привязать её и сюда?')) {
+              await domConfirm('Эта почта уже используется другим аккаунтом. Всё равно привязать её и сюда?')) {
             data = await changeEmail(curPass2Input.value, newEmailInput.value, true);
           } else {
             throw e;

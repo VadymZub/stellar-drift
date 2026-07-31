@@ -25,6 +25,19 @@ const isDevHttp = location.protocol === 'http:';
 export const API_BASE = isDevHttp ? `http://${location.hostname}:8000` : `https://${PROD_HOST}/api`;
 export const WS_BASE  = isDevHttp ? `ws://${location.hostname}:8000`  : `wss://${PROD_HOST}/api`;
 
+// DEV_MODE (dev-хоткеи, dev-кредиты/честь, TestProfileScene skip-auth) раньше было
+// `!isTauriProd` — это ЛОМАЛОСЬ ровно там же, где чинили API_BASE выше: обычный
+// браузер на ПРОД-домене (не только admin.html Test Mode — ЛЮБОЙ visit, включая
+// нормальную регистрацию через confirm-диалог теста дубликата почты) тоже получал
+// isTauriProd=false и потому DEV_MODE=true — реальный игрок, зашедший в браузер
+// напрямую, получал уровень 41/dev-кредиты/переключатель премиума (диалог: "акаунт
+// в дев режиме, 41 уровень, кастомное переключение премиума" — Вадим_04, созданный
+// как раз таким браузерным тестом). DEV_MODE теперь НЕ включается только от того,
+// что это браузер на проде — только явный ?devMode=1 в URL (admin.html Test Mode
+// теперь передаёт его явно) ИЛИ настоящий локальный dev/LAN/`cargo tauri dev`.
+const isExplicitDevMode = new URLSearchParams(location.search).get('devMode') === '1';
+export const DEV_MODE = isDevHttp || isExplicitDevMode;
+
 const TOKEN_KEY   = 'sd_token';
 const USERNAME_KEY = 'sd_username';
 
