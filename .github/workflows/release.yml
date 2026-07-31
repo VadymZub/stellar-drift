@@ -1,15 +1,28 @@
 name: Release
 
 # Builds, signs, and publishes the Tauri desktop client whenever a vX.Y.Z tag is
-# pushed to this remote (morion). Push the tag here specifically — the
-# in-app updater (client/src/updater.js + tauri.conf.json plugins.updater.endpoints)
-# points at THIS repo's GitHub Releases (latest.json), not origin's.
+# pushed to this remote (morion). Push the tag here specifically.
 #
-# Requires two repo secrets (Settings -> Secrets and variables -> Actions):
+# Release ASSETS are published to a SEPARATE public repo (vadimmorion-commits/
+# stellar-drift-releases), not this one — this source repo is private, and the
+# in-app updater does a plain unauthenticated HTTPS GET to fetch latest.json;
+# GitHub 404s that request for any private-repo release asset regardless of
+# what's in the release, so the updater silently never found anything (first
+# real release, v1.1.354, built+signed fine but the installed app's check()
+# always failed quietly — no devtools in a release build to see why). The
+# public releases-only repo holds nothing but built installers/signatures/
+# latest.json, never the source, so this doesn't expose any code/assets.
+# tauri.conf.json's plugins.updater.endpoints points at THAT repo now.
+#
+# Requires THREE repo secrets (Settings -> Secrets and variables -> Actions,
+# on THIS repo — the workflow runs here, RELEASES_REPO_TOKEN just grants it
+# write access to the other one):
 #   TAURI_SIGNING_PRIVATE_KEY, TAURI_SIGNING_PRIVATE_KEY_PASSWORD
 # generated once via `cargo tauri signer generate` (see src-tauri README
 # notes / client/IMPL_NOTES.md) — the matching public key is already embedded
 # in src-tauri/tauri.conf.json.
+#   RELEASES_REPO_TOKEN — fine-grained PAT scoped to ONLY
+# vadimmorion-commits/stellar-drift-releases, Contents: Read and write.
 on:
   push:
     tags:
@@ -48,10 +61,16 @@ jobs:
       - name: Build and release Tauri app
         uses: tauri-apps/tauri-action@v0
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # PAT scoped to the target public repo, NOT the default GITHUB_TOKEN —
+          # the default token is only ever valid for the repo the workflow runs
+          # in, it can't create/upload to a different repo (see header comment).
+          GITHUB_TOKEN: ${{ secrets.RELEASES_REPO_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
+          owner: vadimmorion-commits
+          repo: stellar-drift-releases
+          releaseCommitish: main
           projectPath: .
           tagName: ${{ github.ref_name }}
           releaseName: 'Stellar Drift ${{ github.ref_name }}'
