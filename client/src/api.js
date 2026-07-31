@@ -9,10 +9,12 @@
 // В dev-режиме (браузер ИЛИ `cargo tauri dev`, у которого devUrl = localhost:8080)
 // hostname остаётся 'localhost' как раньше — эта ветка вообще не участвует.
 const isTauriProd = location.hostname === 'tauri.localhost';
-// TODO: заменить на реальный домен после переезда бэкенда на Render (см. память deployment_hosting_plan).
-const PROD_HOST = 'stellar-drift-api.onrender.com';
-export const API_BASE = isTauriProd ? `https://${PROD_HOST}` : `http://${location.hostname}:8000`;
-export const WS_BASE  = isTauriProd ? `wss://${PROD_HOST}`   : `ws://${location.hostname}:8000`;
+// Webdock VPS (193.180.215.8), не Render — см. память deployment_hosting_plan.
+// nginx проксирует /api/ -> 127.0.0.1:8000/ (префикс срезается), backend-роуты
+// сами по себе БЕЗ /api (main.py: /auth/login, /player/state, /ws/chat, ...).
+const PROD_HOST = 'stellar-drift-mmo.duckdns.org';
+export const API_BASE = isTauriProd ? `https://${PROD_HOST}/api` : `http://${location.hostname}:8000`;
+export const WS_BASE  = isTauriProd ? `wss://${PROD_HOST}/api`   : `ws://${location.hostname}:8000`;
 
 const TOKEN_KEY   = 'sd_token';
 const USERNAME_KEY = 'sd_username';
