@@ -13,8 +13,17 @@ export const isTauriProd = location.hostname === 'tauri.localhost';
 // nginx проксирует /api/ -> 127.0.0.1:8000/ (префикс срезается), backend-роуты
 // сами по себе БЕЗ /api (main.py: /auth/login, /player/state, /ws/chat, ...).
 const PROD_HOST = 'stellar-drift-mmo.duckdns.org';
-export const API_BASE = isTauriProd ? `https://${PROD_HOST}/api` : `http://${location.hostname}:8000`;
-export const WS_BASE  = isTauriProd ? `wss://${PROD_HOST}/api`   : `ws://${location.hostname}:8000`;
+// Развилка НЕ по isTauriProd — у неё второй, отдельный сценарий: admin.html
+// "Test Mode" открывает index.html обычным браузером ПРЯМО на проде
+// (https://stellar-drift-mmo.duckdns.org), там location.hostname — реальный
+// домен, не tauri.localhost, но и не dev-сервер — бывший код всё равно уходил
+// в dev-ветку (http://<домен>:8000), а 8000 наружу не торчит + https-страница
+// блокирует http-запрос как mixed content (диалог: "создание тестового профиля
+// из админ панели - не работает на проде"). И dev (браузер/cargo tauri dev), и
+// LAN-доступ со второго ПК всегда голый http — только по нему и различаем.
+const isDevHttp = location.protocol === 'http:';
+export const API_BASE = isDevHttp ? `http://${location.hostname}:8000` : `https://${PROD_HOST}/api`;
+export const WS_BASE  = isDevHttp ? `ws://${location.hostname}:8000`  : `wss://${PROD_HOST}/api`;
 
 const TOKEN_KEY   = 'sd_token';
 const USERNAME_KEY = 'sd_username';
