@@ -35,6 +35,11 @@ class RegisterRequest(BaseModel):
     username: str
     email: EmailStr
     password: str
+    # Почта не unique (см. models.py User.email) — по умолчанию всё равно
+    # предупреждаем, если она уже занята другим аккаунтом, а не молча регистрируем
+    # ("просто предупреди что такая уже есть и желаете ли продолжить"). true —
+    # повторная отправка ПОСЛЕ того, как игрок подтвердил предупреждение.
+    confirm_duplicate_email: bool = False
 
     @field_validator("username")
     @classmethod
@@ -87,6 +92,7 @@ class ChangePasswordRequest(BaseModel):
 class ChangeEmailRequest(BaseModel):
     current_password: str
     new_email: EmailStr
+    confirm_duplicate_email: bool = False  # см. RegisterRequest.confirm_duplicate_email
 
 
 class ChangeUsernameRequest(BaseModel):

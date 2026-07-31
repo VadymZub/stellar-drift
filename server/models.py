@@ -8,7 +8,9 @@ class User(Base):
 
     id           = Column(Integer, primary_key=True, index=True)
     username     = Column(String(50), unique=True, nullable=False, index=True)
-    email        = Column(String(255), unique=True, nullable=True, index=True)
+    # НЕ unique — по просьбе разрешить несколько аккаунтов на одну почту (диалог:
+    # "думаю не стоит запрещать мультиаккаунт... разреши несколько аков на 1 почту").
+    email        = Column(String(255), nullable=True, index=True)
     email_verified = Column(Integer, nullable=False, default=0)  # bool as int (SQLite-friendly, см. DungeonRun.boss_alive)
     password_hash = Column(String(200), nullable=False)
     created_at   = Column(DateTime, default=datetime.utcnow)

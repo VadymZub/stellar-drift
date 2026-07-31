@@ -550,7 +550,18 @@ export default class ProfileScene extends Phaser.Scene {
     this._makeAccountButton(T, LX, y, 'Сменить email', async () => {
       emailMsg.setColor('#ef5350').setText('');
       try {
-        await changeEmail(curPass2Input.value, newEmailInput.value);
+        let data;
+        try {
+          data = await changeEmail(curPass2Input.value, newEmailInput.value);
+        } catch (e) {
+          // Почта не unique — предупреждаем, а не блокируем (см. LoginScene.js регистрацию).
+          if (e.status === 409 && e.message === 'EMAIL_ALREADY_USED' &&
+              confirm('Эта почта уже используется другим аккаунтом. Всё равно привязать её и сюда?')) {
+            data = await changeEmail(curPass2Input.value, newEmailInput.value, true);
+          } else {
+            throw e;
+          }
+        }
         emailMsg.setColor('#66bb6a').setText('Email изменён — на новый адрес отправлен код подтверждения');
         this._accountEmailTxt?.setText(newEmailInput.value);
         this._accountVerifiedTxt?.setText('⚠ Email не подтверждён');

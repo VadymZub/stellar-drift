@@ -1924,8 +1924,12 @@ async def register(body: RegisterRequest, db: AsyncSession = Depends(get_db)):
     if existing:
         raise HTTPException(status_code=400, detail="Username already taken")
     existing_email = (await db.execute(select(User).where(User.email == body.email))).scalar_one_or_none()
-    if existing_email:
-        raise HTTPException(status_code=400, detail="Email already registered")
+    if existing_email and not body.confirm_duplicate_email:
+        # 409, не 400 — клиент (LoginScene.js) отличает этот код от обычных ошибок
+        # валидации, показывает confirm() и при "да" шлёт тот же запрос повторно
+        # с confirm_duplicate_email=true. Мультиаккаунт разрешён (диалог: "разреши
+        # несколько аков на 1 почту"), просто не молча — предупреждаем один раз.
+        raise HTTPException(status_code=409, detail="EMAIL_ALREADY_USED")
     # bcrypt намеренно медленный (CPU-bound) — в тред-пул, иначе блокирует event loop
     # на ~100-300мс на КАЖДУЮ регистрацию (см. диалог про нагрузочный тест).
     password_hash = await asyncio.to_thread(hash_password, body.password)
@@ -2019,8 +2023,8 @@ async def change_email(
     existing = (await db.execute(select(User).where(
         User.email == body.new_email, User.id != user.id
     ))).scalar_one_or_none()
-    if existing:
-        raise HTTPException(status_code=400, detail="Email уже используется")
+    if existing and not body.confirm_duplicate_email:
+        raise HTTPException(status_code=409, detail="EMAIL_ALREADY_USED")
     user.email = body.new_email
     user.email_verified = 0
     await db.commit()

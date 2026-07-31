@@ -237,7 +237,21 @@ export default class LoginScene extends Phaser.Scene {
       try {
         const endpoint = mode === 'login' ? '/auth/login' : '/auth/register';
         const payload = mode === 'login' ? { username, password } : { username, email, password };
-        const data = await apiPost(endpoint, payload);
+        let data;
+        try {
+          data = await apiPost(endpoint, payload);
+        } catch (e) {
+          // Почта не unique (мультиаккаунт разрешён) — сервер не блокирует, а
+          // предупреждает (409 EMAIL_ALREADY_USED); подтвердил — шлём тот же запрос
+          // повторно с confirm_duplicate_email:true (диалог: "разреши несколько аков
+          // на 1 почту... просто предупреди что такая уже есть и желаете ли продолжить").
+          if (e.status === 409 && e.message === 'EMAIL_ALREADY_USED' &&
+              confirm('Эта почта уже используется другим аккаунтом. Всё равно создать новый аккаунт с ней же?')) {
+            data = await apiPost(endpoint, { ...payload, confirm_duplicate_email: true });
+          } else {
+            throw e;
+          }
+        }
 
         if (saveChk?.checked) await this._saveAccountToVault(username, password);
 

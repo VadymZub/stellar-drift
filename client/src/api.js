@@ -133,8 +133,11 @@ export function resendVerification()        { return apiPost('/auth/resend-verif
 export function changePassword(currentPassword, newPassword) {
   return apiPost('/auth/change-password', { current_password: currentPassword, new_password: newPassword });
 }
-export function changeEmail(currentPassword, newEmail) {
-  return apiPost('/auth/change-email', { current_password: currentPassword, new_email: newEmail });
+export function changeEmail(currentPassword, newEmail, confirmDuplicateEmail = false) {
+  return apiPost('/auth/change-email', {
+    current_password: currentPassword, new_email: newEmail,
+    confirm_duplicate_email: confirmDuplicateEmail,
+  });
 }
 export function changeUsername(newUsername) {
   return apiPost('/auth/change-username', { new_username: newUsername });
