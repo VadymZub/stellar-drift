@@ -11,16 +11,17 @@ cd client
 
 No build step. Phaser 4.1.0 loads from CDN as an ES module. ES modules require HTTP (not `file://`), so the server is mandatory.
 
-**DEV hotkeys** (in-game, `DEV_MODE = true` in `GameScene.js`):
+**DEV hotkeys** (in-game, `DEV_MODE = !isTauriProd` in `GameScene.js` — true in browser dev, `cargo tauri dev`, and a browser hitting the deployed site directly; false only inside the packaged Tauri app, so real players never see these):
 - `0` — level up pilot
 - `9` — +1 000 000 credits + 500 ⭐
 - `8` — switch to Argus ship (max stats); engine speed uses T4 base 27 (matches item nerf)
 - `7` — instantly completes every level-eligible mandatory `story_grad_N` mission — needed because a test profile that starts at a high level (see below) hasn't actually done them, and `sectorAccess()` gates the corp sector ladder on their completion
 - `T` — force-launches the armored train in the current sector right now (`startAt = Date.now()`), bypassing the daily deterministic wall-clock window (`_armoredTrainTodayStart`); only works in PvP sectors with an `ARMORED_TRAIN_SECTORS` entry (`pvp_1..pvp_5`)
+- `V` — persists the current Test Mode session as a real, login-able account: prompts for username/password, calls `/auth/register`, then `PUT /player/state` with `_serializeState()` (the same blob a normal autosave would produce). Lets an admin build a custom-stat account via `TestProfileScene` and actually keep it, instead of the test profile evaporating on scene exit.
 
 **Test profile launcher** (DEV_MODE): clicking START GAME on the login screen opens `TestProfileScene` — an HTML overlay to configure level, rank, corp, premium, loot preset, credits, and gold before launching the game. Sets `window.TEST_PROFILE`, consumed once by `GameScene.create()`.
 
-**Admin panel**: `http://localhost:8080/admin.html` — standalone page, same origin as game. Sections: Dashboard, Argus Control, Players (mock), Audit Log, Analytics.
+**Admin panel**: `client/admin.html`, protected by nginx Basic Auth in prod (`stellar-drift-mmo.duckdns.org/admin.html`; credentials in `/etc/nginx/.htpasswd_stellar_drift` on the Webdock VPS). Sections: Dashboard, Argus Control (BroadcastChannel, same-browser-tab only — not a network command), Players (mock), Audit Log, Analytics (mock). "Test Mode" tile opens `index.html` in a plain browser tab against whatever `PROD_HOST` currently is — that's how an admin reaches `TestProfileScene` + the `V` hotkey above on the real deployed backend.
 
 ## Architecture
 

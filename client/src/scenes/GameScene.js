@@ -29,7 +29,7 @@ import { BASE_CONFIG } from '../bases.js';
 import HomeBase from '../entities/HomeBase.js';
 import ArgusController from '../systems/ArgusController.js';
 import ConfedGuardSystem, { getLastResetTime } from '../systems/ConfedGuardSystem.js';
-import { getUsername, getToken, apiPut, apiGet, dungeonEnter, dungeonMobKilled, dungeonLootDrop, dungeonLootCollected, dungeonCorridorState, dungeonDeath, dungeonComplete, miningBaseSector, isTauriProd } from '../api.js';
+import { getUsername, getToken, apiPut, apiGet, apiPost, setSession, dungeonEnter, dungeonMobKilled, dungeonLootDrop, dungeonLootCollected, dungeonCorridorState, dungeonDeath, dungeonComplete, miningBaseSector, isTauriProd } from '../api.js';
 import { prepShipTex, removeWhiteBg } from '../utils/prepShipTex.js';
 import { MISSIONS, getMissionSectorTarget, matchKillObjective, dailyBracketFor } from '../data/missions.js';
 import { DUNGEON_LAYOUTS, DUNGEON_BOSS_KIT } from '../data/dungeonLayouts.js';
@@ -466,6 +466,27 @@ export default class GameScene extends Phaser.Scene {
         this.log('DEV: Laser Cannon Equipped');
       });
       this.input.keyboard.on('keydown-SEVEN', () => this._toggleTrainingDummies());
+      // Персистит текущую Test Mode сессию (admin.html -> "Test Mode" -> TestProfileScene)
+      // как настоящий залогиненный аккаунт — по просьбе "на проде из админ панели нужно
+      // дать админу право создать акаунт с заданными параметрами". Не дублирует расчёт
+      // стартовых статов на Python — просто регистрирует юзера и сохраняет то, что этот
+      // же клиентский код УЖЕ насчитал (_serializeState(), тот же путь, что обычный автосейв).
+      this.input.keyboard.on('keydown-V', async () => {
+        const username = window.prompt('DEV: логин для нового реального аккаунта:');
+        if (!username) return;
+        const password = window.prompt('DEV: пароль:');
+        if (!password) return;
+        try {
+          const data = await apiPost('/auth/register', {
+            username, password, email: `${username}@stellardrift.local`,
+          });
+          setSession(data.access_token, data.username);
+          await apiPut('/player/state', this._serializeState());
+          this.log(`DEV: аккаунт "${username}" создан и сохранён с текущим тестовым профилем`);
+        } catch (e) {
+          this.log(`DEV: не удалось создать аккаунт — ${e.message}`);
+        }
+      });
     }
 
     this.shipLevels = this.shipLevels || {};
