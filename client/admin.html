@@ -439,25 +439,49 @@
 
     <div class="card" style="margin-top:16px">
       <div class="card-title">👥 Все аккаунты (реальные данные с сервера)</div>
-      <div class="row" style="margin-bottom:12px;align-items:center">
-        <input id="players-search" type="text" placeholder="Поиск по логину…" style="max-width:220px"
+      <div class="row" style="margin-bottom:8px;align-items:center">
+        <input id="players-search" type="text" placeholder="Поиск по логину…" style="max-width:330px"
                oninput="_playersSearchDebounced()">
         <button class="btn btn-ghost btn-sm" onclick="loadPlayers()">↺ Обновить</button>
         <span id="players-count" style="color:var(--muted);font-size:12px;margin-left:auto"></span>
       </div>
+      <div class="row" style="margin-bottom:12px;align-items:center;flex-wrap:wrap;gap:8px">
+        <select id="players-filter-corp" onchange="_playersFilterChanged()">
+          <option value="">Корп: все</option>
+          <option value="helios">Helios</option>
+          <option value="karax">Karax</option>
+          <option value="tides">Tides</option>
+          <option value="neutral">Neutral</option>
+        </select>
+        <select id="players-filter-banned" onchange="_playersFilterChanged()">
+          <option value="">Бан: все</option>
+          <option value="true">Забанен</option>
+          <option value="false">Не забанен</option>
+        </select>
+        <select id="players-filter-muted" onchange="_playersFilterChanged()">
+          <option value="">Мут: все</option>
+          <option value="true">В муте</option>
+          <option value="false">Не в муте</option>
+        </select>
+        <select id="players-filter-premium" onchange="_playersFilterChanged()">
+          <option value="">Премиум: все</option>
+          <option value="true">Есть</option>
+          <option value="false">Нет</option>
+        </select>
+        <select id="players-filter-online" onchange="_playersFilterChanged()">
+          <option value="">Онлайн: все</option>
+          <option value="true">Онлайн</option>
+          <option value="false">Оффлайн</option>
+        </select>
+        <label style="display:flex;align-items:center;gap:6px;margin-left:auto;color:var(--danger);font-size:12px;cursor:pointer">
+          <input type="checkbox" id="players-show-delete" onchange="loadPlayers()">
+          🔓 Показать удаление аккаунтов
+        </label>
+      </div>
       <div style="overflow-x:auto">
         <table id="players-table" style="width:100%;border-collapse:collapse;font-size:12px">
           <thead>
-            <tr style="text-align:left;color:var(--muted)">
-              <th style="padding:6px 8px">ID</th>
-              <th style="padding:6px 8px">Логин</th>
-              <th style="padding:6px 8px">Email</th>
-              <th style="padding:6px 8px">Статус</th>
-              <th style="padding:6px 8px">Корп</th>
-              <th style="padding:6px 8px">Кредиты</th>
-              <th style="padding:6px 8px">⭐</th>
-              <th style="padding:6px 8px">Действия</th>
-            </tr>
+            <tr style="text-align:left;color:var(--muted)" id="players-thead-row"></tr>
           </thead>
           <tbody id="players-tbody"></tbody>
         </table>
@@ -474,7 +498,7 @@
   <!-- ── AUDIT LOG ──────────────────────────────────────────────── -->
   <section id="s-audit" class="section">
     <h1>Audit Log</h1>
-    <p class="subtitle">Все действия администратора · Хранится в localStorage · Последние 200 событий</p>
+    <p class="subtitle">Реальный audit_log с сервера + локальные Argus-команды (BroadcastChannel) · Последние 200 событий</p>
     <div class="row" style="margin-bottom:16px">
       <button class="btn btn-ghost btn-sm" onclick="loadAudit()">↺ Обновить</button>
       <button class="btn btn-danger btn-sm" onclick="clearAudit()">🗑 Очистить</button>
@@ -702,13 +726,75 @@ function playersPage(delta) {
   loadPlayers();
 }
 
+function _playersFilterChanged() {
+  _playersPage = 1;
+  loadPlayers();
+}
+
+let _playersSort = 'id', _playersDir = 'asc';
+const PLAYERS_COLUMNS = [
+  { key: 'id',          label: 'ID' },
+  { key: 'username',    label: 'Логин' },
+  { key: null,          label: 'Email' },
+  { key: null,          label: 'Статус' },
+  { key: null,          label: 'Корп' },
+  { key: 'credits',     label: 'Кредиты' },
+  { key: 'starGold',    label: '⭐' },
+  { key: 'pilotHonor',  label: 'Честь' },
+  { key: 'created_at',  label: 'Регистрация' },
+  { key: 'playTimeSec', label: 'Время в игре' },
+  { key: null,          label: 'Действия' },
+];
+
+function _renderPlayersHead() {
+  const row = document.getElementById('players-thead-row');
+  row.innerHTML = PLAYERS_COLUMNS.map(c => {
+    if (!c.key) return `<th style="padding:6px 8px">${c.label}</th>`;
+    const arrow = _playersSort === c.key ? (_playersDir === 'asc' ? ' ▲' : ' ▼') : '';
+    return `<th style="padding:6px 8px;cursor:pointer;user-select:none" onclick="_playersSortBy('${c.key}')">${c.label}${arrow}</th>`;
+  }).join('');
+}
+_renderPlayersHead();
+
+function _playersSortBy(key) {
+  if (_playersSort === key) { _playersDir = _playersDir === 'asc' ? 'desc' : 'asc'; }
+  else { _playersSort = key; _playersDir = 'asc'; }
+  _renderPlayersHead();
+  loadPlayers();
+}
+
+function _fmtPlayTime(sec) {
+  if (!sec) return '—';
+  const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60);
+  return h > 0 ? `${h} ч ${m} мин` : `${m} мин`;
+}
+
+function _fmtDate(iso) {
+  if (!iso) return '—';
+  return new Date(iso).toLocaleDateString('ru');
+}
+
 async function loadPlayers() {
   const tbody = document.getElementById('players-tbody');
-  tbody.innerHTML = '<tr><td colspan="8" style="padding:12px;color:var(--muted)">Загрузка…</td></tr>';
+  tbody.innerHTML = `<tr><td colspan="${PLAYERS_COLUMNS.length}" style="padding:12px;color:var(--muted)">Загрузка…</td></tr>`;
   const q = document.getElementById('players-search').value.trim();
+  const corp = document.getElementById('players-filter-corp').value;
+  const banned = document.getElementById('players-filter-banned').value;
+  const muted = document.getElementById('players-filter-muted').value;
+  const premium = document.getElementById('players-filter-premium').value;
+  const online = document.getElementById('players-filter-online').value;
+  const showDelete = document.getElementById('players-show-delete').checked;
   let players = [], total = 0;
   try {
-    const params = new URLSearchParams({ q, page: _playersPage, pageSize: PLAYERS_PAGE_SIZE });
+    const params = new URLSearchParams({
+      q, page: _playersPage, pageSize: PLAYERS_PAGE_SIZE,
+      sort: _playersSort, dir: _playersDir,
+    });
+    if (corp) params.set('corp', corp);
+    if (banned) params.set('banned', banned);
+    if (muted) params.set('muted', muted);
+    if (premium) params.set('premium', premium);
+    if (online) params.set('online', online);
     const res = await fetch('/api/admin/players?' + params);
     if (res.ok) {
       const data = await res.json();
@@ -718,7 +804,7 @@ async function loadPlayers() {
   document.getElementById('players-count').textContent = `Всего: ${total}`;
   const maxPage = Math.max(1, Math.ceil(total / PLAYERS_PAGE_SIZE));
   document.getElementById('players-page-lbl').textContent = `Страница ${_playersPage} / ${maxPage}`;
-  if (!players.length) { tbody.innerHTML = '<tr><td colspan="8" style="padding:12px;color:var(--muted)">Нет данных</td></tr>'; return; }
+  if (!players.length) { tbody.innerHTML = `<tr><td colspan="${PLAYERS_COLUMNS.length}" style="padding:12px;color:var(--muted)">Нет данных</td></tr>`; return; }
   tbody.innerHTML = players.map(p => {
     const statusBadges = [
       p.online ? '<span style="color:var(--emerald)">● online</span>' : '<span style="color:var(--muted)">○ offline</span>',
@@ -726,6 +812,23 @@ async function loadPlayers() {
       p.is_muted  ? '<span style="color:var(--amber)">МУТ</span>' : '',
       p.is_admin  ? '<span style="color:var(--cyan)">admin</span>' : '',
     ].filter(Boolean).join(' · ');
+    // Кнопка удаления — за глобальным переключателем "Показать удаление аккаунтов"
+    // (по просьбе: "скрой переключателем чтобы случайно не клацнуть"), сама кнопка
+    // текстом подсказывает следующий шаг (забанить / сколько ждать / можно удалять).
+    let deleteBtn = '';
+    if (showDelete) {
+      if (!p.is_banned) {
+        deleteBtn = `<button class="btn btn-danger btn-sm" onclick="adminDeleteAccount(${p.id},'${p.username}',null)">🗑 Удалить…</button>`;
+      } else {
+        const daysSince = p.banned_at ? Math.floor((Date.now() - new Date(p.banned_at)) / 86400000) : 0;
+        const remaining = 14 - daysSince;
+        if (remaining > 0) {
+          deleteBtn = `<button class="btn btn-ghost btn-sm" disabled title="Ещё ${remaining} дн.">🗑 Ждать ${remaining}д</button>`;
+        } else {
+          deleteBtn = `<button class="btn btn-danger btn-sm" onclick="adminDeleteAccount(${p.id},'${p.username}',${daysSince})">🗑 Удалить НАВСЕГДА</button>`;
+        }
+      }
+    }
     return `<tr style="border-top:1px solid var(--border)">
       <td style="padding:6px 8px">${p.id}</td>
       <td style="padding:6px 8px">${p.username}</td>
@@ -734,6 +837,9 @@ async function loadPlayers() {
       <td style="padding:6px 8px">${p.corp ?? '—'}</td>
       <td style="padding:6px 8px">${p.credits ?? '—'}</td>
       <td style="padding:6px 8px">${p.starGold ?? '—'}</td>
+      <td style="padding:6px 8px">${p.pilotHonor ?? '—'}</td>
+      <td style="padding:6px 8px;color:var(--muted)">${_fmtDate(p.created_at)}</td>
+      <td style="padding:6px 8px;color:var(--muted)">${_fmtPlayTime(p.playTimeSec)}</td>
       <td style="padding:6px 8px;white-space:nowrap">
         ${p.is_banned
           ? `<button class="btn btn-ghost btn-sm" onclick="adminPlayerAction(${p.id},'unban')">Разбанить</button>`
@@ -745,7 +851,9 @@ async function loadPlayers() {
         <button class="btn btn-ghost btn-sm" onclick="adminAdjustCredits(${p.id},'${p.username}')" title="Изменить кредиты">💰 Кредиты</button>
         <button class="btn btn-ghost btn-sm" onclick="adminAdjustGold(${p.id},'${p.username}')" title="Изменить золото">⭐ Золото</button>
         <button class="btn btn-ghost btn-sm" onclick="adminAdjustXp(${p.id},'${p.username}')" title="Изменить опыт">📈 Опыт</button>
-        <button class="btn btn-amber btn-sm" onclick="adminHonorPenaltyPrompt(${p.id},'${p.username}')" title="Штраф чести">⚠ Честь</button>
+        <button class="btn btn-amber btn-sm" onclick="adminHonorPenaltyPrompt(${p.id},'${p.username}')" title="Штраф чести (%)">⚠ Честь -%</button>
+        <button class="btn btn-ghost btn-sm" onclick="adminHonorGrantPrompt(${p.id},'${p.username}')" title="Начислить чести (значение)">➕ Честь</button>
+        ${deleteBtn}
       </td>
     </tr>`;
   }).join('');
@@ -798,6 +906,34 @@ async function adminHonorPenaltyPrompt(userId, username) {
   if (![25, 50, 100].includes(pct)) { alert('Нужно ввести ровно 25, 50 или 100'); return; }
   if (!confirm(`Снять ${pct}% чести у ${username}? Это необратимо.`)) return;
   if (await _adminPost(userId, 'honor_penalty', { pct })) loadPlayers();
+}
+
+// Отдельно от штрафа (%) — начисление/списание КОНКРЕТНОГО значения чести, для
+// поощрения, а не наказания (диалог: "отдельно кнопку для начисления чести в+
+// (не % а конкретное значение)").
+async function adminHonorGrantPrompt(userId, username) {
+  const v = parseInt(prompt(`Начислить чести для ${username} (+ добавить, - забрать):`, '0'));
+  if (Number.isNaN(v) || v === 0) return;
+  if (await _adminPost(userId, 'honor_grant', { delta: v })) loadPlayers();
+}
+
+// Физическое удаление аккаунта — двойное подтверждение + обязательный предварительный
+// бан с 14-дневным ожиданием (диалог: "удаление акаунта(физическое), двойное
+// подтверждение... сначала бан потом 2 недели ожидания... не хотите вначале
+// забанить? да нет"). daysSinceBan === null означает "ещё не забанен".
+async function adminDeleteAccount(userId, username, daysSinceBan) {
+  if (daysSinceBan === null) {
+    if (!confirm(`Аккаунт "${username}" ещё не забанен. Забанить сейчас, чтобы начать 14-дневный период ожидания перед удалением?`)) return;
+    if (await _adminPost(userId, 'ban', {})) { loadPlayers(); loadDashboard(); }
+    return;
+  }
+  if (!confirm(`Удалить аккаунт "${username}" НАВСЕГДА? Это необратимо.`)) return;
+  if (!confirm(`Последнее подтверждение: аккаунт "${username}" и все его данные будут удалены без возможности восстановления. Продолжить?`)) return;
+  try {
+    const res = await fetch(`/api/admin/players/${userId}`, { method: 'DELETE' });
+    if (!res.ok) { alert('Ошибка: ' + (await res.text())); return; }
+    loadPlayers(); loadDashboard();
+  } catch(e) { alert('Ошибка: ' + e.message); }
 }
 
 // ══ AUDIT LOG ════════════════════════════════════════════════════════

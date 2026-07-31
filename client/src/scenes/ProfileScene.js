@@ -433,6 +433,13 @@ export default class ProfileScene extends Phaser.Scene {
 
     this._track(this.add.text(LX, y, 'Имя игрока', this._F('11px', '#7eb8c8')).setDepth(4), T);
     const usernameTxt = this._track(this.add.text(LX, y + 18, getUsername(), this._F('13px', '#cfe9ee')).setDepth(4), T);
+    // ID аккаунта — тот же numeric id, что видит админ в /admin/players (диалог:
+    // "в игре - профиль - вывести для игрока его айди - он должен знать"). Приходит
+    // через session_info на /ws/chat (HudScene._connectChatWS), не всегда доступен
+    // сразу при открытии профиля (до подключения чата) — тогда просто не рендерим.
+    if (gs.myUserId != null) {
+      this._track(this.add.text(RX, y, `ID: ${gs.myUserId}`, this._F('11px', '#607d8b')).setOrigin(1, 0).setDepth(4), T);
+    }
     y += 40;
 
     // ── Смена ника (без email-верификации — раз в сутки, см. диалог) ──

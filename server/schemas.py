@@ -16,6 +16,10 @@ class AdminHonorPenaltyRequest(BaseModel):
     pct: int  # 25/50/100 — снимает pct% от ТЕКУЩЕЙ чести (не абсолютное значение)
 
 
+class AdminHonorGrantRequest(BaseModel):
+    delta: int  # абсолютное значение (+ начислить, - забрать), НЕ процент — см. honor_penalty
+
+
 def validate_username_format(v: str) -> str:
     # Общее правило формата ника — используется и при регистрации, и при смене ника
     # (см. ChangeUsernameRequest), чтобы правила не могли разойтись между ними.

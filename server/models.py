@@ -16,6 +16,7 @@ class User(Base):
     is_admin     = Column(Integer, nullable=False, default=0)  # bool as int — гейтит /audit (см. get_current_admin)
     is_banned    = Column(Integer, nullable=False, default=0)  # bool as int — блокирует /auth/login
     is_muted     = Column(Integer, nullable=False, default=0)  # bool as int — блокирует отправку в /ws/chat
+    banned_at    = Column(DateTime, nullable=True)  # момент бана — 14-дневный кулдаун до физического удаления аккаунта
 
 
 class EmailVerificationToken(Base):

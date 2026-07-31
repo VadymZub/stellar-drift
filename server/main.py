@@ -29,7 +29,7 @@ from schemas import (
     DungeonCorridorStateRequest, DungeonDeathRequest, DungeonDeathResponse,
     DungeonCompleteRequest, MiningBaseSaveRequest, MiningBaseSectorResponse,
     ArenaStatusResponse, ArenaMatchCompleteRequest, ArenaMatchCompleteResponse,
-    AdminRefundRequest, AdminXpAdjustRequest, AdminHonorPenaltyRequest,
+    AdminRefundRequest, AdminXpAdjustRequest, AdminHonorPenaltyRequest, AdminHonorGrantRequest,
 )
 from auth import hash_password, verify_password, create_token, decode_token
 from mailer import send_verification_code
@@ -2521,18 +2521,38 @@ async def admin_dashboard(db: AsyncSession = Depends(get_db)):
     }
 
 
+ADMIN_PLAYERS_SORT_FIELDS = {
+    "id", "username", "created_at", "credits", "starGold",
+    "pilotXp", "pilotHonor", "playTimeSec",
+}
+
+
 @app.get("/admin/players")
 async def admin_list_players(
     q: str = "", page: int = 1, pageSize: int = 50,
+    banned: bool | None = None, muted: bool | None = None, premium: bool | None = None,
+    online: bool | None = None, corp: str = "",
+    sort: str = "id", dir: str = "asc",
     db: AsyncSession = Depends(get_db),
 ):
+    # corp/premium/credits/starGold/pilotXp/pilotHonor/playTimeSec живут ВНУТРИ
+    # player_state.state (JSON-блоб, не отдельные SQL-колонки) — а не SQL WHERE/ORDER
+    # BY на них. При 2 аккаунтах сейчас и разумных масштабах позже (это внутренний
+    # admin-инструмент, не публичный листинг) фильтр/сортировка/пагинация в Python
+    # после одной выборки — простое и достаточно быстрое решение; переходить на
+    # json_extract в SQL имеет смысл, только если реально станет медленно.
     page = max(1, page)
     pageSize = max(1, min(pageSize, 200))
+    if sort not in ADMIN_PLAYERS_SORT_FIELDS:
+        sort = "id"
+
     query = select(User)
     if q.strip():
         query = query.where(User.username.ilike(f"%{q.strip()}%"))
-    total = (await db.execute(select(func.count()).select_from(query.subquery()))).scalar_one()
-    query = query.order_by(User.id).offset((page - 1) * pageSize).limit(pageSize)
+    if banned is not None:
+        query = query.where(User.is_banned == (1 if banned else 0))
+    if muted is not None:
+        query = query.where(User.is_muted == (1 if muted else 0))
     users = (await db.execute(query)).scalars().all()
 
     user_ids = [u.id for u in users]
@@ -2543,19 +2563,40 @@ async def admin_list_players(
             for ps in (await db.execute(select(PlayerState).where(PlayerState.user_id.in_(user_ids)))).scalars().all()
         }
     online_uids = {m['uid'] for m in chat_manager.active.values()}
+
     players = []
     for u in users:
         st = states.get(u.id) or {}
+        play_time_sec = sum((st.get("shipPlayTimeSec") or {}).values())
         players.append({
             "id": u.id, "username": u.username, "email": u.email,
             "email_verified": bool(u.email_verified),
             "is_admin": bool(u.is_admin), "is_banned": bool(u.is_banned), "is_muted": bool(u.is_muted),
+            "banned_at": u.banned_at.isoformat() if u.banned_at else None,
             "online": u.id in online_uids,
+            "created_at": u.created_at.isoformat() if u.created_at else None,
             "credits": st.get("credits"), "starGold": st.get("starGold"),
-            "corp": st.get("playerCorp"), "premium": st.get("premium"),
+            "corp": st.get("playerCorp"), "premium": bool(st.get("premium")),
             "pilotXp": st.get("pilotXp"), "pilotHonor": st.get("pilotHonor"),
+            "playTimeSec": play_time_sec,
         })
-    return {"players": players, "total": total, "page": page, "pageSize": pageSize}
+
+    if premium is not None:
+        players = [p for p in players if p["premium"] == premium]
+    if online is not None:
+        players = [p for p in players if p["online"] == online]
+    if corp.strip():
+        players = [p for p in players if p["corp"] == corp.strip()]
+
+    reverse = dir == "desc"
+    _str_fields = {"username", "created_at"}
+    _default = "" if sort in _str_fields else 0
+    players.sort(key=lambda p: (p.get(sort) is None, p.get(sort) if p.get(sort) is not None else _default), reverse=reverse)
+
+    total = len(players)
+    start = (page - 1) * pageSize
+    page_players = players[start:start + pageSize]
+    return {"players": page_players, "total": total, "page": page, "pageSize": pageSize}
 
 
 @app.get("/admin/audit")
@@ -2587,10 +2628,14 @@ def _admin_log(db: AsyncSession, action: str, target: User, params: dict | None 
                      params={"target_user_id": target.id, "target_username": target.username, **(params or {})}))
 
 
+DELETE_ACCOUNT_BAN_WAIT_DAYS = 14
+
+
 @app.post("/admin/players/{user_id}/ban")
 async def admin_ban(user_id: int, db: AsyncSession = Depends(get_db)):
     user = await _admin_get_user(user_id, db)
     user.is_banned = 1
+    user.banned_at = datetime.utcnow()  # старт 14-дневного окна до возможного удаления
     _admin_log(db, "ADMIN_BAN", user)
     await db.commit()
     return {"ok": True}
@@ -2600,6 +2645,7 @@ async def admin_ban(user_id: int, db: AsyncSession = Depends(get_db)):
 async def admin_unban(user_id: int, db: AsyncSession = Depends(get_db)):
     user = await _admin_get_user(user_id, db)
     user.is_banned = 0
+    user.banned_at = None  # разбанили — отменяет и обратный отсчёт до удаления
     _admin_log(db, "ADMIN_UNBAN", user)
     await db.commit()
     return {"ok": True}
@@ -2681,6 +2727,58 @@ async def admin_honor_penalty(user_id: int, body: AdminHonorPenaltyRequest, db: 
     _admin_log(db, "ADMIN_HONOR_PENALTY", user, {"pct": body.pct, "honor_before": before, "honor_after": state["pilotHonor"]})
     await db.commit()
     return {"ok": True, "pilotHonor": state["pilotHonor"]}
+
+
+@app.post("/admin/players/{user_id}/honor_grant")
+async def admin_honor_grant(user_id: int, body: AdminHonorGrantRequest, db: AsyncSession = Depends(get_db)):
+    # Отдельно от honor_penalty (по просьбе): начисление КОНКРЕТНОГО значения,
+    # не процент — для поощрения, а не наказания.
+    user = await _admin_get_user(user_id, db)
+    ps = await _admin_get_player_state(user_id, db)
+    state = dict(ps.state or {})
+    state["pilotHonor"] = max(0, (state.get("pilotHonor") or 0) + body.delta)
+    ps.state = state
+    _admin_log(db, "ADMIN_HONOR_GRANT", user, {"honor_delta": body.delta})
+    await db.commit()
+    return {"ok": True, "pilotHonor": state["pilotHonor"]}
+
+
+@app.delete("/admin/players/{user_id}")
+async def admin_delete_player(user_id: int, db: AsyncSession = Depends(get_db)):
+    # Физическое удаление — необратимо, поэтому обязателен бан + 14 дней ожидания С
+    # МОМЕНТА бана (диалог: "сначала бан потом 2 недели ожидания"; UI уже требует
+    # двойное подтверждение до этого запроса, здесь — жёсткая серверная проверка,
+    # а не только клиентская, т.к. это самое опасное admin-действие из всех).
+    user = await _admin_get_user(user_id, db)
+    if not user.is_banned or not user.banned_at:
+        raise HTTPException(status_code=400, detail="Аккаунт нужно сначала забанить")
+    days_since_ban = (datetime.utcnow() - user.banned_at).days
+    if days_since_ban < DELETE_ACCOUNT_BAN_WAIT_DAYS:
+        remaining = DELETE_ACCOUNT_BAN_WAIT_DAYS - days_since_ban
+        raise HTTPException(status_code=400, detail=f"Ещё рано — до удаления осталось {remaining} дн. с момента бана")
+
+    username_snapshot = user.username
+    _admin_log(db, "ADMIN_DELETE_ACCOUNT", user, {"days_since_ban": days_since_ban})
+
+    # Личные данные аккаунта — удаляем. ChatMessage/AuditLog/Friendship/Blacklist (по
+    # нику, не user_id) НЕ трогаем — это исторические записи/чужие данные (у друга,
+    # добавившего этот ник в блэклист, запись должна остаться), а не собственность
+    # удаляемого аккаунта; таблицы уже толерантны к отсутствующему user_id (см. /audit,
+    # /admin/audit: "u.username if u else None").
+    await db.execute(delete(PlayerState).where(PlayerState.user_id == user_id))
+    await db.execute(delete(PlayerProfile).where(PlayerProfile.user_id == user_id))
+    await db.execute(delete(EmailVerificationToken).where(EmailVerificationToken.user_id == user_id))
+    await db.execute(delete(DungeonLives).where(DungeonLives.user_id == user_id))
+    await db.execute(delete(ArenaDaily).where(ArenaDaily.user_id == user_id))
+    await db.execute(delete(PrivateMessage).where(
+        (PrivateMessage.from_user_id == user_id) | (PrivateMessage.to_user_id == user_id)
+    ))
+    await db.execute(delete(DungeonRun).where(
+        DungeonRun.owner_kind == 'solo', DungeonRun.owner_key == f'user:{user_id}'
+    ))
+    await db.delete(user)
+    await db.commit()
+    return {"ok": True, "deleted_username": username_snapshot}
 
 
 # ── Данж-инстансы ─────────────────────────────────────────────────────
