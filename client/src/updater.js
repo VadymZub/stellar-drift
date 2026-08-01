@@ -71,8 +71,19 @@ function _showPrompt(update, tauri) {
 
   btnLater.addEventListener('click', () => overlay.remove());
 
+  // disabled=true уже блокировал повторный клик функционально, но визуально кнопка
+  // оставалась такой же яркой с cursor:pointer — выглядело так, будто её всё ещё
+  // можно жать (диалог: "когда пошло обновление нужно деактивировать кнопку").
+  const _setButtonsDisabled = (disabled) => {
+    btnUpdate.disabled = disabled; btnLater.disabled = disabled;
+    [btnUpdate, btnLater].forEach(b => {
+      b.style.opacity = disabled ? '0.45' : '1';
+      b.style.cursor = disabled ? 'default' : 'pointer';
+    });
+  };
+
   btnUpdate.addEventListener('click', async () => {
-    btnUpdate.disabled = true; btnLater.disabled = true;
+    _setButtonsDisabled(true);
     let downloaded = 0, total = 0;
     try {
       await update.downloadAndInstall((event) => {
@@ -93,7 +104,7 @@ function _showPrompt(update, tauri) {
     } catch (e) {
       console.warn('[updater] install failed:', e);
       status.textContent = 'Не удалось установить обновление';
-      btnUpdate.disabled = false; btnLater.disabled = false;
+      _setButtonsDisabled(false);
     }
   });
 
