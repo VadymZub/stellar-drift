@@ -19,7 +19,7 @@
       }
     ],
     "security": {
-      "csp": null
+      "csp": "default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; connect-src 'self' https://stellar-drift-mmo.duckdns.org wss://stellar-drift-mmo.duckdns.org; img-src 'self' data:"
     }
   },
   "bundle": {
