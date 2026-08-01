@@ -1924,7 +1924,12 @@ async def register(body: RegisterRequest, db: AsyncSession = Depends(get_db)):
     existing = (await db.execute(select(User).where(User.username == body.username))).scalar_one_or_none()
     if existing:
         raise HTTPException(status_code=400, detail="Username already taken")
-    existing_email = (await db.execute(select(User).where(User.email == body.email))).scalar_one_or_none()
+    # .first(), не .scalar_one_or_none() — email больше НЕ unique (мультиаккаунт
+    # разрешён), несколько строк с одной почтой — не ошибка, а нормальный случай.
+    # scalar_one_or_none() тут раньше падал с MultipleResultsFound, как только почта
+    # использовалась больше одного раза (диалог: регистрация возвращала 500 вместо
+    # ожидаемого 409 EMAIL_ALREADY_USED).
+    existing_email = (await db.execute(select(User).where(User.email == body.email))).scalars().first()
     if existing_email and not body.confirm_duplicate_email:
         # 409, не 400 — клиент (LoginScene.js) отличает этот код от обычных ошибок
         # валидации, показывает confirm() и при "да" шлёт тот же запрос повторно
@@ -2021,9 +2026,10 @@ async def change_email(
 ):
     if not await asyncio.to_thread(verify_password, body.current_password, user.password_hash):
         raise HTTPException(status_code=401, detail="Текущий пароль неверен")
+    # .first() — см. комментарий в /auth/register, тот же MultipleResultsFound-баг.
     existing = (await db.execute(select(User).where(
         User.email == body.new_email, User.id != user.id
-    ))).scalar_one_or_none()
+    ))).scalars().first()
     if existing and not body.confirm_duplicate_email:
         raise HTTPException(status_code=409, detail="EMAIL_ALREADY_USED")
     user.email = body.new_email
