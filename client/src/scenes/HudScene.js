@@ -10,7 +10,8 @@ import { prerenderTex } from '../utils/prerenderTex.js';
 import { loadSettings, saveSettings, getMinimapDims } from '../settings.js';
 import { GroupSystem } from '../systems/GroupSystem.js';
 import { PvpClient } from '../systems/PvpClient.js';
-import { blacklistList, blacklistAdd, blacklistRemove, WS_BASE } from '../api.js';
+import { blacklistList, blacklistAdd, blacklistRemove, WS_BASE, clearSession } from '../api.js';
+import { domConfirm } from '../domConfirm.js';
 import { MailClient } from '../systems/MailClient.js';
 import ArmoredTrain from '../entities/ArmoredTrain.js';
 import { SHIP_BY_KEY } from '../ships.js';
@@ -934,7 +935,105 @@ export default class HudScene extends Phaser.Scene {
     return h;
   }
 
+  // ══ ВЫХОД ИЗ АККАУНТА ═══════════════════════════════════════════════════
+  // Мультиаккаунт на одну почту разрешён (см. память/диалог) — нужен способ сменить
+  // аккаунт без перезапуска всего приложения. 5с отсчёт отменяется движением корабля
+  // или недавним уроном (см. _updateLogoutCountdown); в данже/боссовой карте выход
+  // разрешён, но с явным предупреждением про телепорт на базу при повторном входе.
+  LOGOUT_COUNTDOWN_MS = 5000;
+  LOGOUT_ATTACK_WINDOW_MS = 3000; // "недавно получил урон" — тот же порядок, что recentlyHit в Mob.js
+  LOGOUT_MOVE_EPSILON = 4; // px — не отменять от суб-пиксельного дрожания/физики на месте
+
+  async _startLogoutFlow() {
+    if (this._logoutState) return; // уже идёт отсчёт
+    const sec = SECTORS[galaxy.current];
+    if (sec?.isDungeon) {
+      const ok = await domConfirm(
+        i18n.t('hud.logout_dungeon_warning')
+      );
+      if (!ok) return;
+    }
+    this._beginLogoutCountdown();
+  }
+
+  _beginLogoutCountdown() {
+    const p = this.gs.player;
+    this._logoutState = {
+      remainingMs: this.LOGOUT_COUNTDOWN_MS,
+      startX: p?.x ?? 0,
+      startY: p?.y ?? 0,
+    };
+    this._buildLogoutOverlay();
+  }
+
+  _buildLogoutOverlay() {
+    const overlay = document.createElement('div');
+    Object.assign(overlay.style, {
+      position: 'fixed', top: '16px', left: '50%', transform: 'translateX(-50%)',
+      background: 'rgba(5,10,25,0.95)', border: '1px solid rgba(239,83,80,0.4)',
+      borderRadius: '6px', padding: '10px 18px', zIndex: '9999',
+      fontFamily: "'Segoe UI', system-ui, sans-serif", color: '#cfd8dc',
+      display: 'flex', alignItems: 'center', gap: '14px', fontSize: '13px',
+    });
+    const txt = document.createElement('span');
+    const btnCancel = document.createElement('button');
+    btnCancel.type = 'button';
+    btnCancel.textContent = i18n.t('hud.logout_cancel_btn');
+    Object.assign(btnCancel.style, {
+      background: 'transparent', color: '#ef5350', border: '1px solid rgba(239,83,80,0.5)',
+      borderRadius: '4px', padding: '6px 12px', fontSize: '12px', cursor: 'pointer', fontFamily: 'inherit',
+    });
+    btnCancel.addEventListener('click', () => this._cancelLogout());
+    overlay.append(txt, btnCancel);
+    document.body.append(overlay);
+    this._logoutState.overlay = overlay;
+    this._logoutState.txt = txt;
+  }
+
+  _cancelLogout(logMsg) {
+    if (!this._logoutState) return;
+    this._logoutState.overlay?.remove();
+    this._logoutState = null;
+    if (logMsg) this.gs.log(logMsg);
+  }
+
+  _updateLogoutCountdown(delta) {
+    const st = this._logoutState;
+    if (!st) return;
+    const p = this.gs.player;
+    if (!p) { this._cancelLogout(); return; }
+
+    if (Phaser.Math.Distance.Between(p.x, p.y, st.startX, st.startY) > this.LOGOUT_MOVE_EPSILON) {
+      this._cancelLogout(i18n.t('hud.logout_cancel_move'));
+      return;
+    }
+    const sinceHit = this.time.now - (p.lastDamageAt ?? -1e9);
+    if (sinceHit < this.LOGOUT_ATTACK_WINDOW_MS) {
+      this._cancelLogout(i18n.t('hud.logout_cancel_attack'));
+      return;
+    }
+
+    st.remainingMs -= (delta ?? 16.7);
+    if (st.remainingMs <= 0) {
+      st.overlay?.remove();
+      this._logoutState = null;
+      this._finishLogout();
+      return;
+    }
+    st.txt.textContent = i18n.t('hud.logout_countdown', { sec: (st.remainingMs / 1000).toFixed(1) });
+  }
+
+  _finishLogout() {
+    clearSession();
+    const mgr = this.scene.manager;
+    mgr.getScenes(true).forEach(s => {
+      if (s.scene.key !== 'LoginScene') mgr.stop(s.scene.key);
+    });
+    this.scene.start('LoginScene');
+  }
+
   update(time, delta) {
+    this._updateLogoutCountdown(delta);
     // Видимость кнопки выхода с арены — см. create() выше.
     const inArena = !!SECTORS[galaxy.current]?.arenaMode;
     if (this._leaveArenaBg.visible !== inArena) {
@@ -2628,6 +2727,9 @@ export default class HudScene extends Phaser.Scene {
       { key: 'log',  icon: '📜', tip: 'ЛОГ',          badgeColor: null,      action: () => this._toggleLogPanel() },
       { key: 'bst',  icon: '⚡', tip: 'БУСТЕРЫ',      badgeColor: null,      action: () => this._toggleBoosterWidget() },
       { key: 'set',  icon: '⚙', tip: 'НАСТРОЙКИ',    badgeColor: null,      action: () => this.gs.toggleOverlay('SettingsScene') },
+      // Крайняя справа (по просьбе) — раз мультиаккаунт на одну почту разрешён,
+      // нужен быстрый способ сменить аккаунт, не закрывая всё приложение целиком.
+      { key: 'exit', icon: '⏻', tip: i18n.t('hud.logout_tip'), badgeColor: '#ef5350', action: () => this._startLogoutFlow() },
     ];
 
     // Restore saved position/orientation (та же localStorage-запись, что и раньше,
