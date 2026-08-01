@@ -1,3 +1,5 @@
+use tauri::Manager;
+
 // Custom command instead of relying on window.__TAURI__.app.getVersion() — that
 // global's exact shape under withGlobalTauri turned out unreliable (silently
 // resolved to nothing, no error either), so a plain own command sidesteps
@@ -20,6 +22,17 @@ pub fn run() {
             .level(log::LevelFilter::Info)
             .build(),
         )?;
+      }
+      // ВРЕМЕННО: devtools открыты в самом release-билде (обычно только debug) —
+      // диагностика "TypeError: Failed to fetch" внутри упакованного приложения,
+      // где иначе вообще не видно реальной причины сетевой ошибки. cfg(feature =
+      // "devtools") тут был бы НЕПРАВИЛЬНЫМ — это проверяла бы фичу СВОЕГО крейта
+      // (app), а не зависимости tauri (её фичу включили в Cargo.toml) — метод
+      // open_devtools() просто существует или нет в зависимости от той фичи, свой
+      // cfg-гейт не нужен. Убрать вместе с devtools-фичей в Cargo.toml после того,
+      // как причина найдена и починена.
+      if let Some(window) = app.get_webview_window("main") {
+        window.open_devtools();
       }
       Ok(())
     })
