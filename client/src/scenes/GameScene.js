@@ -390,6 +390,11 @@ export default class GameScene extends Phaser.Scene {
     this.devMode   = DEV_MODE;
     this.credits  = this.credits  ?? (tp ? tp.credits  : DEV_MODE ? 3000000 : 0);
     this.starGold = this.starGold ?? (tp ? tp.starGold : DEV_MODE ? 20000   : 0);
+    // Стартовый боезапас для нового реального игрока — иначе первый бой не с чем вести
+    // (диалог: "новому игроку дать 1 тыс боеприпасов (плазма первого уровня)").
+    // Нормализация ниже (ammoSlots: N слотов по aSlots корабля) сама допишет пустые
+    // слоты после этого первого.
+    this.ammoSlots = this.ammoSlots ?? (tp ? [] : [{ type: 'ammo_plasma', count: 1000 }]);
 
     this.ownedShips     = this.ownedShips     || new Set(['wisp']);
     this.activeShip     = this.activeShip     || 'wisp';
@@ -482,7 +487,12 @@ export default class GameScene extends Phaser.Scene {
     // "любимый корабль" в ProfileScene: сервер ничего подобного не отслеживает, а строить
     // отдельную серверную телеметрию ради лёгкой подсказки — overkill (см. план профиля).
     this._shipPlayTimeSec = this._shipPlayTimeSec || {};
-    this.pilotXp    = this.pilotXp    || (tp ? xpForLevel(tp.level) : 1829100);
+    // 1829100 XP (~ур.41) раньше выдавалось ЛЮБОМУ новому аккаунту безусловно — эта
+    // строка никогда не была под DEV_MODE, в отличие от credits/starGold/honor рядом
+    // (диалог: "но - 41й уровень, почему?" — на свежем реальном аккаунте, где читы,
+    // премиум и кредиты/золото уже корректно занулены DEV_MODE'ом, только эта строка
+    // осталась негейченной).
+    this.pilotXp    = this.pilotXp    || (tp ? xpForLevel(tp.level) : (DEV_MODE ? 1829100 : 0));
     this.pilotHonor = this.pilotHonor ?? (DEV_MODE ? 420500 : 0);
     this.pilotLevel = levelInfo(this.pilotXp).level;
     this.initMissionState();
