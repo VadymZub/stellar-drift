@@ -32,11 +32,18 @@ export const WS_BASE  = isDevHttp ? `ws://${location.hostname}:8000`  : `wss://$
 // isTauriProd=false и потому DEV_MODE=true — реальный игрок, зашедший в браузер
 // напрямую, получал уровень 41/dev-кредиты/переключатель премиума (диалог: "акаунт
 // в дев режиме, 41 уровень, кастомное переключение премиума" — Вадим_04, созданный
-// как раз таким браузерным тестом). DEV_MODE теперь НЕ включается только от того,
-// что это браузер на проде — только явный ?devMode=1 в URL (admin.html Test Mode
-// теперь передаёт его явно) ИЛИ настоящий локальный dev/LAN/`cargo tauri dev`.
+// как раз таким браузерным тестом).
 const isExplicitDevMode = new URLSearchParams(location.search).get('devMode') === '1';
-export const DEV_MODE = isDevHttp || isExplicitDevMode;
+// Первая попытка (isDevHttp || isExplicitDevMode, без учёта isTauriProd) СНОВА не
+// сработала — та же DEV-ссылка вылезла уже в СОБРАННОМ Tauri-приложении (диалог:
+// "это приложение" в ответ на прямой вопрос, подтверждено: "с браузера нормально").
+// Похоже, location.protocol внутри Tauri-рантайма тоже 'http:' (см. isDevHttp выше),
+// а не 'https:', как предполагалось раньше (комментарий про Web Crypto/secure context
+// был ошибочным выводом, не проверенным фактом) — isDevHttp ложно засчитывал сам
+// пакованный апп как локальную разработку. isTauriProd (по hostname==='tauri.localhost',
+// НЕ по protocol) уже доказанно надёжен — на нём же строится рабочий API_BASE выше —
+// поэтому теперь жёстко исключаем его из DEV_MODE независимо от protocol/isDevHttp.
+export const DEV_MODE = !isTauriProd && (isDevHttp || isExplicitDevMode);
 
 const TOKEN_KEY   = 'sd_token';
 const USERNAME_KEY = 'sd_username';
@@ -71,8 +78,12 @@ async function apiFetch(path, opts = {}) {
   let res;
   try {
     res = await fetch(API_BASE + path, { ...opts, headers });
-  } catch (_) {
-    throw new Error('Сервер недоступен');
+  } catch (err) {
+    // Реальная причина сетевого сбоя раньше терялась целиком (диалог: "принципи не
+    // создает акаунт, даже с новой почтой" в собранном приложении, где нет devtools,
+    // чтобы увидеть исходную ошибку fetch()) — теперь она видна прямо в UI-сообщении,
+    // а не только в консоли, которой в prod-сборке Tauri попросту нет.
+    throw new Error(`Сервер недоступен (${err?.name || 'Error'}: ${err?.message || 'unknown'})`);
   }
 
   const body = await res.json().catch(() => ({}));
