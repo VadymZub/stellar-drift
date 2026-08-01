@@ -13,7 +13,7 @@ export const isTauriProd = location.hostname === 'tauri.localhost';
 // nginx проксирует /api/ -> 127.0.0.1:8000/ (префикс срезается), backend-роуты
 // сами по себе БЕЗ /api (main.py: /auth/login, /player/state, /ws/chat, ...).
 const PROD_HOST = 'stellar-drift-mmo.duckdns.org';
-// Развилка НЕ по isTauriProd — у неё второй, отдельный сценарий: admin.html
+// Развилка НЕ ТОЛЬКО по isTauriProd — у неё второй, отдельный сценарий: admin.html
 // "Test Mode" открывает index.html обычным браузером ПРЯМО на проде
 // (https://stellar-drift-mmo.duckdns.org), там location.hostname — реальный
 // домен, не tauri.localhost, но и не dev-сервер — бывший код всё равно уходил
@@ -21,7 +21,15 @@ const PROD_HOST = 'stellar-drift-mmo.duckdns.org';
 // блокирует http-запрос как mixed content (диалог: "создание тестового профиля
 // из админ панели - не работает на проде"). И dev (браузер/cargo tauri dev), и
 // LAN-доступ со второго ПК всегда голый http — только по нему и различаем.
-const isDevHttp = location.protocol === 'http:';
+//
+// !isTauriProd ОБЯЗАТЕЛЕН здесь тоже — не только у DEV_MODE ниже. Реальный
+// перехваченный запрос из devtools собранного приложения (диалог: "curl
+// 'http://tauri.localhost:8000/auth/login'") доказал: location.protocol внутри
+// Tauri-рантайма — 'http:', не 'https:' (предположение про secure context для
+// Web Crypto было ошибочным). Без этого guard'а isDevHttp был true и в самом
+// приложении — оно билось в http://tauri.localhost:8000, который никуда не ведёт
+// ("Failed to fetch"), вместо настоящего https://stellar-drift-mmo.duckdns.org/api.
+const isDevHttp = !isTauriProd && location.protocol === 'http:';
 export const API_BASE = isDevHttp ? `http://${location.hostname}:8000` : `https://${PROD_HOST}/api`;
 export const WS_BASE  = isDevHttp ? `ws://${location.hostname}:8000`  : `wss://${PROD_HOST}/api`;
 
