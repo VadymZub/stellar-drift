@@ -2622,10 +2622,14 @@ export default class HudScene extends Phaser.Scene {
       this.pvpClient = null;
       this.mailClient = null;
       this._friendsList = [];
+      if (this._chatWsDestroyed) return; // осознанное закрытие (logout/shutdown сцены) — сцена и её
+      // Game Objects уже уничтожаются Phaser'ом ПРЯМО СЕЙЧАС (диалог: "выход из игры" — краш
+      // Cannot read properties of null (reading 'drawImage') внутри Text.setColor, вызванного
+      // из _updateSocialBtnStyles ПОСЛЕ того, как HudScene уже остановлена через logout —
+      // перерисовывать UI умирающей сцены незачем и небезопасно), без модалки и без реконнекта.
       this._rebuildFriendsWin();
       this._rebuildGroupWin();
       this._updateSocialBtnStyles();
-      if (this._chatWsDestroyed) return; // осознанное закрытие (logout/shutdown сцены) — без модалки и без реконнекта
       // 4003 — сервер на пределе бета-лимита одновременных игроков (см. server/main.py
       // ChatManager.is_full/MAX_CONCURRENT_USERS). Реконнект всё равно продолжаем —
       // слот освобождается, как только кто-то выйдет.
