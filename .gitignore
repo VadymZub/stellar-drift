@@ -14,3 +14,6 @@ server/.env
 # OS
 .DS_Store
 Thumbs.db
+
+# Local restore points for in-progress refactors (see client/docs/render_interp_fix_log.md)
+client/backups/

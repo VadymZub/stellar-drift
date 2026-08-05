@@ -71,7 +71,14 @@ export default class Player {
 
     const start = SHIP_BY_KEY[PLAYER.shipKey];
     this.sprite = scene.add.image(x, y, start.key).setDepth(50);
-    scene.physics.add.existing(this.sprite);
+    // Render-интерполяция (docs/render_interp_fix_log.md): визуальный спрайт отделён от
+    // физики. Тело живёт на скрытом _phy, а this.sprite — чисто визуальный: его позицию
+    // каждый кадр перезаписывает интерполяция в GameScene.update(). Иначе (если писать
+    // интерполированную позицию прямо в physics-спрайт) Body.preUpdate() перечитывает
+    // позицию из спрайта КАЖДЫЙ кадр (updateFromGameObject) и физика дрейфует (−509px
+    // за 6с на 300px/s в симуляции). Все обращения к `sprite.body` заменены на `_phy.body`.
+    this._phy = scene.add.image(x, y, start.key).setVisible(false).setDepth(-100);
+    scene.physics.add.existing(this._phy);
     // applyShip берёт лоадаут корабля из scene.loadouts (слоты модулей) и считает статы.
     this.applyShip(start);
     this.hull = this.maxHull;
@@ -164,6 +171,11 @@ export default class Player {
     const dh = Math.round(src.height * scale);
     this.sprite.setDisplaySize(dw, dh);
     this._spriteW = dw; this._spriteH = dh;
+    // Синхронизируем физический объект с текущим кораблём (текстура + размер), чтобы
+    // его transform совпадал с визуальным. Размер body-бокса при этом НЕ меняется —
+    // syncBounds=false, ровно как было у спрайта (см. лог интерполяции).
+    this._phy.setTexture(ship.key);
+    this._phy.setDisplaySize(dw, dh);
     this.displaySize = finalSize;
     // Уровень корабля 1-10 (прокачка за кредиты) → бонусы корпуса.
     this.shipLevel = this.scene.shipLevels?.[ship.key] || 1;
@@ -509,7 +521,7 @@ export default class Player {
     const hullMult    = opts.hullMult   ?? 1;
 
     if (!ignoreEvasion) {
-      const body = this.sprite?.body;
+      const body = this._phy?.body;
       const spd = body ? Math.sqrt(body.velocity.x * body.velocity.x + body.velocity.y * body.velocity.y) : 0;
       const movEvasion = Math.min(0.12, spd / 1500);
       const totalEvasion = Math.min(0.30, (this.evasion ?? 0) + movEvasion);
@@ -632,7 +644,7 @@ export default class Player {
     this.boosting = false;
     this.waypoint = null;
     this.speed = 0;
-    this.sprite.body?.setVelocity(0, 0);
+    this._phy.body?.setVelocity(0, 0);
     this.sprite.setVisible(false);
     this._npIcon.setVisible(false);
     this._npTag.setVisible(false);
@@ -649,7 +661,9 @@ export default class Player {
     this.speed = 0;
     this.boosting = false;
     this.lockedRotation = false;
-    this.sprite.body?.setVelocity(0, 0);
+    this._phy.body?.setVelocity(0, 0);
+    this._phy.setPosition(x, y);
+    this._phy.body?.reset(x, y);
     this.sprite.setPosition(x, y);
     this.sprite.setVisible(true);
     this._npIcon.setVisible(true);
@@ -660,6 +674,7 @@ export default class Player {
       this._npEmblem.setVisible(true);
     }
     this.alive = true;
+    this.scene._resetRenderInterp?.();
   }
 
   // faceAngle: угол на цель, если игрок её атакует; иначе null → нос по курсу движения.

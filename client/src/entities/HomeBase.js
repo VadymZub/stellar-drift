@@ -62,7 +62,7 @@ export default class HomeBase {
     const p  = gs.player;
     if (p) {
       p.waypoint = null; p.speed = 0; p.boosting = false;
-      p.sprite?.body?.setVelocity(0, 0);
+      p._phy?.body?.setVelocity(0, 0);
       gs.steering = false;
       if (gs.movement) {
         gs.movement.showArrow = false;

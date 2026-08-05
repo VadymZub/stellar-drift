@@ -309,6 +309,18 @@ export default class GameScene extends Phaser.Scene {
     this.player = new Player(this, startX, startY, this.objScale);
     this.movement = new Movement(this, this.player);
 
+    // Render-интерполяция (docs/render_interp_fix_log.md): ВКЛЮЧЕНА ПО УМОЛЧАНИЮ с
+    // Шага A.3 (A/B на 60Гц и 100Гц подтвердил: ноль регрессий, дребезг корабля/ника
+    // на 100Гц пропал). Аварийный откат без релоада — window.RENDER_INTERP=false в
+    // консоли; ?noRi в URL — то же самое, для тех, кто не может открыть консоль.
+    // Физика Arcade шагает на скрытом _phy с фикс. 60Гц, видимый player.sprite
+    // интерполируется между шагами по World._elapsed/_frameTimeMS.
+    this._renderInterp = (window.RENDER_INTERP !== undefined)
+      ? !!window.RENDER_INTERP
+      : !new URLSearchParams(location.search).has('noRi');
+    this.physics.world.on('worldstep', this._onWorldStep, this);
+    this._resetRenderInterp();
+
     if (travelCatchup) {
       const p = this.player;
       p.heading = travelCatchup.heading;
@@ -685,6 +697,7 @@ export default class GameScene extends Phaser.Scene {
     // Раньше эти три настройки существовали только в SettingsScene UI/localStorage —
     // ничего в коде их не читало, тумблеры были no-op (см. SettingsScene._save()).
     this.cameraShakeEnabled   = _cfg.cameraShake;
+    this.shotShakeEnabled     = _cfg.shotShake;
     this.engineTrailsEnabled  = _cfg.engineTrails;
     this.bgParallaxEnabled    = _cfg.bgParallax;
 
@@ -3337,7 +3350,9 @@ export default class GameScene extends Phaser.Scene {
           cx = this.worldWidth / 2; cy = this.worldHeight / 2;
         }
         this.player.sprite.setPosition(cx, cy);
-        if (this.player.sprite.body) this.player.sprite.body.reset(cx, cy);
+        if (this.player._phy.body) this.player._phy.body.reset(cx, cy);
+        this.player._phy.setPosition(cx, cy);
+        this._resetRenderInterp();
         this.muzzleFlash(cx, cy, 0x8888ff, this.player);
         this.log(sec.pvp ? '🌀 Варп: телепорт к родной базе' : '🌀 Аварийный прыжок: телепорт на базу');
         break;
@@ -3480,7 +3495,9 @@ export default class GameScene extends Phaser.Scene {
     p.waypoint = null;
     p.speed = 0;
     p.sprite.setPosition(destX, destY);
-    if (p.sprite.body) p.sprite.body.reset(destX, destY);
+    if (p._phy.body) p._phy.body.reset(destX, destY);
+    p._phy.setPosition(destX, destY);
+    this._resetRenderInterp();
     this.time.delayedCall(250, () => {
       if (p?.alive) {
         p.invulnerable = false;
@@ -3537,7 +3554,9 @@ export default class GameScene extends Phaser.Scene {
     const by = base.y ?? this.worldHeight / 2;
     p.sprite.setAlpha(0);
     p.sprite.setPosition(bx, by);
-    if (p.sprite.body) p.sprite.body.reset(bx, by);
+    if (p._phy.body) p._phy.body.reset(bx, by);
+    p._phy.setPosition(bx, by);
+    this._resetRenderInterp();
     p.waypoint = null; p.speed = 0;
     this.cameras.main.centerOn(bx, by);
     this.tweens.add({ targets: p.sprite, alpha: 1, duration: 350 });
@@ -3965,7 +3984,10 @@ export default class GameScene extends Phaser.Scene {
     // бы любой внешний твин на следующем же шаге; микро-шейк камеры — тот же
     // безопасный, уже проверенный в проекте паттерн (см. _shake/_shakeForHit), просто
     // на порядок слабее самых мелких существующих шейков урона.
-    this._shake(isOC ? 90 : 45, isOC ? 0.006 : 0.0025);
+    // shotShakeEnabled — подпункт "Тряска камеры": работает, только если сама
+    // тряска камеры включена (_shake() и так гасит её отдельно, но выстрел
+    // должен отключаться независимо от урона/боссов).
+    if (this.shotShakeEnabled !== false) this._shake(isOC ? 90 : 45, isOC ? 0.006 : 0.0025);
     if (p.hasCannon) this._fireCannon(skillMult, isOC, cannonCount);
     if (p.hasLaser)  this._fireLaser(skillMult, isOC);
   }
@@ -5640,7 +5662,7 @@ export default class GameScene extends Phaser.Scene {
     } else if (eff === 'push') {
       // Гравпульс: отталкиваем игрока + замедляем
       const ang = Math.atan2(p.y - hy, p.x - hx);
-      p.sprite.body.setVelocity(Math.cos(ang) * (cfg.pushDist ?? 180) * 3, Math.sin(ang) * (cfg.pushDist ?? 180) * 3);
+      p._phy.body.setVelocity(Math.cos(ang) * (cfg.pushDist ?? 180) * 3, Math.sin(ang) * (cfg.pushDist ?? 180) * 3);
       p.gravMult  = cfg.slowMult ?? 0.65;
       p.gravTimer = cfg.slowSec  ?? 1.5;
     }
@@ -6821,8 +6843,44 @@ export default class GameScene extends Phaser.Scene {
     // jitter produces a proportionally bigger pixel error. Recomputing the lerp each
     // frame to match what "0.35 at a nominal 60fps" would give at THIS frame's actual
     // dt makes the follow speed frame-rate independent instead of frame-COUNT dependent.
-    const camLerp = 1 - Math.pow(1 - 0.35, dt * 60);
+    // dt сам по себе шумный несколько секунд подряд после любого "прерывания" рендер-
+    // цикла — свежая загрузка, scene.restart() на прыжке, возврат фокуса из фоновой
+    // вкладки (диалог: "рывки чаще после загрузки/прыжка", "свернуть вкладку и вернуться
+    // — снова дребезг"): интервалы между кадрами скачут (замерено трейсом: 10-24мс без
+    // ритма), и та же самая пила лезет в camLerp выше, так что скролл камеры каждый кадр
+    // берёт разный "кусок" пути к цели. Экран = мир − скролл камеры, а камера следует
+    // именно за кораблём игрока — этот шум скролла виден КАК тряска корабля/плашки
+    // ника; у мобов тот же абсолютный джиттер есть, но тонет в их собственном движении.
+    // EMA сглаживает dt ПЕРЕД тем, как он попадёт в формулу — гасит именно кадр-к-кадру
+    // шум, а не разовый выброс; клэмp — бэкстоп на случай гигантской dt на первом кадре
+    // после разворачивания вкладки (иначе camLerp скачет к ~1, мгновенный снап камеры).
+    this._camDtSmoothed = this._camDtSmoothed == null ? dt : this._camDtSmoothed + (dt - this._camDtSmoothed) * 0.15;
+    const camDt = Math.min(Math.max(this._camDtSmoothed, 1 / 240), 1 / 20);
+    const camLerp = 1 - Math.pow(1 - 0.35, camDt * 60);
     this.cameras.main.setLerp(camLerp, camLerp);
+
+    if (this.player?._phy?.body && !this.jumping) {
+      const ri = (window.RENDER_INTERP !== undefined) ? !!window.RENDER_INTERP : this._renderInterp;
+      if (ri) {
+        // Интерполяция: мир уже прошагал в PRE_UPDATE, _riPrev/_riCurr — позиции тела
+        // до/после последнего шага; alpha — точная доля пути к следующему шагу
+        // (World._elapsed / _frameTimeMS). Пишем sprite ДО всех визуальных читателей
+        // player.x/y ниже (engine fx, ретикль, имя, курсор) — они автоматически следуют
+        // за интерполированной позицией.
+        const prX = this._riPrevX, prY = this._riPrevY;
+        const crX = this._riCurrX, crY = this._riCurrY;
+        if (prX != null) {
+          const _w = this.physics.world;
+          const alpha = _w.fixedStep ? (_w._elapsed / _w._frameTimeMS) : 1;
+          const a = Math.min(1, Math.max(0, alpha));
+          this.player.sprite.setPosition(prX + (crX - prX) * a, prY + (crY - prY) * a);
+        }
+      } else {
+        // Интерполяция выключена (?ri нет): спрайт жёстко повторяет _phy — ровно то же
+        // поведение, что было до выноса тела (спрайт = позиция тела после шага).
+        this.player.sprite.setPosition(this.player._phy.x, this.player._phy.y);
+      }
+    }
 
     // Настройка "Параллакс фон" (SettingsScene → Графика) — раньше тумблер ничего не
     // проверял, слой всегда скроллился безусловно.
@@ -6917,10 +6975,10 @@ export default class GameScene extends Phaser.Scene {
     if (this._arenaMazeBounds && this.player.alive) this.movement.clampToWorld();
     // Импульсная мина Синдиката: полная остановка двигателей (сильнее обычного EMP-замедления)
     if (this.player.alive && (this._playerStunUntil || 0) > this.time.now) {
-      this.player.sprite.body.setVelocity(0, 0);
+      this.player._phy.body.setVelocity(0, 0);
     } else if (this.player.alive && (this._empSlowUntil || 0) > this.time.now) {
       // EMP slow: применяем после movement, до обновления мобов
-      const b = this.player.sprite.body;
+      const b = this.player._phy.body;
       b.setVelocity(b.velocity.x * 0.45, b.velocity.y * 0.45);
     }
     if (this.player.alive && galaxy.current === 'dungeon_1') this._updateSwarmPack();
@@ -7852,7 +7910,7 @@ export default class GameScene extends Phaser.Scene {
       }
     }
 
-    this.physics.add.collider(this.player.sprite, this.walls);
+    this.physics.add.collider(this.player._phy, this.walls);
   }
 
   _checkDungeonBossDoor() {
@@ -8372,14 +8430,14 @@ export default class GameScene extends Phaser.Scene {
       const dist = Math.sqrt(dx * dx + dy * dy);
       if (dist < trap.range && dist > 20) {
         const t = 1 - dist / trap.range;
-        // Гравитационное притяжение
+        // Гравитационное притяжение (тело на _phy — см. render_interp_fix_log.md)
         const force = trap.strength * t * dt;
-        this.player.sprite.body.velocity.x += (dx / dist) * force;
-        this.player.sprite.body.velocity.y += (dy / dist) * force;
+        this.player._phy.body.velocity.x += (dx / dist) * force;
+        this.player._phy.body.velocity.y += (dy / dist) * force;
         // Торможение скорости — корабль с трудом улетает
         const drag = Math.pow(1 - t * 0.82, dt);
-        this.player.sprite.body.velocity.x *= drag;
-        this.player.sprite.body.velocity.y *= drag;
+        this.player._phy.body.velocity.x *= drag;
+        this.player._phy.body.velocity.y *= drag;
       }
     }
   }
@@ -9036,7 +9094,7 @@ export default class GameScene extends Phaser.Scene {
     b.fireCooldown -= dt;
     if (b.fireCooldown <= 0 && dist < 600 && b._aiState !== 'flee') {
       b.fireCooldown = b.baseFireRate;
-      const pBody = p.sprite?.body;
+      const pBody = p._phy?.body;
       const pvx = pBody ? pBody.velocity.x / DPR : 0;
       const pvy = pBody ? pBody.velocity.y / DPR : 0;
       const aim = _leadTarget(b.x, b.y, p.x, p.y, pvx, pvy, PROJECTILE.speed);
@@ -9091,7 +9149,7 @@ export default class GameScene extends Phaser.Scene {
       for (let i = 0; i < 5; i++) {
         this.time.delayedCall(i * 110, () => {
           if (!this.botPilot?.alive || !this.player?.alive) return;
-          const _pb = this.player.sprite?.body;
+          const _pb = this.player._phy?.body;
           const aim = _leadTarget(this.botPilot.x, this.botPilot.y, this.player.x, this.player.y,
             _pb ? _pb.velocity.x / DPR : 0, _pb ? _pb.velocity.y / DPR : 0, PROJECTILE.speed);
           this._botShootAt(aim.x, aim.y);
@@ -9359,12 +9417,42 @@ export default class GameScene extends Phaser.Scene {
     return dummy;
   }
 
+  // Render-интерполяция (docs/render_interp_fix_log.md). 'worldstep' — событие
+  // Phaser.Physics.Arcade.World (фиксированные шаги 60Гц, мир шагает в PRE_UPDATE).
+  // К моменту worldstep postUpdate ещё НЕ прошёл: _phy.x/y всё ещё позиция ДО шага
+  // (world перечитывает её в body каждым preUpdate через updateFromGameObject), а
+  // body.center — ПОСЛЕ (интеграция + столкновения уже применены). alpha для рендера
+  // берётся из World._elapsed/_frameTimeMS (точная доля пути к следующему шагу).
+  _onWorldStep() {
+    if (!this.player?._phy?.body) return;
+    const b = this.player._phy.body;
+    const phy = this.player._phy;
+    this._riPrevX = (this._riCurrX == null) ? phy.x : this._riCurrX;
+    this._riPrevY = (this._riCurrY == null) ? phy.y : this._riCurrY;
+    this._riCurrX = b.center.x;
+    this._riCurrY = b.center.y;
+  }
+
+  // Снять интерполяцию после телепорта/респауна/возврата вкладки: prev=curr=текущая
+  // позиция, чтобы sprite не пролетел интерполяцией от старого места к новому.
+  _resetRenderInterp() {
+    const p = this.player;
+    if (!p) { this._riPrevX = this._riPrevY = this._riCurrX = this._riCurrY = null; return; }
+    const x = p._phy?.x ?? p.x;
+    const y = p._phy?.y ?? p.y;
+    this._riPrevX = this._riCurrX = x;
+    this._riPrevY = this._riCurrY = y;
+  }
+
   shutdown() {
     this._prevSector = galaxy.current;
     // Тут — сразу, не через debounce: сцена сейчас уничтожается (смена сектора и т.п.),
     // откладывать на 2с нельзя — можем не долететь до срабатывания таймера.
     if (this._saveStateTimer) { clearTimeout(this._saveStateTimer); this._saveStateTimer = null; }
     this._flushSaveState();
+    if (this.physics.world) {
+      this.physics.world.off('worldstep', this._onWorldStep, this);
+    }
     this._cleanupBotPilot();
     this.escortTransport?.destroy();
     this.escortTransport = null;

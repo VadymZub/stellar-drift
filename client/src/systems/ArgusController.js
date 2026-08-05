@@ -586,9 +586,11 @@ export default class ArgusController {
       gs.time.delayedCall(300, () => {
         if (!p.alive) { cam.startFollow(p.sprite, false, 0.15, 0.15); return; }
 
-        // Teleport player to destination
+        // Teleport player to destination (физика — в _phy, визуал — в sprite; см. render_interp_fix_log.md)
         p.sprite.setPosition(destX, destY);
-        if (p.sprite.body) p.sprite.body.reset(destX, destY);
+        if (p._phy.body) p._phy.body.reset(destX, destY);
+        p._phy.setPosition(destX, destY);
+        gs._resetRenderInterp?.();
 
         // Rotate nose to face the target immediately
         const faceAngle = Math.atan2(target.y - destY, target.x - destX);

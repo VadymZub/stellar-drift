@@ -26,6 +26,7 @@ export function startBgFallbackTick(scene) {
     // Не считаем время скрытия ДО этого момента — отсчёт реального дельта-времени
     // начинается с момента ухода в фон, а не с последнего реального кадра.
     if (document.hidden) lastRealTime = Date.now();
+    else sceneRef?._resetRenderInterp?.(); // возврат вкладки: физика могла уехать в фоне → снять интерполяцию
   });
 
   setInterval(() => {
@@ -51,11 +52,12 @@ export function startBgFallbackTick(scene) {
 
     // Movement.update() лишь выставляет body.velocity — саму позицию интегрирует шаг
     // физического мира Arcade Physics, который (как и rAF) не выполняется в фоне.
-    // Интегрируем позицию вручную тем же dt, иначе корабль оставит курс, но не полетит.
-    const body = p.sprite.body;
+    // Интегрируем позицию вручную тем же dt (в ФИЗИЧЕСКИЙ объект _phy — интерполяция
+    // рендера слетается на возврате вкладки через _resetRenderInterp выше).
+    const body = p._phy.body;
     if (body) {
-      p.sprite.x += body.velocity.x * dt;
-      p.sprite.y += body.velocity.y * dt;
+      p._phy.x += body.velocity.x * dt;
+      p._phy.y += body.velocity.y * dt;
       gs.movement.clampToWorld();
     }
 

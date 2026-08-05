@@ -280,7 +280,7 @@ export default class MiningBase {
     p.waypoint  = null;
     p.speed     = 0;
     p.boosting  = false;
-    p.sprite?.body?.setVelocity(0, 0);
+    p._phy?.body?.setVelocity(0, 0);
     gs.steering = false;
     gs.cancelCollect?.();
     if (gs.movement) {

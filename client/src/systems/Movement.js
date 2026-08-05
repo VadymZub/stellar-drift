@@ -56,12 +56,14 @@ export default class Movement {
   }
 
   // Зажать позицию корабля в границах мира (камера теперь не ограничена миром).
+  // Клэмп пишем в ФИЗИЧЕСКИЙ объект _phy (интерполяция рендера, см. render_interp_fix_log.md),
+  // иначе визуальный спрайт уедет от тела на горизонте мира.
   clampToWorld() {
     const m = this.worldMargin(), p = this.player;
-    if (this._inArenaBaseBubble(p.sprite.x, p.sprite.y)) return;
+    if (this._inArenaBaseBubble(p._phy.x, p._phy.y)) return;
     const b = this._clampBounds();
-    p.sprite.x = Phaser.Math.Clamp(p.sprite.x, b.x0 + m, b.x1 - m);
-    p.sprite.y = Phaser.Math.Clamp(p.sprite.y, b.y0 + m, b.y1 - m);
+    p._phy.x = Phaser.Math.Clamp(p._phy.x, b.x0 + m, b.x1 - m);
+    p._phy.y = Phaser.Math.Clamp(p._phy.y, b.y0 + m, b.y1 - m);
   }
 
   setWaypoint(x, y, showArrow = false) {
@@ -104,7 +106,7 @@ export default class Movement {
     // Арена: 5с обратный отсчёт перед боем — движение заблокировано (см. ArenaController.countdownActive)
     if (this.scene._arenaController?.countdownActive) {
       p.speed = 0;
-      p.sprite.body?.setVelocity(0, 0);
+      p._phy.body?.setVelocity(0, 0);
       this.courseArrow.setVisible(false);
       return;
     }
@@ -115,7 +117,7 @@ export default class Movement {
       this.showArrow = false;
       this.courseArrow.setVisible(false);
       // дрейф по инерции через velocity
-      p.sprite.body.setVelocity(Math.cos(p.heading) * p.speed, Math.sin(p.heading) * p.speed);
+      p._phy.body.setVelocity(Math.cos(p.heading) * p.speed, Math.sin(p.heading) * p.speed);
       return;
     }
 
@@ -126,7 +128,7 @@ export default class Movement {
     // Steer mode: stop at cursor but keep waypoint (next frame setWaypoint refreshes from cursor)
     if (this.steerMode && dist <= this.arrivalThreshold) {
       p.speed = 0;
-      p.sprite.body.setVelocity(0, 0);
+      p._phy.body.setVelocity(0, 0);
       return;
     }
 
@@ -137,7 +139,7 @@ export default class Movement {
       p.speed = 0;
       this.showArrow = false;
       this.courseArrow.setVisible(false);
-      p.sprite.body.setVelocity(0, 0);
+      p._phy.body.setVelocity(0, 0);
       return;
     }
 
@@ -174,7 +176,7 @@ export default class Movement {
     else p.speed = Math.max(desired, p.speed - HANDLING.accel * dt);
 
     // УСТАНОВКА СКОРОСТИ ЧЕРЕЗ ФИЗИКУ (лечит пролёт сквозь стены)
-    p.sprite.body.setVelocity(Math.cos(p.heading) * p.speed, Math.sin(p.heading) * p.speed);
+    p._phy.body.setVelocity(Math.cos(p.heading) * p.speed, Math.sin(p.heading) * p.speed);
 
     // Стрелка-активатор форсажа: только при навигации с миникарты и пока НЕ форсаж.
     // На время самого ускорения стрелка скрыта — активация уже произошла кликом по ней.
