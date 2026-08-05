@@ -2506,7 +2506,7 @@ async def add_audit(
     return {"ok": True}
 
 
-@app.get("/")
+@app.api_route("/", methods=["GET", "HEAD"])
 def root():
     return {"status": "ok", "service": "Stellar Drift API"}
 

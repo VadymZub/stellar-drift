@@ -27,6 +27,7 @@ export const DEFAULTS = {
   // Graphics
   engineTrails: true,
   cameraShake:  true,
+  shotShake:    true,   // подпункт cameraShake — дрожание камеры конкретно при своём выстреле
   bgParallax:   true,
   // Требует перезагрузки страницы — Phaser не умеет менять antialias/antialiasGL
   // у уже созданного WebGL-контекста "на лету" (см. main.js/SettingsScene._save()).

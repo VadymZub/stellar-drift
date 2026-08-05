@@ -7,6 +7,7 @@ import { itemName, itemStats, itemSellPrice, itemIconKey, SLOT_KEY, creditUpgrad
          AMMO_ICON, CONSUMABLES, addConsumableToInventory, countConsumableInInventory, removeConsumableFromInventory,
          rollLaser, LASER_CANNON_PARTS_NEEDED } from '../items.js';
 import { SHIPS, SHIP_BY_KEY, purchaseState, shipLevelCost, shipLevelCostGold, SHIP_MAX_LEVEL } from '../ships.js';
+import { DEV_MODE } from '../api.js';
 import { PERK_MAP, RARITY_COLOR, RARITY_LABEL, rollPerk, perkBonus, creditUpgCost, starUpgCost, PERK_CREDIT_COST, PERK_STAR_COST, PERK_REROLL_BASE,
          generateRoll, rollQualityInfo, refineRoll, REFINE_COST, perkMaxBase, perkMaxUpgraded } from '../perks.js';
 import { prerenderTex } from '../utils/prerenderTex.js';
@@ -88,8 +89,12 @@ export default class GarageScene extends Phaser.Scene {
     this.gs.garageSel = sel;
 
     // Витрина 3×3 слева — крупные плитки с геройским артом
+    // ADMIN-тир (Argus, DEV-хоткей 8) скрыт от обычных игроков — тот же фильтр,
+    // что уже применяется в TestProfileScene/ShadowBattleScene (диалог: "обычный
+    // игрок видит аргус в гараже - это должно быть доступно только в дев режиме").
+    const visibleShips = DEV_MODE ? SHIPS : SHIPS.filter(s => s.tier !== 'ADMIN');
     const cw = 200, ch = 152, gap = 12, lx = px + 18, gy = py + 64;
-    SHIPS.forEach((ship, i) => {
+    visibleShips.forEach((ship, i) => {
       const c = i % 3, r = Math.floor(i / 3);
       this.shipCard(lx + c * (cw + gap), gy + r * (ch + gap), cw, ch, ship, ship.key === sel);
     });

@@ -160,6 +160,7 @@ export default class SettingsScene extends Phaser.Scene {
     this._section('ЭФФЕКТЫ', T, LX, RX, y); y += 22;
     this._addToggle('Следы двигателя', 'engineTrails', T, LX, RX, y); y += 36;
     this._addToggle('Тряска камеры',   'cameraShake',  T, LX, RX, y); y += 36;
+    this._addToggle('При выстреле', 'shotShake', T, LX, RX, y, { indent: true, dependsOn: 'cameraShake' }); y += 36;
     this._addToggle('Параллакс фон',   'bgParallax',   T, LX, RX, y); y += 36;
 
     this._section('ОТОБРАЖЕНИЕ', T, LX, RX, y); y += 22;
@@ -367,10 +368,15 @@ export default class SettingsScene extends Phaser.Scene {
     return hit;
   }
 
-  _addToggle(label, key, tabIdx, LX, RX, y) {
+  _addToggle(label, key, tabIdx, LX, RX, y, opts = {}) {
+    const { indent = false, dependsOn = null } = opts;
     const ROW = 36, BW = 60, BH = 22;
     const by = y + Math.round((ROW - BH) / 2);
-    this._track(this.add.text(LX, y + ROW / 2, label, this._F('12px', '#7eb8c8')).setOrigin(0, 0.5).setDepth(4), tabIdx);
+    const lx = indent ? LX + 18 : LX;
+    const lbl = this._track(
+      this.add.text(lx, y + ROW / 2, indent ? '↳ ' + label : label, this._F('12px', '#7eb8c8')).setOrigin(0, 0.5).setDepth(4),
+      tabIdx
+    );
 
     const bx  = RX - BW;
     const bg  = this._track(
@@ -384,12 +390,28 @@ export default class SettingsScene extends Phaser.Scene {
 
     const refresh = () => {
       const on = !!this._draft[key];
+      const enabled = !dependsOn || !!this._draft[dependsOn];
       bg.setFillStyle(on ? 0x0a3020 : 0x1a0808).setStrokeStyle(1, on ? 0x2a7a50 : 0x5a2a2a, 0.9);
       txt.setText(on ? 'ВКЛ' : 'ВЫКЛ').setColor(on ? '#4dffa0' : '#cc4444');
+      const alpha = enabled ? 1 : 0.4;
+      bg.setAlpha(alpha); txt.setAlpha(alpha); lbl.setAlpha(alpha);
+      if (enabled) bg.setInteractive({ useHandCursor: true }); else bg.disableInteractive();
     };
     refresh();
-    bg.on('pointerdown', () => { this._draft[key] = !this._draft[key]; refresh(); });
-    this._controls[key] = { type: 'toggle', refresh };
+    bg.on('pointerdown', () => {
+      this._draft[key] = !this._draft[key];
+      refresh();
+      this._refreshDependents(key);
+    });
+    this._controls[key] = { type: 'toggle', refresh, dependsOn };
+  }
+
+  // Пропускает refresh() у всех тумблеров, у которых dependsOn === parentKey —
+  // нужно, чтобы дочерний тумблер визуально гас/загорался сразу при клике по родителю.
+  _refreshDependents(parentKey) {
+    for (const ctrl of Object.values(this._controls)) {
+      if (ctrl.dependsOn === parentKey) ctrl.refresh();
+    }
   }
 
   // ── Tab switching ──────────────────────────────────────────────────────────
@@ -433,6 +455,7 @@ export default class SettingsScene extends Phaser.Scene {
     if (gs) gs._autoTargetEnabled   = next.autoTarget;
     if (gs) gs.autoCollectEnabled   = next.autoCollect;
     if (gs) gs.cameraShakeEnabled   = next.cameraShake;
+    if (gs) gs.shotShakeEnabled     = next.shotShake;
     if (gs) gs.engineTrailsEnabled  = next.engineTrails;
     if (gs) gs.bgParallaxEnabled    = next.bgParallax;
 
