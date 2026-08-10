@@ -8,6 +8,8 @@
   "permissions": [
     "core:default",
     "updater:default",
-    "process:allow-restart"
+    "process:allow-restart",
+    "core:window:allow-close",
+    "core:window:allow-destroy"
   ]
 }

@@ -2,6 +2,7 @@ import * as Phaser from 'https://cdn.jsdelivr.net/npm/phaser@4.2.1/dist/phaser.e
 import { COLORS, DPR } from './constants.js';
 import BootScene from './scenes/BootScene.js';
 import LoginScene from './scenes/LoginScene.js';
+import CorpSelectScene from './scenes/CorpSelectScene.js';
 import BackgroundScene from './scenes/BackgroundScene.js';
 import GameScene from './scenes/GameScene.js';
 import HudScene from './scenes/HudScene.js';
@@ -23,8 +24,10 @@ import ProfileScene from './scenes/ProfileScene.js';
 import ProfileViewScene from './scenes/ProfileViewScene.js';
 import MailScene from './scenes/MailScene.js';
 import ArenaLobbyScene from './scenes/ArenaLobbyScene.js';
+import StatsScene from './scenes/StatsScene.js';
 import { loadSettings } from './settings.js';
 import { checkForUpdates } from './updater.js';
+import { domConfirm } from './domConfirm.js';
 
 // Canvas at physical pixel resolution. CSS canvas element uses image-rendering:pixelated
 // for nearest-neighbour CSS scaling — eliminates bilinear blur at non-integer DPR
@@ -77,8 +80,8 @@ const config = {
   // ошибке (см. диалог "должно быть окно — потеряно соединение").
   loader: { timeout: 20000 },
   scene: [
-    BootScene, LoginScene, BackgroundScene, TestProfileScene, GameScene, HudScene,
-    InventoryScene, CargoScene, ClanScene, GarageScene, MapScene, MissionsScene, ShopScene, DonateScene, CorpScene, BaseMenuScene, SkillScene, ShadowBattleScene, SettingsScene, ProfileScene, ProfileViewScene, MailScene, ArenaLobbyScene,
+    BootScene, LoginScene, CorpSelectScene, BackgroundScene, TestProfileScene, GameScene, HudScene,
+    InventoryScene, CargoScene, ClanScene, GarageScene, MapScene, MissionsScene, ShopScene, DonateScene, CorpScene, BaseMenuScene, SkillScene, ShadowBattleScene, SettingsScene, ProfileScene, ProfileViewScene, MailScene, ArenaLobbyScene, StatsScene,
   ],
 };
 
@@ -109,6 +112,7 @@ Promise.race([
 ]).catch(() => {}).then(() => {
   const game = new Phaser.Game(config);
   checkForUpdates(); // no-op outside a real Tauri window (see updater.js)
+  _bindCloseConfirm(game); // no-op outside a real Tauri window — see below
 
   function fitCanvas() {
     const c = game.canvas;
@@ -175,3 +179,37 @@ Promise.race([
     if (window.innerWidth !== _lastW || window.innerHeight !== _lastH) scheduleResize();
   }, 500);
 });
+
+// Подтверждение на крестик окна (диалог: "можно выйти из игры некорректно" + "предупредить
+// что нужно выходить по кнопке выхода") — раньше крестик закрывал приложение мгновенно,
+// без шанса передумать и без напоминания про штатный logout (HudScene ⏻, 5с отсчёт,
+// корректно шлёт clearSession()/останавливает сцены). Автосейв на visibilitychange→hidden
+// (см. GameScene.js) технически должен успевать сработать и на крестик, так что риск тут
+// в основном UX-ный (случайный клик по крестику посреди боя), а не гарантированная потеря
+// сохранения — но предупреждение не помешает в любом случае.
+// Диагностика прямо на экране (не консоль — диалог: "я не умею" искать её/фильтры
+async function _bindCloseConfirm(game) {
+  // НЕ isTauriProd — тот означает конкретно упакованное прод-приложение (хост
+  // tauri.localhost). cargo tauri dev грузится с обычного http://localhost:8080
+  // (см. tauri.conf.json devUrl) — тот же самый настоящий Tauri-рантайм/API, просто
+  // isTauriProd там всегда false (диалог: "выключилось без диалога" — код выходил
+  // на этой строке, ничего даже не пробовав; DEV_MODE=true в cargo tauri dev — та же
+  // причина, см. CLAUDE.md). Правильная проверка — есть ли Tauri-мост вообще, а не
+  // прод ли это конкретно. Подтверждено рабочим на реальном крестике (диалог "есть").
+  if (!window.__TAURI__) return; // обычная браузерная вкладка — крестика такого нет
+  const appWindow = window.__TAURI__.window?.getCurrentWindow?.();
+  if (!appWindow?.onCloseRequested) return;
+
+  await appWindow.onCloseRequested(async (event) => {
+    event.preventDefault();
+    // domConfirm рисует message через textContent без white-space:pre-line — перенос
+    // строки \n не отрисуется как реальный разрыв, поэтому одним предложением, а не
+    // двумя абзацами.
+    const inGame = game.scene.isActive('GameScene');
+    const msg = inGame
+      ? 'Рекомендуется выходить через кнопку ⏻ в игре — это гарантирует сохранение. Всё равно закрыть приложение?'
+      : 'Закрыть приложение?';
+    const ok = await domConfirm(msg, { okText: 'Закрыть', cancelText: 'Остаться' });
+    if (ok) appWindow.destroy();
+  });
+}

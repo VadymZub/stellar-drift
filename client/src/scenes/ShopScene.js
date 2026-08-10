@@ -479,10 +479,11 @@ export default class ShopScene extends Phaser.Scene {
       this.F('12px', '#4a7a90')).setOrigin(0.5, 0);
     ob.push(haveTxt);
 
-    // Sell hint
-    ob.push(this.add.text(cx + cw / 2, cy + 176,
-      `продажа: ${item.sell} кр./шт.`,
-      this.F('12px', '#4a6040')).setOrigin(0.5, 0));
+    // Строка "продажа: X кр./шт." тут убрана — карточка "gold only, no credits"
+    // (см. заголовок метода), продажа в трюме реально идёт за кредиты (CargoScene),
+    // но показывать это здесь, на экране ПОКУПКИ за звёзды, только путало (диалог:
+    // "описание про продажу в кредитах но данные предметы только за золото").
+    // Сам механизм продажи не менялся — это чисто витрина магазина.
 
     // Gold buy button — по умолчанию ×10 = 1⭐ (GOLD_PACK), но предмет может задать свою
     // пару goldQty/goldPrice (см. shield_drone в items.js — ×1 = 10⭐, штучная покупка

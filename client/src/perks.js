@@ -133,8 +133,11 @@ export const PERK_DEFS = [
 
   { key: 'perk_hardened',           imgFile: 'Hardened.png',           name: 'Hardened',
     slot: 'shield', rarity: 'common',
-    effect: '+10% сопротивление входящему урону',
-    desc: (b, r = 1) => `+${+(10 * r * (1 + b)).toFixed(1)}% физ. сопр. · к кораблю, суммируется` },
+    // База снижена с 10% до 6.9% (макс. прокачка ×1.45 → ~10% вместо ~14.5%) + стек
+    // ограничен 2 копиями на корабль (см. GarageScene.equip()/Player.recomputeStats()) —
+    // на 7-слотовом корабле старые цифры давали >100% снижения урона одним этим перком.
+    effect: '+6.9% сопротивление входящему урону',
+    desc: (b, r = 1) => `+${+(6.9 * r * (1 + b)).toFixed(1)}% физ. сопр. · к кораблю, макс. 2 шт./корабль` },
 
   { key: 'perk_last_stand',         imgFile: 'Last Stand.png',         name: 'Last Stand',
     slot: 'shield', rarity: 'jackpot',

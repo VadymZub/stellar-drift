@@ -103,6 +103,20 @@ export default class Player {
     this._npEmblem = scene.add.image(0, 0, 'rank_tier1')
       .setDisplaySize(18, 18).setDepth(51).setVisible(false);
 
+    // Индикатор направления входящего урона: дуга у борта корабля + суммарный урон.
+    // Форма рисуется один раз локально (открытием на +x), поворот/позиция — в update().
+    // Depth 52 — сразу над nameplate (51), под course arrow (55).
+    this._dmgArcG = scene.add.graphics().setDepth(52).setVisible(false);
+    this._dmgArcText = scene.add.text(0, 0, '', {
+      fontFamily: 'Orbitron', fontSize: '13px', fontStyle: 'bold',
+      color: '#ff6666', stroke: '#000000', strokeThickness: 3,
+      resolution: UI_RES,
+    }).setOrigin(0.5).setDepth(52).setVisible(false);
+    this._dmgArcAngle = 0;
+    this._dmgArcHideAt = 0;
+    this._dmgArcLastShownAt = -100000;
+    this._dmgArcPending = null; // {total, angle, isCrit} — копится, пока держит троттлинг
+
     this.heading = -Math.PI / 2;     // направление ДВИЖЕНИЯ
     this.facing = -Math.PI / 2;      // направление НОСА (в бою — на цель)
     this.waypoint = null;            // {x, y} или null
@@ -312,11 +326,17 @@ export default class Player {
     const groupN = this.scene.groupSize || 0;
     this.adaptiveResistPct = 0;
     this.kineticAbsorbChance = 0;
+    // Hardened раньше суммировался по ВСЕМ щитовым слотам без ограничения — на корабле
+    // с 7 слотами (Helion/Argosy/Drifter) это давало >100% снижения урона САМО ПО СЕБЕ,
+    // до скилла и платы (диалог: "это уже имба, как достичь"). Экипировка 3+ штук уже
+    // блокируется в Гараже (см. GarageScene.equip()), но считаем не больше 2 копий и
+    // здесь — защита от уже надетых до фикса/DEV-путей мимо equip().
+    let hardenedCount = 0;
     for (const s of S) {
       if (!s.perk) continue;
       const pb = perkBonus(s.perk);
       if (s.perk.key === 'perk_resonance')      regenPerkPct       += 0.12 * (1 + pb);
-      if (s.perk.key === 'perk_hardened')        piercingResPerkRed += 0.10 * (1 + pb);
+      if (s.perk.key === 'perk_hardened' && hardenedCount < 2) { piercingResPerkRed += 0.069 * (1 + pb); hardenedCount++; }
       if (s.perk.key === 'perk_quick_recovery')  quickRecoveryMult  *= 1 - 0.30 * (1 + pb);
       if (s.perk.key === 'perk_nimble')          evasionPerkAdd     += 0.06 * (1 + pb);
       if (s.perk.key === 'perk_kinetic_absorb')  this.kineticAbsorbChance = Math.max(this.kineticAbsorbChance, 0.15 * (1 + pb));
@@ -422,7 +442,7 @@ export default class Player {
 
     // Reduction stats: 1.0 - Σ(all reductions) — board, skill, perk all additive
     this.damageResistMod   = Math.max(0.10, 1.0 - BF('piercingRes') - sl('damage_resist') * 0.05 - piercingResPerkRed);
-    this.activeCooldownMod = Math.max(0.10, 1.0 - BF('cooldown')    - sl('module_specialist') * 0.10);
+    this.activeCooldownMod = Math.max(0.25, 1.0 - BF('cooldown')    - sl('module_specialist') * 0.10);
     this.aggroRadiusMod    = Math.max(0.30, 1.0 - BF('aggroRadius'));
 
     // ── Economy stats — additive from BASE=1.0 ────────────────────────────────
@@ -614,8 +634,57 @@ export default class Player {
     }
 
     const brokeShield = hadShield && this.shield <= 0;
+    const shieldHit = toShieldRaw * shieldMult;
     if (this.hull <= 0) { this.hull = 0; this.die(); }
-    return { shieldHit: toShieldRaw * shieldMult, hullHit, brokeShield };
+    // Индикатор направления входящего урона — только когда источник известен
+    // (opts.srcX/srcY): DoT-тики кислоты и внутренние reflect-хиты его не передают,
+    // это и есть намеренный фильтр "только новые дискретные попадания".
+    if (opts.srcX != null && (shieldHit > 0 || hullHit > 0)) {
+      this._flashDamageArc(opts.srcX, opts.srcY, shieldHit + hullHit, !!opts.isCrit);
+    }
+    return { shieldHit, hullHit, brokeShield };
+  }
+
+  // Троттлинг индикатора направления урона: при частых попаданиях подряд (пулемётный
+  // моб/веер) не мигаем на каждый выстрел — копим сумму и угол ПОСЛЕДНЕГО попадания,
+  // показываем не чаще раза в 2с (диалог: "обновлять не чаще раз в 2 сек, показать
+  // общий урон, если несколько выстрелов одновременно — последнее направление").
+  _flashDamageArc(srcX, srcY, dmg, isCrit) {
+    const now = this.scene.time.now;
+    const angle = Math.atan2(srcY - this.y, srcX - this.x);
+    if (now - this._dmgArcLastShownAt >= 2000) {
+      const total = dmg + (this._dmgArcPending?.total || 0);
+      const crit  = isCrit || !!this._dmgArcPending?.isCrit;
+      this._dmgArcPending = null;
+      this._showDamageArc(angle, total, crit, now);
+    } else {
+      if (!this._dmgArcPending) this._dmgArcPending = { total: 0, angle, isCrit: false };
+      this._dmgArcPending.total += dmg;
+      this._dmgArcPending.angle = angle; // последнее попадание "выигрывает" направление
+      this._dmgArcPending.isCrit = this._dmgArcPending.isCrit || isCrit;
+    }
+  }
+
+  _showDamageArc(angle, total, isCrit, now) {
+    this._dmgArcLastShownAt = now;
+    this._dmgArcAngle = angle;
+    this._dmgArcHideAt = now + 1200;
+    const color = isCrit ? 0xffee44 : 0xff4444;
+    const half = isCrit ? 0.45 : 0.35;
+    // Радиус: у самого борта, но не дальше зоны ника/эмблемы/ранга над кораблём
+    // (см. npY в update() ниже — та же формула минус небольшой запас).
+    const npClearance = this.sprite.displayHeight * 0.55 + 13 - 6;
+    const radius = Math.min(Math.max(this.sprite.displayWidth, this.sprite.displayHeight) / 2 + 10, npClearance);
+    const g = this._dmgArcG;
+    g.clear();
+    g.lineStyle(7, color, 0.15); g.beginPath(); g.arc(0, 0, radius, -half, half); g.strokePath();
+    g.lineStyle(3, color, 0.55); g.beginPath(); g.arc(0, 0, radius, -half, half); g.strokePath();
+    g.lineStyle(1.5, 0xffffff, 0.9); g.beginPath(); g.arc(0, 0, radius, -half * 0.5, half * 0.5); g.strokePath();
+    g.rotation = angle;
+    g.setPosition(this.x, this.y).setAlpha(1).setVisible(true);
+    this._dmgArcText.setText(`-${Math.round(total)}`)
+      .setColor(isCrit ? '#ffee44' : '#ff6666')
+      .setAlpha(1).setVisible(true);
   }
 
   // Общий хелпер для Aegis-пассивки и перка Reactive — оба отражают долю
@@ -651,6 +720,9 @@ export default class Player {
     this._npText.setVisible(false);
     this._npEmblemBg.setVisible(false);
     this._npEmblem.setVisible(false);
+    this._dmgArcG.setVisible(false);
+    this._dmgArcText.setVisible(false);
+    this._dmgArcPending = null;
   }
 
   respawn(x, y) {
@@ -756,6 +828,26 @@ export default class Player {
       const embX = cursor + this._npText.width + 4 + 9;
       this._npEmblemBg.setPosition(embX, npY);
       this._npEmblem.setPosition(embX, npY);
+    }
+
+    // Индикатор направления урона: если троттлинг-окно вышло, а накопленный урон ещё
+    // не показан (например, серия попаданий закончилась и новых не было) — досрочно
+    // "сливаем" его, а не ждём следующего попадания, которое может не случиться.
+    if (this._dmgArcPending && now - this._dmgArcLastShownAt >= 2000) {
+      const { total, angle, isCrit } = this._dmgArcPending;
+      this._dmgArcPending = null;
+      this._showDamageArc(angle, total, isCrit, now);
+    }
+    if (this._dmgArcG.visible) {
+      this._dmgArcG.setPosition(this.x, this.y);
+      const textR = Math.max(this.sprite.displayWidth, this.sprite.displayHeight) / 2 + 26;
+      this._dmgArcText.setPosition(this.x + Math.cos(this._dmgArcAngle) * textR, this.y + Math.sin(this._dmgArcAngle) * textR);
+      if (now >= this._dmgArcHideAt) {
+        const fadeT = Phaser.Math.Clamp((now - this._dmgArcHideAt) / 300, 0, 1);
+        this._dmgArcG.setAlpha(1 - fadeT);
+        this._dmgArcText.setAlpha(1 - fadeT);
+        if (fadeT >= 1) { this._dmgArcG.setVisible(false); this._dmgArcText.setVisible(false); }
+      }
     }
   }
 }

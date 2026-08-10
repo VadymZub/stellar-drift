@@ -50,6 +50,7 @@ const AB_TIPS = {
   'argus:cocoon':              { name: 'Фазовый кокон',         desc: '+30% HP и щит + неуязвимость 2с\nВо время кокона пульсар урон не наносит\nКД 60с' },
   'argus:missiles':            { name: 'Ракетный залп',         desc: '8 самонаводящихся ракет · 2000 урон/ракета\nЦели: все враги вокруг\nКД 35с' },
   'argus:phase_strike':        { name: 'Фазовый удар',          desc: 'Прицел врагов сбит на 3с\nТелепорт за спину цели · камера следует\nКД 50с' },
+  'argus:fan_shot':            { name: 'Веерный залп',          desc: '6 болтов веером · 1000 урон/болт\nЦели: все враги вокруг\nКД 35с' },
 };
 
 // Оверлей-сцена HUD. Читает статы из GameScene, слушает события лога.
@@ -229,6 +230,10 @@ export default class HudScene extends Phaser.Scene {
         F('10px', '#ffb74d')).setOrigin(0.5).setDepth(201);
       devBg.on('pointerdown', () => {
         this.gs.premium = !this.gs.premium;
+        // premiumUntil — раньше premium был вечным булем без срока (диалог: "premium
+        // активен до и число — клиент должен видеть такие данные"). DEV-тоггл выдаёт
+        // тестовый месяц (30д), как реальный план "1 МЕСЯЦ" в DonateScene.
+        this.gs.premiumUntil = this.gs.premium ? Date.now() + 30 * 24 * 60 * 60 * 1000 : null;
         this._devPremTxt.setText(this.gs.premium ? 'DEV  ⭐ PREMIUM ✓' : 'DEV  ⭐ premium');
         this._devPremTxt.setColor(this.gs.premium ? '#ffd54f' : '#ffb74d');
         devBg.setFillStyle(this.gs.premium ? 0x2a1a00 : 0x1a0d00, 0.92);
@@ -516,7 +521,7 @@ export default class HudScene extends Phaser.Scene {
     const out = [];
 
     if (gs.activeShip === 'argus') {
-      for (const key of ['argus:pulsar', 'argus:cocoon', 'argus:missiles', 'argus:phase_strike']) {
+      for (const key of ['argus:pulsar', 'argus:cocoon', 'argus:missiles', 'argus:phase_strike', 'argus:fan_shot']) {
         if (bar.includes(key)) continue;
         out.push({ key, label: AB_TIPS[key]?.name ?? key, kind: 'ship' });
       }
@@ -664,6 +669,7 @@ export default class HudScene extends Phaser.Scene {
       'argus:cocoon':              0xe0f7fa,
       'argus:missiles':            0xff8c00,
       'argus:phase_strike':        0xce93d8,
+      'argus:fan_shot':            0xffd54f,
     };
     this._abSlots.forEach((slot, i) => {
       const key = (gs.actionBar || [])[i] || null;
@@ -739,6 +745,7 @@ export default class HudScene extends Phaser.Scene {
       'argus:cocoon':               { label: 'ФК', bg: '#0a1218', fg: '#e0f7fa', border: '#e0f7fa' },
       'argus:missiles':             { label: 'РЗ', bg: '#1a0c00', fg: '#ff8c00', border: '#ff8c00' },
       'argus:phase_strike':         { label: 'ФУ', bg: '#130a1a', fg: '#ce93d8', border: '#ce93d8' },
+      'argus:fan_shot':             { label: 'ВЗ', bg: '#1a1400', fg: '#ffd54f', border: '#ffd54f' },
     };
     const info = INFO[key] || { label: '??', bg: '#0a0a14', fg: '#7e9398', border: '#7e9398' };
     const sz = Math.round(104 * DPR); // 2× physical slot size

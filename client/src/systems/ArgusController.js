@@ -116,6 +116,7 @@ export default class ArgusController {
     bar[1] = 'argus:cocoon';
     bar[2] = 'argus:missiles';
     bar[3] = 'argus:phase_strike';
+    bar[4] = 'argus:fan_shot';
   }
 
   // Тот же косметический эффект, что и attachToPlayer, но на ДРУГОМ игроке (RemotePlayer)
@@ -431,6 +432,40 @@ export default class ArgusController {
     } else {
       target.takeDamage(dmg, 0);
     }
+  }
+
+  // Веерный залп — 5-й слот способностей Аргуса (диалог: "веерный огонь боссов").
+  // Каждый болт СЛАБЕЕ обычного выстрела (см. Player.js weaponFireRate/dmgMod для
+  // ADMIN-тира — обычный выстрел Аргуса тяжёлый; здесь фиксированная величина
+  // намеренно ниже её и ниже пульсара/ракет) — суммарный урон растёт с числом
+  // целей, а не даёт один мощный крит по одной цели, как одиночный выстрел.
+  // Мгновенное разрешение (без своего update()-цикла, в отличие от ракет/пульсара)
+  // — визуальные болты чисто декоративны (_fireVisualBolt), урон применяется сразу
+  // через _dealAbilityDamage (тот же PvP-безопасный путь, что у пульсара/ракет).
+  _activateFanShot() {
+    const fx = this._playerFX;
+    if (!fx?.player?.alive) return;
+    const p  = fx.player;
+    const gs = this.scene;
+
+    const FAN_COUNT  = 6;
+    const FAN_DAMAGE  = 1000;
+    const DETECT_RADIUS = 900;
+
+    const nearby = this._missileCandidates(p, DETECT_RADIUS);
+    if (!nearby.length) {
+      gs.log('🎇 ВЕЕРНЫЙ ЗАЛП — нет целей в радиусе.');
+      return;
+    }
+
+    for (let i = 0; i < FAN_COUNT; i++) {
+      const target = nearby[i % nearby.length];
+      if (!target?.alive) continue;
+      gs._fireVisualBolt(p.x, p.y, target.x, target.y, 0xffd54f);
+      gs.muzzleFlash(p.x, p.y, 0xffd54f, p);
+      this._dealAbilityDamage(target, 'argus_fan_shot', FAN_DAMAGE);
+    }
+    gs.log(`🎇 ВЕЕРНЫЙ ЗАЛП — ${FAN_COUNT} болтов · ${FAN_DAMAGE} урон/болт · ${Math.min(nearby.length, FAN_COUNT)} цел.`);
   }
 
   _activateMissiles() {
@@ -858,7 +893,7 @@ export default class ArgusController {
             for (let i = 0; i < NUM; i++) {
               let diff = ((ma - (pd.angle + i * step)) % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2);
               if (diff > Math.PI) diff = Math.PI * 2 - diff;
-              if (diff < HALF) { p.takeDamage(900, 0, { ignoreMovEvasion: false }); break; }
+              if (diff < HALF) { p.takeDamage(900, 0, { ignoreMovEvasion: false, srcX: m.x, srcY: m.y }); break; }
             }
           }
         }
@@ -900,7 +935,7 @@ export default class ArgusController {
         mis.y += Math.sin(mis.angle) * mis.speed * dt;
         // Hit check
         if (p.alive && Math.hypot(p.x - mis.x, p.y - mis.y) < 40) {
-          p.takeDamage(2000, 0);
+          p.takeDamage(2000, 0, { srcX: mis.x, srcY: mis.y });
           mis.hit = true;
           gs.explosion?.(mis.x, mis.y, 0.4);
           continue;

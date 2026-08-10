@@ -16,6 +16,10 @@ export default class MissionsScene extends Phaser.Scene {
   F(s, c) { return { fontFamily: 'Inter, sans-serif',    fontSize: s, color: c, resolution: UI_RES }; }
 
   create() {
+    // scene.restart() (клик по строке миссии) даёт новый InputPlugin — старый wheel-
+    // листенер уже не существует, флаг-охранник в _renderList должен это отражать,
+    // иначе после первого клика список перестаёт скроллиться (флаг остался бы true).
+    this._missionWheelBound = false;
     this.gs = this.scene.get('GameScene');
     const gs = this.gs;
 
@@ -104,54 +108,83 @@ export default class MissionsScene extends Phaser.Scene {
   }
 
   // ── Left mission list — scrollable when it overflows the panel ─────────────
+  // Clip-by-position, не Container+setMask — тот же приём, что GarageScene._drawBoardList
+  // (geometry mask не поддерживается WebGL-рендерером в этой версии Phaser, см. комментарий
+  // там же). Раньше здесь двигали container.y и закрывали "хвост" одной непрозрачной
+  // полоской ПОД панелью — она не покрывала верх вообще и не всегда покрывала низ
+  // целиком, из-за чего строки вылезали за рамки окна сверху и снизу при скролле
+  // (диалог: "список миссий при пролистывании выходит за рамки окна"). Теперь строка,
+  // которая хотя бы частично выходит за [y, y+h], просто не создаётся — никакой
+  // полоски-заглушки не нужно вообще.
   _renderList(x, y, w, h, missions, selIdx, gs) {
+    this._missionListX = x; this._missionListY = y; this._missionListW = w; this._missionListH = h;
+    this._missionListData = missions; this._missionListSel = selIdx; this._missionListGs = gs;
+
     if (!missions.length) {
       this.add.text(x + w / 2, y + 48, 'Нет миссий', this.F('16px', '#2a3a4a')).setOrigin(0.5, 0);
       return;
     }
 
     const rowH = 86, gap = 7;
-    const container = this.add.container(x, y);
+    const totalH = missions.length * (rowH + gap) - gap;
+    const maxScroll = Math.max(0, totalH - h);
+    gs._missionListScroll = Phaser.Math.Clamp(gs._missionListScroll ?? 0, 0, maxScroll);
+
+    if (!this._missionWheelBound) {
+      this._missionWheelBound = true;
+      this.input.on('wheel', (p, _o, _dx, dy) => {
+        const lx = this._missionListX, ly = this._missionListY, lw = this._missionListW, lh = this._missionListH;
+        if (lx == null || p.x < lx || p.x > lx + lw || p.y < ly || p.y > ly + lh) return;
+        const list = this._missionListData, g = this._missionListGs;
+        const total = list.length * (rowH + gap) - gap;
+        const mSc = Math.max(0, total - lh);
+        if (mSc <= 0) return;
+        g._missionListScroll = Phaser.Math.Clamp((g._missionListScroll ?? 0) + dy * 0.5, 0, mSc);
+        this._drawMissionRows();
+      });
+    }
+
+    this._drawMissionRows();
+  }
+
+  _drawMissionRows() {
+    (this._missionListObjs || []).forEach(o => o?.destroy());
+    this._missionListObjs = [];
+
+    const x = this._missionListX, y = this._missionListY, w = this._missionListW, h = this._missionListH;
+    const missions = this._missionListData, selIdx = this._missionListSel, gs = this._missionListGs;
+    const rowH = 86, gap = 7;
+    const scroll = gs._missionListScroll ?? 0;
 
     missions.forEach((m, i) => {
-      const ry  = i * (rowH + gap); // local to container — scrolling just moves container.y
+      const ry = y + i * (rowH + gap) - scroll;
+      if (ry < y || ry + rowH > y + h) return; // строго — без частично видимых строк
       const sel = i === selIdx;
       const status = this._missionStatus(gs, m.id);
 
       const bg  = this.add.graphics();
       bg.fillStyle(sel ? 0x0e2436 : 0x080e1a, sel ? 1 : 0.9);
-      bg.fillRoundedRect(0, ry, w, rowH, 6);
+      bg.fillRoundedRect(x, ry, w, rowH, 6);
       bg.lineStyle(sel ? 2 : 1, sel ? COLORS.primary : 0x0d1a28, 0.9);
-      bg.strokeRoundedRect(0, ry, w, rowH, 6);
+      bg.strokeRoundedRect(x, ry, w, rowH, 6);
 
-      const btn = this.add.rectangle(w / 2, ry + rowH / 2, w, rowH, 0, 0)
+      const btn = this.add.rectangle(x + w / 2, ry + rowH / 2, w, rowH, 0, 0)
         .setInteractive({ useHandCursor: true });
       btn.on('pointerdown', () => { gs.selectedMissionIdx = i; this.scene.restart(); });
       btn.on('pointerover',  () => { if (!sel) bg.fillStyle(0x0c1828, 0.95); });
       btn.on('pointerout',   () => { if (!sel) bg.fillStyle(0x080e1a, 0.9); });
 
       const tColor = TYPE_COLOR[m.type] || '#4dd0e1';
-      const tLabel = this.add.text(10, ry + 8,  TYPE_LABEL[m.type] || m.type, this.O('11px', tColor)).setOrigin(0, 0);
-      const tTitle = this.add.text(10, ry + 29, m.title, this.O('14px', sel ? '#cce8f4' : '#8ab0bc')).setOrigin(0, 0);
+      const tLabel = this.add.text(x + 10, ry + 8,  TYPE_LABEL[m.type] || m.type, this.O('11px', tColor)).setOrigin(0, 0);
+      const tTitle = this.add.text(x + 10, ry + 29, m.title, this.O('14px', sel ? '#cce8f4' : '#8ab0bc')).setOrigin(0, 0);
 
       const sColor = STATUS_COLOR[status] || '#4a6678';
-      const tStatus = this.add.text(10, ry + 55, STATUS_LABEL[status] || status, this.F('12px', sColor)).setOrigin(0, 0);
-      const tRew = this.add.text(w - 10, ry + 55, `${m.rewards.xp} XP  ${m.rewards.credits}cr`,
+      const tStatus = this.add.text(x + 10, ry + 55, STATUS_LABEL[status] || status, this.F('12px', sColor)).setOrigin(0, 0);
+      const tRew = this.add.text(x + w - 10, ry + 55, `${m.rewards.xp} XP  ${m.rewards.credits}cr`,
         this.F('12px', '#2a5060')).setOrigin(1, 0);
 
-      container.add([bg, btn, tLabel, tTitle, tStatus, tRew]);
+      this._missionListObjs.push(bg, btn, tLabel, tTitle, tStatus, tRew);
     });
-
-    const totalH = missions.length * (rowH + gap) - gap;
-    if (totalH > h) {
-      this.input.on('wheel', (p, _o, _dx, dy) => {
-        if (p.x < x || p.x > x + w || p.y < y || p.y > y + h) return;
-        container.y = Phaser.Math.Clamp(container.y - dy * 0.5, y - (totalH - h), y);
-      });
-      // Opaque strip below the visible list masks scrolled-past rows (same trick as
-      // the bounty board / clan member list — no true geometry mask needed).
-      this.add.rectangle(x, y + h, w, 60, 0x060c18, 1).setOrigin(0, 0).setDepth(12);
-    }
   }
 
   // Two-button choice popup for 'narrative_choice' objectives (e.g. story_broker).

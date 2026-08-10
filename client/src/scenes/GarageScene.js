@@ -993,10 +993,78 @@ export default class GarageScene extends Phaser.Scene {
     this.modal = objs;
   }
 
+  // Ранг копии Hardened среди ВСЕХ Hardened, стоящих на корабле (в порядке слотов) —
+  // Player.recomputeStats() считает только первые 2 (hardenedCount<2), см. диалог "это
+  // уже имба". rank>=2 (3-я и далее копия) — эффекта нет, прокачка впустую.
+  _hardenedRank(item) {
+    const ship = this.gs.player.ship;
+    const arr = (this.gs.equipped.shield || []).slice(0, ship.sSlots).filter(Boolean);
+    let rank = -1, count = 0;
+    for (const s of arr) {
+      if (s.perk?.key !== 'perk_hardened') continue;
+      if (s === item) rank = count;
+      count++;
+    }
+    return rank;
+  }
+
+  _confirmWastedHardenedUpgrade(onConfirm) {
+    if (this.modal) this.closeModal();
+    const W = this.scale.width, H = this.scale.height;
+    const objs = [];
+    const dim = this.add.rectangle(0, 0, W, H, 0x000000, 0.55).setOrigin(0).setDepth(100).setInteractive();
+    dim.on('pointerdown', () => this.closeModal());
+    objs.push(dim);
+    const mw = Math.min(480, W - 60), mh = 200, mx = (W - mw) / 2, my = (H - mh) / 2;
+    const g = this.add.graphics().setDepth(101);
+    g.fillStyle(0x2b1010, 1); g.fillRoundedRect(mx, my, mw, mh, 10);
+    g.lineStyle(2, 0xef5350, 0.85); g.strokeRoundedRect(mx, my, mw, mh, 10);
+    objs.push(g);
+    objs.push(this.add.text(mx + mw / 2, my + 30,
+      'На корабле уже 2 щита с перком Hardened — эффект от этого перка не суммируется дальше. Прокачка этой копии ничего не даст. Всё равно потратить ресурсы?',
+      { ...this.F('13px', '#f0d0d0'), align: 'center', wordWrap: { width: mw - 48 } }).setOrigin(0.5, 0).setDepth(102));
+    const mkBtn = (cxr, color, brd, label, cb) => {
+      const bw = 190, bh = 40, bx = cxr - bw / 2, by = my + mh - bh - 22;
+      const r = this.add.rectangle(bx, by, bw, bh, color, 0.95).setOrigin(0, 0).setDepth(102)
+        .setStrokeStyle(1, brd, 0.4).setInteractive({ useHandCursor: true });
+      const t = this.add.text(cxr, by + bh / 2, label, this.O('13px', '#ffffff')).setOrigin(0.5).setDepth(103);
+      r.on('pointerdown', cb);
+      objs.push(r, t);
+    };
+    mkBtn(mx + mw * 0.30, 0x3a2c12, COLORS.amber, i18n.t('garage.reset_yes'), () => { this.closeModal(); onConfirm(); });
+    mkBtn(mx + mw * 0.70, 0x37474f, 0xffffff, i18n.t('garage.no'), () => this.closeModal());
+    this.modal = objs;
+  }
+
   // ⭐-апгрейд перка. Если у перка есть кредитный прогресс — предупреждаем о сбросе.
   tryStarPerkUpgrade(item) {
+    if (item.perk?.key === 'perk_hardened' && this._hardenedRank(item) >= 2) {
+      this._confirmWastedHardenedUpgrade(() => this._tryStarPerkUpgradeConfirmed(item));
+      return;
+    }
+    this._tryStarPerkUpgradeConfirmed(item);
+  }
+
+  _tryStarPerkUpgradeConfirmed(item) {
     if ((item.perk.creditLvl || 0) > 0) this.showPerkResetConfirm(item);
     else this.doStarPerkUpgrade(item);
+  }
+
+  // Кредитный апгрейд перка — та же проверка "впустую ли", что и у звёздного пути.
+  tryCreditPerkUpgrade(item, cost) {
+    if (item.perk?.key === 'perk_hardened' && this._hardenedRank(item) >= 2) {
+      this._confirmWastedHardenedUpgrade(() => this.doCreditPerkUpgrade(item, cost));
+      return;
+    }
+    this.doCreditPerkUpgrade(item, cost);
+  }
+
+  doCreditPerkUpgrade(item, cost) {
+    const gs = this.gs;
+    gs.credits = (gs.credits || 0) - cost;
+    item.perk.creditLvl = (item.perk.creditLvl || 0) + 1;
+    gs._saveState?.();
+    this.scene.restart();
   }
 
   doStarPerkUpgrade(item) {
@@ -1068,6 +1136,16 @@ export default class GarageScene extends Phaser.Scene {
       `${i18n.t('hud.hull')}:  ${p.maxHull}`,
     ];
     this.add.text(lx, py + 440, lines.join('\n'), this.F('13px', '#9fb3b8')).setLineSpacing(7);
+
+    // Детальная разбивка статов по источникам (предмет/апгрейд/перк + общие модификаторы) —
+    // отдельное окно поверх этой вкладки, см. StatsScene.js.
+    const statsBtnY = py + 440 + 5 * 13 + 4 * 7 + 14;
+    const statsBtn = this.add.rectangle(lx, statsBtnY, 130, 30, 0x0d1e2c, 0.95).setOrigin(0, 0)
+      .setStrokeStyle(1, 0x1e3a50, 0.7).setInteractive({ useHandCursor: true }).setDepth(15);
+    const statsLabel = this.add.text(lx + 65, statsBtnY + 15, 'СТАТЫ', this.O('12px', '#4dd0e1')).setOrigin(0.5).setDepth(15);
+    statsBtn.on('pointerover', () => { statsBtn.setFillStyle(0x142838); statsLabel.setColor('#7ee8f0'); });
+    statsBtn.on('pointerout',  () => { statsBtn.setFillStyle(0x0d1e2c); statsLabel.setColor('#4dd0e1'); });
+    statsBtn.on('pointerdown', () => this.scene.launch('StatsScene'));
 
     const rx = px + 380, rw = pw - 420;
     const gs = this.gs;
@@ -1313,6 +1391,18 @@ export default class GarageScene extends Phaser.Scene {
     const key = SLOT_KEY[item.type];
     const arr = this.gs.equipped[key];
     if (!arr) return;
+
+    // Hardened: не даём поставить 3-ю копию на корабль — 3-я и далее всё равно не
+    // учитывается в Player.recomputeStats() (hardenedCount<2, диалог "это уже имба").
+    // Сообщаем явно, а не молча отказываем (диалог "сообщать при установке 3-го").
+    if (item.perk?.key === 'perk_hardened' && key === 'shield') {
+      const already = (this.gs.equipped.shield || []).slice(0, p.ship.sSlots)
+        .filter(s => s?.perk?.key === 'perk_hardened').length;
+      if (already >= 2) {
+        this.gs.log('⚠ Hardened: на корабле уже 2 щита с этим перком — 3-й эффекта не даёт, не установлен.');
+        return;
+      }
+    }
 
     const idx = inv.indexOf(item);
     if (idx < 0) return;
@@ -1584,7 +1674,6 @@ export default class GarageScene extends Phaser.Scene {
 
     // Credits upgrade
     const goldLocked = sLvl > 0; // starLvl > 0 блокирует кредитный апгрейд
-    const nextCLvl = cLvl + 1;
     const cCost    = (!goldLocked && cLvl < 5) ? creditUpgCost(cLvl, item.tier) : null;
     const canCred  = cCost !== null && (gs.credits || 0) >= cCost;
 
@@ -1606,12 +1695,7 @@ export default class GarageScene extends Phaser.Scene {
       if (canCred) {
         cbg.on('pointerover', () => cbg.setFillStyle(0x102818));
         cbg.on('pointerout',  () => cbg.setFillStyle(0x081a10));
-        cbg.on('pointerdown', () => {
-          gs.credits  = (gs.credits || 0) - cCost;
-          item.perk.creditLvl = nextCLvl - 1 + 1; // = nextCLvl
-          gs._saveState?.();
-          this.scene.restart();
-        });
+        cbg.on('pointerdown', () => this.tryCreditPerkUpgrade(item, cCost));
       }
     } else {
       this.add.text(colLX + halfW / 2, cy + 48, '✓ MAX (кред.)',

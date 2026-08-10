@@ -43,7 +43,9 @@ export const vline = (x, y1, y2, ...gaps) => {
 
 // Киты боссов D1–D5/prem — собраны из готовых механик Mob.js (Апофиса/R-1-boss не касаются):
 //   phases: [{at: доля HP, summon:{k,n,r,opts?}, decoy:{hpFrac}?, acid?, dashOn?, tint?}] — одноразовые фазы
-//   scatter — веерный залп (5 снарядов/8с); minelayer — мины-бомбы; blink — телепорт-уклонение;
+//   scatter — веерный залп (5 снарядов/8с, урон каждого ×0.7-1.3 рандом от this.damage
+//   уже масштабированного по уровню босса — см. Mob._updateScatterShot; теперь у ВСЕХ
+//   D1-D5/prem, раньше не было у D4/prem); minelayer — мины-бомбы; blink — телепорт-уклонение;
 //   blinkInvuln — блинк даёт кратковременную неуязвимость (см. Mob._updateCloaker);
 //   dash — рывок через игрока каждые N сек; shielder — аура −30% урона союзникам рядом;
 //   shieldCycle: {closedSec, openSec} — чередующееся окно полной неуязвимости (см. Mob._updateBossKit)
@@ -62,11 +64,11 @@ export const DUNGEON_BOSS_KIT = {
     { at: 0.70, summon: { k: 'syndicate_shield', n: 2, r: 400, opts: { behavior: 'guard', patrolRadius: 200 } }, tint: 0x00e5ff },
     { at: 0.50, summon: { k: 'syndicate_05', n: 3, r: 450 }, tint: 0x9090ff },
   ] },
-  dungeon_4: { minelayer: true, dash: 20 },
+  dungeon_4: { scatter: true, minelayer: true, dash: 20 },
   dungeon_5: { scatter: true, phases: [
     { at: 0.50, summon: { k: 'ancient_shield', n: 3, r: 420, opts: { behavior: 'guard', patrolRadius: 200 } }, tint: 0x4dd0e1 },
   ], shieldCycle: { closedSec: 4, openSec: 6 } },
-  dungeon_prem: { phases: [
+  dungeon_prem: { scatter: true, phases: [
     { at: 0.75, summon: { k: 'ancient_09', n: 3, r: 450 }, tint: 0x76ff03 },
     { at: 0.50, summon: { k: 'ancient_10', n: 2, r: 450 }, acid: true, tint: 0x00e676 },
     { at: 0.25, dashOn: 15, tint: 0xff5252 },

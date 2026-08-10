@@ -305,6 +305,15 @@ export default class LoginScene extends Phaser.Scene {
       window.PLAYER_STATE = local ? (() => { try { return JSON.parse(local); } catch (_e) { return {}; } })() : {};
     }
 
+    // Совсем новый аккаунт — playerCorp ещё ни разу не сохранялся (пустой /player/state,
+    // ключа нет вообще, в отличие от 'neutral' — тот уже был бы записан автосейвом).
+    // Экран выбора корпорации показывается РОВНО ОДИН РАЗ, до первого входа в игру
+    // (диалог: "при регистрации нового игрока нет выбора корпорации").
+    if (window.PLAYER_STATE.playerCorp == null) {
+      this.scene.start('CorpSelectScene');
+      return;
+    }
+
     galaxy.current = _resolveStartSector(window.PLAYER_STATE);
     const _mapKey = SECTORS[galaxy.current].map;
     const _launch = () => {

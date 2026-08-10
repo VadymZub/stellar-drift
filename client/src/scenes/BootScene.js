@@ -144,6 +144,13 @@ export default class BootScene extends Phaser.Scene {
     this.load.image('lootbox',       'assets/modules/lootbox.png');
     this.load.image('plasmate_icon', 'assets/modules/plasmate_icon.png');
 
+    // Пробовали заменить летящий болт на кадр из plasma_bolt VFX-листа (диалог:
+    // "прямоугольный, не тот что я рисовал") — ОТКАЧЕНО: у мягкого VFX-кадра низкая
+    // плотность/альфа к краям, при уменьшении до размера болта яркое ядро съедается,
+    // остаётся полупрозрачная дымка ("слишком прозрачные, центр тонкий" — диалог).
+    // makeBoltTexture() ниже (сплошная белая капсула) тонируется чисто в любой цвет
+    // и не имеет этой проблемы — вернулись к ней, см. create().
+
     // Consumables & materials icons
     for (const type of ['repair_pack','speed_boost','scanner_pulse','emergency_warp','shield_drone','biomech_core','quantum_crystal','plasma_coil','damage_booster','hull_booster','shield_booster','xp_booster'])
       this.load.image(`consumable_${type}`, `assets/consumables/${type}.png`);
@@ -248,7 +255,7 @@ export default class BootScene extends Phaser.Scene {
     this.makeStarTexture('stars_far', 0.5, 90);
     this.makeStarTexture('stars_near', 1.0, 50);
     this.makeGlowTexture('glow', 18);      // мягкий круглый glow (шлейф, вспышки, additive)
-    this.makeBoltTexture('bolt_sprite');   // вытянутая светящаяся капсула снаряда
+    this.makeBoltTexture('bolt_sprite');   // вытянутая светящаяся капсула снаряда — см. preload()
     // lootbox and plasmate_icon loaded from assets/modules/ in preload()
 
     this.anims.create({
@@ -495,15 +502,19 @@ export default class BootScene extends Phaser.Scene {
     g.destroy();
   }
 
-  // Плазма-болт: вытянутая капсула — мягкое гало + яркая сердцевина + лидирующий «носик».
+  // Плазма-болт: вытянутая капсула — три слоя гало/свечения/ядра, чистыми эллипсами
+  // (не rounded-rect + отдельный кружок-носик, как раньше — та комбинация давала
+  // видимый стык/шишку на конце, читалось как угловатое, диалог: "не может быть
+  // такой прямоугольной плазмы"). Эллипс сам по себе гладкий везде, без стыков —
+  // каждый слой смещён к переднему (правому) краю чуть сильнее предыдущего, тот же
+  // эффект "яркость смещена к носу", что раньше давал отдельный кружок, но без шва.
   // Белая (тинтуется по владельцу), смотрит ВПРАВО (Projectile поворачивает по вектору полёта).
   makeBoltTexture(key) {
     const w = 48, h = 20, cy = h / 2;
     const g = this.make.graphics({ x: 0, y: 0 }, false);
-    g.fillStyle(0xffffff, 0.16); g.fillRoundedRect(2, 3, w - 4, h - 6, (h - 6) / 2);   // внешнее гало
-    g.fillStyle(0xffffff, 0.45); g.fillRoundedRect(7, 6, w - 14, h - 12, (h - 12) / 2); // среднее свечение
-    g.fillStyle(0xffffff, 1.0);  g.fillRoundedRect(11, cy - 3, w - 24, 6, 3);           // яркая сердцевина
-    g.fillStyle(0xffffff, 1.0);  g.fillCircle(w - 9, cy, 5);                            // лидирующий носик
+    g.fillStyle(0xffffff, 0.16); g.fillEllipse(w * 0.42, cy, w - 6, h - 4);   // внешнее гало
+    g.fillStyle(0xffffff, 0.45); g.fillEllipse(w * 0.48, cy, w - 18, h - 10); // среднее свечение
+    g.fillStyle(0xffffff, 1.0);  g.fillEllipse(w * 0.54, cy, w - 30, h - 15); // яркая сердцевина
     g.generateTexture(key, w, h);
     g.destroy();
   }

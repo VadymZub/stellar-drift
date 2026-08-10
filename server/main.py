@@ -447,8 +447,15 @@ PVP_MAX_SHIELD = 700000.0
 # PvpPlayerState.ability_last_fire). Значения — с запасом над реальным уроном
 # способности (client/src/systems/ArgusController.js: pulsar 900/тик, missile 2000),
 # тот же принцип "щедрый, но конечный допуск", что и PVP_BURST_MULT ниже.
-ABILITY_DAMAGE_CEILING = {'argus_pulsar': 1000.0, 'argus_missile': 2500.0}
-ABILITY_COOLDOWN_FLOOR = {'argus_pulsar': 0.08, 'argus_missile': 0.03}
+ABILITY_DAMAGE_CEILING = {'argus_pulsar': 1000.0, 'argus_missile': 2500.0, 'argus_fan_shot': 1200.0}
+# fan_shot floor = 0 — намеренно, в отличие от pulsar/missile: те тикают РАЗНЕСЁННО
+# во времени (обновление каждый кадр/по прилёту снаряда), а веерный залп заявляет
+# все свои болты ОДНИМ синхронным циклом (см. ArgusController._activateFanShot) —
+# любой floor>0 схлопнул бы claim'ы кроме первого (last у ability_last_fire
+# записывается по ИМЕНИ способности, не по цели). Настоящий кулдаун (30-40с) —
+# тот же клиентский action-bar таймер, что и у остальных способностей Аргуса;
+# сервер и для pulsar/missile не проверяет его отдельно, тут не хуже.
+ABILITY_COOLDOWN_FLOOR = {'argus_pulsar': 0.08, 'argus_missile': 0.03, 'argus_fan_shot': 0.0}
 
 # "Фазовый кокон" (см. pvp_self_heal_claim) — сервер сам считает сумму хила от своего
 # max_hull/max_shield (% фиксирован, клиентской заявке тут доверять нечему), только

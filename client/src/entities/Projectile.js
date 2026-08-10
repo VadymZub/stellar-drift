@@ -14,10 +14,18 @@ export default class Projectile {
   // sourceMob — опционально: Mob-инстанс, выпустивший снаряд (только owner==='mob'),
   // для Death Recap (диалог: "кто убил, откуда прилетело") — раньше снаряд нёс только
   // категорию 'player'|'mob', конкретный моб-виновник урона игроку нигде не сохранялся.
-  constructor(scene, owner, fromX, fromY, toX, toY, victim, damage, penetration, color, turnRate = 0, type = 'plasma', isCrit = false, maxTurnRad = Infinity, sourceMob = null) {
+  // cosmetic — опционально: визуальный дубль-болт второго хардпоинта при 2+ пушках
+  // (диалог: "болты летят не одновременно") — раньше вторую пушку рисовали прямым
+  // твином без самонаведения (_fireVisualBolt), а настоящий снаряд каждый кадр
+  // доворачивает на ЖИВУЮ позицию цели (см. update() ниже) — на движущейся цели
+  // прямой твин и самонаводящийся снаряд расходились визуально. cosmetic=true даёт
+  // тому же самонаведению/скорости/hitRadius лететь без урона — _hit() просто
+  // разрушает снаряд, не трогая victim.takeDamage()/onProjectileHit.
+  constructor(scene, owner, fromX, fromY, toX, toY, victim, damage, penetration, color, turnRate = 0, type = 'plasma', isCrit = false, maxTurnRad = Infinity, sourceMob = null, cosmetic = false) {
     this.scene = scene;
     this.owner = owner;          // 'player' | 'mob'
     this.victim = victim;
+    this.cosmetic = cosmetic;
     this.sourceMob = sourceMob;
     this.damage = damage;
     this.penetration = penetration;
@@ -95,9 +103,16 @@ export default class Projectile {
   }
 
   _hit() {
+    // cosmetic — визуальный дубль второго хардпоинта (см. конструктор), настоящий
+    // урон уже нанёс снаряд с первого хардпоинта — этот просто гаснет без damage/fx.
+    if (this.cosmetic) { this.destroy(); return; }
     // dmgType — только для снарядов мобов: перк Adaptive у игрока отслеживает
     // повторные попадания одного типа подряд, у мобов такого перка нет.
-    const opts = this.owner === 'mob' ? { dmgType: this.type } : undefined;
+    // srcX/srcY — текущая позиция болта в момент удара (не позиция моба-стрелка,
+    // тот мог уже отойти/умереть) — питает индикатор направления урона у Player.
+    const opts = this.owner === 'mob'
+      ? { dmgType: this.type, srcX: this.sprite.x, srcY: this.sprite.y, isCrit: this.isCrit }
+      : undefined;
     const res = this.victim.takeDamage(this.damage, this.penetration, opts);
     this.scene.onProjectileHit(this, res);
     this.destroy();

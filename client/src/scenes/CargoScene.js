@@ -394,7 +394,14 @@ export default class CargoScene extends Phaser.Scene {
         const iconSz = boxH >= 36 ? 34 : 24;
         const borderColor = isAmmo ? (AMMO_ICON[item.type]?.color ?? 0xffb74d) : isConsumable ? 0x44aacc : 0xccaa44;
         const box = this.add.rectangle(sx, sy, SZ, boxH, 0x0a1a2a, 0.95).setOrigin(0, 0)
-          .setStrokeStyle(2, borderColor, 0.8);
+          .setStrokeStyle(2, borderColor, 0.8).setInteractive({ useHandCursor: true });
+        // Хинт по наведению — раньше был только у модулей (пушки/щиты/двигатели),
+        // патроны/расходники/ресурсы вообще не подсказывали название/назначение
+        // (диалог: "добавить хинты - патроны такие-то и кол-во, ресурс название
+        // кол-во и для чего коротко"). _showTooltip уже умеет простой режим для
+        // не-модульных категорий (см. там же).
+        box.on('pointerover', (p) => this._showTooltip(p.x, p.y, item));
+        box.on('pointerout',  ()  => this._hideTooltip());
         let iconImg = null;
         if (isAmmo) {
           const ammoTex = this.textures.exists(item.type)
@@ -590,9 +597,27 @@ export default class CargoScene extends Phaser.Scene {
     this._hideTooltip();
     if (!item) return;
     const W = this.scale.width, H = this.scale.height;
+    const TW = 240, GAP = 5;
+
+    // Патроны/расходники/ресурсы — простой хинт (название + кол-во + короткое
+    // назначение из itemdesc.*), без модульной логики (перки/статы/rarity) ниже —
+    // у CONSUMABLES-предметов её просто нет (диалог: "добавить хинты - патроны
+    // такие-то и кол-во, ресурс название кол-во и для чего коротко").
+    if (CONSUMABLES[item.type]) {
+      const simpleLineDefs = [
+        { text: i18n.t(`item.${item.type}`), sty: this.O('13px', '#ffe0b2') },
+        { text: `×${item.amount.toLocaleString()}`, sty: this.F('11px', '#9fb3b8') },
+      ];
+      const desc = i18n.t(`itemdesc.${item.type}`);
+      if (desc && desc !== `itemdesc.${item.type}`) {
+        simpleLineDefs.push({ text: desc, sty: this.F('11px', '#7fa8bc') });
+      }
+      this._renderTooltipLines(wx, wy, TW, GAP, simpleLineDefs);
+      return;
+    }
+
     const pDef = item.perk ? PERK_MAP[item.perk.key] : null;
     const rarColor = pDef ? `#${RARITY_COLOR[pDef.rarity].toString(16).padStart(6, '0')}` : null;
-    const TW = 240, GAP = 5;
 
     const srInfo = statRollStr(item);
     const lineDefs = [
@@ -616,6 +641,14 @@ export default class CargoScene extends Phaser.Scene {
       });
     }
 
+    this._renderTooltipLines(wx, wy, TW, GAP, lineDefs);
+  }
+
+  // Общий рендер тултипа (замер word-wrap → фон → расстановка) — вынесен из
+  // _showTooltip, чтобы простой хинт патронов/расходников/ресурсов и подробный
+  // хинт модулей (перки/статы/rarity) не дублировали одну и ту же геометрию.
+  _renderTooltipLines(wx, wy, TW, GAP, lineDefs) {
+    const W = this.scale.width, H = this.scale.height;
     // Первый проход — создаём тексты вне экрана, чтобы замерить реальную высоту с word-wrap
     // Правый текст создаётся первым, чтобы знать его ширину и оставить место в основном тексте
     const SINGLE_LINE_H = 18; // порог для 11px шрифта; выше → текст перенёсся

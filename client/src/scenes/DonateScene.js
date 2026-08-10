@@ -23,8 +23,11 @@ const PREMIUM_BENEFITS = [
   '+8 слотов трюма',
   '+8 слотов склада',
   'Авто-сбор плазмита (магнит)',
+  '+10% опыта',
+  'Удалённая продажа (без захода на базу)',
+  'Бой с тенью: 6 попыток/сутки (было 3)',
+  'Доступ в премиум-данж «Лабиринт Тьмы»',
   'Элитные миссии  (скоро)',
-  'Премиум данж  (скоро)',
 ];
 
 // Base hotkeys → scene to open
@@ -94,8 +97,15 @@ export default class DonateScene extends Phaser.Scene {
       starTxt.setText(`${gs.starGold || 0}`);
       sepTxt.setX(balCX - 64 + starTxt.width);
       const active = gs.premium;
+      // "до <дата>" — раньше статус был просто вкл/выкл без срока (диалог: "premium
+      // активен до и число — клиент должен видеть такие данные"). gs.premiumUntil
+      // отсутствует у вечного тестового премиума (TestProfileScene) — тогда просто
+      // "АКТИВЕН" без даты, как и было.
+      const untilTxt = active && gs.premiumUntil
+        ? ` до ${new Date(gs.premiumUntil).toLocaleDateString('ru-RU')}`
+        : '';
       premTxt.setX(sepTxt.x + sepTxt.width)
-             .setText(`PREMIUM: ${active ? 'АКТИВЕН' : 'НЕТ'}`)
+             .setText(`PREMIUM: ${active ? 'АКТИВЕН' + untilTxt : 'НЕТ'}`)
              .setColor(active ? '#ffd54f' : '#ce93d8');
     };
     refreshBal();
@@ -116,8 +126,10 @@ export default class DonateScene extends Phaser.Scene {
   _drawPremiumSection(x, y, w, h, gs, refreshBal) {
     this.add.text(x, y, 'ПОДПИСКА PREMIUM', this.O('14px', '#ffb74d'));
 
-    // Premium icon — 320px
-    const iconSz = 320;
+    // Premium icon — 260px (было 320 — список преимуществ вырос с 5 до 8 строк,
+    // на 320 не помещалось бы в панель без прокрутки, см. диалог "актуализируй
+    // преимущества премиума").
+    const iconSz = 260;
     const iconX  = x + w / 2;
     this.add.image(iconX, y + 44 + iconSz / 2, prerenderTex(this, 'icon_premium', iconSz, iconSz))
       .setDisplaySize(iconSz, iconSz).setOrigin(0.5);
@@ -130,13 +142,13 @@ export default class DonateScene extends Phaser.Scene {
 
     // Benefits hint
     const hintY = planY + PREMIUM_PLANS.length * 58 + 12;
-    const hintH = PREMIUM_BENEFITS.length * 22 + 28;
+    const hintH = PREMIUM_BENEFITS.length * 19 + 28;
     const hg = this.add.graphics();
     hg.fillStyle(0x0a1a0a, 0.85); hg.fillRoundedRect(x, hintY, w - 10, hintH, 8);
     hg.lineStyle(1, 0x2a5a2a, 0.7); hg.strokeRoundedRect(x, hintY, w - 10, hintH, 8);
     this.add.text(x + 14, hintY + 10, 'ПРЕИМУЩЕСТВА PREMIUM:', this.F('11px', '#66bb6a'));
     PREMIUM_BENEFITS.forEach((line, i) => {
-      this.add.text(x + 14, hintY + 28 + i * 22, `✓  ${line}`, this.F('11px', '#99cc99'));
+      this.add.text(x + 14, hintY + 28 + i * 19, `✓  ${line}`, this.F('11px', '#99cc99'));
     });
   }
 

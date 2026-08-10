@@ -29,19 +29,39 @@ const AI_CLASS_ICON = {
 // сюда, чтобы переиспользовать и для PvP-патрульных роёв (см. GameScene._updateDroneSwarms),
 // у которых раньше вообще не было антискученности. Чистая функция над любым массивом
 // {alive, x, y, sprite} — не завязана на Mob-специфичное состояние.
+// Spatial-hash bucketing вместо голого O(n²) — раньше при 40+ мобах (данжи после
+// growth-скейла) прямой перебор group×group стал бы заметен в профиле (диалог:
+// "Separation для всех мобов", предупреждение из combat_analysis_v3.md §B3 про
+// именно этот сценарий). cellSize >= sepDist гарантирует, что любые два моба в
+// радиусе sepDist окажутся в одной или соседней (из 8 вокруг) ячейке — проверяем
+// только 3×3 ячейки на моба вместо всей группы. При типичных 8-16 мобах на сектор
+// разница не важна, но не деградирует при масштабе — не нужно будет чинить дважды.
 export function applySeparation(group, dt, { sepDist = 70, sepSpeed = 90 } = {}) {
-  for (let i = 0; i < group.length; i++) {
-    const d = group[i];
+  const cellSize = Math.max(sepDist, 50);
+  const buckets = new Map();
+  for (const d of group) {
+    const key = `${Math.floor(d.x / cellSize)},${Math.floor(d.y / cellSize)}`;
+    let bucket = buckets.get(key);
+    if (!bucket) buckets.set(key, bucket = []);
+    bucket.push(d);
+  }
+  for (const d of group) {
     let rx = 0, ry = 0;
-    for (let j = 0; j < group.length; j++) {
-      if (i === j) continue;
-      const o = group[j];
-      const dx = d.x - o.x, dy = d.y - o.y;
-      const dist2 = dx * dx + dy * dy;
-      if (dist2 < sepDist * sepDist && dist2 > 1) {
-        const dist = Math.sqrt(dist2);
-        const push = (sepDist - dist) / sepDist;
-        rx += (dx / dist) * push; ry += (dy / dist) * push;
+    const cx = Math.floor(d.x / cellSize), cy = Math.floor(d.y / cellSize);
+    for (let ox = -1; ox <= 1; ox++) {
+      for (let oy = -1; oy <= 1; oy++) {
+        const neighbors = buckets.get(`${cx + ox},${cy + oy}`);
+        if (!neighbors) continue;
+        for (const o of neighbors) {
+          if (o === d) continue;
+          const dx = d.x - o.x, dy = d.y - o.y;
+          const dist2 = dx * dx + dy * dy;
+          if (dist2 < sepDist * sepDist && dist2 > 1) {
+            const dist = Math.sqrt(dist2);
+            const push = (sepDist - dist) / sepDist;
+            rx += (dx / dist) * push; ry += (dy / dist) * push;
+          }
+        }
       }
     }
     if (rx || ry) {
@@ -967,7 +987,10 @@ export default class Mob {
       this._bombFuseTimer -= dt;
       if (this._bombFuseTimer <= 0) {
         this.scene.onBombDetonate?.(this);
-        this.alive = false;
+        // die(), не голый alive=false — тот не прятал sprite/label/aiIcon (диалог:
+        // "иконки класса моба бомбы рисуются после их взрыва"), иконка висела в
+        // точке взрыва до тех пор, пока моб не удалялся из this.mobs где-то позже.
+        this.die();
       }
       return;
     }
@@ -996,7 +1019,7 @@ export default class Mob {
       this._bombFuseTimer -= dt;
       if (this._bombFuseTimer <= 0) {
         this.scene.onDirectedMineDetonate?.(this);
-        this.alive = false;
+        this.die(); // см. комментарий в _updateBomb
       }
       return;
     }
@@ -1021,7 +1044,9 @@ export default class Mob {
       this._bombFuseTimer -= dt;
       if (this._bombFuseTimer <= 0) {
         this.scene.onStunMineDetonate?.(this);
-        this.alive = false;
+        this.die(); // см. комментарий в _updateBomb; onStunMineDetonate уже прятал sprite/
+        // label вручную (не иконку) — теперь избыточно, но не мешает (setVisible(false)
+        // повторно безвреден)
       }
       return;
     }
@@ -1110,7 +1135,11 @@ export default class Mob {
         const ang = baseAng + (i - Math.floor(SHOTS / 2)) * (SPREAD / (SHOTS - 1));
         const tx = this.x + Math.cos(ang) * 800;
         const ty = this.y + Math.sin(ang) * 800;
-        fireProjectile(this, tx, ty);
+        // Рандомизация ±30% на болт (диалог: "урон рандомизируй по тирам данжа и
+        // уровням боссов") — множитель применяется к this.damage, который УЖЕ
+        // масштабирован по уровню босса (scaleStat), так что разброс автоматически
+        // растёт вместе с тиром данжа/уровнем, без отдельной таблицы значений.
+        fireProjectile(this, tx, ty, { dmgMult: Phaser.Math.FloatBetween(0.7, 1.3) });
       }
     }
   }

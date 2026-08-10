@@ -399,6 +399,14 @@ export default class GameScene extends Phaser.Scene {
     }
     this.atBase    = this.atBase    ?? false;
     this.premium   = this.premium   ?? (tp ? tp.premium : false);
+    this.premiumUntil = this.premiumUntil ?? null;
+    // Истёк срок (проверяем сразу при заходе, не дожидаясь 5с-тика в update() —
+    // см. "premium активен до и число"): тестовый TestProfileScene-премиум вечный
+    // (tp.premium без premiumUntil), реальный/DEV-выданный — со сроком.
+    if (this.premium && this.premiumUntil && Date.now() >= this.premiumUntil) {
+      this.premium = false;
+      this.premiumUntil = null;
+    }
     this.devMode   = DEV_MODE;
     this.credits  = this.credits  ?? (tp ? tp.credits  : DEV_MODE ? 3000000 : 0);
     this.starGold = this.starGold ?? (tp ? tp.starGold : DEV_MODE ? 20000   : 0);
@@ -3189,6 +3197,7 @@ export default class GameScene extends Phaser.Scene {
     if (key === 'argus:cocoon')       return 60000;
     if (key === 'argus:missiles')     return 35000;
     if (key === 'argus:phase_strike') return 50000;
+    if (key === 'argus:fan_shot')     return 35000;
     if (key.startsWith('ship:')) {
       const mod = this.player?.activeCooldownMod ?? 1;
       const SHIP_CD = {
@@ -3229,6 +3238,7 @@ export default class GameScene extends Phaser.Scene {
       else if (key === 'argus:cocoon')         this.argusCtrl?._activateCocoon();
       else if (key === 'argus:missiles')       this.argusCtrl?._activateMissiles();
       else if (key === 'argus:phase_strike')   this.argusCtrl?._activatePhaseStrike();
+      else if (key === 'argus:fan_shot')       this.argusCtrl?._activateFanShot();
       return;
     }
     if (key.startsWith('ship:')) {
@@ -3972,6 +3982,9 @@ export default class GameScene extends Phaser.Scene {
     const cannonCount = p.hasCannon
       ? (this.equipped?.weapon || []).filter(w => w && w.type !== 'laser').length
       : 0;
+    const laserCount = p.hasLaser
+      ? (this.equipped?.weapon || []).filter(w => w && w.type === 'laser').length
+      : 0;
 
     let blocked = false;
     if (!isAdmin && cannonCount > 0 && !this._checkAmmo('cannon', cannonCount)) blocked = true;
@@ -3989,7 +4002,25 @@ export default class GameScene extends Phaser.Scene {
     // должен отключаться независимо от урона/боссов).
     if (this.shotShakeEnabled !== false) this._shake(isOC ? 90 : 45, isOC ? 0.006 : 0.0025);
     if (p.hasCannon) this._fireCannon(skillMult, isOC, cannonCount);
-    if (p.hasLaser)  this._fireLaser(skillMult, isOC);
+    if (p.hasLaser)  this._fireLaser(skillMult, isOC, laserCount);
+  }
+
+  // Хардпоинты для визуального разлёта выстрела при 2+ пушках/лазерах — ЧИСТО
+  // косметика (диалог: "не будет ли промахов" — точность/крит/урон считаются РОВНО
+  // один раз на выстрел, как и раньше; хардпоинты только дублируют визуал второго
+  // ствола, у второго "снаряда" нет ни хитбокса, ни своего ролла). При count<2
+  // возвращает одну точку — центр корабля, т.е. поведение НЕ меняется вообще для
+  // самого частого случая (1 пушка/1 лазер). Формула — та же, что у сопел
+  // двигателя (см. update() "Engine particles"): ship-local (nx,0) → мир, спрайт
+  // нос-вниз.
+  _weaponHardpoints(p, count) {
+    if (count < 2) return [{ x: p.x, y: p.y }];
+    const half = (p.sprite.displayWidth || 40) * 0.22;
+    const f = p.facing;
+    return [-half, half].map(nx => ({
+      x: p.x + nx * Math.sin(f),
+      y: p.y - nx * Math.cos(f),
+    }));
   }
 
   _checkAmmo(type, count) {
@@ -4056,9 +4087,11 @@ export default class GameScene extends Phaser.Scene {
       const ammoMult = this._consumeAmmo('cannon', cannonCount);
       const perkMult = this._offensivePerkMult(p, t, true);
       const dmg = Math.round(p.cannonDamage * skillMult * ammoMult * perkMult);
-      this._fireVisualBolt(p.x, p.y, t.x, t.y, isOC ? 0xff8800 : PROJECTILE.playerColor);
-      this.muzzleFlash(p.x, p.y, isOC ? 0xff8800 : 0x8fe6ff, p);
-      this._cannonMuzzleFx(p, t, isOC);
+      const _boltColor = isOC ? 0xff8800 : PROJECTILE.playerColor;
+      for (const h of this._weaponHardpoints(p, cannonCount)) {
+        this._fireVisualBolt(h.x, h.y, t.x, t.y, _boltColor);
+        this.muzzleFlash(h.x, h.y, isOC ? 0xff8800 : 0x8fe6ff, p);
+      }
       this.sfx?.play('sfx_cannon_fire', { cooldownMs: 60 });
       this.pvpClient?.fireClaim(t.ownerUserId, 'cannon', dmg, 'drone');
       return;
@@ -4088,9 +4121,11 @@ export default class GameScene extends Phaser.Scene {
       // Крит не считаем тут — его роллит сервер по loadout.critChance/critMult
       // (см. _pvpLoadoutSnapshot), иначе игрок мог бы заявлять крит на каждый выстрел.
       const dmg = Math.round(p.cannonDamage * skillMult * ammoMult * perkMult);
-      this._fireVisualBolt(p.x, p.y, t.x, t.y, isOC ? 0xff8800 : PROJECTILE.playerColor);
-      this.muzzleFlash(p.x, p.y, isOC ? 0xff8800 : 0x8fe6ff, p);
-      this._cannonMuzzleFx(p, t, isOC);
+      const _boltColor = isOC ? 0xff8800 : PROJECTILE.playerColor;
+      for (const h of this._weaponHardpoints(p, cannonCount)) {
+        this._fireVisualBolt(h.x, h.y, t.x, t.y, _boltColor);
+        this.muzzleFlash(h.x, h.y, isOC ? 0xff8800 : 0x8fe6ff, p);
+      }
       this.sfx?.play('sfx_cannon_fire', { cooldownMs: 60 });
       this.pvpClient?.fireClaim(t.userId, 'cannon', dmg);
       return;
@@ -4104,9 +4139,11 @@ export default class GameScene extends Phaser.Scene {
       const ammoMult = this._consumeAmmo('cannon', cannonCount);
       const perkMult = this._offensivePerkMult(p, t, true);
       const dmg = Math.round(p.cannonDamage * skillMult * ammoMult * perkMult);
-      this._fireVisualBolt(p.x, p.y, t.x, t.y, isOC ? 0xff8800 : PROJECTILE.playerColor);
-      this.muzzleFlash(p.x, p.y, isOC ? 0xff8800 : 0x8fe6ff, p);
-      this._cannonMuzzleFx(p, t, isOC);
+      const _boltColor = isOC ? 0xff8800 : PROJECTILE.playerColor;
+      for (const h of this._weaponHardpoints(p, cannonCount)) {
+        this._fireVisualBolt(h.x, h.y, t.x, t.y, _boltColor);
+        this.muzzleFlash(h.x, h.y, isOC ? 0xff8800 : 0x8fe6ff, p);
+      }
       this.sfx?.play('sfx_cannon_fire', { cooldownMs: 60 });
       if (this.pvpClient) {
         this.pvpClient.mobFireClaim(t.pvpMobId, t.maxHull, t.maxShield, t.x, t.y, 'cannon', dmg, t.wagonReward, t.isDungeonBoss);
@@ -4120,8 +4157,7 @@ export default class GameScene extends Phaser.Scene {
     }
 
     if (Math.random() >= (p.cannonAccuracy ?? 0.90)) {
-      this.muzzleFlash(p.x, p.y, 0x8fe6ff, p);
-      this._cannonMuzzleFx(p, t, isOC);
+      for (const h of this._weaponHardpoints(p, cannonCount)) this.muzzleFlash(h.x, h.y, 0x8fe6ff, p);
       this.sfx?.play('sfx_weapon_miss', { volume: 0.4, cooldownMs: 80 });
       return;
     }
@@ -4136,9 +4172,17 @@ export default class GameScene extends Phaser.Scene {
       (t.sprite?.body?.velocity?.x ?? 0) / DPR,
       (t.sprite?.body?.velocity?.y ?? 0) / DPR,
       PROJECTILE.speed);
-    this.projectiles.push(new Projectile(this, 'player', p.x, p.y, aimPt.x, aimPt.y, t, dmg, p.weaponPenetration, color, 160 * Math.PI / 180, 'plasma', isCrit));
-    this.muzzleFlash(p.x, p.y, isOC ? 0xff8800 : isCrit ? 0xffee44 : 0x8fe6ff, p);
-    this._cannonMuzzleFx(p, t, isOC, isCrit);
+    // Второй хардпоинт (2+ пушек) — ЧИСТО визуальный дубль-болт без урона (см.
+    // комментарий у _weaponHardpoints), но теперь тоже настоящий Projectile
+    // (cosmetic=true) вместо прямого твина _fireVisualBolt — тот летел прямой линией
+    // в фиксированную точку без самонаведения, а обычный снаряд каждый кадр доворачивает
+    // на ЖИВУЮ позицию цели (см. Projectile.update turnRate) — на движущейся цели два
+    // болта расходились визуально (диалог: "болты летят не одновременно"). Одинаковая
+    // физика у обоих — идут парой один в один.
+    const _hp = this._weaponHardpoints(p, cannonCount);
+    this.projectiles.push(new Projectile(this, 'player', _hp[0].x, _hp[0].y, aimPt.x, aimPt.y, t, dmg, p.weaponPenetration, color, 160 * Math.PI / 180, 'plasma', isCrit));
+    if (_hp[1]) this.projectiles.push(new Projectile(this, 'player', _hp[1].x, _hp[1].y, aimPt.x, aimPt.y, t, 0, 0, color, 160 * Math.PI / 180, 'plasma', isCrit, Infinity, null, true));
+    for (const h of _hp) this.muzzleFlash(h.x, h.y, isOC ? 0xff8800 : isCrit ? 0xffee44 : 0x8fe6ff, p);
     this.sfx?.play('sfx_cannon_fire', { cooldownMs: 60 });
     if (isCrit) this.sfx?.play('sfx_crit', { volume: 0.7 });
     if (isCrit || isOC) {
@@ -4479,7 +4523,12 @@ export default class GameScene extends Phaser.Scene {
       this.hitFlash(p.x, p.y, hullHit > 0, p);
       this.showDamage(p.x, p.y, { shieldHit, hullHit, killed: msg.killed }, msg.maxHull, msg.isCrit);
       this._shakeForHit({ hullHit }, msg.maxHull);
-      this._logDamageToPlayer(hullHit, shieldHit, this.pvpClient?.players?.get(msg.attackerUserId)?.name || 'Игрок');
+      const attacker = this.pvpClient?.players?.get(msg.attackerUserId);
+      // PvP-урон авторитетен на сервере и минует Player.takeDamage() (hull/shield
+      // выставляются напрямую выше) — индикатор направления урона триггерим тут явно,
+      // тем же _flashDamageArc, что и PvE-путь внутри takeDamage().
+      if (attacker && (hullHit > 0 || shieldHit > 0)) p._flashDamageArc(attacker.x, attacker.y, hullHit + shieldHit, !!msg.isCrit);
+      this._logDamageToPlayer(hullHit, shieldHit, attacker?.name || 'Игрок');
       if (msg.killed && p.alive) {
         p.die(); this.onPlayerKilled(true);
         // Автолок/автоатака не должны переживать собственную смерть — иначе после
@@ -4717,6 +4766,10 @@ export default class GameScene extends Phaser.Scene {
         this.hitFlash(p.x, p.y, hullHit > 0, p);
         this.showDamage(p.x, p.y, { shieldHit, hullHit, killed: h.killed }, h.maxHull, false);
         this._shakeForHit({ hullHit }, h.maxHull);
+        const trainHead = this.armoredTrain?.head;
+        if (trainHead && (hullHit > 0 || shieldHit > 0)) {
+          p._flashDamageArc(trainHead.x, trainHead.y, hullHit + shieldHit, false);
+        }
         this._logDamageToPlayer(hullHit, shieldHit, 'Бронепоезд');
         if (h.killed && p.alive) {
           p.die(); this.onPlayerKilled();
@@ -5160,8 +5213,22 @@ export default class GameScene extends Phaser.Scene {
     return mult;
   }
 
+  // Пускает луч(и) лазера с хардпоинтов — см. _weaponHardpoints. Лазер хитскан:
+  // попадание уже решено ДО отрисовки луча, так что дублировать луч на 2 ствола
+  // абсолютно безопасно для баланса — оба луча чисто декоративные, урон/попадание
+  // общий и посчитан один раз выше по стеку. e1=null при 2 хардпоинтах (не p) —
+  // иначе _updateTrackedBeams каждый кадр перерисовывал бы начало луча ОБРАТНО в
+  // центр корабля (см. e1?.x в этой функции), и за ~200мс жизни луча было бы видно
+  // характерный "скачок" со ствола в центр на второй же кадр.
+  _fireLaserBeams(p, t, hardpoints, color, alpha, width, duration) {
+    for (const h of hardpoints) {
+      this._laserBeam(h.x, h.y, t.x, t.y, color, alpha, width, duration, hardpoints.length === 1 ? p : null, t);
+      this.muzzleFlash(h.x, h.y, color, p);
+    }
+  }
+
   // Hitscan laser: instant hit, accuracy check, shield/hull multipliers, amber VFX beam.
-  _fireLaser(skillMult = 1, isOC = false) {
+  _fireLaser(skillMult = 1, isOC = false, laserCount = 1) {
     const t = this.target, p = this.player;
     if (!t?.alive || !p.alive) return;
     // См. _fireCannon — вагон бронепоезда лочится всегда, но бьётся строго с хвоста.
@@ -5193,8 +5260,7 @@ export default class GameScene extends Phaser.Scene {
       const beamColor = isOC ? 0xffcc00 : p.allLasers ? 0xce93d8 : 0xffaa00;
       const perkMult = this._offensivePerkMult(p, t, false);
       const dmg = Math.round(p.laserDamage * skillMult * perkMult);
-      this._laserBeam(p.x, p.y, t.x, t.y, beamColor, 1.0, isOC ? 12 : 3, 200, p, t);
-      this.muzzleFlash(p.x, p.y, beamColor, p);
+      this._fireLaserBeams(p, t, this._weaponHardpoints(p, laserCount), beamColor, 1.0, isOC ? 12 : 3, 200);
       this.sfx?.play('sfx_laser_fire', { cooldownMs: 60 });
       this._consumeAmmo('laser');
       this.pvpClient?.fireClaim(t.ownerUserId, 'laser', dmg, 'drone');
@@ -5219,8 +5285,7 @@ export default class GameScene extends Phaser.Scene {
       const beamColor = isOC ? 0xffcc00 : p.allLasers ? 0xce93d8 : 0xffaa00;
       const perkMult = this._offensivePerkMult(p, t, false);
       const dmg = Math.round(p.laserDamage * skillMult * perkMult);
-      this._laserBeam(p.x, p.y, t.x, t.y, beamColor, 1.0, isOC ? 12 : 3, 200, p, t);
-      this.muzzleFlash(p.x, p.y, beamColor, p);
+      this._fireLaserBeams(p, t, this._weaponHardpoints(p, laserCount), beamColor, 1.0, isOC ? 12 : 3, 200);
       this.sfx?.play('sfx_laser_fire', { cooldownMs: 60 });
       this._consumeAmmo('laser');
       this.pvpClient?.fireClaim(t.userId, 'laser', dmg);
@@ -5231,8 +5296,7 @@ export default class GameScene extends Phaser.Scene {
       const beamColor = isOC ? 0xffcc00 : p.allLasers ? 0xce93d8 : 0xffaa00;
       const perkMult = this._offensivePerkMult(p, t, false);
       const dmg = Math.round(p.laserDamage * skillMult * perkMult);
-      this._laserBeam(p.x, p.y, t.x, t.y, beamColor, 1.0, isOC ? 12 : 3, 200, p, t);
-      this.muzzleFlash(p.x, p.y, beamColor, p);
+      this._fireLaserBeams(p, t, this._weaponHardpoints(p, laserCount), beamColor, 1.0, isOC ? 12 : 3, 200);
       this.sfx?.play('sfx_laser_fire', { cooldownMs: 60 });
       this._consumeAmmo('laser');
       if (this.pvpClient) {
@@ -5254,12 +5318,7 @@ export default class GameScene extends Phaser.Scene {
     const allLasers = p.allLasers;
     const beamColor = isOC ? 0xffcc00 : isCrit ? 0xffff44 : allLasers ? 0xce93d8 : 0xffaa00;
     const beamWidth = isOC ? 12 : isCrit ? 6 : 3;
-    this._laserBeam(p.x, p.y, t.x, t.y, beamColor, hit ? 1.0 : 0.25, beamWidth, 200, p, t);
-    this.muzzleFlash(p.x, p.y, beamColor, p);
-    // Animated muzzle discharge — beam1 rotated toward target
-    const _beamAngle = Math.atan2(t.y - p.y, t.x - p.x);
-    const _beamSpr = this.vfx?.play('laser_beam1', p.x, p.y, { scale: isOC ? 0.22 : isCrit ? 0.17 : 0.13, depth: 64 });
-    if (_beamSpr) { _beamSpr.setRotation(_beamAngle); this._attachFx(_beamSpr, p); }
+    this._fireLaserBeams(p, t, this._weaponHardpoints(p, laserCount), beamColor, hit ? 1.0 : 0.25, beamWidth, 200);
 
     if (!hit) { this.sfx?.play('sfx_weapon_miss', { volume: 0.4, cooldownMs: 80 }); return; }
 
@@ -5388,7 +5447,7 @@ export default class GameScene extends Phaser.Scene {
     if (cfg.hitscan) {
       if (this._hasWallBetween(mob.x, mob.y, victim.x, victim.y)) return;
       const pen = cfg.penetration ?? 0.6;
-      const res = victim.takeDamage(mob.damage * dmgMult, pen, { ignoreMovEvasion: true, dmgType: pType, ...extraOpts });
+      const res = victim.takeDamage(mob.damage * dmgMult, pen, { ignoreMovEvasion: true, dmgType: pType, srcX: mob.x, srcY: mob.y, isCrit, ...extraOpts });
       this._laserBeam(mob.x, mob.y, victim.x, victim.y, isCrit ? 0xffe14d : 0xce93d8, isCrit ? 1.0 : 0.85, isCrit ? 6 : 4, 200, mob, victim);
       this.sfx?.play('sfx_mob_fire_hitscan', { volume: 0.4, cooldownMs: 90 });
       this.onProjectileHit({ owner: 'mob', victim, type: pType, effect: null, effectCfg: cfg, isCrit, sourceMob: mob }, res);
@@ -5417,7 +5476,13 @@ export default class GameScene extends Phaser.Scene {
     // Projectile.js), не безлимитное самонаведение; сейчас только у sec_drone
     // (constants.js) — правка по просьбе ("90 градусов наведение" вместо ion-веера).
     const maxTurnRad = mob.tpl.maxTurnRad ?? Infinity;
-    this.projectiles.push(new Projectile(this, 'mob', mob.x, mob.y, tx, ty, victim, mob.damage * dmgMult, pen, cfg.color, turnRate, pType, isCrit, maxTurnRad, mob));
+    // extraOpts.dmgMult — рандомизация урона болта веерного залпа (_updateScatterShot).
+    // mob.damage уже масштабирован по уровню босса (см. scaleStat в конструкторе Mob) —
+    // умножая на случайный множитель ЕГО, а не фиксированное число, разброс урона
+    // автоматически получается разным по тирам данжей/уровням боссов без отдельной
+    // таблицы (диалог: "урон рандомизируй по тирам данжа и уровням боссов").
+    const fanMult = extraOpts.dmgMult ?? 1;
+    this.projectiles.push(new Projectile(this, 'mob', mob.x, mob.y, tx, ty, victim, mob.damage * dmgMult * fanMult, pen, cfg.color, turnRate, pType, isCrit, maxTurnRad, mob));
     // gunner — единственный признак класса был +20% к скорострельности, никак не
     // читаемый на глаз; даём его выстрелу свою, более резкую/яркую вспышку
     const flashColor = isCrit ? 0xffe14d : mob.tpl.aiClass === 'gunner'
@@ -5425,14 +5490,6 @@ export default class GameScene extends Phaser.Scene {
       : ({ plasma: 0xff8a7a, acid: 0x76ff03, grav: 0xffb74d, emp: 0x4dd0e1 }[pType] ?? 0xff8a7a);
     this.muzzleFlash(mob.x, mob.y, flashColor, mob);
     this.sfx?.play('sfx_mob_fire_plasma', { volume: 0.35, cooldownMs: 90 });
-  }
-  // Анимированный залп пушки (plasma_bolt VFX-лист) — тот же приём, что и
-  // laser_beam1 у _fireLaser, только для собственного ассета пушки; раньше этот
-  // лист был загружен и зарегистрирован в BootScene, но нигде не проигрывался.
-  _cannonMuzzleFx(p, t, isOC, isCrit = false) {
-    const scale = isOC ? 0.22 : isCrit ? 0.17 : 0.13;
-    const spr = this.vfx?.play('plasma_bolt', p.x, p.y, { scale, depth: 64 });
-    if (spr) { spr.setRotation(Math.atan2(t.y - p.y, t.x - p.x)); this._attachFx(spr, p); }
   }
   // entity — опционально: живая сущность (Player/Mob), за которой эффект должен
   // следовать все время своей жизни. Без него — прежнее поведение (снимок позиции),
@@ -6593,28 +6650,72 @@ export default class GameScene extends Phaser.Scene {
     const shieldHit = Math.round(res.shieldHit || 0);
     const hullHit   = Math.round(res.hullHit   || 0);
     const total = shieldHit + hullHit; if (total <= 0) return;
-    const spawnNum = (amount, toHull, xOff) => {
+
+    // Один КАНАЛ НА СТОРОНУ (щит/корпус), а не третий отдельный "solo" — раньше независимый
+    // хит только по щиту ИЛИ только по корпусу (от любого источника — другого моба, другой
+    // турели) шёл через отдельный 'solo'-канал со своим джиттером/веером, никак не
+    // согласованным с фиксированными позициями 'shield'/'hull' — отсюда "то рядом то очень
+    // далеко" (диалог): три независимые системы позиционирования на одной точке, не
+    // знающие друг о друге. Теперь ЛЮБОЙ чисто щитовой хит (от кого угодно) идёт в канал
+    // 'shield' (тянется строго влево), любой чисто корпусный — в 'hull' (строго вправо);
+    // канал остаётся только один на сторону, позиции полностью детерминированы (без рандома).
+    //
+    // Суммирование в пределах 1с внутри каждого канала (диалог: "суммировать урон, щит и
+    // корпус отдельно") — пока предыдущее число в этом канале не старше 1с от своего первого
+    // хита, новый урон добавляется в него (setText + короткий "пульс"), а не спавнит новую
+    // цифру. Показ не откладывается — первый хит рисуется сразу.
+    //
+    // Анти-нахлёст для случая, когда предыдущее число уже "остыло" (>1с) но ещё летит на
+    // экране (тви́н долёта живёт до ~1.9с) — свой счётчик живых цифр на канал, каждая
+    // следующая уходит дальше по стороне канала строго фиксированным шагом (без рандома).
+    const stacks = (this._dmgNumStacks ??= new Map());
+    const merges = (this._dmgNumMerges ??= new Map());
+    const now = this.time.now;
+    const posKey = `${Math.round(x / 50)}:${Math.round(y / 50)}`;
+
+    const spawnNum = (amount, toHull, channel, dir) => {
+      const mergeKey = `${posKey}:${channel}`;
+      const active = merges.get(mergeKey);
+      if (active && now - active.windowStart < 1000) {
+        active.total += amount;
+        active.textObj.setText(`-${active.total}`);
+        this.tweens.add({ targets: active.textObj, scale: active.textObj.scale * 1.12, duration: 90, yoyo: true, ease: 'Quad.easeOut' });
+        return;
+      }
+
+      const stack = stacks.get(mergeKey) || { alive: 0 };
+      stacks.set(mergeKey, stack);
+      const idx = stack.alive;
+      stack.alive++;
+
       const pct  = maxHp ? Math.min(1, amount / maxHp) : 0;
       const size = Math.round((toHull ? 20 : 16) + pct * 16);
       const color = isCrit ? '#ffe14d' : toHull ? '#ef5350' : '#4dd0e1';
-      const txt = this.add.text(x + xOff, y - 20, `-${amount}`,
+      const xOff = dir * (14 + idx * 24); // фиксированный шаг, без рандома — предсказуемая позиция
+      const fanY = Math.min(idx * 8, 40);
+      const txt = this.add.text(x + xOff, y - 20 - fanY, `-${amount}`,
         { fontFamily: 'Orbitron', fontSize: `${size}px`, color, fontStyle: 'bold', resolution: UI_RES })
         .setOrigin(0.5).setDepth(70).setScale(0.55 + pct * 0.35);
       this.tweens.add({ targets: txt, scale: 1, duration: 140, ease: 'Back.easeOut' });
-      const riseDist = 60 + pct * 40, dur = 1500 + pct * 400;
-      this.tweens.add({ targets: txt, y: y - riseDist, duration: dur, ease: 'Quad.easeOut', onComplete: () => txt.destroy() });
+      const mergeEntry = { total: amount, windowStart: now, textObj: txt };
+      merges.set(mergeKey, mergeEntry);
+      // Разброс скорости/дистанции подъёма — иначе цифры, вылетевшие почти одновременно,
+      // весь путь двигаются синхронно и визуально "слипаются" в одну колонну на подъёме.
+      const jitter = 0.85 + Math.random() * 0.3;
+      const riseDist = (60 + pct * 40) * jitter, dur = (1500 + pct * 400) * jitter;
+      this.tweens.add({
+        targets: txt, y: txt.y - riseDist, duration: dur, ease: 'Quad.easeOut',
+        onComplete: () => {
+          txt.destroy();
+          stack.alive--;
+          if (stack.alive <= 0) stacks.delete(mergeKey);
+          if (merges.get(mergeKey) === mergeEntry) merges.delete(mergeKey);
+        },
+      });
       this.tweens.add({ targets: txt, alpha: 0, delay: dur * 0.47, duration: dur * 0.53 });
     };
-    // Пробитие за один выстрел (часть в щит, часть в корпус) раньше схлопывалось в одно
-    // суммарное число — игрок не видел разбивку (диалог: "не знает, сколько урона ушло
-    // в щит, сколько в корпус"). Два отдельных числа со сдвигом, только когда реально
-    // задеты ОБА канала — обычный (не пробивающий) хит остаётся одним числом, как раньше.
-    if (shieldHit > 0 && hullHit > 0) {
-      spawnNum(shieldHit, false, Phaser.Math.Between(-20, -6));
-      spawnNum(hullHit, true, Phaser.Math.Between(6, 20));
-    } else {
-      spawnNum(total, hullHit > 0, Phaser.Math.Between(-12, 12));
-    }
+    if (shieldHit > 0) spawnNum(shieldHit, false, 'shield', -1);
+    if (hullHit > 0)   spawnNum(hullHit,   true,  'hull',    1);
   }
   // Death Recap — накапливает попадания ПО ИГРОКУ (не по мобам/другим игрокам), источник
   // best-effort (имя моба, если известно, ник в PvP, иначе общая категория). Обрезаем по
@@ -6708,7 +6809,7 @@ export default class GameScene extends Phaser.Scene {
     const d = Phaser.Math.Distance.Between(p.x, p.y, z.x, z.y);
     if (d <= z.radius) {
       const falloff = 1 - (d / z.radius) * (1 - BOSS.aoeEdgeFactor);
-      const res = p.takeDamage(BOSS.aoeDamage * falloff, BOSS.aoePenetration, { ignoreMovEvasion: true, aoe: true });
+      const res = p.takeDamage(BOSS.aoeDamage * falloff, BOSS.aoePenetration, { ignoreMovEvasion: true, aoe: true, srcX: z.x, srcY: z.y });
       this.showDamage(p.x, p.y, res, p.maxHull);
       this._shakeForHit(res, p.maxHull);
       if (!p.alive) this.onPlayerKilled();
@@ -6816,7 +6917,17 @@ export default class GameScene extends Phaser.Scene {
     // сохранённый стейт. _saveState() сам дебаунсит (см. комментарий на месте
     // определения), так что раз в 5с реального времени достаточно.
     this._posSaveAccum = (this._posSaveAccum || 0) + dt;
-    if (this._posSaveAccum > 5) { this._posSaveAccum = 0; this._saveState(); }
+    if (this._posSaveAccum > 5) {
+      this._posSaveAccum = 0;
+      // Срок Premium мог истечь прямо во время сессии (не только на заходе, см.
+      // create()) — тот же самый тик, не завожу отдельный аккумулятор ради этого.
+      if (this.premium && this.premiumUntil && Date.now() >= this.premiumUntil) {
+        this.premium = false;
+        this.premiumUntil = null;
+        this.log('⭐ Подписка Premium истекла.');
+      }
+      this._saveState();
+    }
 
     if (this.activeShip) {
       this._shipPlayTimeSec[this.activeShip] = (this._shipPlayTimeSec[this.activeShip] || 0) + dt;
@@ -7015,10 +7126,15 @@ export default class GameScene extends Phaser.Scene {
       }
       const tgt = (m.escortTarget?.alive) ? m.escortTarget : this.player;
       const victim = (m.escortTarget?.alive) ? this.escortTransport : this.player;
-      const _fireCb = this.mobAimDisrupted ? () => {} : (mob, tx, ty) => this.fireMobWeapon(mob, tx, ty, victim);
+      const _fireCb = this.mobAimDisrupted ? () => {} : (mob, tx, ty, extraOpts) => this.fireMobWeapon(mob, tx, ty, victim, extraOpts);
       m.update(dt, tgt, tgt === this.player && inSafe, _fireCb);
       if (m.requestAoe) { this.spawnBossAoe(m, this.player.x, this.player.y); m.requestAoe = false; }
     });
+    // Расталкивание всех обычных мобов (не только дрон-роёв ниже) — раньше при
+    // агро 10+ они слипались в "слоёный пирог" на одной точке (диалог: "Separation
+    // для всех мобов"). Спатиал-хеш внутри applySeparation держит это дешёвым даже
+    // на данжах после growth-скейла (40+ мобов).
+    if (this.mobs.length > 1) applySeparation(this.mobs.filter(m => m.alive), dt);
     this._updateDroneSwarms(dt);
     this._processPendingAmbientSpawns();
     this._redrawMobBars();
@@ -8316,7 +8432,7 @@ export default class GameScene extends Phaser.Scene {
         const totalHp = (this.player.hull ?? 0) + (this.player.shield ?? 0);
         const dmg = Math.max(totalHp * 0.10, 60);
         const falloff = 1 - (pdist / br) * 0.5;
-        const res = this.player.takeDamage(dmg * falloff, 0.2, { aoe: true });
+        const res = this.player.takeDamage(dmg * falloff, 0.2, { aoe: true, srcX: bx, srcY: by });
         this._logDamageToPlayer(res.hullHit, res.shieldHit, 'Мина');
         this.showDamage(this.player.x, this.player.y, res, this.player.maxHull);
         this._shakeForHit(res, this.player.maxHull);
@@ -8358,7 +8474,7 @@ export default class GameScene extends Phaser.Scene {
       if (dAng <= HALF_ANGLE && pdist <= RANGE && !this._hasWallBetween(mx, my, this.player.x, this.player.y)) {
         const totalHp = (this.player.hull ?? 0) + (this.player.shield ?? 0);
         const dmg = Math.max(totalHp * 0.16, 100);
-        const res = this.player.takeDamage(dmg, 0.9, { aoe: true }); // высокая пробивная способность — почти весь урон в корпус
+        const res = this.player.takeDamage(dmg, 0.9, { aoe: true, srcX: mx, srcY: my }); // высокая пробивная способность — почти весь урон в корпус
         this._logDamageToPlayer(res.hullHit, res.shieldHit, 'Направленная мина');
         this.showDamage(this.player.x, this.player.y, res, this.player.maxHull);
         this._shakeForHit(res, this.player.maxHull);
@@ -8412,7 +8528,7 @@ export default class GameScene extends Phaser.Scene {
     const dist = Phaser.Math.Distance.Between(this.player.x, this.player.y, boss.x, boss.y);
     for (const z of ZONES) {
       if (dist >= z.r - z.hw && dist <= z.r + z.hw) {
-        const res = this.player.takeDamage(z.dmg, 0, { aoe: true });
+        const res = this.player.takeDamage(z.dmg, 0, { aoe: true, srcX: boss.x, srcY: boss.y });
         this._logDamageToPlayer(res.hullHit, res.shieldHit, 'Апофис (кольца)');
         this.showDamage(this.player.x, this.player.y, res, this.player.maxHull);
         this._shakeForHit(res, this.player.maxHull);
@@ -8465,7 +8581,7 @@ export default class GameScene extends Phaser.Scene {
             const blastDist = Phaser.Math.Distance.Between(mine.x, mine.y, this.player.x, this.player.y);
             if (blastDist <= mine.blastRadius) {
               const falloff = 1 - (blastDist / mine.blastRadius) * 0.6;
-              const res = this.player.takeDamage(mine.damage * falloff, mine.penetration, { aoe: true });
+              const res = this.player.takeDamage(mine.damage * falloff, mine.penetration, { aoe: true, srcX: mine.x, srcY: mine.y });
               this._logDamageToPlayer(res.hullHit, res.shieldHit, 'Мина');
               this.showDamage(this.player.x, this.player.y, res, this.player.maxHull);
               this._shakeForHit(res, this.player.maxHull);
@@ -8861,7 +8977,7 @@ export default class GameScene extends Phaser.Scene {
     }
     for (let i = 0; i < sSlots; i++) {
       const p = mkPerk('shield'); const pb = perkBonus(p);
-      if (p.key === 'perk_hardened')  dmgResistRed += 0.10 * (1 + pb);
+      if (p.key === 'perk_hardened')  dmgResistRed += 0.069 * (1 + pb); // база снижена, см. perks.js perk_hardened
       if (p.key === 'perk_resonance') shdRegenPct  += 0.12 * (1 + pb);
     }
     for (let i = 0; i < eSlots; i++) {
@@ -9517,6 +9633,7 @@ export default class GameScene extends Phaser.Scene {
       corpRep:             this.corpRep,
       seasonWon:           this.seasonWon,
       premium:             this.premium,
+      premiumUntil:        this.premiumUntil,
       activeShip:          this.activeShip,
       ownedShips:          [...(this.ownedShips || [])],
       shipLevels:          this.shipLevels  || {},
@@ -9578,6 +9695,7 @@ export default class GameScene extends Phaser.Scene {
     if (s.corpRep            != null) this.corpRep            = s.corpRep;
     if (s.seasonWon          != null) this.seasonWon          = s.seasonWon;
     if (s.premium            != null) this.premium            = s.premium;
+    if (s.premiumUntil       != null) this.premiumUntil       = s.premiumUntil;
     if (s.activeShip         != null) this.activeShip         = s.activeShip;
     if (s.ownedShips         != null) this.ownedShips         = new Set(s.ownedShips);
     if (s.shipLevels         != null) this.shipLevels         = s.shipLevels;
