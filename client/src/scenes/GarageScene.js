@@ -560,12 +560,16 @@ export default class GarageScene extends Phaser.Scene {
           const cntTxt = this.add.text(sx + SZ / 2, sy + SZ - 8, `${item.amount.toLocaleString()}`,
             this.F('10px', '#aaccdd')).setOrigin(0.5);
           const cellObjs = [box, iconEl, cntTxt];
-          if (canLoad) {
-            box.setInteractive({ useHandCursor: true });
-            box.on('pointerover', () => box.setFillStyle(0x142838));
-            box.on('pointerout',  () => box.setFillStyle(0x0a1a2a));
-            box.on('pointerdown', () => this._loadAmmoToSlot(item));
-          }
+          // Хинт по наведению — раньше висел ТОЛЬКО если canLoad (клик грузит в слот),
+          // т.е. клановые/данж-ресурсы (canLoad всегда false — см. комментарий выше)
+          // не были интерактивны вообще и не показывали название при наведении, только
+          // цифру количества в ячейке (жалоба из диалога: "добавить хинты для
+          // расходников, ресурсов и боеприпасов"). Клик-в-слот (_loadAmmoToSlot)
+          // остаётся условным на canLoad, хинт — всегда.
+          box.setInteractive({ useHandCursor: canLoad });
+          box.on('pointerover', (p) => { if (canLoad) box.setFillStyle(0x142838); this._showTooltip(p.x, p.y, item); });
+          box.on('pointerout',  () => { if (canLoad) box.setFillStyle(0x0a1a2a); this._hideTooltip(); });
+          if (canLoad) box.on('pointerdown', () => this._loadAmmoToSlot(item));
           container.add(cellObjs);
           if (overflow) {
             const dg = this.add.graphics();
@@ -1161,8 +1165,11 @@ export default class GarageScene extends Phaser.Scene {
 
     // Кнопка быстрого перехода в окно Трюм/Склад
     const btnY = py + 92 + invH + 8;
+    // Бордер ярче/плотнее (0x1e3a50@0.7 → 0x2a5878@1) — на bg_garage терялся у нижнего
+    // края панели (та же жалоба "слабо читается на фоне окна", что и у пустых слотов
+    // боеприпасов выше).
     const btnBg = this.add.rectangle(rx, btnY, rw, BTN_H, 0x0d1e2c, 0.95)
-      .setOrigin(0, 0).setStrokeStyle(1, 0x1e3a50, 0.7).setInteractive({ useHandCursor: true })
+      .setOrigin(0, 0).setStrokeStyle(1.5, 0x2a5878, 1).setInteractive({ useHandCursor: true })
       .setDepth(15);
     const whLabel = this.add.text(rx + rw / 2, btnY + BTN_H / 2,
       `СКЛАД  ${whCount}/${whMax}   →   C`,
@@ -1252,9 +1259,14 @@ export default class GarageScene extends Phaser.Scene {
       const isEmpty = !slot.type || slot.count <= 0;
       const ammoInfo = slot.type ? AMMO_ICON[slot.type] : null;
       const hexC = ammoInfo?.color ?? 0x44aacc;
-      const borderColor = isEmpty ? 0x33484f : hexC;
-      const box = this.add.rectangle(sx, sy, sz, sz, isEmpty ? 0x0c1118 : 0x12222e, 0.95).setOrigin(0, 0)
-        .setStrokeStyle(isEmpty ? 1 : 2, borderColor, isEmpty ? 0.35 : 0.85);
+      // Пустой слот раньше был темнее/тусклее (0x33484f@0.35), чем ЭТОТ ЖЕ стиль пустой
+      // ячейки в _renderSlotGrid (0x2a4870@0.65, см. ниже) — на контрастном bg_garage
+      // (панель рисуется на alpha 0.88, фон просвечивает) тонкая тусклая рамка почти
+      // не читалась (жалоба из диалога: "кнопки и ячейки слабо читаются на фоне окна").
+      // Подняли до того же контраста, что уже используется для пустых ячеек трюма.
+      const borderColor = isEmpty ? 0x2a4870 : hexC;
+      const box = this.add.rectangle(sx, sy, sz, sz, isEmpty ? 0x0f2035 : 0x12222e, isEmpty ? 0.9 : 0.95).setOrigin(0, 0)
+        .setStrokeStyle(isEmpty ? 1 : 2, borderColor, isEmpty ? 0.65 : 0.85);
 
       if (!isEmpty) {
         if (ammoInfo) {
@@ -1400,6 +1412,19 @@ export default class GarageScene extends Phaser.Scene {
         .filter(s => s?.perk?.key === 'perk_hardened').length;
       if (already >= 2) {
         this.gs.log('⚠ Hardened: на корабле уже 2 щита с этим перком — 3-й эффекта не даёт, не установлен.');
+        return;
+      }
+    }
+
+    // Максимум 2 РАЗНЫХ типов оружия одновременно на корабле (решено 2026-08-09, см.
+    // roadmap_backlog.md п.9 — заготовка под будущие рельсотрон/электро-пушку, чтобы
+    // визуальные эффекты выстрела не превратились в кашу из 3-4 разных типов сразу).
+    // Не регрессия сейчас: пока в игре только cannon+laser, это условие никогда не
+    // блокирует реальную экипировку (2 типа уже разрешённый максимум).
+    if (key === 'weapon') {
+      const equippedTypes = new Set((this.gs.equipped.weapon || []).filter(Boolean).map(w => w.type));
+      if (!equippedTypes.has(item.type) && equippedTypes.size >= 2) {
+        this.gs.log('⚠ На корабле уже 2 разных типа оружия — больше не помещается, снимите один тип.');
         return;
       }
     }
@@ -1842,6 +1867,14 @@ export default class GarageScene extends Phaser.Scene {
       { text: itemName(item),  sty: this.O('13px', '#ffe0b2') },
       { text: itemStats(item), sty: this.F('11px', '#9fb3b8') },
     ];
+    // Клановый/данж-ресурс (biomech_fragment/quantum_shard/plasma_strand, category
+    // 'dungeonResource') — явная метка (диалог: "если ресурс клановый - написать
+    // клановый") — раньше единственный намёк на это был в itemdesc.* (CargoScene), а
+    // тут (Гараж, трюм/склад) вообще ничего не подсказывало, что ресурс не продать/не
+    // экипировать, а нужно сдавать в клан.
+    if (CONSUMABLES[item.type]?.category === 'dungeonResource') {
+      lineDefs.push({ text: '★ Клановый ресурс', sty: this.F('10px', '#80cbc4') });
+    }
     if (srInfo) {
       lineDefs.push({ text: srInfo.label, sty: this.F('10px', `#${srInfo.color.toString(16).padStart(6, '0')}`) });
     }

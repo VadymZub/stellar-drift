@@ -704,7 +704,7 @@ export default class SkillScene extends Phaser.Scene {
       // Hotkey label (top-left of slot)
       const hkLabel = i < 9 ? `${i + 1}` : '0';
       const hkt = this.add.text(sx + 3, sy + 2, hkLabel,
-        { ...TFS, fontSize: '8px', color: '#1a2a35' }).setDepth(23);
+        { ...TFS, fontSize: '11px', color: '#1a2a35' }).setDepth(23);
       this._objs.push(hkt);
 
       if (s) {
@@ -714,7 +714,7 @@ export default class SkillScene extends Phaser.Scene {
           { fontSize: '16px' }).setOrigin(0.5).setDepth(23);
         // Short name
         const nt = this.add.text(sx + slotW / 2, sy + slotH - 11, s.nameRu.split(' ')[0].slice(0, 8),
-          { ...TFS, fontSize: '7px', color: bm.color }).setOrigin(0.5, 0).setDepth(23);
+          { ...TFS, fontSize: '9px', color: bm.color }).setOrigin(0.5, 0).setDepth(23);
         this._objs.push(it, nt);
 
         // Right-click to remove

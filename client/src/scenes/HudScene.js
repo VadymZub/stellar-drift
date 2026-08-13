@@ -136,6 +136,13 @@ export default class HudScene extends Phaser.Scene {
       fontFamily: 'Orbitron, sans-serif', fontSize: '13px', color: '#7ec8ff', resolution: UI_RES,
     }).setDepth(300).setScrollFactor(0).setVisible(_s.showRam === true && !!performance.memory);
 
+    // PvP Killfeed (combat_analysis_v3.md §B14) — правый верхний угол, под миникартой.
+    // Данные копит GameScene._pushKillfeed() (только реальные PvP-килы, вызывается из
+    // _onPvpHitResult на msg.killed — PvE-убийства мобов сюда не попадают).
+    this._killfeedTxts = Array.from({ length: 5 }, () =>
+      this.add.text(0, 0, '', { fontFamily: 'Inter, sans-serif', fontSize: '13px', color: '#e8f0fe', resolution: UI_RES })
+        .setOrigin(1, 0).setDepth(300).setScrollFactor(0).setVisible(false));
+
     const F = (size, color = '#cfe9ee', weight = '600') =>
       ({ fontFamily: 'Inter, sans-serif', fontSize: size, color, fontStyle: weight, resolution: UI_RES });
     const O = (size, color = '#4dd0e1') =>
@@ -153,11 +160,18 @@ export default class HudScene extends Phaser.Scene {
 
     // Панель игрока (лев-верх) — фиксированный вертикальный layout
     // Bar rows: icon (left) + bar (center, 155px) + value (right of bar, white)
-    this._icoShield = this.add.text(18, 20, '🛡', F('12px', '#4dd0e1')).setDepth(101);
-    this._valShield = this.add.text(202, 28, '', F('11px', '#d0eeff')).setOrigin(0, 0.5).setDepth(102);
-    this._icoHull   = this.add.text(18, 44, '⚙', F('12px', '#66bb6a')).setDepth(101);
-    this._valHull   = this.add.text(202, 52, '', F('11px', '#c8f0d0')).setOrigin(0, 0.5).setDepth(102);
-    this.pSpeed     = this.add.text(20, 68, '', F('12px', '#9fb3b8')).setDepth(101);
+    // Тёмная подложка (bar() ниже) рисуется только ПОД самой полоской HP/щита — цифры
+    // справа от неё и надпись скорости под ней сидят прямо на игровом фоне без всякой
+    // подложки. На светлых участках карты (туманности, взрывы) светлый текст в них
+    // проваливается (жалоба со скрином). Фикс — тот же приём, что уже используют
+    // подписи под миникартой чуть выше (_mmSectorTxt/_mmCoordTxt): тёмная обводка
+    // держит контраст независимо от того, что под текстом в конкретный момент.
+    const STROKE = ['#04101a', 3];
+    this._icoShield = this.add.text(18, 20, '🛡', F('12px', '#4dd0e1')).setDepth(101).setStroke(...STROKE);
+    this._valShield = this.add.text(202, 28, '', F('11px', '#d0eeff')).setOrigin(0, 0.5).setDepth(102).setStroke(...STROKE);
+    this._icoHull   = this.add.text(18, 44, '⚙', F('12px', '#66bb6a')).setDepth(101).setStroke(...STROKE);
+    this._valHull   = this.add.text(202, 52, '', F('11px', '#c8f0d0')).setOrigin(0, 0.5).setDepth(102).setStroke(...STROKE);
+    this.pSpeed     = this.add.text(20, 68, '', F('12px', '#9fb3b8')).setDepth(101).setStroke(...STROKE);
     // Info panel items — position managed by _buildInfoPanel
     this.pCredits  = this.add.text(0, 0, '', F('13px', '#ffb74d')).setDepth(101).setVisible(false);
     this.pStarGold = this.add.text(0, 0, '', F('13px', '#ffd54f')).setDepth(101).setVisible(false);
@@ -396,14 +410,19 @@ export default class HudScene extends Phaser.Scene {
 
     // Tooltip panel (hidden by default)
     this._abTipTimer = null;
+    // Шрифт увеличен 11→13 / 10→13px (диалог: "хинты для актив панели... он всё равно
+    // плохо читается" — прошлый фикс тронул ТОЛЬКО ячейки SkillScene, этот тултип не
+    // трогался вообще). Desc-цвет тоже светлее ('#7aacbc'→'#b8d8e4') — старый был не
+    // "невидимым" по контрасту (фон под ним свой опаque-панель), но слишком тусклым
+    // при мелком кегле, из-за чего в сумме читался как "почти не видно".
     this._abTipBg   = this.add.graphics().setDepth(120).setVisible(false);
     this._abTipName = this.add.text(0, 0, '', {
-      fontFamily: 'Orbitron, sans-serif', fontSize: '11px', color: '#e0f4ff',
+      fontFamily: 'Orbitron, sans-serif', fontSize: '13px', color: '#e0f4ff',
       fontStyle: 'bold', resolution: UI_RES,
     }).setDepth(121).setVisible(false);
     this._abTipDesc = this.add.text(0, 0, '', {
-      fontFamily: 'Inter, sans-serif', fontSize: '10px', color: '#7aacbc',
-      resolution: UI_RES, wordWrap: { width: 165 },
+      fontFamily: 'Inter, sans-serif', fontSize: '13px', color: '#b8d8e4',
+      resolution: UI_RES, wordWrap: { width: 184 }, // W_TIP(200) - PAD(8)*2, см. _showAbTip
     }).setDepth(121).setVisible(false);
   }
 
@@ -423,7 +442,7 @@ export default class HudScene extends Phaser.Scene {
     const slot = this._abSlots?.[i];
     if (!slot) return;
 
-    const PAD = 8, W_TIP = 180;
+    const PAD = 8, W_TIP = 200; // было 180 — при 13px-шрифте (см. create()) впритык на wordWrap
     this._abTipName.setText(tip.name);
     this._abTipDesc.setText(tip.desc);
 
@@ -701,11 +720,18 @@ export default class HudScene extends Phaser.Scene {
       }
 
       if (!key) return;
+      // Печём текстуру ВДВОЕ крупнее, чем реально показываем (setDisplaySize ниже) —
+      // тот же приём, которым уже фиксили жалобы "улучшить качество картинок" для
+      // флагов арены/груза/дрона щита (ArenaFlag.js/ShieldDrone.js/
+      // ArenaCargoContainer.js: prerenderTex(..., SIZE*2, SIZE*2) + setDisplaySize(SIZE)).
+      // Раньше здесь текстура пеклась 1:1 с размером показа без запаса — на action-bar'е
+      // это единственное место в проекте, где иконку так и не завели на этот приём (баг
+      // из диалога: "можно ли увеличить качество картинок на актив панели").
       if (key.startsWith('ship:') || key.startsWith('argus:')) {
         const srcKey = this._ensureShipSkillTex(key);
         const iconSz = slot.SW;
         slot.iconImg = this.add.image(slot.sx + slot.SW / 2, slot.sy + slot.SH / 2,
-            prerenderTex(this, srcKey, iconSz, iconSz))
+            prerenderTex(this, srcKey, iconSz * 2, iconSz * 2))
           .setDisplaySize(iconSz, iconSz).setDepth(102);
         return;
       }
@@ -719,7 +745,7 @@ export default class HudScene extends Phaser.Scene {
       const iconYOffset = isConsumable ? Math.min(Math.round(5 * DPR), 4) : 0;
       const iconY   = slot.sy + slot.SH / 2 - iconYOffset;
       slot.iconImg = this.add.image(slot.sx + slot.SW / 2, iconY,
-          prerenderTex(this, texKey, iconSz, iconSz))
+          prerenderTex(this, texKey, iconSz * 2, iconSz * 2))
         .setDisplaySize(iconSz, iconSz).setDepth(102);
     });
   }
@@ -825,6 +851,19 @@ export default class HudScene extends Phaser.Scene {
       const cdMs    = key ? gs._skillCooldownMs(key) : 1;
       const cdRem   = Math.max(0, cdEnd - time);
       const lv      = (key?.startsWith('ship:') || key?.startsWith('argus:')) ? 1 : (gs.skillLevels?.[key] || 0);
+
+      // CD-Ready pulse (combat_analysis_v3.md §B13) — активная способность (не
+      // расходник, у тех своя ветка выше с consBuffEndTimes/'use:'-ключами) только что
+      // сошла с кулдауна — кольцо вокруг корабля через GameScene._cdReadyPulse() (раньше
+      // переиспользовал pingAt() — жалоба из диалога: "еле заметил, очень маленькое и
+      // очень быстро пропадает", см. комментарий у _cdReadyPulse для причины).
+      // Фронт-детект по key, не по slot-индексу — иначе перестановка скилла на панели
+      // между кадрами могла бы ложно сработать/пропустить переход.
+      if (key && slot._cdReadyKey === key && slot._cdReadyWasOnCd && cdRem <= 0 && this.gs.player?.alive) {
+        this.gs._cdReadyPulse();
+      }
+      slot._cdReadyKey = key;
+      slot._cdReadyWasOnCd = cdRem > 0;
 
       if (key && buffRem > 0) {
         setCdBar(null);
@@ -1030,6 +1069,37 @@ export default class HudScene extends Phaser.Scene {
     st.txt.textContent = i18n.t('hud.logout_countdown', { sec: (st.remainingMs / 1000).toFixed(1) });
   }
 
+  // PvP Killfeed рендер — до 5 последних килов, 6с видимости + 1с fade-out.
+  // Позиция под миникартой, НИЖЕ нижнего края кнопки "покинуть арену" (та же зона —
+  // mm.y+mm.h+31+26 центр, высота 40 → нижний край на +31+26+20=+77). Раньше киллфид
+  // стартовал на +61 — внутри диапазона кнопки, и предположение "не пересекаются, т.к.
+  // кнопка только в arenaMode, а фид только при живых килах" было неверным: арена —
+  // ровно то место, где PvP-килы происходят чаще всего, оба видны одновременно (баг из
+  // диалога). Отступ безусловный (не только пока кнопка видна) — иначе позиция киллфида
+  // скакала бы при входе/выходе из арены.
+  _updateKillfeed() {
+    const feed = this.gs?._killfeed;
+    const txts = this._killfeedTxts;
+    if (!feed?.length) { for (const t of txts) t.setVisible(false); return; }
+    const mm = minimapRect(this, getMinimapDims(loadSettings().minimapSize));
+    const x = this.scale.width - 16;
+    let y = mm.y + mm.h + 31 + 26 + 20 + 8;
+    const now = this.time.now;
+    const recent = feed.slice(-5).reverse();
+    const WEAPON_LABEL = { laser: 'лазер', argus_missile: 'ракета', argus_pulsar: 'пульсар', cannon: 'пушка' };
+    for (let i = 0; i < txts.length; i++) {
+      const e = recent[i];
+      const t = txts[i];
+      if (!e) { t.setVisible(false); continue; }
+      const age = now - e.t;
+      if (age > 6000) { t.setVisible(false); continue; }
+      this._setText(t, `${e.attacker} 💥 ${e.victim} (${WEAPON_LABEL[e.weaponType] || 'пушка'})`);
+      t.setPosition(x, y);
+      t.setAlpha(age > 5000 ? Math.max(0, 1 - (age - 5000) / 1000) : 1);
+      t.setVisible(true);
+      y += 18;
+    }
+  }
   _finishLogout() {
     clearSession();
     const mgr = this.scene.manager;
@@ -1041,6 +1111,7 @@ export default class HudScene extends Phaser.Scene {
 
   update(time, delta) {
     this._updateLogoutCountdown(delta);
+    this._updateKillfeed();
     // Видимость кнопки выхода с арены — см. create() выше.
     const inArena = !!SECTORS[galaxy.current]?.arenaMode;
     if (this._leaveArenaBg.visible !== inArena) {

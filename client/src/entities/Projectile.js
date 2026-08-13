@@ -98,7 +98,18 @@ export default class Projectile {
       const d = Phaser.Math.Distance.Between(this.sprite.x, this.sprite.y, this.victim.x, this.victim.y);
       if (d < this.hitRadius) { this._hit(); return true; }
     }
-    if (this.life <= 0) { this.destroy(); return true; }
+    if (this.life <= 0) {
+      // Missing-impact indicator — снаряд моба, прошедший мимо, раньше исчезал молча,
+      // выглядя точно так же, как реально попавший (см. combat_analysis_v3.md §B9).
+      // Только owner==='mob' (снаряды игрока и так видны по попаданию в цель) и только
+      // если был на экране — не тратим FX на промахи за пределами видимости игрока.
+      if (this.owner === 'mob' && !this.cosmetic && this.scene._onScreen?.(this.sprite.x, this.sprite.y)) {
+        this.scene.sfx?.play('sfx_weapon_miss', { volume: 0.2, cooldownMs: 80 });
+        const spark = this.scene.add.circle(this.sprite.x, this.sprite.y, 2, 0xffffff, 0.9).setDepth(60);
+        this.scene.tweens.add({ targets: spark, radius: 8, alpha: 0, duration: 220, ease: 'Quad.easeOut', onComplete: () => spark.destroy() });
+      }
+      this.destroy(); return true;
+    }
     return false;
   }
 

@@ -4185,6 +4185,7 @@ export default class GameScene extends Phaser.Scene {
     for (const h of _hp) this.muzzleFlash(h.x, h.y, isOC ? 0xff8800 : isCrit ? 0xffee44 : 0x8fe6ff, p);
     this.sfx?.play('sfx_cannon_fire', { cooldownMs: 60 });
     if (isCrit) this.sfx?.play('sfx_crit', { volume: 0.7 });
+    if (isOC) this._recoilZoomPulse();
     if (isCrit || isOC) {
       const label = isOC ? '⚡ УДАР!' : 'КРИТ!';
       const clr   = isOC ? '#ff8800' : '#ffee44';
@@ -4268,7 +4269,18 @@ export default class GameScene extends Phaser.Scene {
       });
       this.muzzleFlash(attacker.x, attacker.y, 0xff4400, attacker);
     } else {
-      const boltColor = msg.isCrit ? 0xffee66 : PROJECTILE.playerColor;
+      // Team-цвет болта в арене (combat_analysis_v3.md §B15) — раньше и союзник, и враг
+      // рисовались одинаковым PROJECTILE.playerColor (cyan), различить "кто в кого
+      // стреляет" по цвету выстрела было невозможно (различался только по неймплейту).
+      // Вне арены (обычные PvP-комнаты без команд) цвет не меняем — там свой/чужой
+      // и так read по неймплейту, здесь только для матчей с явными командами.
+      // ARENA_TEAM_COLOR — тот же источник цвета, что уже использует ArenaController
+      // (team-дот на миникарте, пикап груза и т.п.), а не свой relative-to-viewer цвет —
+      // абсолютный цвет команды одинаков для всех наблюдателей, а не "я/враг".
+      const arena = this._arenaController;
+      const teamKey = arena?.teamOf(msg.attackerUserId);
+      const teamColor = teamKey != null ? (ARENA_TEAM_COLOR[teamKey] ?? PROJECTILE.playerColor) : PROJECTILE.playerColor;
+      const boltColor = msg.isCrit ? 0xffee66 : teamColor;
       this._fireVisualBolt(attacker.x, attacker.y, targetEntity.x, targetEntity.y, boltColor);
       this.muzzleFlash(attacker.x, attacker.y, boltColor, attacker);
     }
@@ -4530,6 +4542,7 @@ export default class GameScene extends Phaser.Scene {
       if (attacker && (hullHit > 0 || shieldHit > 0)) p._flashDamageArc(attacker.x, attacker.y, hullHit + shieldHit, !!msg.isCrit);
       this._logDamageToPlayer(hullHit, shieldHit, attacker?.name || 'Игрок');
       if (msg.killed && p.alive) {
+        this._pushKillfeed(attacker?.name, this.playerName, msg.weaponType);
         p.die(); this.onPlayerKilled(true);
         // Автолок/автоатака не должны переживать собственную смерть — иначе после
         // респавна огонь по прежней цели резюмируется сам, без нового клика игрока.
@@ -4562,6 +4575,10 @@ export default class GameScene extends Phaser.Scene {
     this.hitFlash(rp.x, rp.y, hullHit > 0, rp);
     this.showDamage(rp.x, rp.y, { shieldHit, hullHit, killed: msg.killed }, msg.maxHull, msg.isCrit);
     if (msg.killed) {
+      const attackerName = msg.attackerUserId === this.myUserId
+        ? this.playerName
+        : this.pvpClient?.players?.get(msg.attackerUserId)?.name;
+      this._pushKillfeed(attackerName, rp.name, msg.weaponType);
       this.explosion(rp.x, rp.y, 1.1);
       rp.die();
       // Автолок/автоатака не должны переживать смерть цели — иначе, стоит жертве
@@ -6673,12 +6690,30 @@ export default class GameScene extends Phaser.Scene {
     const now = this.time.now;
     const posKey = `${Math.round(x / 50)}:${Math.round(y / 50)}`;
 
+    // pct→size — общая формула, используется и при первом спавне, и при пересчёте
+    // размера уже летящего числа при merge (см. ниже) — раньше жила только инлайн в
+    // первом спавне.
+    const sizeFor = (amount, toHull) => {
+      const pct = maxHp ? Math.min(1, amount / maxHp) : 0;
+      return { pct, size: Math.round((toHull ? 20 : 16) + pct * 16) };
+    };
+
     const spawnNum = (amount, toHull, channel, dir) => {
       const mergeKey = `${posKey}:${channel}`;
       const active = merges.get(mergeKey);
       if (active && now - active.windowStart < 1000) {
         active.total += amount;
         active.textObj.setText(`-${active.total}`);
+        // Размер шрифта пересчитывается на НОВЫЙ суммарный total, а не остаётся от
+        // первого (возможно мелкого) хита — раньше при слиянии менялся только текст, и
+        // суммарное число могло визуально стать крупным по значению, но остаться в
+        // мелком кегле первого хита (жалоба со скрином: "надписи то крупные то мелкие,
+        // причём больший урон может сопровождаться мелким шрифтом"). Позиция канала
+        // тоже пересчитывается — иначе выросший в ширину текст мог бы наехать на
+        // соседний канал (тот же класс проблемы, что чинили xOff по txt.width выше).
+        const { size } = sizeFor(active.total, active.toHull);
+        active.textObj.setFontSize(`${size}px`);
+        active.textObj.x = x + active.dir * (active.textObj.width / 2 + 6 + active.idx * 24);
         this.tweens.add({ targets: active.textObj, scale: active.textObj.scale * 1.12, duration: 90, yoyo: true, ease: 'Quad.easeOut' });
         return;
       }
@@ -6688,16 +6723,23 @@ export default class GameScene extends Phaser.Scene {
       const idx = stack.alive;
       stack.alive++;
 
-      const pct  = maxHp ? Math.min(1, amount / maxHp) : 0;
-      const size = Math.round((toHull ? 20 : 16) + pct * 16);
+      const { pct, size } = sizeFor(amount, toHull);
       const color = isCrit ? '#ffe14d' : toHull ? '#ef5350' : '#4dd0e1';
-      const xOff = dir * (14 + idx * 24); // фиксированный шаг, без рандома — предсказуемая позиция
       const fanY = Math.min(idx * 8, 40);
-      const txt = this.add.text(x + xOff, y - 20 - fanY, `-${amount}`,
+      const txt = this.add.text(x, y - 20 - fanY, `-${amount}`,
         { fontFamily: 'Orbitron', fontSize: `${size}px`, color, fontStyle: 'bold', resolution: UI_RES })
         .setOrigin(0.5).setDepth(70).setScale(0.55 + pct * 0.35);
+      // Отступ по половине РЕАЛЬНОЙ ширины текста, а не фиксированные 14px (было раньше) —
+      // старый константный offset не учитывал, что шрифт растёт 16→36px вместе с pct урона:
+      // на мелких хитах он выглядел избыточно далёким, на крупных/крит-хитах (особенно
+      // 4-5-значные числа) ширина текста превышала 14px и щит/корпус наезжали друг на друга
+      // (жалоба со скрином — "то далеко то накладывается"). txt.width — ширина ДО setScale
+      // выше (т.е. уже при целевом steady-state размере после Back.easeout поп-твина ниже),
+      // поэтому зазор остаётся верным и после того как цифра долетит до scale:1.
+      const GAP = 6;
+      txt.x = x + dir * (txt.width / 2 + GAP + idx * 24);
       this.tweens.add({ targets: txt, scale: 1, duration: 140, ease: 'Back.easeOut' });
-      const mergeEntry = { total: amount, windowStart: now, textObj: txt };
+      const mergeEntry = { total: amount, windowStart: now, textObj: txt, toHull, dir, idx };
       merges.set(mergeKey, mergeEntry);
       // Разброс скорости/дистанции подъёма — иначе цифры, вылетевшие почти одновременно,
       // весь путь двигаются синхронно и визуально "слипаются" в одну колонну на подъёме.
@@ -6728,9 +6770,38 @@ export default class GameScene extends Phaser.Scene {
     this._recentDamageLog = (this._recentDamageLog || []).filter(e => e.t > cutoff);
     this._recentDamageLog.push({ t: this.time.now, hullHit: hullHit || 0, shieldHit: shieldHit || 0, source: source || 'Неизвестно' });
   }
+  // PvP Killfeed (combat_analysis_v3.md §B14) — только реальные PvP-килы (эта функция
+  // вызывается только из веток msg.killed в _onPvpHitResult, PvE-убийства мобов сюда не
+  // попадают). Читает HudScene каждый кадр, здесь только копим/обрезаем по возрасту —
+  // тот же принцип, что у _logDamageToPlayer чуть выше.
+  _pushKillfeed(attackerName, victimName, weaponType) {
+    const cutoff = this.time.now - 8000;
+    this._killfeed = (this._killfeed || []).filter(e => e.t > cutoff);
+    this._killfeed.push({ attacker: attackerName || 'Пилот', victim: victimName || 'Пилот', weaponType, t: this.time.now });
+    if (this._killfeed.length > 8) this._killfeed.shift();
+  }
   pingAt(x, y) {
     const ring = this.add.circle(x, y, 6, COLORS.primary, 0).setStrokeStyle(2, COLORS.primary, 0.9).setDepth(35);
     this.tweens.add({ targets: ring, radius: 26, alpha: 0, duration: 380, ease: 'Quad.easeOut', onUpdate: () => ring.setStrokeStyle(2, COLORS.primary, ring.alpha), onComplete: () => ring.destroy() });
+  }
+  // Кольцо "скилл готов" (HudScene._updateActionBar, CD-Ready pulse) — раньше переиспользовал
+  // pingAt() (жалоба из диалога: "еле заметил, очень маленькое и очень быстро пропадает").
+  // pingAt() задуман для НЕПОДВИЖНОЙ точки маршрута (радиус 6→26, 380мс, тонкая линия 2px) —
+  // на живом корабле, который продолжает лететь, кольцо оставалось в точке спавна и почти
+  // сразу визуально отрывалось от корабля, а не "гасло у корабля", как задумано. Здесь —
+  // отдельный эффект: крупнее, толще, дольше, и **тянется за this.player каждый кадр**
+  // (onUpdate), а не фиксируется в точке вызова. Цвет — тот же '#4de8a0', которым HudScene
+  // красит саму способность как "активна/готова" (buffRem-ветка чуть выше), не cyan
+  // pingAt() — иначе визуально путался бы с маркером маршрута.
+  _cdReadyPulse() {
+    const p = this.player;
+    if (!p?.alive) return;
+    const ring = this.add.circle(p.x, p.y, 16, 0x4de8a0, 0).setStrokeStyle(3, 0x4de8a0, 0.95).setDepth(52);
+    this.tweens.add({
+      targets: ring, radius: 48, alpha: 0, duration: 650, ease: 'Quad.easeOut',
+      onUpdate: () => { if (p.alive) ring.setPosition(p.x, p.y); ring.setStrokeStyle(3, 0x4de8a0, ring.alpha); },
+      onComplete: () => ring.destroy(),
+    });
   }
   showDodge(x, y) {
     const txt = this.add.text(x, y - 24, i18n.t('hud.dodge'), { fontFamily: 'Orbitron', fontSize: '15px', color: '#4dd0e1', fontStyle: 'bold', resolution: UI_RES, }).setOrigin(0.5).setDepth(70);
@@ -6820,6 +6891,20 @@ export default class GameScene extends Phaser.Scene {
   _shake(duration, intensity) {
     if (this.cameraShakeEnabled === false) return;
     this.cameras.main.shake(duration, intensity);
+  }
+  // "Отдача" тяжёлого (overcharge) выстрела — сдвиг спрайта корабля технически
+  // невозможен (Arcade Physics перечитывает sprite.x/y из body каждый кадр, см.
+  // Player.js _phy/sprite-разделение), поэтому вместо этого — короткий импульсный
+  // zoom-out камеры (см. combat_analysis_v3.md §B2). Zoom относительно ТЕКУЩЕГО
+  // this.cameras.main.zoom, не абсолютной 1.0 — база камеры это DPR (setZoom(DPR) в
+  // create()), а не 1.0, абсолютное значение сломало бы масштаб после пульса.
+  // Гейтится тем же shotShakeEnabled, что и мушка-шейк выстрела — тот же UX-переключатель.
+  _recoilZoomPulse() {
+    if (this.shotShakeEnabled === false) return;
+    const cam = this.cameras.main;
+    const base = cam.zoom;
+    cam.zoomTo(base * 1.02, 50, 'Quad.easeOut', true);
+    this.time.delayedCall(50, () => cam.zoomTo(base, 60, 'Quad.easeOut', true));
   }
   // Тряска камеры от удара по игроку — растёт с % урона от maxHull, с нижним
   // порогом, чтобы щитовые тычки роя не превращали экран в непрерывную вибрацию.
@@ -7033,6 +7118,31 @@ export default class GameScene extends Phaser.Scene {
         this.vfx.stopLoop(this._targetFx);
         this._targetFx = null;
       }
+    }
+
+    // Lead-target marker — визуализирует уже существующую predictive-aim точку из
+    // _leadTarget()/_fireCannon (болт летит именно туда), которую раньше игрок не видел —
+    // авто-упреждение выглядело как "магия". Показываем только когда цель реально
+    // движется (>30px/s), иначе маркер совпал бы с самой целью и был бы лишним шумом.
+    // Переиспользует this.reticle — Graphics-объект, заведённый в create() (depth 45,
+    // тот же слой, что и остальной прицельный VFX), но до этого нигде не рисовавший.
+    if (this.target?.alive && this.player.alive) {
+      const tvx = (this.target.sprite?.body?.velocity?.x ?? 0) / DPR;
+      const tvy = (this.target.sprite?.body?.velocity?.y ?? 0) / DPR;
+      const tSpeed = Math.hypot(tvx, tvy);
+      this.reticle.clear();
+      if (tSpeed > 30) {
+        const aimPt = _leadTarget(this.player.x, this.player.y, this.target.x, this.target.y, tvx, tvy, PROJECTILE.speed);
+        this.reticle.lineStyle(1.5, 0x4dd0e1, 0.55);
+        this.reticle.strokeCircle(aimPt.x, aimPt.y, 5);
+        this.reticle.moveTo(aimPt.x - 8, aimPt.y).lineTo(aimPt.x - 3, aimPt.y);
+        this.reticle.moveTo(aimPt.x + 3, aimPt.y).lineTo(aimPt.x + 8, aimPt.y);
+        this.reticle.moveTo(aimPt.x, aimPt.y - 8).lineTo(aimPt.x, aimPt.y - 3);
+        this.reticle.moveTo(aimPt.x, aimPt.y + 3).lineTo(aimPt.x, aimPt.y + 8);
+        this.reticle.strokePath();
+      }
+    } else {
+      this.reticle.clear();
     }
 
     // Эффект варп-пыли (проносящиеся мимо частицы) при форсаже

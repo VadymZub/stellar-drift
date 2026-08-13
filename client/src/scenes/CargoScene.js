@@ -608,6 +608,12 @@ export default class CargoScene extends Phaser.Scene {
         { text: i18n.t(`item.${item.type}`), sty: this.O('13px', '#ffe0b2') },
         { text: `×${item.amount.toLocaleString()}`, sty: this.F('11px', '#9fb3b8') },
       ];
+      // Клановый/данж-ресурс — явная метка (диалог: "если ресурс клановый - написать
+      // клановый"), а не только неявный намёк через itemdesc.* чуть ниже ("сдаётся в
+      // казну гильдии за вклад" — не все читают описание до конца).
+      if (CONSUMABLES[item.type].category === 'dungeonResource') {
+        simpleLineDefs.push({ text: '★ Клановый ресурс', sty: this.F('10px', '#80cbc4') });
+      }
       const desc = i18n.t(`itemdesc.${item.type}`);
       if (desc && desc !== `itemdesc.${item.type}`) {
         simpleLineDefs.push({ text: desc, sty: this.F('11px', '#7fa8bc') });
