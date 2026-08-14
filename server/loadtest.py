@@ -22,11 +22,24 @@ import argparse
 import asyncio
 import json
 import random
+import ssl
 import time
 import uuid
 
+import certifi
 import requests
 import websockets
+
+# websockets (в отличие от requests/urllib3) не подтягивает certifi сам — берёт
+# ssl.create_default_context() как есть, а тот на части Windows-машин смотрит в
+# системный доверенный список ОС, где может не оказаться актуальной цепочки для
+# текущего Let's Encrypt intermediate (обновление certifi pip-пакетом эту цепочку
+# не чинит, т.к. websockets его не читает вообще). Диагностировано живым тестом:
+# openssl s_client и requests.post к тому же хосту оба видели валидный сертификат
+# (Jul-Oct 2026), а websockets.connect() ловил "certificate has expired" на КАЖДОМ
+# боте. Явно указываем cafile=certifi.where() — тот же бандл, что уже обновили
+# pip'ом, но теперь реально используется для WS-хендшейка.
+_SSL_CTX = ssl.create_default_context(cafile=certifi.where())
 
 SHIPS = ['wisp', 'falcon', 'raven']
 CORPS = ['helios', 'karax', 'tides']
@@ -40,8 +53,14 @@ def register_clients(base_url, n, run_id):
     t0 = time.monotonic()
     for i in range(n):
         username = f'loadtest_{run_id}_{i}'
+        # email на нашем же домене (@stellar-drift-mmo.duckdns.org) — сервер
+        # авто-верифицирует такие адреса без письма (main.py register(), тот же
+        # трюк, что у GameScene.js keydown-V "сохранить Test Mode как аккаунт").
+        # Схема стала требовать email ПОСЛЕ того, как этот скрипт был написан —
+        # без него регистрация падала 422 (диалог: "прогнать нагрузочный тест").
         r = requests.post(f'{base_url}/auth/register', json={
             'username': username, 'password': 'loadtest123',
+            'email': f'{username}@stellar-drift-mmo.duckdns.org',
         }, timeout=15)
         if r.status_code != 200:
             print(f'  ! регистрация {username} провалилась: {r.status_code} {r.text[:200]}')
@@ -69,7 +88,8 @@ class Stats:
 
 
 async def bot_loop(ws_url, username, token, uid_by_name, sector, duration, ramp_delay, stats: Stats,
-                    bot_index=0, drones=0):
+                    bot_index=0, drones=0, pos_hz=10):
+    pos_interval = 1.0 / pos_hz
     # ramp_delay — небольшой разброс старта, чтобы не открывать все N соединений
     # в один и тот же миллисекунд (реалистичнее "наплыва", легче искать в логах момент отказов)
     if ramp_delay:
@@ -79,7 +99,15 @@ async def bot_loop(ws_url, username, token, uid_by_name, sector, duration, ramp_
     t_connect_start = time.monotonic()
     connected_ok = False
     try:
-        async with websockets.connect(url, open_timeout=15, close_timeout=5) as ws:
+        ssl_kw = {'ssl': _SSL_CTX} if url.startswith('wss://') else {}
+        # ping_interval=None — отключает СОБСТВЕННЫЙ ping/pong клиентской библиотеки
+        # websockets. Диагностика: "keepalive ping timeout" на 60+ ботах может быть
+        # (а) сервер реально не успевает ответить на ping вовремя, ИЛИ (б) этот же
+        # локальный asyncio-процесс, разгребающий десятки тысяч входящих broadcast-
+        # сообщений от всех ботов разом, сам не успевает обработать pong вовремя —
+        # ложный сигнал, не про сервер. Без своего ping/pong клиент полагается только
+        # на TCP/реальные ошибки соединения — если обрывы ИСЧЕЗНУТ, значит (б).
+        async with websockets.connect(url, open_timeout=15, close_timeout=5, ping_interval=None, **ssl_kw) as ws:
             connected_ok = True
             stats.connected += 1
             stats.connect_times.append(time.monotonic() - t_connect_start)
@@ -93,7 +121,7 @@ async def bot_loop(ws_url, username, token, uid_by_name, sector, duration, ramp_
                         except ValueError:
                             continue
                         if msg.get('type') == 'session_info':
-                            uid_by_name[username] = msg.get('userId')
+                            uid_by_name[username] = (msg.get('userId'), sector)
                         elif msg.get('type') == 'pvp_mob_room_update':
                             stats.mob_room_updates += 1
                 except Exception:
@@ -140,7 +168,11 @@ async def bot_loop(ws_url, username, token, uid_by_name, sector, duration, ramp_
                 # и оборвёт СВОЁ ЖЕ соединение, см. main.py except-блок на верхнем уровне).
                 if time.monotonic() - last_fire > random.uniform(2, 5):
                     last_fire = time.monotonic()
-                    candidates = [uid for name, uid in uid_by_name.items() if name != username and uid is not None]
+                    # Только цели из СВОЕГО сектора (--sectors распределяет ботов по
+                    # нескольким комнатам) — стрельба через границу секторов не имеет
+                    # смысла (разные комнаты на сервере, разные локальные координаты).
+                    candidates = [uid for name, (uid, sec) in uid_by_name.items()
+                                  if name != username and uid is not None and sec == sector]
                     if candidates:
                         target = random.choice(candidates)
                         await ws.send(json.dumps({
@@ -152,7 +184,7 @@ async def bot_loop(ws_url, username, token, uid_by_name, sector, duration, ramp_
                     else:
                         stats.fires_skipped_no_target += 1
 
-                await asyncio.sleep(0.1)  # 10Hz, как реальный клиент
+                await asyncio.sleep(pos_interval)
 
             reader_task.cancel()
     except Exception as e:
@@ -167,7 +199,13 @@ async def bot_loop(ws_url, username, token, uid_by_name, sector, duration, ramp_
 
 async def run(args):
     run_id = uuid.uuid4().hex[:8]
-    print(f'== Нагрузочный тест: {args.clients} клиентов, {args.duration}с, сектор {args.sector} ==')
+    # --sectors (через запятую) распределяет ботов round-robin по НЕСКОЛЬКИМ комнатам
+    # вместо одной общей — проверяет гипотезу "затык не в общем числе игроков, а в
+    # квадратичном росте broadcast'а внутри ОДНОЙ комнаты" (диалог: "100 игроков не в
+    # 1 комнате - другой результат?"). --sector (в ед. числе) остаётся для обратной
+    # совместимости, если --sectors не передан.
+    sectors = [s.strip() for s in args.sectors.split(',')] if args.sectors else [args.sector]
+    print(f'== Нагрузочный тест: {args.clients} клиентов, {args.duration}с, секторы {sectors} ==')
     print(f'Цель: {args.url}')
 
     accounts = register_clients(args.url, args.clients, run_id)
@@ -177,13 +215,14 @@ async def run(args):
 
     ws_url = args.url.replace('https://', 'wss://').replace('http://', 'ws://')
     stats = Stats()
-    uid_by_name = {}  # username -> numeric user.id, заполняется по мере подключения ботов
+    uid_by_name = {}  # username -> (numeric user.id, sector), заполняется по мере подключения ботов
 
-    print(f'Открываю {len(accounts)} WS-соединений (разброс старта {args.ramp_ms}мс/бот)...')
+    print(f'Открываю {len(accounts)} WS-соединений по {len(sectors)} секторам '
+          f'(разброс старта {args.ramp_ms}мс/бот)...')
     t0 = time.monotonic()
     tasks = [
-        bot_loop(ws_url, username, token, uid_by_name, args.sector, args.duration,
-                 i * args.ramp_ms / 1000.0, stats, bot_index=i, drones=args.drones)
+        bot_loop(ws_url, username, token, uid_by_name, sectors[i % len(sectors)], args.duration,
+                 i * args.ramp_ms / 1000.0, stats, bot_index=i, drones=args.drones, pos_hz=args.pos_hz)
         for i, (username, token) in enumerate(accounts)
     ]
     await asyncio.gather(*tasks, return_exceptions=True)
@@ -217,6 +256,14 @@ if __name__ == '__main__':
     p.add_argument('--url', default='http://localhost:8000', help='Базовый URL сервера (http/https)')
     p.add_argument('--duration', type=int, default=120, help='Длительность фазы нагрузки на бота, сек')
     p.add_argument('--sector', default='pvp_1', help='PvP-сектор для всех ботов (общая комната)')
+    p.add_argument('--pos-hz', type=float, dest='pos_hz', default=10,
+                    help='Частота pvp_pos на бота, Гц (реальный клиент — 10, '
+                         'см. PvpClient.js _posIntervalMs=100). Проверка гипотезы '
+                         '"снизить тик-рейт дешевле, чем AoI-фильтрация".')
+    p.add_argument('--sectors', default=None,
+                    help='Список секторов через запятую — боты распределяются round-robin '
+                         'по НЕСКОЛЬКИМ комнатам вместо одной (напр. pvp_1,pvp_2,pvp_3,pvp_4). '
+                         'Перекрывает --sector, если задан.')
     p.add_argument('--ramp-ms', type=int, dest='ramp_ms', default=20,
                     help='Задержка между стартом соседних ботов, мс (0 = все разом)')
     p.add_argument('--drones', type=int, default=0,
