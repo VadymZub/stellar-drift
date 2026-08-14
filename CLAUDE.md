@@ -11,7 +11,7 @@ cd client
 
 No build step. Phaser 4.1.0 loads from CDN as an ES module. ES modules require HTTP (not `file://`), so the server is mandatory.
 
-**DEV hotkeys** (in-game, `DEV_MODE = !isTauriProd` in `GameScene.js` — true in browser dev, `cargo tauri dev`, and a browser hitting the deployed site directly; false only inside the packaged Tauri app, so real players never see these):
+**DEV hotkeys** (in-game, `DEV_MODE = !isTauriProd && (isDevHttp || isExplicitDevMode)` in `client/src/api.js` — true in browser dev (`http://localhost:8080`) and `cargo tauri dev`; false inside the packaged Tauri app unconditionally, and false on the plain production HTTPS site unless the URL carries `?devKey=<secret>` — see `DEV_KEY` in `api.js`, kept in sync with the "Test Mode" tile URL in `admin.html`. A plain visitor hitting the deployed site (e.g. via a GameJolt embed) does NOT get DEV_MODE by default — only `isDevHttp`/`isExplicitDevMode` grant it, and both require deliberate action):
 - `0` — level up pilot
 - `9` — +1 000 000 credits + 500 ⭐
 - `8` — switch to Argus ship (max stats); engine speed uses T4 base 27 (matches item nerf)

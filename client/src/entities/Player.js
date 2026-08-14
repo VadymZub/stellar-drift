@@ -639,7 +639,9 @@ export default class Player {
     // Индикатор направления входящего урона — только когда источник известен
     // (opts.srcX/srcY): DoT-тики кислоты и внутренние reflect-хиты его не передают,
     // это и есть намеренный фильтр "только новые дискретные попадания".
-    if (opts.srcX != null && (shieldHit > 0 || hullHit > 0)) {
+    // damageArcEnabled — настройка "Дуга урона за экраном" (Графика), чисто визуальный
+    // тумблер, ничего в самом расчёте урона не меняет.
+    if (opts.srcX != null && (shieldHit > 0 || hullHit > 0) && this.scene.damageArcEnabled !== false) {
       this._flashDamageArc(opts.srcX, opts.srcY, shieldHit + hullHit, !!opts.isCrit);
     }
     return { shieldHit, hullHit, brokeShield };

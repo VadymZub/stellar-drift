@@ -708,6 +708,8 @@ export default class GameScene extends Phaser.Scene {
     this.shotShakeEnabled     = _cfg.shotShake;
     this.engineTrailsEnabled  = _cfg.engineTrails;
     this.bgParallaxEnabled    = _cfg.bgParallax;
+    this.damageArcEnabled     = _cfg.damageArc;
+    this.splitDmgNumbersEnabled = _cfg.splitDmgNumbers;
 
     this.aoeZones = [];
     this.aoeGfx = this.add.graphics().setDepth(36);
@@ -6374,7 +6376,19 @@ export default class GameScene extends Phaser.Scene {
     if (!ship) return;
     this._engineFxShipKey = ship.key;
     for (const _n of (ship.engines || [{ x: 0, y: 42 }])) {
-      this.engineFxList.push(this.vfx.playLoop('engine_particle', this.player.x, this.player.y, { scale: 0.12, depth: 52 }));
+      const fx = this.vfx.playLoop('engine_particle', this.player.x, this.player.y, { scale: 0.12, depth: 52 });
+      // Спрайт engine_particle (кадр 700×520, см. assets/vfx/engine_particle_sheet.png) —
+      // пузырь по факту начинается на ~40% ширины кадра (0-280px пустые/прозрачные), не
+      // на ~15%, как показалось по сильно уменьшенной миниатюре листа при первой правке —
+      // origin.x=0.15 сажал якорь В ПУСТОТУ ДО пламени, из-за чего хвост визуально
+      // "отрывался" от корабля одинаково на ВСЕХ кораблях независимо от их собственного
+      // y (отсюда серия "слишком далеко" жалоб, которые чинились неправильной ручкой —
+      // см. откат y в ships.js). Проверено вырезкой кадра в полном разрешении. 0.42 —
+      // чуть левее видимого центра пузыря (дефолтный origin 0.5 и был близко к верному
+      // месту, реальная проблема была лишь в небольшом перекрытии мягким внешним свечением
+      // левее пузыря, не в грубом смещении в середину кадра).
+      fx?.setOrigin(0.42, 0.5);
+      this.engineFxList.push(fx);
     }
   }
   onPlayerKilled(killedByPlayer = false) {
@@ -6756,6 +6770,14 @@ export default class GameScene extends Phaser.Scene {
       });
       this.tweens.add({ targets: txt, alpha: 0, delay: dur * 0.47, duration: dur * 0.53 });
     };
+    // Настройка "Раздельный урон (щит/корпус)" — false показывает один общий тик по
+    // суммарному урону вместо двух каналов слева/справа. dir=0 центрирует число прямо
+    // над точкой удара (xOff = dir*(...) = 0), toHull берём по преобладающей части, чтобы
+    // цвет/базовый размер шрифта не были произвольными.
+    if (this.splitDmgNumbersEnabled === false) {
+      spawnNum(total, hullHit >= shieldHit, 'combined', 0);
+      return;
+    }
     if (shieldHit > 0) spawnNum(shieldHit, false, 'shield', -1);
     if (hullHit > 0)   spawnNum(hullHit,   true,  'hull',    1);
   }
@@ -7100,6 +7122,15 @@ export default class GameScene extends Phaser.Scene {
       const px = this.player.x, py = this.player.y;
       const alpha = this.player.speed > 8 ? 1 : 0;
       const nozzles = this.player.ship?.engines || [{ x: 0, y: 42 }];
+      // engineTrailWidth (опционально на ship-деф, см. ships.js) — множитель ТОЛЬКО на
+      // scaleY. Спрайт engine_particle нарисован "хвостом вдоль локального X" (после
+      // setRotation ниже локальный +X = направление НАЗАД, т.е. длина хвоста), Y —
+      // перпендикулярная толщина. VFXManager.playLoop() тюнит единый .scale каждый
+      // кадр (это одновременно и scaleX, и scaleY в Phaser) — перезаписывали бы любую
+      // асимметрию, поставленную сразу после playLoop(), в первые же 200мс интро-твина,
+      // так что применяем ПОСЛЕ тюна, тут же, каждый кадр (диалог: "аргоси сделай
+      // пошире след двигателя" — шире, не длиннее).
+      const trailWidthMult = this.player.ship?.engineTrailWidth ?? 1;
       this.engineFxList.forEach((fx, i) => {
         if (!fx?.active) return;
         const n = nozzles[i] || nozzles[0];
@@ -7107,6 +7138,7 @@ export default class GameScene extends Phaser.Scene {
                        py - n.x * Math.cos(f) - n.y * Math.sin(f));
         fx.setRotation(f + Math.PI);
         fx.setAlpha(alpha);
+        if (trailWidthMult !== 1) fx.scaleY = fx.scaleX * trailWidthMult;
       });
     }
 
@@ -9886,6 +9918,16 @@ export default class GameScene extends Phaser.Scene {
 
   _flushSaveState() {
     if (!getToken()) return;
+    // _sessionSuperseded — эта вкладка была вытеснена другой вкладкой ТОГО ЖЕ аккаунта
+    // (см. HudScene ws.onclose, code 4000). PUT /player/state на сервере — безусловный
+    // overwrite без версии/времени (main.py save_state()), так что если разрешить этой,
+    // теперь неактуальной, вкладке продолжать автосейв — она рано или поздно затрёт
+    // прогресс, реально сохранённый активной вкладкой (диалог: "продал вещи и пересел
+    // на фантом во втором окне, закрыл — в первом всё ещё аргоси и предметы не проданы").
+    // _saveStateDirty НЕ сбрасываем — если вкладка снова станет актуальной (см.
+    // HudScene ws.onopen), она сама заново вызовет _saveState() и досохранит то, что
+    // накопилось за время блокировки.
+    if (this._sessionSuperseded) return;
     this._saveStateDirty = false;
     const state = this._serializeState();
     try { localStorage.setItem('stellar_drift_state_' + getUsername(), JSON.stringify(state)); } catch (_) {}

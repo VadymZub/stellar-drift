@@ -19,26 +19,50 @@ export const SHIPS = [
   //                             wy = py − x·cos(facing) − y·sin(facing)
   { key: 'wisp',     nameKey: 'ship.wisp',     descKey: 'shipdesc.wisp',     tier: 'T1',       levelGate: 1,  price: 0,      currency: null,      displaySize: 77,  hullMax: 1000, shieldBase: 120, baseSpeed: 200, wSlots: 1, sSlots: 1, eSlots: 0, aSlots: 3, dmgMod: 1.00, garageKey: 'wisp_g', artAngleOffset: -Math.PI / 2,
     activeSkill: { key: 'ship:wisp_recall', nameKey: 'skill.ship_wisp_recall', icon: 'БЗ', color: 0x66bb6a },
-    engines: [{ x: -10, y: 28 }, { x: 10, y: 28 }] },
+    // ВСЕ y-сдвиги ниже (+18, потом +8) откачены — общий диалог показал, что почти
+    // на любом корабле пламя выглядело "слишком далеко" независимо от величины
+    // сдвига (даже +5 у Анвила), а у Аргоси (единственный корабль, где y НЕ трогали)
+    // жалоб на дистанцию не было вовсе. Значит саму задачу "пламя из сопла, не на
+    // корпусе" уже решает origin-фикс (0.15, 0.5) в GameScene._spawnEngineFx(), а
+    // весь этот y-бюджет был лишним поверх него. Ширина <1 (уже обычного) оставлена —
+    // это отдельное свойство (толщина), не расстояние.
+    engines: [{ x: -10, y: 28 }, { x: 10, y: 28 }],
+    engineTrailWidth: 0.7 },
   // Остальные корабли: арт нарисован носом ВНИЗ (как wisp) → artAngleOffset −π/2 (разворот 180°);
   // displaySize уменьшен ~25% (были крупнее виспа). Игровой спрайт ↔ orientation; в Гараже арт статичный.
   { key: 'stiletto', nameKey: 'ship.stiletto', descKey: 'shipdesc.stiletto', tier: 'T2',       levelGate: 10, price: 80000,  currency: 'credits', displaySize: 120, hullMax: 850,  shieldBase: 150, baseSpeed: 250, wSlots: 2, sSlots: 2, eSlots: 1, aSlots: 3, dmgMod: 1.00, garageKey: 'stiletto_g', artAngleOffset: -Math.PI / 2,
     activeSkill: { key: 'ship:stiletto_afterburner', nameKey: 'skill.ship_stiletto_afterburner', icon: 'ФС', color: 0x29b6f6 },
-    engines: [{ x: 0, y: 50 }] },
+    // Ближе к соплу на 2px.
+    engines: [{ x: 0, y: 48 }] },
   { key: 'anvil',    nameKey: 'ship.anvil',    descKey: 'shipdesc.anvil',    tier: 'T2',       levelGate: 15, price: 120000, currency: 'credits', displaySize: 110, hullMax: 1300, shieldBase: 210, baseSpeed: 205, wSlots: 3, sSlots: 3, eSlots: 1, aSlots: 4, dmgMod: 1.00, garageKey: 'anvil_g',    artAngleOffset: -Math.PI / 2,
     activeSkill: { key: 'ship:anvil_lockdown', nameKey: 'skill.ship_anvil_lockdown', icon: 'УП', color: 0x90a4ae },
-    engines: [{ x: -13, y: 52 }, { x: 13, y: 52 }] },
+    // Уже обычного (engineTrailWidth<1, scaleY-множитель, как у Аргоси наоборот).
+    // Скрин с носом вправо: "ближе к соплу на 2px" (y 52→50), "верхний ниже на 3px,
+    // нижний выше на 4px" — сблизил к центру (предположил x:-13=верхний → -10,
+    // x:13=нижний → 9; если перепутаны местами — поменять дельты местами тривиально).
+    engines: [{ x: -10, y: 50 }, { x: 9, y: 50 }],
+    engineTrailWidth: 0.7 },
   { key: 'drover',   nameKey: 'ship.drover',   descKey: 'shipdesc.drover',   tier: 'T3',       levelGate: 25, price: 230000, currency: 'credits', displaySize: 147, hullMax: 1400, shieldBase: 230, baseSpeed: 205, wSlots: 5, sSlots: 5, eSlots: 2, aSlots: 5, dmgMod: 1.00, garageKey: 'drover_g',   artAngleOffset: -Math.PI / 2,
     cargoBonus: 4,
     activeSkill: { key: 'ship:drover_scan', nameKey: 'skill.ship_drover_scanner', icon: 'СК', color: 0xab47bc },
-    engines: [{ x: -12, y: 62 }, { x: 12, y: 62 }] },
+    // Скрин с носом вправо: "нижний след на 3px выше, верхний на 2px ниже" — сблизил
+    // оба к центру на соответствующие дельты. Предположил x:-12 = верхний на скрине
+    // (-2 → -10), x:12 = нижний (-3 → 9); если перепутаны местами — поменять
+    // дельты местами тривиально. (Похоже, это Дровер, не Дрифтер — см. коммент выше.)
+    engines: [{ x: -10, y: 62 }, { x: 9, y: 62 }] },
   { key: 'aegis',    nameKey: 'ship.aegis',    descKey: 'shipdesc.aegis',    tier: 'T3',       levelGate: 25, price: 260000, currency: 'credits', displaySize: 155, hullMax: 2500, shieldBase: 450, baseSpeed: 200, wSlots: 4, sSlots: 5, eSlots: 2, aSlots: 5, dmgMod: 1.00, garageKey: 'aegis_g',    artAngleOffset: -Math.PI / 2,
     passives: { shieldBonus: 0.20, shieldPerAlly: 0.05, reflectChance: 0.07 },
     activeSkill: { key: 'ship:aegis_dome', nameKey: 'skill.ship_aegis_dome', icon: 'ЩК', color: 0x42a5f5 },
-    engines: [{ x: -12, y: 68 }, { x: 12, y: 68 }] },
+    // x сближен на 4px каждый (12→8) — "ближе друг к другу".
+    engines: [{ x: -8, y: 68 }, { x: 8, y: 68 }] },
   { key: 'phantom',  nameKey: 'ship.phantom',  descKey: 'shipdesc.phantom',  tier: 'T4',       levelGate: 40, price: 520000, currency: 'credits', displaySize: 147, hullMax: 1800, shieldBase: 400, baseSpeed: 235, wSlots: 6, sSlots: 6, eSlots: 2, aSlots: 6, dmgMod: 1.00, garageKey: 'phantom_g',  artAngleOffset: -Math.PI / 2,
     activeSkill: { key: 'ship:phantom_cloak', nameKey: 'skill.ship_phantom_cloak', icon: 'МС', color: 0x7e57c2 },
-    engines: [{ x: 0, y: 71 }] },
+    // Новый арт (fantom_2.png) — двухкорпусный. y — прежний (дистанция подтверждена
+    // ОК). x был симметричный ±11 (сужен с ±22, было широко) — но сам силуэт
+    // асимметричен: правое сопло (x:11) стоит верно, левое сидело заметно дальше
+    // от него, чем в отражении (диалог: "этот асет поставь ближе к другому, второй
+    // стоит хорошо, не трогай"). Левое подведено ближе к правому НЕ зеркально.
+    engines: [{ x: -5, y: 71 }, { x: 11, y: 71 }] },
 
   // Prestige — за ⭐, гибрид-гейт. corp задаёт принадлежность (для текста требования).
   // Все три: 7/7/2 слота, dmgMod 1.0. Разница — корпус/скорость + пассив + активный скилл.
@@ -49,7 +73,15 @@ export const SHIPS = [
   { key: 'argosy',   nameKey: 'ship.argosy',   descKey: 'shipdesc.argosy',   tier: 'T4 elite', levelGate: 45, price: 5000, currency: 'star', prestige: true, corp: 'karax',  corpAffinity: 'karax',  displaySize: 140, hullMax: 3600, shieldBase: 480, baseSpeed: 215, wSlots: 7, sSlots: 7, eSlots: 2, aSlots: 7, dmgMod: 1.00, garageKey: 'argosy_g',  artAngleOffset: -Math.PI / 2,
     passives: { hullRegen: 25 },
     activeSkill: { key: 'ship:argosy_repair', nameKey: 'skill.ship_argosy_repair', icon: 'РМ', color: 0x4fc3f7 },
-    engines: [{ x: -24, y: 58 }, { x: 24, y: 58 }] },
+    // x гулял 24→34→44, каждый раз "слишком широко/далеко" — реальная причина
+    // дистанции была в origin-баге (см. GameScene._spawnEngineFx(), 0.15→0.42),
+    // не в этих цифрах; y-добавка (58→64) тоже была лишней по той же причине и
+    // откачена. Осталась только сама правка на РАЗНЕСЕНИЕ (не ширину спрайта) —
+    // сужено по факту (диалог: "сузить, ближе друг к другу") 44→26.
+    // Тонкая асимметричная правка: "верхний след подними на 2-3px, нижний на 1-2px" —
+    // предположил, что x:-26 = верхний на скрине (+2.5), x:26 = нижний (+1.5). Если
+    // перепутаны местами — поменять местами дельты между двумя записями тривиально.
+    engines: [{ x: -26, y: 60.5 }, { x: 26, y: 59.5 }] },
   { key: 'drifter',  nameKey: 'ship.drifter',  descKey: 'shipdesc.drifter',  tier: 'T4 elite', levelGate: 45, price: 5000, currency: 'star', prestige: true, corp: 'tides',  corpAffinity: 'tides',  displaySize: 147, hullMax: 2900, shieldBase: 440, baseSpeed: 265, wSlots: 7, sSlots: 7, eSlots: 2, aSlots: 7, dmgMod: 1.00, garageKey: 'drifter_g',  artAngleOffset: -Math.PI / 2,
     passives: { evasionBonus: 0.15 },
     activeSkill: { key: 'ship:drifter_jump', nameKey: 'skill.ship_drifter_jump', icon: 'ПР', color: 0x4db6ac },

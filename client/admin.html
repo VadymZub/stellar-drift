@@ -352,7 +352,11 @@
         <div class="t-desc">MAU, ретенция, выручка — моковые данные</div>
         <div class="t-link">→ Войти</div>
       </div>
-      <div class="tile" onclick="window.open('index.html?devMode=1','_blank')">
+      <!-- devKey — секретный токен вместо угадываемого ?devMode=1 (диалог: "нужен
+           двойной переключатель, мне дев мод ещё пригодится" — публичный веб на
+           GameJolt/т.п. не должен пускать в DEV_MODE по общеизвестной конвенции).
+           См. src/api.js DEV_KEY — держать значение синхронизированным с ним. -->
+      <div class="tile" onclick="window.open('index.html?devKey=hjovht369jdenw22kzgugtj28d4b','_blank')">
         <div class="t-icon">🧪</div>
         <div class="t-label">Test Mode</div>
         <div class="t-desc">Запуск игры с заданным профилем</div>

@@ -29,6 +29,12 @@ export const DEFAULTS = {
   cameraShake:  true,
   shotShake:    true,   // подпункт cameraShake — дрожание камеры конкретно при своём выстреле
   bgParallax:   true,
+  // Дуга направления урона (Player._flashDamageArc) при попадании ИЗ-ЗА ГРАНИЦЫ экрана —
+  // чисто визуальный индикатор "откуда бьют", без влияния на сам расчёт урона.
+  damageArc:      true,
+  // Раздельные числа урона по щиту/корпусу (GameScene.showDamage) — false показывает
+  // один общий суммарный тик вместо двух (щит слева, корпус справа).
+  splitDmgNumbers: true,
   // Требует перезагрузки страницы — Phaser не умеет менять antialias/antialiasGL
   // у уже созданного WebGL-контекста "на лету" (см. main.js/SettingsScene._save()).
   antialiasing: true,

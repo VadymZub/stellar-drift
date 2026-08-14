@@ -2105,7 +2105,6 @@ export default class HudScene extends Phaser.Scene {
       this._chatWsDestroyed = true;
       this._chatWS?.close();
       if (this._chatReconnectTimer) { clearTimeout(this._chatReconnectTimer); this._chatReconnectTimer = null; }
-      this._hideConnectionLostModal();
       this.game.events.off('chat-message', null, this);
       this._chatInputEl?.parentNode?.removeChild(this._chatInputEl);
     });
@@ -2618,7 +2617,19 @@ export default class HudScene extends Phaser.Scene {
     };
 
     ws.onopen = () => {
-      this._hideConnectionLostModal();
+      // Сообщение о восстановлении — только если реально ПОКАЗЫВАЛИ "потеряно" перед
+      // этим (см. флаг в ws.onclose ниже), иначе оно бы всплывало и на самый первый,
+      // обычный коннект при логине, когда никакого разрыва не было вовсе.
+      if (this._chatLostNoticeShown) {
+        this._chatLostNoticeShown = false;
+        this.pushChatMessage('general', 'System', '✓ Соединение с сервером восстановлено.', {});
+      }
+      // Успешный (пере)коннект = эта вкладка снова "текущая" (сервер не вытеснил её при
+      // самом accept()) — снимаем блок автосейва, поставленный в onclose при code=4000,
+      // и досохраняем то, что накопилось за время блокировки (_saveState() сам
+      // no-op'нется, если ничего не изменилось — см. _saveStateDirty).
+      const gsOnOpen = this.scene.get('GameScene');
+      if (gsOnOpen) { gsOnOpen._sessionSuperseded = false; gsOnOpen._saveState(); }
       this.groupSystem?.sectorUpdate(galaxy.current);
       // Самолечащаяся регистрация в realtime-комнате: GameScene.create() уже пытается
       // вызвать pvpClient.enterSector() при входе в сектор, но если в этот момент WS
@@ -2691,8 +2702,8 @@ export default class HudScene extends Phaser.Scene {
       // Защита от гонки: если этот сокет уже был заменён более новым (см. _connectChatWS
       // вызванный повторно, напр. из-за resize-рестарта HudScene выше) — его onclose может
       // сработать ПОЗЖЕ, чем this._chatWS уже указывает на новый, живой сокет. Без этой
-      // проверки устаревший onclose затирал бы ссылку на новый сокет null'ом и показывал
-      // модалку "соединение потеряно" поверх реально работающего соединения.
+      // проверки устаревший onclose затирал бы ссылку на новый сокет null'ом и слал бы
+      // сообщение "потеряно" поверх реально работающего соединения.
       if (this._chatWS !== ws) return;
       this._chatWS = null;
       this.groupSystem = null;
@@ -2704,67 +2715,54 @@ export default class HudScene extends Phaser.Scene {
       // Game Objects уже уничтожаются Phaser'ом ПРЯМО СЕЙЧАС (диалог: "выход из игры" — краш
       // Cannot read properties of null (reading 'drawImage') внутри Text.setColor, вызванного
       // из _updateSocialBtnStyles ПОСЛЕ того, как HudScene уже остановлена через logout —
-      // перерисовывать UI умирающей сцены незачем и небезопасно), без модалки и без реконнекта.
+      // перерисовывать UI умирающей сцены незачем и небезопасно), без сообщения и без реконнекта.
       this._rebuildFriendsWin();
       this._rebuildGroupWin();
       this._updateSocialBtnStyles();
       // 4003 — сервер на пределе бета-лимита одновременных игроков (см. server/main.py
       // ChatManager.is_full/MAX_CONCURRENT_USERS). Реконнект всё равно продолжаем —
       // слот освобождается, как только кто-то выйдет.
-      const subtitle = evt?.code === 4003
-        ? 'Сервер сейчас заполнен (бета, лимит игроков)'
+      // 4000 — сервер сам вытеснил ЭТОТ сокет, потому что тот же аккаунт подключился
+      // из другой вкладки/окна (см. server/main.py ChatManager.connect(), "один
+      // пользователь — одно активное соединение"). Без спец-текста игрок видел общее
+      // "связь прервана" и не понимал, что происходит (диалог: "недавно такого не
+      // было" — на деле оказалось два открытых окна одного аккаунта, пинг-понгующих
+      // друг друга каждые 5с через обычный реконнект-таймер).
+      // 4000 — эта вкладка вытеснена, значит она больше НЕ авторитетный источник
+      // прогресса: если оставить автосейв работать, её устаревший _saveState() рано
+      // или поздно перезапишет на сервере то, что успела сохранить активная вкладка
+      // (диалог: "продал вещи и пересел на фантом во втором окне, закрыл его — в
+      // первом всё ещё аргоси и предметы не проданы" — PUT /player/state на сервере
+      // это голый overwrite без версии/времени, см. main.py save_state(), так что
+      // ЛЮБОЙ автосейв из этой вкладки после вытеснения тихо стирает прогресс другой).
+      // "Жёстко закрыть первое соединение" (правка по диалогу) реализована как блок
+      // автосейва здесь, а не доп. версионирование на сервере — тот же результат
+      // (устаревшая вкладка не может испортить данные), но без нового поля в БД.
+      const gsForSave = this.scene.get('GameScene');
+      if (evt?.code === 4000 && gsForSave) gsForSave._sessionSuperseded = true;
+      const subtitle = evt?.code === 4003 ? 'Сервер сейчас заполнен (бета, лимит игроков)'
+        : evt?.code === 4000 ? 'Этот аккаунт открыт в другой вкладке/окне — автосохранение здесь приостановлено'
         : 'Связь с сервером прервана';
-      this._showConnectionLostModal(subtitle);
-      this._chatReconnectTimer = setTimeout(() => this._connectChatWS(), 5000);
+      // Раньше — полноэкранная блокирующая модалка (диалог: "на обрыв чата не нужно
+      // такое писать, если проблемы с чатом то писать в окно чата"). Пишем системным
+      // сообщением в общий чат вместо этого; ничего не блокирует клики/движение.
+      // Троттлинг флагом — реконнект-таймер ниже бьёт каждые 5с, и если сервер
+      // недоступен долго, КАЖДАЯ попытка сама тоже кончается этим же onclose — без
+      // флага чат заспамило бы одним и тем же сообщением раз в 5-7с (та самая жалоба).
+      if (!this._chatLostNoticeShown) {
+        this._chatLostNoticeShown = true;
+        this.pushChatMessage('general', 'System', `⚠ ${subtitle} Переподключение...`, {});
+      }
+      // 4000 (вытеснены другой вкладкой того же аккаунта) — задержка длиннее обычной
+      // (20с вместо 5с). Пока открыты обе вкладки, каждый реконнект одной стороны
+      // выбивает другую — с 5с таймером это давало пинг-понг каждые 5-7с (жалоба
+      // "постоянные обрывы"). 20с не устраняет конфликт полностью (обе вкладки всё
+      // равно активны), но резко снижает частоту дёргания, пока игрок не заметит
+      // сообщение выше и не закроет лишнюю вкладку сам.
+      const retryDelay = evt?.code === 4000 ? 20000 : 5000;
+      this._chatReconnectTimer = setTimeout(() => this._connectChatWS(), retryDelay);
     };
     ws.onerror = () => {};
-  }
-
-  // ── Модалка "соединение потеряно" — любая причина закрытия WS (обрыв сети,
-  // рестарт/падение сервера, бета-лимит игроков и т.п.) заканчивается тут:
-  // фоновый реконнект и так уже был (см. ws.onclose), но раньше это было
-  // незаметно игроку — теперь явное сообщение + кнопка немедленного повтора.
-  _showConnectionLostModal(subtitle) {
-    const wasShowing = !!this._connLostObjs;
-    if (this._connLostObjs) { this._connLostObjs.forEach(o => o?.destroy()); this._connLostObjs = null; }
-    const gs = this.scene.get('GameScene');
-    if (!wasShowing && gs) gs._modalBlockingClicks = true; // см. паттерн в GameScene — иначе клик по кнопке ниже двигает корабль
-    const W = this.scale.width, H = this.scale.height;
-    const objs = [];
-    objs.push(this.add.rectangle(0, 0, W, H, 0x000000, 0.55).setOrigin(0, 0).setDepth(500).setScrollFactor(0).setInteractive());
-    const OW = 340, OH = 150, ox = (W - OW) / 2, oy = (H - OH) / 2;
-    objs.push(this.add.rectangle(ox, oy, OW, OH, 0x0e0608, 0.97)
-      .setOrigin(0, 0).setStrokeStyle(1.5, 0xef5350, 0.8).setDepth(501).setScrollFactor(0));
-    objs.push(this.add.text(ox + OW / 2, oy + 28, '⚠ Соединение потеряно', {
-      fontFamily: 'Orbitron, sans-serif', fontSize: '15px', color: '#ef5350', resolution: UI_RES,
-    }).setOrigin(0.5).setDepth(502).setScrollFactor(0));
-    objs.push(this.add.text(ox + OW / 2, oy + 62, subtitle, {
-      fontFamily: 'Inter, sans-serif', fontSize: '12px', color: '#ccaaaa', resolution: UI_RES,
-      wordWrap: { width: OW - 40 }, align: 'center',
-    }).setOrigin(0.5).setDepth(502).setScrollFactor(0));
-    const btnY = oy + OH - 32;
-    const btn = this.add.rectangle(ox + OW / 2, btnY, 170, 32, 0x1a0808, 1)
-      .setStrokeStyle(1, 0xef5350, 0.8).setDepth(502).setScrollFactor(0).setInteractive({ useHandCursor: true });
-    btn.on('pointerdown', () => this._retryConnectionNow());
-    objs.push(btn);
-    objs.push(this.add.text(ox + OW / 2, btnY, 'ПОВТОРИТЬ СЕЙЧАС', {
-      fontFamily: 'Orbitron, sans-serif', fontSize: '11px', color: '#ef9a9a', resolution: UI_RES,
-    }).setOrigin(0.5).setDepth(503).setScrollFactor(0));
-    this._connLostObjs = objs;
-  }
-
-  _hideConnectionLostModal() {
-    if (!this._connLostObjs) return;
-    this._connLostObjs.forEach(o => o?.destroy());
-    this._connLostObjs = null;
-    const gs = this.scene.get('GameScene');
-    if (gs) this.time.delayedCall(0, () => { gs._modalBlockingClicks = false; });
-  }
-
-  _retryConnectionNow() {
-    if (this._chatReconnectTimer) { clearTimeout(this._chatReconnectTimer); this._chatReconnectTimer = null; }
-    this._hideConnectionLostModal();
-    this._connectChatWS();
   }
 
   _saveChatState() {
@@ -3597,8 +3595,14 @@ export default class HudScene extends Phaser.Scene {
     const W = this.scale.width;
     let saved = {}; try { saved = JSON.parse(localStorage.getItem('sd_booster_win') || '{}'); } catch {}
     const WW = 200, hdrH = 26, rowH = 22;
-    const bx = saved.x ?? (W - WW - 12);
-    const by = saved.y ?? 120;
+    const H = this.scale.height;
+    // Клэмп под ТЕКУЩИЙ размер окна — раньше сохранённые x/y применялись как есть,
+    // без проверки: после ресайза окна (стало уже/ниже, чем когда плашку двигали в
+    // последний раз) виджет уезжал за пределы видимой области — тоггл технически
+    // отрабатывал (setVisible(true), никакой ошибки), но игрок ничего не видел
+    // (диалог: "ошибки нет но окно с бустерами не запускается").
+    const bx = Phaser.Math.Clamp(saved.x ?? (W - WW - 12), 0, Math.max(0, W - WW));
+    const by = Phaser.Math.Clamp(saved.y ?? 120, 0, Math.max(0, H - (hdrH + rowH)));
 
     this._bstClosed    = saved.closed || false;
     this._bstForceOpen = false;
@@ -3640,9 +3644,22 @@ export default class HudScene extends Phaser.Scene {
       const ry = hdrH + i * rowH;
       const icon  = this.add.text(8,      ry + rowH / 2, def.icon,  F('12px', def.color)).setOrigin(0, 0.5);
       const label = this.add.text(26,     ry + rowH / 2, def.label, F('10px', '#7a9aaa')).setOrigin(0, 0.5);
-      const timer = this.add.text(WW - 8, ry + rowH / 2, '',        O('11px', def.color)).setOrigin(1, 0.5);
-      c.add([icon, label, timer]);
-      return { key: def.key, icon, label, timer };
+      // Таймер "ММ:СС" — 5 ОТДЕЛЬНЫХ текстов, один на символ, каждый в своём
+      // фиксированном слоте, а не один текст с origin(1,0.5). Orbitron не
+      // моноширинный (напр. "1" уже "0"), и origin=1 честно держит правый край
+      // ВСЕЙ строки на месте, но при смене ширины строки ("29:09"→"29:10") левая
+      // часть всё равно сдвигается целиком — цифры "гуляли" (диалог, повторно
+      // после первой неудачной попытки через fixedWidth+align: align в Phaser
+      // управляет выравниванием строк многострочного текста, а не позицией
+      // однострочного текста внутри бокса — не решает эту задачу вообще).
+      // Слот на символ — как в табличных/тайм-кодовых UI: каждый символ
+      // центрируется в СВОЁМ фиксированном месте, соседние слоты не съезжают,
+      // какой бы ширины ни была конкретная цифра в конкретном слоте.
+      const CHAR_W = 9;
+      const timerChars = Array.from({ length: 5 }, (_, ci) =>
+        this.add.text(WW - 8 - (4 - ci) * CHAR_W, ry + rowH / 2, '', O('11px', def.color)).setOrigin(0.5, 0.5));
+      c.add([icon, label, ...timerChars]);
+      return { key: def.key, icon, label, timerChars };
     });
 
     // Пустой ряд — показывается вместо перечня, когда плашку принудительно
@@ -3796,10 +3813,12 @@ export default class HudScene extends Phaser.Scene {
     for (const row of this._bstRows) {
       const remainingMs = ab[row.key] || 0;
       const active = remainingMs > 0;
-      row.icon.setVisible(active); row.label.setVisible(active); row.timer.setVisible(active);
+      row.icon.setVisible(active); row.label.setVisible(active);
+      for (const t of row.timerChars) t.setVisible(active);
       if (active) {
         const rem = Math.ceil(remainingMs / 1000);
-        this._setText(row.timer, `${String(Math.floor(rem / 60)).padStart(2, '0')}:${String(rem % 60).padStart(2, '0')}`);
+        const str = `${String(Math.floor(rem / 60)).padStart(2, '0')}:${String(rem % 60).padStart(2, '0')}`;
+        for (let ci = 0; ci < 5; ci++) this._setText(row.timerChars[ci], str[ci]);
         visCount++;
       }
     }

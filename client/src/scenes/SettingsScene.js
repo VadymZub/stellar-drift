@@ -162,6 +162,8 @@ export default class SettingsScene extends Phaser.Scene {
     this._addToggle('Тряска камеры',   'cameraShake',  T, LX, RX, y); y += 36;
     this._addToggle('При выстреле', 'shotShake', T, LX, RX, y, { indent: true, dependsOn: 'cameraShake' }); y += 36;
     this._addToggle('Параллакс фон',   'bgParallax',   T, LX, RX, y); y += 36;
+    this._addToggle('Дуга урона за экраном', 'damageArc',       T, LX, RX, y); y += 36;
+    this._addToggle('Раздельный урон (щит/корпус)', 'splitDmgNumbers', T, LX, RX, y); y += 36;
 
     this._section('ОТОБРАЖЕНИЕ', T, LX, RX, y); y += 22;
     this._addToggle('Счётчик FPS', 'showFps', T, LX, RX, y); y += 36;
@@ -458,6 +460,8 @@ export default class SettingsScene extends Phaser.Scene {
     if (gs) gs.shotShakeEnabled     = next.shotShake;
     if (gs) gs.engineTrailsEnabled  = next.engineTrails;
     if (gs) gs.bgParallaxEnabled    = next.bgParallax;
+    if (gs) gs.damageArcEnabled     = next.damageArc;
+    if (gs) gs.splitDmgNumbersEnabled = next.splitDmgNumbers;
 
     if (next.uiScale !== prev.uiScale && hud) {
       this.scene.stop('HudScene');
