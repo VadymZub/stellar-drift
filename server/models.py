@@ -19,6 +19,17 @@ class User(Base):
     is_banned    = Column(Integer, nullable=False, default=0)  # bool as int — блокирует /auth/login
     is_muted     = Column(Integer, nullable=False, default=0)  # bool as int — блокирует отправку в /ws/chat
     banned_at    = Column(DateTime, nullable=True)  # момент бана — 14-дневный кулдаун до физического удаления аккаунта
+    # USDT-платежи (см. диалог "давай подключим кошелек usdt") — звёзды, подтверждённые
+    # background-воркером (server/crypto_payments.py) как оплаченные РЕАЛЬНЫМ переводом,
+    # но ещё не "забранные" клиентом. Отдельно от PlayerState.state (клиент-доверенный
+    # JSON-блоб, см. ⚠ premium в памяти проекта) — если бы зачисление шло туда же,
+    # платить не нужно, любой мог бы выставить starGold через консоль сам. Клиент
+    # явно забирает через POST /wallet/claim-credit (атомарно на сервере), после
+    # чего сумма прибавляется к его собственному client-side starGold и сохраняется
+    # обычным путём — сервер после этого момента доверяет клиенту ровно так же, как
+    # доверял ДО (это не решает исходную проблему целиком, только для ЭТОЙ суммы
+    # гарантирует, что она не могла появиться без реальной оплаты).
+    pending_star_gold_credit = Column(Integer, nullable=False, default=0)
 
 
 class EmailVerificationToken(Base):
@@ -32,6 +43,31 @@ class EmailVerificationToken(Base):
     code       = Column(String(6), nullable=False)
     expires_at = Column(DateTime, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class CryptoDepositOrder(Base):
+    # Один заказ = одна покупка звёздной пачки за USDT (TRC-20/Tron). Адрес — ОДНОРАЗОВЫЙ
+    # (см. диалог: "проще для игрока, чем точная сумма на общий кошелёк, и не постоянный
+    # адрес на аккаунт ради приватности") — derivation_index монотонно растёт, один на
+    # заказ, никогда не переиспользуется даже для того же юзера повторно.
+    __tablename__ = "crypto_deposit_orders"
+
+    id                = Column(Integer, primary_key=True)
+    user_id           = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    derivation_index  = Column(Integer, unique=True, nullable=False, index=True)
+    address           = Column(String(64), unique=True, nullable=False, index=True)
+    pack_id           = Column(String(32), nullable=False)      # см. STAR_PACKS в DonateScene.js
+    star_gold_amount  = Column(Integer, nullable=False)
+    # USDT в микро-юнитах (×1_000_000) — TRC-20 USDT имеет 6 знаков после запятой,
+    # целое число вместо float/Numeric полностью убирает риск ошибок округления
+    # при сравнении "пришедшая сумма >= ожидаемой" (см. crypto_payments.py).
+    amount_usdt_micro = Column(Integer, nullable=False)
+    # pending -> paid (воркер нашёл и подтвердил перевод) | expired (истёк, никто не заплатил)
+    status            = Column(String(16), nullable=False, default='pending', index=True)
+    tx_hash           = Column(String(80), nullable=True, unique=True)  # заполняется при paid
+    created_at        = Column(DateTime, default=datetime.utcnow)
+    expires_at        = Column(DateTime, nullable=False)
+    paid_at           = Column(DateTime, nullable=True)
 
 
 class PlayerState(Base):

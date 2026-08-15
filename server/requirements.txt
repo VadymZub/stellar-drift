@@ -10,5 +10,12 @@ python-multipart==0.0.12
 email-validator>=2.2.0
 python-dotenv>=1.0.1
 
+# USDT (TRC-20) приём платежей — HD-деривация адресов + чтение TronGrid API.
+# Требует Python 3.12 (coincurve/bip-utils не имеют собранных wheel под 3.14
+# на момент внедрения — см. диалог, локальный venv пересоздан под 3.12,
+# сервер на VPS уже на 3.12 — совпадает без правок).
+tronpy==0.6.2
+bip-utils==2.12.2
+
 # Для PostgreSQL (prod): раскомментировать и установить
 # asyncpg==0.30.0

@@ -351,3 +351,25 @@ class ArenaMatchCompleteResponse(BaseModel):
     honor: int = 0
     gold: int = 0
     rewardedCount: int = 0
+
+
+# ── USDT (TRC-20) платежи ──────────────────────────────────────────────
+class CreateDepositOrderRequest(BaseModel):
+    packId: str  # см. STAR_PACKS в DonateScene.js — сервер сам знает цену/кол-во звёзд по id
+
+
+class CreateDepositOrderResponse(BaseModel):
+    orderId: int
+    address: str
+    amountUsdt: str        # человекочитаемая строка "4.99" — избегаем float на клиенте
+    starGoldAmount: int
+    expiresAt: str          # ISO — клиент считает обратный отсчёт сам
+
+
+class DepositOrderStatusResponse(BaseModel):
+    status: str  # pending | paid | expired
+    starGoldAmount: int
+
+
+class ClaimCreditResponse(BaseModel):
+    credited: int  # сколько реально зачислено этим вызовом (0, если нечего забирать)

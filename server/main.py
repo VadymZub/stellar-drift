@@ -16,7 +16,8 @@ from sqlalchemy import or_, and_, select, delete, update, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import engine, get_db, SessionLocal, Base
-from models import User, PlayerState, PlayerProfile, AuditLog, ChatMessage, Friendship, Blacklist, PrivateMessage, EmailVerificationToken, DungeonRun, DungeonLives, MiningBaseState, ArenaDaily
+from models import User, PlayerState, PlayerProfile, AuditLog, ChatMessage, Friendship, Blacklist, PrivateMessage, EmailVerificationToken, DungeonRun, DungeonLives, MiningBaseState, ArenaDaily, CryptoDepositOrder
+import crypto_payments
 from schemas import (
     RegisterRequest, LoginRequest, TokenResponse, UserResponse,
     VerifyEmailRequest, ChangePasswordRequest, ChangeEmailRequest, ChangeUsernameRequest,
@@ -31,6 +32,7 @@ from schemas import (
     DungeonCompleteRequest, MiningBaseSaveRequest, MiningBaseSectorResponse,
     ArenaStatusResponse, ArenaMatchCompleteRequest, ArenaMatchCompleteResponse,
     AdminRefundRequest, AdminXpAdjustRequest, AdminHonorPenaltyRequest, AdminHonorGrantRequest,
+    CreateDepositOrderRequest, CreateDepositOrderResponse, DepositOrderStatusResponse, ClaimCreditResponse,
 )
 from auth import hash_password, verify_password, create_token, decode_token
 from mailer import send_verification_code
@@ -60,6 +62,8 @@ async def _migrate_add_email_column():
                 sync_conn.exec_driver_sql("ALTER TABLE users ADD COLUMN email_verified INTEGER NOT NULL DEFAULT 0")
             if "username_changed_at" not in cols:
                 sync_conn.exec_driver_sql("ALTER TABLE users ADD COLUMN username_changed_at DATETIME")
+            if "pending_star_gold_credit" not in cols:
+                sync_conn.exec_driver_sql("ALTER TABLE users ADD COLUMN pending_star_gold_credit INTEGER NOT NULL DEFAULT 0")
         await conn.run_sync(_check_and_alter)
 
 
@@ -67,7 +71,10 @@ async def _migrate_add_email_column():
 async def _create_tables():
     # create_all — синхронный вызов metadata, run_sync прогоняет его через
     # обычное DBAPI-соединение движка (aiosqlite) без блокировки event loop
-    # (см. диалог про переход на async SQLAlchemy).
+    # (см. диалог про переход на async SQLAlchemy). Создаёт НОВЫЕ таблицы (напр.
+    # CryptoDepositOrder) автоматически — колонки к УЖЕ существующим таблицам
+    # (users.pending_star_gold_credit) create_all не трогает, тем и занимается
+    # _migrate_add_email_column ниже (тот же паттерн, что у email/is_verified).
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     await _migrate_add_email_column()
@@ -2127,6 +2134,149 @@ async def save_state(
         db.add(ps)
     await db.commit()
     return {"ok": True}
+
+
+# ── USDT (TRC-20) платежи ───────────────────────────────────────────────
+# См. crypto_payments.py — схема (одноразовый адрес на заказ, фоновая проверка
+# TronGrid, зачисление через pending_star_gold_credit, НЕ через player_state)
+# согласована отдельно, не переизобретать при правках.
+
+CRYPTO_ORDER_TTL_MIN = 30
+CRYPTO_POLL_INTERVAL_SEC = 20
+# Сколько ещё МИНУТ после истечения заказа продолжаем проверять на оплату —
+# сеть Tron может подтвердить перевод с опозданием (игрок отправил ДО, но
+# транзакция замайнилась ПОСЛЕ expires_at). Без этого окна такой платёж
+# улетает в никуда: заказ уже 'expired', воркер его больше не смотрит,
+# а деньги реальные. См. диалог "доработай недоделки".
+CRYPTO_EXPIRY_GRACE_MIN = 15
+
+
+@app.post("/wallet/create-deposit-order", response_model=CreateDepositOrderResponse)
+async def create_deposit_order(
+    body: CreateDepositOrderRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    pack = crypto_payments.STAR_PACKS.get(body.packId)
+    if not pack:
+        raise HTTPException(status_code=400, detail="Unknown packId")
+    # derivation_index — максимум существующего +1 (монотонно растёт, никогда не
+    # переиспользуется — см. комментарий в models.py у CryptoDepositOrder). MAX(), не
+    # COUNT() — заказ мог быть только один, но индекс должен быть уникален НАВСЕГДА,
+    # даже если старые заказы когда-нибудь начнут удаляться/архивироваться.
+    max_index = (await db.execute(select(func.max(CryptoDepositOrder.derivation_index)))).scalar()
+    # НЕ "max_index or -1" — 0 (первый когда-либо созданный заказ) falsy в Python,
+    # `0 or -1` даёт -1, и индекс 0 переиспользовался бы для ВТОРОГО заказа тоже
+    # (баг найден живым тестом: UNIQUE constraint failed на повторном index=0).
+    next_index = (max_index + 1) if max_index is not None else 0
+    address = crypto_payments.derive_address(next_index)
+    expires_at = datetime.utcnow() + timedelta(minutes=CRYPTO_ORDER_TTL_MIN)
+    order = CryptoDepositOrder(
+        user_id=user.id, derivation_index=next_index, address=address,
+        pack_id=body.packId, star_gold_amount=pack["stars"],
+        amount_usdt_micro=pack["usdt_micro"], status="pending", expires_at=expires_at,
+    )
+    db.add(order)
+    await db.commit()
+    await db.refresh(order)
+    return CreateDepositOrderResponse(
+        orderId=order.id, address=address,
+        amountUsdt=f"{pack['usdt_micro'] / 1_000_000:.2f}",
+        starGoldAmount=pack["stars"], expiresAt=expires_at.isoformat(),
+    )
+
+
+@app.get("/wallet/deposit-order/{order_id}", response_model=DepositOrderStatusResponse)
+async def get_deposit_order_status(
+    order_id: int,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    # Клиент поллит этот эндпоинт (не сам TronGrid — приватные детали инфраструктуры
+    # платежей клиенту знать незачем), пока ждёт подтверждения на экране DonateScene.
+    order = (await db.execute(select(CryptoDepositOrder).where(
+        CryptoDepositOrder.id == order_id, CryptoDepositOrder.user_id == user.id,
+    ))).scalar_one_or_none()
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+    return DepositOrderStatusResponse(status=order.status, starGoldAmount=order.star_gold_amount)
+
+
+@app.post("/wallet/claim-credit", response_model=ClaimCreditResponse)
+async def claim_credit(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    # Атомарно — читаем и обнуляем в ОДНОЙ транзакции, иначе двойной вызов подряд
+    # (сеть/ретрай на клиенте) мог бы зачислить одну и ту же сумму дважды.
+    fresh = (await db.execute(select(User).where(User.id == user.id))).scalar_one()
+    amount = fresh.pending_star_gold_credit
+    fresh.pending_star_gold_credit = 0
+    await db.commit()
+    return ClaimCreditResponse(credited=amount)
+
+
+async def _crypto_deposit_poll_loop():
+    """Фоновый цикл — единственное место, где сервер решает "заказ реально оплачен".
+    Обёрнут в try/except (в отличие от остальных tick-циклов выше) — этот, в отличие
+    от них, делает ВНЕШНИЙ HTTP-запрос (TronGrid), который может упасть/зависнуть по
+    сетевым причинам; без защиты одна временная ошибка API убила бы цикл навсегда."""
+    while True:
+        await asyncio.sleep(CRYPTO_POLL_INTERVAL_SEC)
+        try:
+            now = datetime.utcnow()
+            grace_cutoff = now - timedelta(minutes=CRYPTO_EXPIRY_GRACE_MIN)
+            async with SessionLocal() as db:
+                # pending — обычный случай; expired-но-в-пределах-grace — заказы,
+                # которые уже истекли, но недавно (см. CRYPTO_EXPIRY_GRACE_MIN) —
+                # проверяем их ещё раз на случай платежа, подтвердившегося с опозданием.
+                watched = (await db.execute(select(CryptoDepositOrder).where(or_(
+                    CryptoDepositOrder.status == "pending",
+                    and_(
+                        CryptoDepositOrder.status == "expired",
+                        CryptoDepositOrder.expires_at > grace_cutoff,
+                    ),
+                )))).scalars().all()
+                for order in watched:
+                    if order.status == "pending" and now > order.expires_at:
+                        order.status = "expired"
+                        # НЕ continue — платёж мог замайниться буквально в последнюю
+                        # секунду до истечения, проверяем его в этом же проходе, а не
+                        # ждём следующий (следующий раз попадёт сюда уже через ветку
+                        # expired-в-пределах-grace выше, но нет смысла терять цикл).
+                    min_ts_ms = int(order.created_at.timestamp() * 1000)
+                    try:
+                        transfers = crypto_payments.check_incoming_usdt(order.address, min_ts_ms)
+                    except Exception:
+                        import traceback; traceback.print_exc()
+                        continue
+                    # Суммируем ВСЕ переводы на адрес заказа, не только последний —
+                    # игрок мог отправить оплату несколькими траншами (напр. случайно
+                    # разбил перевод на 2 части). check_incoming_usdt каждый раз читает
+                    # ПОЛНУЮ историю с created_at, так что накопительная сумма всегда
+                    # актуальна. tx_hash заказа — тот перевод, что довёл сумму до порога.
+                    transfers_sorted = sorted(transfers, key=lambda t: t["timestamp_ms"])
+                    cumulative = 0
+                    completing_tx = None
+                    for t in transfers_sorted:
+                        cumulative += t["amount_micro"]
+                        if cumulative >= order.amount_usdt_micro:
+                            completing_tx = t["tx_hash"]
+                            break
+                    if completing_tx:
+                        order.status = "paid"
+                        order.tx_hash = completing_tx
+                        order.paid_at = now
+                        usr = (await db.execute(select(User).where(User.id == order.user_id))).scalar_one()
+                        usr.pending_star_gold_credit += order.star_gold_amount
+                await db.commit()
+        except Exception:
+            import traceback; traceback.print_exc()
+
+
+@app.on_event("startup")
+async def _start_crypto_poll_loop():
+    asyncio.create_task(_crypto_deposit_poll_loop())
 
 
 # ── Player profile ────────────────────────────────────────────────────
