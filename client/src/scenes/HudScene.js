@@ -1103,8 +1103,17 @@ export default class HudScene extends Phaser.Scene {
   _finishLogout() {
     clearSession();
     const mgr = this.scene.manager;
+    // mgr.stop(key) — СЫРОЙ метод SceneManager, останавливает сцену НЕМЕДЛЕННО/
+    // синхронно (scene.sys.shutdown() внутри, см. vendor/phaser.esm.js). Вызванный
+    // для НЕСКОЛЬКИХ активных сцен (GameScene/BackgroundScene/сама HudScene) прямо
+    // из update() этой же HudScene — рвёт текущий шаг рендер-цикла без исключения:
+    // картинка замирает, в консоли тихо (диалог: "при завершении таймера просто
+    // зависание, ошибок в консоли нет"). Безопасный путь — s.scene.stop() через
+    // ScenePlugin каждой сцены: он кладёт операцию в очередь (this.manager._queue),
+    // которую SceneManager.update() разгребает processQueue() ПЕРВОЙ строкой
+    // следующего шага — то же самое, что делает любой обычный this.scene.stop().
     mgr.getScenes(true).forEach(s => {
-      if (s.scene.key !== 'LoginScene') mgr.stop(s.scene.key);
+      if (s.scene.key !== 'LoginScene') s.scene.stop();
     });
     this.scene.start('LoginScene');
   }
