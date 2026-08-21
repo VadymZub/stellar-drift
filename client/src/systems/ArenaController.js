@@ -10,7 +10,7 @@ import { ARENA_TEAM_COLOR, ARENA_BASE_SAFE_R, ARENA_CAPTURE_R, ARENA_PICKUP_R, A
 import ArenaFlag from '../entities/ArenaFlag.js';
 import ArenaCargoContainer from '../entities/ArenaCargoContainer.js';
 import ArenaPoint from '../entities/ArenaPoint.js';
-import { arenaMatchComplete } from '../api.js';
+import { arenaMatchComplete, logEvent } from '../api.js';
 
 export default class ArenaController {
   constructor(scene, match) {
@@ -230,6 +230,9 @@ export default class ArenaController {
             this.scene.starGold   = (this.scene.starGold   || 0) + (res.gold  || 0);
             this.scene._saveState?.();
             this.scene.log?.(`🏆 Арена: +${res.honor} чести, +${res.gold} ⭐ (сегодня ${res.rewardedCount}/10)`);
+            // Прямая мутация pilotHonor/starGold (не gainHonor()/gainXp()) — не подхватывается
+            // их централизованным логированием, пишем явно здесь.
+            logEvent('earn', 'arena_reward', { honor: res.honor || 0, stars: res.gold || 0, outcome: msg.outcome });
           }
         } catch (_e) { /* сеть недоступна — награда просто не применится, матч уже сыгран */ }
       }

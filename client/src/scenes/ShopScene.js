@@ -3,6 +3,7 @@ import { COLORS, UI_RES } from '../constants.js';
 import { i18n } from '../i18n.js';
 import { CONSUMABLES, addConsumableToInventory, countConsumableInInventory, AMMO_ICON } from '../items.js';
 import { prerenderTex } from '../utils/prerenderTex.js';
+import { logEvent } from '../api.js';
 
 // Обмен золота на опыт — 3× дороже фарма (типичный данж-килл: ~100 XP за ~3 ⭐,
 // см. GameScene.onMobKilled/rollStarGold — курс не константа, варьируется по
@@ -308,6 +309,7 @@ export default class ShopScene extends Phaser.Scene {
         gs.credits = (gs.credits || 0) + credits;
         gs._saveState?.();
         gs.log?.(`Обмен: −${a.toLocaleString()} ⭐  +${credits.toLocaleString()} кр.`);
+        logEvent('purchase_stars', 'exchange_gold_to_credits', { starGold: a, credits });
         this._refresh();
         this._tabObjects.forEach(o => { try { o.destroy(); } catch (_) {} });
         this._tabObjects = [];
@@ -406,6 +408,7 @@ export default class ShopScene extends Phaser.Scene {
       gs._applyRawXp(buyXp);
       gs._saveState?.();
       gs.log?.(`Куплено: ${buyXp.toLocaleString()} XP −${price} ⭐`);
+      logEvent('purchase_stars', 'exchange_gold_to_xp', { starGold: price, xp: buyXp });
       this._refresh();
       this._tabObjects.forEach(o => { try { o.destroy(); } catch (_) {} });
       this._tabObjects = [];
@@ -529,6 +532,7 @@ export default class ShopScene extends Phaser.Scene {
       haveTxt.setText(`в трюме: ${countConsumableInInventory(inv2, item.type)}`);
       gs._saveState?.();
       gs.log?.(`Куплено: ${i18n.t(`item.${item.type}`)} ×${qty} −${price} ⭐${toSlots > 0 ? ` (${toSlots} → слот)` : ''}`);
+      logEvent('purchase_stars', 'buy_consumable', { item: item.type, qty, price });
       this._refresh();
     });
   }
@@ -611,6 +615,7 @@ export default class ShopScene extends Phaser.Scene {
       if (remaining > 0) addConsumableToInventory(inv, item.type, remaining, cargoMax);
       gs._saveState?.();
       gs.log?.(`Куплено: ${i18n.t(`item.${item.type}`)} ×${item.qty}`);
+      if (item.currency === 'gold') logEvent('purchase_stars', 'buy_ammo', { item: item.type, qty: item.qty, price: item.price });
       const newSlots = (gs.ammoSlots || []).filter(s => s.type === item.type).reduce((sum, s) => sum + (s.count || 0), 0);
       haveTxt.setText(`в трюме: ${countConsumableInInventory(inv, item.type)}  ·  в патронах: ${newSlots}`);
       this._refresh();
@@ -678,6 +683,7 @@ export default class ShopScene extends Phaser.Scene {
       statusTxt.setText(`АКТИВЕН  ${rem} мин.`);
       gs._saveState?.();
       gs.log?.(`Куплен бустер: ${b.label} −20 ⭐`);
+      logEvent('purchase_stars', 'buy_booster', { booster: b.key, price: 20 });
       this._refresh();
     });
   }

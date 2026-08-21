@@ -64,6 +64,46 @@ async def _migrate_add_email_column():
                 sync_conn.exec_driver_sql("ALTER TABLE users ADD COLUMN username_changed_at DATETIME")
             if "pending_star_gold_credit" not in cols:
                 sync_conn.exec_driver_sql("ALTER TABLE users ADD COLUMN pending_star_gold_credit INTEGER NOT NULL DEFAULT 0")
+            if "pending_premium_days" not in cols:
+                sync_conn.exec_driver_sql("ALTER TABLE users ADD COLUMN pending_premium_days INTEGER NOT NULL DEFAULT 0")
+            if "pending_booster_xp_honor_ms" not in cols:
+                sync_conn.exec_driver_sql("ALTER TABLE users ADD COLUMN pending_booster_xp_honor_ms INTEGER NOT NULL DEFAULT 0")
+        await conn.run_sync(_check_and_alter)
+
+
+async def _migrate_add_crypto_order_product_columns():
+    # См. диалог "так мы можем подключить оплату криптой" — CryptoDepositOrder изначально
+    # знал только звёзды, теперь премиум/бустер тоже через него же.
+    async with engine.begin() as conn:
+        def _check_and_alter(sync_conn):
+            cols = {r[1] for r in sync_conn.exec_driver_sql("PRAGMA table_info(crypto_deposit_orders)").fetchall()}
+            if "product_kind" not in cols:
+                sync_conn.exec_driver_sql("ALTER TABLE crypto_deposit_orders ADD COLUMN product_kind VARCHAR(16) NOT NULL DEFAULT 'stars'")
+            if "premium_days" not in cols:
+                sync_conn.exec_driver_sql("ALTER TABLE crypto_deposit_orders ADD COLUMN premium_days INTEGER NOT NULL DEFAULT 0")
+            if "booster_days" not in cols:
+                sync_conn.exec_driver_sql("ALTER TABLE crypto_deposit_orders ADD COLUMN booster_days INTEGER NOT NULL DEFAULT 0")
+        await conn.run_sync(_check_and_alter)
+
+
+async def _migrate_add_audit_category_column():
+    # См. диалог "нужно доделать сохранение и просмотр лога" — AuditLog существовал
+    # раньше (админский аудит), category — новое поле для разного срока жизни по
+    # типу события (см. AUDIT_RETENTION_DAYS ниже).
+    async with engine.begin() as conn:
+        def _check_and_alter(sync_conn):
+            cols = {r[1] for r in sync_conn.exec_driver_sql("PRAGMA table_info(audit_log)").fetchall()}
+            if "category" not in cols:
+                sync_conn.exec_driver_sql("ALTER TABLE audit_log ADD COLUMN category VARCHAR(24)")
+                sync_conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_audit_log_category ON audit_log(category)")
+                # Backfill: все существующие строки на этот момент — старые pvp_kill
+                # записи (единственное, что сервер сам писал в AuditLog до этой фичи,
+                # см. _onPvpHitResult/_onPvpAbilityResult) — простая column-миграция,
+                # не создание новых строк, поэтому это в самой ALTER-функции, а не
+                # отдельным шагом.
+                sync_conn.exec_driver_sql(
+                    "UPDATE audit_log SET category = 'pvp_kill' WHERE action = 'pvp_kill' AND category IS NULL"
+                )
         await conn.run_sync(_check_and_alter)
 
 
@@ -78,6 +118,8 @@ async def _create_tables():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     await _migrate_add_email_column()
+    await _migrate_add_audit_category_column()
+    await _migrate_add_crypto_order_product_columns()
 
 app.add_middleware(
     CORSMiddleware,
@@ -2157,8 +2199,10 @@ async def create_deposit_order(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    pack = crypto_payments.STAR_PACKS.get(body.packId)
-    if not pack:
+    # См. диалог "так мы можем подключить оплату криптой" — packId теперь ищется across
+    # ВСЕХ трёх каталогов (звёзды/премиум/бустер), не только STAR_PACKS.
+    kind, product = crypto_payments.resolve_product(body.packId)
+    if not kind:
         raise HTTPException(status_code=400, detail="Unknown packId")
     # derivation_index — максимум существующего +1 (монотонно растёт, никогда не
     # переиспользуется — см. комментарий в models.py у CryptoDepositOrder). MAX(), не
@@ -2173,16 +2217,20 @@ async def create_deposit_order(
     expires_at = datetime.utcnow() + timedelta(minutes=CRYPTO_ORDER_TTL_MIN)
     order = CryptoDepositOrder(
         user_id=user.id, derivation_index=next_index, address=address,
-        pack_id=body.packId, star_gold_amount=pack["stars"],
-        amount_usdt_micro=pack["usdt_micro"], status="pending", expires_at=expires_at,
+        pack_id=body.packId, product_kind=kind,
+        star_gold_amount=product["stars"] if kind == 'stars' else 0,
+        premium_days=product["days"] if kind == 'premium' else 0,
+        booster_days=product["days"] if kind == 'booster' else 0,
+        amount_usdt_micro=product["usdt_micro"], status="pending", expires_at=expires_at,
     )
     db.add(order)
     await db.commit()
     await db.refresh(order)
     return CreateDepositOrderResponse(
         orderId=order.id, address=address,
-        amountUsdt=f"{pack['usdt_micro'] / 1_000_000:.2f}",
-        starGoldAmount=pack["stars"], expiresAt=expires_at.isoformat(),
+        amountUsdt=f"{product['usdt_micro'] / 1_000_000:.2f}",
+        starGoldAmount=order.star_gold_amount, premiumDays=order.premium_days, boosterDays=order.booster_days,
+        expiresAt=expires_at.isoformat(),
     )
 
 
@@ -2199,7 +2247,8 @@ async def get_deposit_order_status(
     ))).scalar_one_or_none()
     if not order:
         raise HTTPException(status_code=404, detail="Order not found")
-    return DepositOrderStatusResponse(status=order.status, starGoldAmount=order.star_gold_amount)
+    return DepositOrderStatusResponse(status=order.status, starGoldAmount=order.star_gold_amount,
+                                       premiumDays=order.premium_days, boosterDays=order.booster_days)
 
 
 @app.post("/wallet/claim-credit", response_model=ClaimCreditResponse)
@@ -2208,12 +2257,21 @@ async def claim_credit(
     db: AsyncSession = Depends(get_db),
 ):
     # Атомарно — читаем и обнуляем в ОДНОЙ транзакции, иначе двойной вызов подряд
-    # (сеть/ретрай на клиенте) мог бы зачислить одну и ту же сумму дважды.
+    # (сеть/ретрай на клиенте) мог бы зачислить одну и ту же сумму дважды. Три поля —
+    # звёзды/премиум/бустер, см. диалог "так мы можем подключить оплату криптой".
     fresh = (await db.execute(select(User).where(User.id == user.id))).scalar_one()
     amount = fresh.pending_star_gold_credit
+    premiumDays = fresh.pending_premium_days
+    boosterMs = fresh.pending_booster_xp_honor_ms
     fresh.pending_star_gold_credit = 0
+    fresh.pending_premium_days = 0
+    fresh.pending_booster_xp_honor_ms = 0
+    # Покупка сама уже залогирована в AuditLog(category='purchase_real_money') в момент
+    # ПОДТВЕРЖДЕНИЯ оплаты (_crypto_deposit_poll_loop) — здесь дублировать не нужно, claim
+    # — это просто "забрать то, что уже подтверждено", может забирать сразу несколько
+    # заказов за раз.
     await db.commit()
-    return ClaimCreditResponse(credited=amount)
+    return ClaimCreditResponse(credited=amount, premiumDays=premiumDays, boosterXpHonorMs=boosterMs)
 
 
 async def _crypto_deposit_poll_loop():
@@ -2268,7 +2326,22 @@ async def _crypto_deposit_poll_loop():
                         order.tx_hash = completing_tx
                         order.paid_at = now
                         usr = (await db.execute(select(User).where(User.id == order.user_id))).scalar_one()
+                        # Три вида фулфилмента по product_kind — см. диалог "так мы можем
+                        # подключить оплату криптой" (премиум/бустер через ту же USDT-инфру,
+                        # что звёзды, вместо ожидания ответа от Xolla). Ровно одно из трёх
+                        # полей ненулевое (см. create_deposit_order), остальные += 0 безопасны.
                         usr.pending_star_gold_credit += order.star_gold_amount
+                        usr.pending_premium_days += order.premium_days
+                        usr.pending_booster_xp_honor_ms += order.booster_days * 86_400_000
+                        # category='purchase_real_money' — навсегда (см. AUDIT_RETENTION_DAYS),
+                        # пишет ТОЛЬКО сервер, здесь, в момент реально подтверждённой оплаты —
+                        # см. диалог "нужно доделать сохранение и просмотр лога".
+                        db.add(AuditLog(user_id=order.user_id, action='crypto_purchase', category='purchase_real_money', params={
+                            'packId': order.pack_id, 'kind': order.product_kind,
+                            'starGoldAmount': order.star_gold_amount, 'premiumDays': order.premium_days,
+                            'boosterDays': order.booster_days,
+                            'amountUsdtMicro': order.amount_usdt_micro, 'txHash': completing_tx,
+                        }))
                 await db.commit()
         except Exception:
             import traceback; traceback.print_exc()
@@ -2637,7 +2710,24 @@ async def mark_pm_read(
     return {"ok": True}
 
 
-# ── Audit log ─────────────────────────────────────────────────────────
+# ── Audit log / история игрока ───────────────────────────────────────
+# См. диалог "нужно доделать сохранение и просмотр лога" — 5 категорий с разным
+# сроком жизни. purchase_real_money хранится НАВСЕГДА (None — без чистки), остальные
+# 7 дней. Ключи — то, что реально пишется в AuditLog.category (см. модель).
+AUDIT_RETENTION_DAYS = {
+    'purchase_real_money': None,  # см. crypto_payments.py — деньги, храним навсегда
+    'purchase_stars':      7,
+    'craft':                7,
+    'earn':                 7,
+    'pvp_kill':             7,
+}
+# 'purchase_real_money' НЕ входит — эту категорию пишет ТОЛЬКО сервер сам (в
+# _crypto_deposit_poll_loop, в момент реально подтверждённой оплаты), клиент не может
+# её прислать через POST /audit ни при каких условиях (иначе любой мог бы вписать себе
+# фейковую "вечную" запись о покупке, которую отличить от настоящей было бы нечем).
+CLIENT_WRITABLE_AUDIT_CATEGORIES = {'purchase_stars', 'craft', 'earn', 'pvp_kill'}
+AUDIT_PURGE_INTERVAL_SEC = 6 * 3600  # раз в 6 часов достаточно для недельного окна
+
 
 @app.get("/audit", response_model=list[AuditEntryResponse])
 async def get_audit(
@@ -2653,7 +2743,7 @@ async def get_audit(
         u = await db.get(User, row.user_id) if row.user_id else None
         result.append(AuditEntryResponse(
             id=row.id, action=row.action, params=row.params,
-            sector=row.sector, ts=row.ts,
+            sector=row.sector, category=row.category, ts=row.ts,
             username=u.username if u else None,
         ))
     return result
@@ -2665,10 +2755,65 @@ async def add_audit(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    entry = AuditLog(user_id=user.id, action=body.action, params=body.params, sector=body.sector)
+    if body.category not in CLIENT_WRITABLE_AUDIT_CATEGORIES:
+        raise HTTPException(status_code=400, detail=f"Unknown or server-only category: {body.category}")
+    entry = AuditLog(user_id=user.id, action=body.action, params=body.params,
+                      sector=body.sector, category=body.category)
     db.add(entry)
     await db.commit()
     return {"ok": True}
+
+
+@app.get("/player/audit", response_model=list[AuditEntryResponse])
+async def get_my_audit(
+    category: Optional[str] = None,
+    limit: int = 100,
+    before_id: Optional[int] = None,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    # Игрок смотрит СВОЮ историю — в отличие от GET /audit (админ, все игроки).
+    # category=None — все категории сразу (клиент сам делит на вкладки по полю).
+    conds = [AuditLog.user_id == user.id]
+    if category:
+        conds.append(AuditLog.category == category)
+    if before_id:
+        conds.append(AuditLog.id < before_id)  # пагинация "загрузить ещё"
+    rows = (await db.execute(
+        select(AuditLog).where(and_(*conds)).order_by(AuditLog.id.desc()).limit(max(1, min(limit, 200)))
+    )).scalars().all()
+    return [
+        AuditEntryResponse(id=r.id, action=r.action, params=r.params,
+                            sector=r.sector, category=r.category, ts=r.ts, username=None)
+        for r in rows
+    ]
+
+
+async def _purge_audit_log_loop():
+    """Чистка истёкших по сроку записей — см. AUDIT_RETENTION_DAYS. category=None
+    (легаси-строки до этой фичи) чистится как обычная 7-дневная категория — среди них
+    заведомо нет покупок за реальные деньги (эта фича появилась вместе с крипто-
+    платежами), так что 'навсегда' им не положено."""
+    while True:
+        await asyncio.sleep(AUDIT_PURGE_INTERVAL_SEC)
+        try:
+            async with SessionLocal() as db:
+                for cat, days in AUDIT_RETENTION_DAYS.items():
+                    if days is None:
+                        continue
+                    cutoff = datetime.utcnow() - timedelta(days=days)
+                    await db.execute(delete(AuditLog).where(AuditLog.category == cat, AuditLog.ts < cutoff))
+                # Легаси-строки без категории (появились до этой миграции) — те же 7 дней.
+                legacy_cutoff = datetime.utcnow() - timedelta(days=7)
+                await db.execute(delete(AuditLog).where(AuditLog.category.is_(None), AuditLog.ts < legacy_cutoff))
+                await db.commit()
+        except Exception:
+            import traceback; traceback.print_exc()
+
+
+@app.on_event("startup")
+async def _start_audit_purge_loop():
+    asyncio.create_task(_purge_audit_log_loop())
 
 
 @app.api_route("/", methods=["GET", "HEAD"])
@@ -3901,7 +4046,14 @@ async def chat_ws(
                     await _arena_on_kill(arena_match, victim, attacker)
                 elif result['killed']:
                     async with SessionLocal() as db:
-                        db.add(AuditLog(user_id=victim.user_id, action='pvp_kill', params={
+                        # Две строки — жертве ("вас убили") и убийце ("вы убили") — с
+                        # РАЗНЫМ action, а не только user_id: _pvp_win_count считает
+                        # именно action='pvp_kill' по params.killer, добавлять сюда
+                        # вторую строку с тем же action задвоило бы счётчик побед.
+                        db.add(AuditLog(user_id=victim.user_id, action='pvp_kill', category='pvp_kill', params={
+                            'killer': attacker.username, 'victim': victim.username, 'sector': sector,
+                        }, sector=sector))
+                        db.add(AuditLog(user_id=attacker.user_id, action='pvp_kill_scored', category='pvp_kill', params={
                             'killer': attacker.username, 'victim': victim.username, 'sector': sector,
                         }, sector=sector))
                         await db.commit()
@@ -3991,7 +4143,12 @@ async def chat_ws(
 
                 if r['killed']:
                     async with SessionLocal() as db:
-                        db.add(AuditLog(user_id=victim.user_id, action='pvp_kill', params={
+                        # См. комментарий у пары строк выше (первый pvp_hit-обработчик) —
+                        # тот же паттерн: разный action, чтобы не задвоить _pvp_win_count.
+                        db.add(AuditLog(user_id=victim.user_id, action='pvp_kill', category='pvp_kill', params={
+                            'killer': attacker.username, 'victim': victim.username, 'sector': sector,
+                        }, sector=sector))
+                        db.add(AuditLog(user_id=attacker.user_id, action='pvp_kill_scored', category='pvp_kill', params={
                             'killer': attacker.username, 'victim': victim.username, 'sector': sector,
                         }, sector=sector))
                         await db.commit()

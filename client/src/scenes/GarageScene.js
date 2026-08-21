@@ -7,7 +7,7 @@ import { itemName, itemStats, itemSellPrice, itemIconKey, SLOT_KEY, creditUpgrad
          AMMO_ICON, CONSUMABLES, addConsumableToInventory, countConsumableInInventory, removeConsumableFromInventory,
          rollLaser, LASER_CANNON_PARTS_NEEDED } from '../items.js';
 import { SHIPS, SHIP_BY_KEY, purchaseState, shipLevelCost, shipLevelCostGold, SHIP_MAX_LEVEL } from '../ships.js';
-import { DEV_MODE } from '../api.js';
+import { DEV_MODE, logEvent } from '../api.js';
 import { PERK_MAP, RARITY_COLOR, RARITY_LABEL, rollPerk, perkBonus, creditUpgCost, starUpgCost, PERK_CREDIT_COST, PERK_STAR_COST, PERK_REROLL_BASE,
          generateRoll, rollQualityInfo, refineRoll, REFINE_COST, perkMaxBase, perkMaxUpgraded } from '../perks.js';
 import { prerenderTex } from '../utils/prerenderTex.js';
@@ -297,6 +297,7 @@ export default class GarageScene extends Phaser.Scene {
     if (ship.currency === 'star') gs.starGold -= ship.price; else gs.credits -= ship.price;
     gs.ownedShips.add(ship.key);
     gs.log(i18n.t('garage.bought', { ship: i18n.t(ship.nameKey) }));
+    if (ship.currency === 'star') logEvent('purchase_stars', 'buy_ship', { ship: ship.key, price: ship.price });
     gs._saveState?.();
     this.selectShip(ship);
   }
@@ -498,6 +499,7 @@ export default class GarageScene extends Phaser.Scene {
               removePlasmateFromInventory(inv, sets * PLASMATE_GOLD_RATE);
               gs.starGold = (gs.starGold || 0) + sets;
               gs.log(i18n.t('log.plasmate_exchanged', { amount: sets * PLASMATE_GOLD_RATE, gold: sets }));
+              logEvent('earn', 'plasmate_exchange', { plasmate: sets * PLASMATE_GOLD_RATE, starGold: sets });
               this.scene.restart();
             });
           }
@@ -925,6 +927,7 @@ export default class GarageScene extends Phaser.Scene {
     if (isPrestige) {
       if ((gs.starGold || 0) < cost) return;
       gs.starGold -= cost;
+      logEvent('purchase_stars', 'upgrade_ship', { ship: key, toLevel: lvl + 1, price: cost });
     } else {
       if ((gs.credits || 0) < cost) return;
       gs.credits -= cost;
@@ -966,6 +969,7 @@ export default class GarageScene extends Phaser.Scene {
     item.starLvl = (item.starLvl || 0) + 1;
     gs.player.recomputeStats();
     gs.log(i18n.t('garage.mod_star_upgraded', { item: itemName(item), lvl: item.starLvl }));
+    logEvent('purchase_stars', 'upgrade_module_star', { item: itemName(item), toLevel: item.starLvl, price: cost });
     gs._saveState?.();
     this.scene.restart();
   }
@@ -1085,6 +1089,7 @@ export default class GarageScene extends Phaser.Scene {
     gs.starGold -= cost;
     item.perk.creditLvl = 0;
     item.perk.starLvl = sLvl + 1;
+    logEvent('purchase_stars', 'upgrade_perk_star', { item: itemName(item), toLevel: item.perk.starLvl, price: cost });
     gs._saveState?.();
     this.scene.restart();
   }
@@ -1399,6 +1404,7 @@ export default class GarageScene extends Phaser.Scene {
     inv.splice(idx, 1);
     gs.credits = (gs.credits || 0) + price;
     gs.log(i18n.t('log.sold', { item: itemName(item), price }));
+    logEvent('earn', 'sell_item', { item: itemName(item), price });
     this.closeModal();
     this.scene.restart();
   }
@@ -1810,6 +1816,7 @@ export default class GarageScene extends Phaser.Scene {
           rbgRef.on('pointerdown', () => {
             gs.starGold    = (gs.starGold || 0) - cost;
             item.perk.roll = refineRoll(item.perk.roll ?? 1, gi);
+            logEvent('purchase_stars', 'refine_perk_quality', { item: itemName(item), tier: refineLabels[gi], price: cost });
             gs._saveState?.();
             this.scene.restart();
           });
@@ -1854,6 +1861,7 @@ export default class GarageScene extends Phaser.Scene {
         gs.starGold = (gs.starGold || 0) - rerollCost;
         gs.perkRerollCounts[rerollKey] = rerollN + 1;
         item.perk = rollPerk(item.type);
+        logEvent('purchase_stars', 'reroll_perk', { item: itemName(item), attempt: rerollN + 1, price: rerollCost });
         gs._saveState?.();
         this.scene.restart();
       });
@@ -2592,6 +2600,7 @@ export default class GarageScene extends Phaser.Scene {
       }
       inv.push(rollConnector(2));
       gs._selectedConnIdx = inv.length - 1;
+      logEvent('craft', 'craft_connector', { spent: '3xT1', created: 'T2' });
       this._drawConnPanel(board);
     });
 
@@ -2602,6 +2611,7 @@ export default class GarageScene extends Phaser.Scene {
       }
       inv.push(rollConnector(3));
       gs._selectedConnIdx = inv.length - 1;
+      logEvent('craft', 'craft_connector', { spent: '4xT2', created: 'T3' });
       this._drawConnPanel(board);
     });
 
@@ -2618,6 +2628,7 @@ export default class GarageScene extends Phaser.Scene {
         gs.chips = (gs.chips ?? 0) + chipYield;
         inv.splice(selIdx, 1);
         gs._selectedConnIdx = Math.min(selIdx, inv.length - 1);
+        logEvent('craft', 'disassemble_connector', { spent: `T${selConn.tier}`, created: `${chipYield} chips` });
         this._drawConnPanel(board);
         this._drawBoardList();  // refresh chip count
       });
@@ -2726,6 +2737,7 @@ export default class GarageScene extends Phaser.Scene {
       removeConsumableFromInventory(gs.inventory, 'laser_cannon_part', need);
       gs.inventory.push(rollLaser());
       gs.log?.('⚡ Лазерная пушка собрана!');
+      logEvent('craft', 'craft_laser_cannon', { spent: `${need} laser_cannon_part`, created: 'laser_cannon' });
       this.scene.restart();
     });
     if (!ready) {

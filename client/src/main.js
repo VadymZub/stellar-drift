@@ -25,6 +25,7 @@ import ProfileViewScene from './scenes/ProfileViewScene.js';
 import MailScene from './scenes/MailScene.js';
 import ArenaLobbyScene from './scenes/ArenaLobbyScene.js';
 import StatsScene from './scenes/StatsScene.js';
+import HistoryScene from './scenes/HistoryScene.js';
 import { loadSettings } from './settings.js';
 import { checkForUpdates } from './updater.js';
 import { domConfirm } from './domConfirm.js';
@@ -81,7 +82,7 @@ const config = {
   loader: { timeout: 20000 },
   scene: [
     BootScene, LoginScene, CorpSelectScene, BackgroundScene, TestProfileScene, GameScene, HudScene,
-    InventoryScene, CargoScene, ClanScene, GarageScene, MapScene, MissionsScene, ShopScene, DonateScene, CorpScene, BaseMenuScene, SkillScene, ShadowBattleScene, SettingsScene, ProfileScene, ProfileViewScene, MailScene, ArenaLobbyScene, StatsScene,
+    InventoryScene, CargoScene, ClanScene, GarageScene, MapScene, MissionsScene, ShopScene, DonateScene, CorpScene, BaseMenuScene, SkillScene, ShadowBattleScene, SettingsScene, ProfileScene, ProfileViewScene, MailScene, ArenaLobbyScene, StatsScene, HistoryScene,
   ],
 };
 

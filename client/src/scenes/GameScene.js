@@ -29,7 +29,7 @@ import { BASE_CONFIG } from '../bases.js';
 import HomeBase from '../entities/HomeBase.js';
 import ArgusController from '../systems/ArgusController.js';
 import ConfedGuardSystem, { getLastResetTime } from '../systems/ConfedGuardSystem.js';
-import { getUsername, getToken, apiPut, apiGet, apiPost, setSession, dungeonEnter, dungeonMobKilled, dungeonLootDrop, dungeonLootCollected, dungeonCorridorState, dungeonDeath, dungeonComplete, miningBaseSector, DEV_MODE } from '../api.js';
+import { getUsername, getToken, apiPut, apiGet, apiPost, setSession, dungeonEnter, dungeonMobKilled, dungeonLootDrop, dungeonLootCollected, dungeonCorridorState, dungeonDeath, dungeonComplete, miningBaseSector, DEV_MODE, logEvent } from '../api.js';
 import { prepShipTex, removeWhiteBg } from '../utils/prepShipTex.js';
 import { MISSIONS, getMissionSectorTarget, matchKillObjective, dailyBracketFor } from '../data/missions.js';
 import { DUNGEON_LAYOUTS, DUNGEON_BOSS_KIT } from '../data/dungeonLayouts.js';
@@ -1344,6 +1344,7 @@ export default class GameScene extends Phaser.Scene {
           this.gainXp(r.xp);
           if (r.stars > 0) this.starGold = (this.starGold || 0) + r.stars;
           this.log(`✅ Нашествие отражено! +${r.credits} кр · +${r.xp} XP${r.stars > 0 ? ` · +${r.stars} ★` : ''}`);
+          logEvent('earn', 'world_event_reward', { credits: r.credits, stars: r.stars || 0 });
         }
       }
       this._worldEvent = null;
@@ -1358,6 +1359,7 @@ export default class GameScene extends Phaser.Scene {
     if (msg.xp > 0) this.gainXp(msg.xp);
     if (msg.stars > 0) this.starGold = (this.starGold || 0) + msg.stars;
     this.log(`✅ Нашествие отражено! +${msg.credits || 0} кр · +${msg.xp || 0} XP${msg.stars > 0 ? ` · +${msg.stars} ★` : ''}`);
+    if (msg.credits > 0 || msg.stars > 0) logEvent('earn', 'world_event_reward', { credits: msg.credits || 0, stars: msg.stars || 0 });
     // Как и у wagon_reward — без немедленного сейва награда терялась при закрытии
     // вкладки/крэше в окне до следующего автосейва (см. диалог "не вижу наград").
     this._saveState?.();
@@ -3647,7 +3649,12 @@ export default class GameScene extends Phaser.Scene {
     if (this.pilotLevel >= MAX_LEVEL || amount <= 0) return;
     const _premiumXp = this.premium ? 1.10 : 1.0;
     const _mapXp = 1 + (this.player?.mapXpBonus ?? 0);
-    this._applyRawXp(amount * (this.player?.xpBonusMod ?? 1) * _premiumXp * _mapXp);
+    const final = amount * (this.player?.xpBonusMod ?? 1) * _premiumXp * _mapXp;
+    this._applyRawXp(final);
+    // Единая точка логирования заработанного опыта (в отличие от ShopScene, который
+    // покупает XP за звёзды через _applyRawXp НАПРЯМО, минуя gainXp — та покупка уже
+    // залогирована как purchase_stars в ShopScene, здесь бы задвоилось).
+    logEvent('earn', 'gain_xp', { xp: Math.round(final) });
   }
 
   // Начисление XP БЕЗ бонусных множителей (perks/premium/карта) — общая логика
@@ -3730,10 +3737,14 @@ export default class GameScene extends Phaser.Scene {
 
   gainHonor(amount) {
     if (amount <= 0) return;
-    this.pilotHonor = (this.pilotHonor || 0) + amount;
+    const final = Math.round(amount * (this.player?.honorBonusMod ?? 1));
+    this.pilotHonor = (this.pilotHonor || 0) + final;
     // Small corp rep bonus proportional to honor earned
-    this.gainCorpRep(amount * 0.0000004);
-    this.log(`⚔️ +${amount} честь`);
+    this.gainCorpRep(final * 0.0000004);
+    this.log(`⚔️ +${final} честь`);
+    // Единая точка логирования — все источники чести (Апофис, данж-боссы, PvP-bounty,
+    // сундуки коридоров, миссии) идут через этот метод, отдельные call site'ы не нужны.
+    logEvent('earn', 'gain_honor', { honor: final });
   }
 
   gainCorpRep(amount) {
@@ -4616,6 +4627,7 @@ export default class GameScene extends Phaser.Scene {
           if (goldGain > 0) {
             this.starGold = (this.starGold || 0) + goldGain;
             this.log(`💀 Розыск снят! +${goldGain} ⭐ за устранение разыскиваемого пилота «${rp.name}».`);
+            logEvent('earn', 'pvp_bounty_gold', { starGold: goldGain, victim: rp.name });
           }
         }
         this.advanceMissionsByEvent('pvp_kill', () => true);
@@ -5803,6 +5815,9 @@ export default class GameScene extends Phaser.Scene {
     } else {
       this.log(i18n.t('log.reward', { credits, xp }));
       this.credits = (this.credits || 0) + credits; this.gainXp(xp);
+      // xp здесь не логируем отдельно — gainXp() выше уже пишет свою 'gain_xp' запись,
+      // задваивать её значением из этого же килла смысла нет.
+      if (credits > 0) logEvent('earn', 'mob_kill_credits', { mob: mob.tpl.key, credits });
     }
     if (this.target === mob) {
       this.target = null; this.isFiring = false;
@@ -5854,7 +5869,11 @@ export default class GameScene extends Phaser.Scene {
     if (isDung && mob.isBossEscort && _grpKill?.inGroup && _grpKill.isLeader && mob._groupMobId !== undefined) {
       _grpKill.sendMobDied(mob._groupMobId);
     }
-    if (sg > 0) { this.starGold = (this.starGold || 0) + sg; this.log(i18n.t('log.stargold', { amount: sg })); }
+    if (sg > 0) {
+      this.starGold = (this.starGold || 0) + sg;
+      this.log(i18n.t('log.stargold', { amount: sg }));
+      logEvent('earn', 'mob_kill_stargold', { mob: mob.tpl.key, starGold: sg });
+    }
 
     // Модульный дроп — solo: всегда игроку. Группа (будущее): владелец = последний наносивший урон 30с без перерыва.
     const mobDropRate = isDung ? (diff?.dropRate ?? 0.10) * lootNorm : dropChance(mob) * (this.player?.dropChanceMult ?? 1);
@@ -6183,6 +6202,8 @@ export default class GameScene extends Phaser.Scene {
     this.gainCorpRep(0.01);
     this.log(`Миссия завершена: ${m.title}`);
     this.log(`+${m.rewards.credits} кр · +${m.rewards.xp} XP${m.rewards.stars > 0 ? ` · +${m.rewards.stars} ★` : ''}`);
+    // xp/honor логируются в gainXp()/gainHonor() самостоятельно — здесь только credits/stars.
+    logEvent('earn', 'mission_reward', { mission: id, credits: m.rewards.credits, stars: m.rewards.stars || 0 });
     if (m.type === 'daily') this._checkDailySetBonus();
   }
 
@@ -6207,6 +6228,7 @@ export default class GameScene extends Phaser.Scene {
     this.gainXp(bonusXp);
     if (bonusSt > 0) this.starGold = (this.starGold || 0) + bonusSt;
     this.log(`🎯 Все дейлики дня выполнены! Бонус +10%: +${bonusCr} кр · +${bonusXp} XP${bonusSt > 0 ? ` · +${bonusSt} ★` : ''}`);
+    logEvent('earn', 'daily_set_bonus', { credits: bonusCr, stars: bonusSt });
   }
 
   advanceMission(id, objIdx, amount = 1) {
@@ -6634,7 +6656,7 @@ export default class GameScene extends Phaser.Scene {
 
     const finishRespawn = (rx, ry, fullHull, cr, st, jumpToSector) => {
       dialogOpen = false;
-      if (st > 0)      this.starGold = (this.starGold || 0) - st;
+      if (st > 0)      { this.starGold = (this.starGold || 0) - st; logEvent('purchase_stars', 'repair_respawn', { price: st }); }
       else if (cr > 0) this.credits  = (this.credits  || 0) - cr;
       destroyAll();
       this.steering = false;
@@ -9500,6 +9522,7 @@ export default class GameScene extends Phaser.Scene {
       credGain = 1200;
       this.gainXp(xpGain);
       this.credits = (this.credits || 0) + credGain;
+      logEvent('earn', 'shadow_battle_win', { credits: credGain });
     }
 
     const panH = 290, panW = 460;

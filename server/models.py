@@ -30,6 +30,15 @@ class User(Base):
     # доверял ДО (это не решает исходную проблему целиком, только для ЭТОЙ суммы
     # гарантирует, что она не могла появиться без реальной оплаты).
     pending_star_gold_credit = Column(Integer, nullable=False, default=0)
+    # Тот же клиент-доверенный принцип, что у pending_star_gold_credit выше — см. диалог
+    # "так мы можем подключить оплату криптой" (премиум/бустер через ту же USDT-инфру,
+    # что звёзды). pending_premium_days — сервер уже подтвердил оплату, клиент забирает
+    # через /wallet/claim-credit и САМ прибавляет к своему premiumUntil (сервер не хранит
+    # premiumUntil — это, как и весь остальной прогресс, живёт в PlayerState.state).
+    pending_premium_days = Column(Integer, nullable=False, default=0)
+    # Аналогично — мс для gs.activeBoosters['xp_honor_7d'] (та же величина "оставшиеся
+    # мс", что и у остальных бустеров, см. GameScene.update()).
+    pending_booster_xp_honor_ms = Column(Integer, nullable=False, default=0)
 
 
 class EmailVerificationToken(Base):
@@ -56,8 +65,14 @@ class CryptoDepositOrder(Base):
     user_id           = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
     derivation_index  = Column(Integer, unique=True, nullable=False, index=True)
     address           = Column(String(64), unique=True, nullable=False, index=True)
-    pack_id           = Column(String(32), nullable=False)      # см. STAR_PACKS в DonateScene.js
-    star_gold_amount  = Column(Integer, nullable=False)
+    pack_id           = Column(String(32), nullable=False)      # см. STAR_PACKS/PREMIUM_PLANS/BOOSTERS в crypto_payments.py
+    # product_kind различает, ЧТО фулфилить при оплате (см. _crypto_deposit_poll_loop) —
+    # 'stars' (было изначально, default для старых строк) | 'premium' | 'booster'.
+    # Только ОДНО из трёх полей ниже ненулевое в зависимости от kind.
+    product_kind      = Column(String(16), nullable=False, default='stars')
+    star_gold_amount  = Column(Integer, nullable=False, default=0)
+    premium_days      = Column(Integer, nullable=False, default=0)
+    booster_days      = Column(Integer, nullable=False, default=0)
     # USDT в микро-юнитах (×1_000_000) — TRC-20 USDT имеет 6 знаков после запятой,
     # целое число вместо float/Numeric полностью убирает риск ошибок округления
     # при сравнении "пришедшая сумма >= ожидаемой" (см. crypto_payments.py).
@@ -103,14 +118,29 @@ class PlayerProfile(Base):
 
 
 class AuditLog(Base):
+    # Двойное назначение: (1) админский аудит-лог (см. GET /audit, get_current_admin) —
+    # исходное назначение таблицы; (2) с диалога "нужно доделать сохранение и просмотр
+    # лога" — она же хранит игроку видимую ИСТОРИЮ его собственных событий (GET
+    # /player/audit), с разным сроком жизни по category (см. AUDIT_RETENTION_DAYS в
+    # main.py и _purge_audit_log_loop):
+    #   purchase_real_money — навсегда (крипто-платёж, пишет ТОЛЬКО сервер в
+    #                          _crypto_deposit_poll_loop — НЕ доверяем клиенту эту
+    #                          категорию, см. add_audit: 400 если клиент её прислал)
+    #   purchase_stars, craft, earn, pvp_kill — 7 дней, пишет клиент через POST /audit
+    #                          (кроме pvp_kill — тот тоже пишет сервер, он уже видит
+    #                          килы напрямую из PvP-обработки урона)
+    # category NULLABLE — старые строки (до этой миграции, все pvp_kill от сервера)
+    # мигрируются вручную в _migrate_add_audit_category_column, но новые ВСЕГДА
+    # получают category (валидируется в add_audit).
     __tablename__ = "audit_log"
 
-    id      = Column(Integer, primary_key=True)
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
-    action  = Column(String(100), nullable=False)
-    params  = Column(JSON, nullable=True)
-    sector  = Column(String(50), nullable=True)
-    ts      = Column(DateTime, default=datetime.utcnow)
+    id       = Column(Integer, primary_key=True)
+    user_id  = Column(Integer, ForeignKey("users.id"), nullable=True)
+    action   = Column(String(100), nullable=False)
+    params   = Column(JSON, nullable=True)
+    sector   = Column(String(50), nullable=True)
+    category = Column(String(24), nullable=True, index=True)
+    ts       = Column(DateTime, default=datetime.utcnow)
 
 
 class ChatMessage(Base):

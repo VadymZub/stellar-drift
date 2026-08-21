@@ -234,6 +234,10 @@ class ProfilePublicResponse(BaseModel):
 
 
 class AuditEntryCreate(BaseModel):
+    # category — обязателен (см. диалог "нужно доделать сохранение и просмотр лога");
+    # add_audit в main.py валидирует значение против CLIENT_WRITABLE_AUDIT_CATEGORIES
+    # (без 'purchase_real_money' — эту категорию пишет только сервер сам).
+    category: str
     action: str
     params: Optional[dict[str, Any]] = None
     sector: Optional[str] = None
@@ -244,6 +248,7 @@ class AuditEntryResponse(BaseModel):
     action: str
     params: Optional[dict[str, Any]]
     sector: Optional[str]
+    category: Optional[str] = None
     ts: datetime
     username: Optional[str] = None
 
@@ -362,14 +367,23 @@ class CreateDepositOrderResponse(BaseModel):
     orderId: int
     address: str
     amountUsdt: str        # человекочитаемая строка "4.99" — избегаем float на клиенте
-    starGoldAmount: int
+    # См. диалог "так мы можем подключить оплату криптой" — заказ теперь не только на
+    # звёзды: starGoldAmount=0 для premium/booster-заказов, premiumDays/boosterDays=0
+    # для звёздных. Ровно один из трёх ненулевой — клиент сам решает, что показать.
+    starGoldAmount: int = 0
+    premiumDays: int = 0
+    boosterDays: int = 0
     expiresAt: str          # ISO — клиент считает обратный отсчёт сам
 
 
 class DepositOrderStatusResponse(BaseModel):
     status: str  # pending | paid | expired
-    starGoldAmount: int
+    starGoldAmount: int = 0
+    premiumDays: int = 0
+    boosterDays: int = 0
 
 
 class ClaimCreditResponse(BaseModel):
-    credited: int  # сколько реально зачислено этим вызовом (0, если нечего забирать)
+    credited: int              # звёзды (как раньше)
+    premiumDays: int = 0       # добавить к User.premiumUntil (не перезаписать — см. main.py)
+    boosterXpHonorMs: int = 0  # добавить к gs.activeBoosters['xp_honor_7d'] (в мс, как остальные бустеры)

@@ -382,6 +382,11 @@ export default class Player {
     const boostHull   = _ab.boost_hull   > 0 ? 0.20 : 0;
     const boostShield = _ab.boost_shield > 0 ? 0.20 : 0;
     const boostXp     = _ab.boost_xp    > 0 ? 0.25 : 0;
+    // Недельный бустер за USDT (DonateScene, см. диалог "так мы можем подключить
+    // оплату криптой") — отдельный от почасового boost_xp выше ключ, складывается с
+    // ним (+10% xp сверху +25%, если оба активны) + отдельно +10% чести (нет другого
+    // источника такого бонуса — honorBonusMod ниже вводится специально под него).
+    const boostXpHonor = _ab.xp_honor_7d > 0 ? 0.10 : 0;
     // Consumed-item speed multipliers (speed_boost consumable, stealth)
     const speedBoostPct = (this.scene._speedBoostMult ?? 1.0) * (this.scene._stealthMult ?? 1.0) - 1.0;
     // Session mini-boosters (corridor chests in R-1-boss): reset on map exit
@@ -449,7 +454,10 @@ export default class Player {
     this.lootPickupRadiusMult = 1 + sl('loot_magnet') * 0.30;
     this.dropChanceMult       = 1.0 + BF('lootBonus')    + sl('salvager') * 0.10;
     this.creditBonusMod       = Math.max(0.1, 1.0 + BF('creditBonus'));
-    this.xpBonusMod           = Math.max(0.1, 1.0 + BF('xpBonus') + boostXp);
+    this.xpBonusMod           = Math.max(0.1, 1.0 + BF('xpBonus') + boostXp + boostXpHonor);
+    // Честь пока не имела ни одного бонусного источника — весь honorBonusMod целиком
+    // от этого бустера (см. GameScene.gainHonor()).
+    this.honorBonusMod        = Math.max(0.1, 1.0 + boostXpHonor);
     this.repairCostMult       = Math.max(0.10, 1.0 - BF('repairCost')    - sl('merchants_eye') * 0.15);
     this.shopDiscountMod      = Math.max(0.10, 1.0 - BF('shopDiscount'));
     this.cargoBonusMod        = BF('cargoBonus');

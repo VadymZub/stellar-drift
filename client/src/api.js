@@ -188,3 +188,25 @@ export function changeUsername(newUsername) {
 export function blacklistList()          { return apiGet('/player/blacklist'); }
 export function blacklistAdd(username)   { return apiPost('/player/blacklist', { username }); }
 export function blacklistRemove(username) { return apiDelete(`/player/blacklist/${encodeURIComponent(username)}`); }
+
+// ── USDT (TRC-20) депозиты — см. server/crypto_payments.py ──────────────
+export function walletCreateDepositOrder(packId) { return apiPost('/wallet/create-deposit-order', { packId }); }
+export function walletDepositOrderStatus(orderId) { return apiGet(`/wallet/deposit-order/${orderId}`); }
+export function walletClaimCredit()      { return apiPost('/wallet/claim-credit', {}); }
+
+// ── История игрока (см. диалог "нужно доделать сохранение и просмотр лога") ──
+// category — 'purchase_stars' | 'craft' | 'earn' | 'pvp_kill' (НЕ 'purchase_real_money' —
+// эту сервер пишет сам при подтверждённой оплате, POST сюда с ней вернёт 400, см. main.py
+// add_audit/CLIENT_WRITABLE_AUDIT_CATEGORIES). Вызовы этой функции — fire-and-forget: сбой
+// логирования не должен ронять саму игровую операцию (покупку/крафт/начисление).
+export function logEvent(category, action, params = null, sector = null) {
+  return apiPost('/audit', { category, action, params, sector }).catch(() => {});
+}
+export function getMyLog(category = null, opts = {}) {
+  const q = new URLSearchParams();
+  if (category) q.set('category', category);
+  if (opts.limit) q.set('limit', opts.limit);
+  if (opts.beforeId) q.set('before_id', opts.beforeId);
+  const qs = q.toString();
+  return apiGet(`/player/audit${qs ? `?${qs}` : ''}`);
+}

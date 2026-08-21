@@ -10,7 +10,7 @@ import { prerenderTex } from '../utils/prerenderTex.js';
 import { loadSettings, saveSettings, getMinimapDims } from '../settings.js';
 import { GroupSystem } from '../systems/GroupSystem.js';
 import { PvpClient } from '../systems/PvpClient.js';
-import { blacklistList, blacklistAdd, blacklistRemove, WS_BASE, clearSession } from '../api.js';
+import { blacklistList, blacklistAdd, blacklistRemove, WS_BASE, clearSession, logEvent } from '../api.js';
 import { domConfirm } from '../domConfirm.js';
 import { MailClient } from '../systems/MailClient.js';
 import ArmoredTrain from '../entities/ArmoredTrain.js';
@@ -22,6 +22,9 @@ const BOOSTER_DEFS = [
   { key: 'boost_hull',   icon: '🛡', label: 'Броня +20%', color: '#4fc3f7' },
   { key: 'boost_shield', icon: '💠', label: 'Щит +20%',   color: '#4db6ac' },
   { key: 'boost_xp',    icon: '⚡', label: 'Опыт +25%',  color: '#ffd54f' },
+  // Недельный бустер за USDT (DonateScene) — отдельный ключ от почасового boost_xp
+  // выше, оба могут тикать одновременно (см. Player.recomputeStats).
+  { key: 'xp_honor_7d', icon: '🎖', label: 'Опыт+Честь +10%', color: '#ce93d8' },
 ];
 
 const AB_TIPS = {
@@ -1806,6 +1809,22 @@ export default class HudScene extends Phaser.Scene {
       .setOrigin(0).setStrokeStyle(1, 0x4dd0e1, 0.45).setInteractive({ useHandCursor: true }).setDepth(102);
     this._logBtnTxt = this.add.text(BW / 2, BH / 2, 'L ◀', F('11px', '#4dd0e1')).setOrigin(0.5).setDepth(103);
 
+    // Кнопка "ИСТОРИЯ" — открывает HistoryScene (персистентный лог с сервера, см.
+    // диалог "нужно доделать сохранение и просмотр лога"), в отличие от самой ЛОГ-панели,
+    // которая показывает только эфемерные сообщения текущей сессии (this.log(...)/
+    // 'hud-log'). Рядом с рукояткой лога, а не отдельной кнопкой в общей соц-панели —
+    // концептуально это тот же "лог", просто с историей за неделю/навсегда вместо
+    // "здесь и сейчас". launch, не toggleOverlay — не эксклюзивен базовым меню, PvP-килы
+    // и покупки логично смотреть в любой момент, не только на базе.
+    const HBW = 26;
+    this._logHistBtn = this.add.rectangle(0, 0, HBW, BH, 0x000000, 0)
+      .setOrigin(0).setStrokeStyle(1, 0xffd54f, 0.45).setInteractive({ useHandCursor: true }).setDepth(102);
+    this._logHistBtnTxt = this.add.text(0, 0, '📖', F('12px', '#ffd54f')).setOrigin(0.5).setDepth(103);
+    this._logHistBtn.on('pointerdown', (p, lx, ly, event) => {
+      event?.stopPropagation();
+      this.scene.launch('HistoryScene');
+    });
+
     let dragging = false, dox = 0, doy = 0, moved = false;
     this._logBtn.on('pointerdown', ptr => {
       dragging = true; moved = false;
@@ -1850,6 +1869,10 @@ export default class HudScene extends Phaser.Scene {
 
     this._logBtn.setPosition(x, y);
     this._logBtnTxt.setPosition(x + BW / 2, y + BH / 2).setText(this._logCollapsed ? 'L ▶' : 'L ◀');
+
+    const HBW = 26;
+    this._logHistBtn.setPosition(x + BW + 2, y);
+    this._logHistBtnTxt.setPosition(x + BW + 2 + HBW / 2, y + BH / 2);
 
     this._logBg.clear();
     if (!this._logCollapsed) {
@@ -2433,6 +2456,7 @@ export default class HudScene extends Phaser.Scene {
       if (quantum_shard > 0) addConsumableToInventory(gs.inventory, 'quantum_shard', quantum_shard, cargoMax);
       if (plasma_strand > 0) addConsumableToInventory(gs.inventory, 'plasma_strand', plasma_strand, cargoMax);
       gs.log?.(i18n.t('log.wagon_reward', { credits, xp }));
+      if (credits > 0 || gold > 0) logEvent('earn', 'wagon_reward', { credits, stars: gold });
       // Раньше эта ветка не сохраняла состояние (в отличие от каждого другого reward-пути
       // в этом файле — лут-пикап/карго) — держалось только на 60с автосейве
       // (GameScene._saveState тик). Реконнект/краш/закрытие вкладки в этом окне тихо
@@ -2535,6 +2559,7 @@ export default class HudScene extends Phaser.Scene {
       if (credits > 0) gs.credits = (gs.credits || 0) + credits;
       if (xp > 0) gs.gainXp(xp);
       if (credits > 0 || xp > 0) gs.log?.(i18n.t('log.reward', { credits, xp }));
+      if (credits > 0 || gold > 0) logEvent('earn', 'group_reward', { credits, stars: gold });
     };
     this.groupSystem.onError = (text) => {
       this.pushChatMessage('general', 'System', text, {});
@@ -3825,9 +3850,14 @@ export default class HudScene extends Phaser.Scene {
       row.icon.setVisible(active); row.label.setVisible(active);
       for (const t of row.timerChars) t.setVisible(active);
       if (active) {
-        const rem = Math.ceil(remainingMs / 1000);
-        const str = `${String(Math.floor(rem / 60)).padStart(2, '0')}:${String(rem % 60).padStart(2, '0')}`;
-        for (let ci = 0; ci < 5; ci++) this._setText(row.timerChars[ci], str[ci]);
+        // 5 слотов держат "ММ:СС" (см. комментарий у их создания в _createBoosterWidget) —
+        // недельный USDT-бустер (до 10080+ минут) туда физически не влезает, показываем
+        // в днях вместо минут:секунд, тот же принцип фиксированных слотов, просто другое
+        // содержимое строки.
+        const str = row.key === 'xp_honor_7d'
+          ? `${Math.ceil(remainingMs / 86_400_000)}д`.padStart(5, ' ')
+          : `${String(Math.floor(Math.ceil(remainingMs / 1000) / 60)).padStart(2, '0')}:${String(Math.ceil(remainingMs / 1000) % 60).padStart(2, '0')}`;
+        for (let ci = 0; ci < 5; ci++) this._setText(row.timerChars[ci], str[ci] ?? '');
         visCount++;
       }
     }

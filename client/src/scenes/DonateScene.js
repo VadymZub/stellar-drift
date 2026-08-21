@@ -1,6 +1,8 @@
 import * as Phaser from 'https://cdn.jsdelivr.net/npm/phaser@4.2.1/dist/phaser.esm.js';
 import { COLORS, UI_RES } from '../constants.js';
 import { prerenderTex } from '../utils/prerenderTex.js';
+import { i18n } from '../i18n.js';
+import { walletCreateDepositOrder, walletDepositOrderStatus, walletClaimCredit } from '../api.js';
 
 const PREMIUM_PLANS = [
   { id: 'prem_1m',  label: '1 МЕСЯЦ',  price: '$5.00',  days: 30  },
@@ -15,8 +17,9 @@ const STAR_PACKS = [
   { id: 'stars_admiral',  label: 'АДМИРАЛ', stars: 6000, price: '$39.99', badge: '+20%' },
 ];
 
-// Недельный бустер опыта/чести — тот же мок-паттерн, что и весь DonateScene
-// (кнопка → _showComingSoon), реальной активации/оплаты нет.
+// Недельный бустер опыта/чести — подключён к той же USDT-инфраструктуре, что и звёзды
+// (см. диалог "так мы можем подключить оплату криптой"), id совпадает с ключом в
+// server/crypto_payments.py BOOSTERS.
 const WEEKLY_BOOSTER = { id: 'boost_xp_honor_7d', label: '+10% ОПЫТ  ·  +10% ЧЕСТЬ', desc: '7 дней', price: '$2.99' };
 
 const PREMIUM_BENEFITS = [
@@ -65,6 +68,11 @@ export default class DonateScene extends Phaser.Scene {
     // Header
     this.add.text(px + 34, py + 22, 'ДОНАТ МАГАЗИН', this.O('20px', '#ffd54f'));
 
+    // Открытая модалка оплаты держит два this.time.addEvent(loop: true) —
+    // без этого они продолжали бы тикать (и слать запросы на сервер) после
+    // закрытия сцены любым путём (ESC, хоткей другой базовой сцены).
+    this.events.once('shutdown', () => this._closeDepositModal());
+
     // ESC button — full exit from base
     const _exit = () => { this.scene.stop(); gs._exitToSpace(); };
     const escBtn = this.add.text(px + pw - 30, py + 28, 'ESC', this.F('13px', '#445566'))
@@ -109,6 +117,17 @@ export default class DonateScene extends Phaser.Scene {
              .setColor(active ? '#ffd54f' : '#ce93d8');
     };
     refreshBal();
+
+    // Подчищаем "забытые" начисления при каждом открытии магазина: если игрок
+    // закрыл модалку оплаты ДО того, как её поллинг увидел status='paid'
+    // (например, ушёл из базы, не дождавшись), кредит остаётся висеть на
+    // сервере в pending_star_gold_credit — сама модалка его больше не заберёт
+    // (её таймеры уже уничтожены). Без этого шага деньги были бы формально
+    // начислены, но никогда не попали бы в gs.starGold, пока игрок случайно
+    // не откроет магазин снова и не купит что-то ещё, дождавшись оплаты ЭТОГО
+    // заказа. Дешёвый no-op запрос, если начислять нечего (credited === 0).
+    walletClaimCredit().then(res => this._applyClaimResult(res, gs, refreshBal))
+      .catch(() => { /* нет токена/сеть недоступна — не критично, попробуем при следующем открытии */ });
 
     const colW = (pw - 60) / 2;
     const leftX   = px + 20;
@@ -168,7 +187,7 @@ export default class DonateScene extends Phaser.Scene {
 
     bg.on('pointerover', () => bg.setFillStyle(0x2e1050));
     bg.on('pointerout',  () => bg.setFillStyle(0x1a0a2e));
-    bg.on('pointerdown', () => this._showComingSoon(x + bw / 2, y));
+    bg.on('pointerdown', () => this._buyProduct(plan, gs, refreshBal));
   }
 
   _drawStarSection(x, y, w, h, gs, refreshBal) {
@@ -189,10 +208,10 @@ export default class DonateScene extends Phaser.Scene {
     // (левая с premium-планами заполнена почти до низа панели, эта — нет).
     const rows = Math.ceil(STAR_PACKS.length / 2);
     const boosterY = y + 30 + rows * (ch + gap) + 16;
-    this._drawWeeklyBoosterCard(x, boosterY, w - 10);
+    this._drawWeeklyBoosterCard(x, boosterY, w - 10, gs, refreshBal);
   }
 
-  _drawWeeklyBoosterCard(x, y, w) {
+  _drawWeeklyBoosterCard(x, y, w, gs, refreshBal) {
     const bh = 74;
     const g = this.add.graphics();
     g.fillStyle(0x1a1400, 0.95); g.fillRoundedRect(x, y, w, bh, 10);
@@ -208,7 +227,7 @@ export default class DonateScene extends Phaser.Scene {
 
     btn.on('pointerover', () => btn.setFillStyle(0x4a2a00));
     btn.on('pointerout',  () => btn.setFillStyle(0x2a1a00));
-    btn.on('pointerdown', () => this._showComingSoon(btnX + btnW / 2, btnY));
+    btn.on('pointerdown', () => this._buyProduct(WEEKLY_BOOSTER, gs, refreshBal));
   }
 
   _drawStarCard(cx, cy, cw, ch, pack, gs, refreshBal) {
@@ -239,14 +258,174 @@ export default class DonateScene extends Phaser.Scene {
 
     btn.on('pointerover', () => btn.setFillStyle(0x2a4a20));
     btn.on('pointerout',  () => btn.setFillStyle(0x1a3010));
-    btn.on('pointerdown', () => this._showComingSoon(cx + cw / 2, cy));
+    btn.on('pointerdown', () => this._buyProduct(pack, gs, refreshBal));
   }
 
-  _showComingSoon(x, y) {
-    const lbl = this.add.text(x, y - 10, 'СКОРО', this.O('13px', '#ffcc80'))
-      .setOrigin(0.5, 1).setAlpha(0);
-    this.tweens.add({ targets: lbl, alpha: 1, y: y - 28, duration: 200,
-      onComplete: () => this.tweens.add({ targets: lbl, alpha: 0, duration: 400, delay: 800,
+  // ── Покупка за USDT (TRC-20) — звёзды/premium/недельный бустер, все три через
+  // одну и ту же серверную инфраструктуру (см. диалог "так мы можем подключить
+  // оплату криптой" — раньше премиум/бустер были мок-кнопками _showComingSoon,
+  // т.к. ждали ответа от Xolla; теперь используют то же, что уже работает для звёзд).
+  // product.id должен совпадать с ключом в server/crypto_payments.py (STAR_PACKS/
+  // PREMIUM_PLANS/BOOSTERS — сервер сам ищет across всех трёх, см. resolve_product).
+  _buyProduct(product, gs, refreshBal) {
+    if (this._depositBusy) return;
+    this._depositBusy = true;
+    walletCreateDepositOrder(product.id)
+      .then(order => { this._depositBusy = false; this._showDepositModal(order, gs, refreshBal); })
+      .catch(err => {
+        this._depositBusy = false;
+        this._showError(err?.message || 'Не удалось создать заказ');
+      });
+  }
+
+  // ── Общее применение результата /wallet/claim-credit — звёзды сразу в баланс,
+  // premium продлевает premiumUntil (не перезаписывает — см. диалог), бустер
+  // добавляется в gs.activeBoosters['xp_honor_7d'] (те же "оставшиеся мс", что и
+  // у остальных бустеров, см. GameScene.update()). Общий метод — вызывается и из
+  // авто-клейма при открытии сцены, и из модалки после детекта оплаты, чтобы не
+  // дублировать эту логику в двух местах.
+  _applyClaimResult(res, gs, refreshBal) {
+    if (res.credited > 0) {
+      gs.starGold = (gs.starGold || 0) + res.credited;
+      gs.log(i18n.t('log.stargold', { amount: res.credited }));
+    }
+    if (res.premiumDays > 0) {
+      const addMs = res.premiumDays * 86_400_000;
+      if (gs.premium && gs.premiumUntil == null) {
+        // Бессрочный premium (DEV/тест-профиль) — покупка не должна его портить,
+        // превращая в конечный срок; просто ничего не меняем.
+      } else {
+        gs.premiumUntil = Math.max(Date.now(), gs.premiumUntil || 0) + addMs;
+        gs.premium = true;
+      }
+      gs.log(`💎 Premium продлён на ${res.premiumDays} дн.`);
+    }
+    if (res.boosterXpHonorMs > 0) {
+      gs.activeBoosters = gs.activeBoosters || {};
+      gs.activeBoosters.xp_honor_7d = (gs.activeBoosters.xp_honor_7d || 0) + res.boosterXpHonorMs;
+      gs.log(`🎖 Бустер "Опыт+Честь" +${Math.round(res.boosterXpHonorMs / 86_400_000)} дн.`);
+    }
+    if (res.credited > 0 || res.premiumDays > 0 || res.boosterXpHonorMs > 0) {
+      gs._saveState?.();
+      refreshBal();
+    }
+  }
+
+  _showError(message, color = '#ff8a80') {
+    const W = this.scale.width, H = this.scale.height;
+    const lbl = this.add.text(W / 2, H / 2 + 40, message, this.F('12px', color))
+      .setOrigin(0.5).setDepth(200).setAlpha(0);
+    this.tweens.add({ targets: lbl, alpha: 1, duration: 200,
+      onComplete: () => this.tweens.add({ targets: lbl, alpha: 0, duration: 400, delay: 1800,
         onComplete: () => lbl.destroy() }) });
   }
+
+  // ── Модалка ожидания оплаты — адрес депозита + сумма + обратный отсчёт до
+  // истечения + поллинг статуса заказа. Тот же визуальный паттерн, что и
+  // ShopScene._showConfirm (затемнение + панель по центру), но с собственным
+  // таймером поллинга вместо однократного подтверждения.
+  _showDepositModal(order, gs, refreshBal) {
+    this._closeDepositModal();
+    const W = this.scale.width, H = this.scale.height;
+    const dw = 460, dh = 300;
+    const dx = W / 2, dy = H / 2;
+    const objs = [];
+    const overlay = this.add.rectangle(W / 2, H / 2, W, H, 0x000000, 0.6).setDepth(199).setInteractive();
+    const dlg = this.add.rectangle(dx, dy, dw, dh, 0x060e1c, 1)
+      .setStrokeStyle(2, COLORS.amber, 1).setDepth(200);
+    objs.push(overlay, dlg);
+
+    // Что именно покупается — ровно одно из трёх ненулевое (см. server CreateDepositOrderResponse).
+    const rewardStr = order.starGoldAmount > 0 ? `+${order.starGoldAmount} ⭐`
+      : order.premiumDays > 0 ? `Premium +${order.premiumDays} дн.`
+      : order.boosterDays > 0 ? `Бустер "Опыт+Честь" +${order.boosterDays} дн.`
+      : '?';
+    objs.push(this.add.text(dx, dy - dh / 2 + 16, 'ОПЛАТА USDT (TRC-20)', this.O('14px', '#ffd54f'))
+      .setOrigin(0.5, 0).setDepth(201));
+    objs.push(this.add.text(dx, dy - dh / 2 + 42,
+      `${order.amountUsdt} USDT  →  ${rewardStr}`, this.F('12px', '#cce8f0'))
+      .setOrigin(0.5, 0).setDepth(201));
+
+    objs.push(this.add.text(dx, dy - dh / 2 + 72, 'Адрес для перевода (нажмите, чтобы скопировать):',
+      this.F('11px', '#6aacb8')).setOrigin(0.5, 0).setDepth(201));
+    const addrBg = this.add.rectangle(dx, dy - dh / 2 + 100, dw - 40, 32, 0x0d1828)
+      .setStrokeStyle(1, 0x3a5a7a, 0.9).setDepth(200).setInteractive({ useHandCursor: true });
+    const addrTxt = this.add.text(dx, dy - dh / 2 + 100, order.address, this.F('12px', '#4dd0e1'))
+      .setOrigin(0.5).setDepth(201);
+    objs.push(addrBg, addrTxt);
+    addrBg.on('pointerdown', () => {
+      navigator.clipboard?.writeText(order.address)
+        .then(() => this._showError('Адрес скопирован', '#aed581'))
+        .catch(() => this._showError('Буфер обмена недоступен — скопируйте вручную'));
+    });
+
+    const statusTxt = this.add.text(dx, dy - dh / 2 + 150, 'Ожидание платежа…', this.O('12px', '#ffb74d'))
+      .setOrigin(0.5, 0).setDepth(201);
+    const timerTxt = this.add.text(dx, dy - dh / 2 + 176, '', this.F('11px', '#6aacb8'))
+      .setOrigin(0.5, 0).setDepth(201);
+    objs.push(statusTxt, timerTxt);
+
+    const closeBtn = this.add.rectangle(dx, dy + dh / 2 - 30, 140, 34, 0x1a0a0a)
+      .setStrokeStyle(1.5, 0x995544, 1).setDepth(200).setInteractive({ useHandCursor: true });
+    const closeTxt = this.add.text(dx, dy + dh / 2 - 30, 'ЗАКРЫТЬ', this.F('12px', '#aa6655')).setOrigin(0.5).setDepth(201);
+    objs.push(closeBtn, closeTxt);
+    closeBtn.on('pointerover', () => closeBtn.setFillStyle(0x2a1010));
+    closeBtn.on('pointerout',  () => closeBtn.setFillStyle(0x1a0a0a));
+    closeBtn.on('pointerdown', () => this._closeDepositModal());
+
+    this._depositObjs = objs;
+
+    // Сервер шлёт datetime.utcnow().isoformat() — БЕЗ 'Z'/offset (наивный UTC).
+    // new Date(...) без суффикса трактует строку как ЛОКАЛЬНОЕ время браузера,
+    // а не UTC — без явного 'Z' отсчёт до истечения был бы сдвинут на
+    // часовой пояс игрока. Достраиваем 'Z', если сервер его ещё не прислал.
+    const isoUtc = /[Zz]|[+-]\d\d:\d\d$/.test(order.expiresAt) ? order.expiresAt : order.expiresAt + 'Z';
+    const expiresAtMs = new Date(isoUtc).getTime();
+    const tickTimer = () => {
+      const msLeft = expiresAtMs - Date.now();
+      if (msLeft <= 0) { timerTxt.setText('Истекает…'); return; }
+      const m = Math.floor(msLeft / 60000), s = Math.floor((msLeft % 60000) / 1000);
+      timerTxt.setText(`Заказ действителен ещё ${m}:${String(s).padStart(2, '0')}`);
+    };
+    tickTimer();
+    this._depositTickEvent = this.time.addEvent({ delay: 1000, loop: true, callback: tickTimer });
+
+    // Поллинг раз в 5с — сервер сам проверяет TronGrid раз в 20с (см.
+    // CRYPTO_POLL_INTERVAL_SEC в main.py), чаще спрашивать смысла нет, но
+    // и разрежать сильно тоже — игрок ждёт живого фидбека на экране.
+    const poll = () => {
+      walletDepositOrderStatus(order.orderId).then(st => {
+        if (!statusTxt.active) return; // модалка уже закрыта
+        if (st.status === 'paid') {
+          this._depositPollEvent?.remove(); this._depositTickEvent?.remove();
+          timerTxt.setText('');
+          statusTxt.setColor('#aed581').setText('Оплачено! Зачисление…');
+          walletClaimCredit().then(res => {
+            this._applyClaimResult(res, gs, refreshBal);
+            const doneStr = res.credited > 0 ? `+${res.credited} ⭐`
+              : res.premiumDays > 0 ? `Premium +${res.premiumDays} дн.`
+              : res.boosterXpHonorMs > 0 ? `Бустер +${Math.round(res.boosterXpHonorMs / 86_400_000)} дн.`
+              : '';
+            if (statusTxt.active) statusTxt.setText(`✓ Зачислено ${doneStr}`);
+            this.time.delayedCall(1600, () => this._closeDepositModal());
+          }).catch(() => {
+            if (statusTxt.active) statusTxt.setText('Оплачено — не удалось забрать начисление, попробуйте закрыть и открыть магазин снова');
+          });
+        } else if (st.status === 'expired') {
+          this._depositPollEvent?.remove(); this._depositTickEvent?.remove();
+          statusTxt.setColor('#ff8a80').setText('Заказ истёк — создайте новый');
+          timerTxt.setText('');
+        }
+      }).catch(() => { /* временная сетевая ошибка — просто ждём следующий тик */ });
+    };
+    this._depositPollEvent = this.time.addEvent({ delay: 5000, loop: true, callback: poll });
+  }
+
+  _closeDepositModal() {
+    this._depositPollEvent?.remove(); this._depositPollEvent = null;
+    this._depositTickEvent?.remove(); this._depositTickEvent = null;
+    (this._depositObjs || []).forEach(o => o?.destroy());
+    this._depositObjs = [];
+  }
+
 }

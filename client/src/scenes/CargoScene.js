@@ -4,6 +4,7 @@ import { i18n } from '../i18n.js';
 import { itemName, itemStats, itemIconKey, itemSellPrice, PLASMATE_PER_SLOT, PLASMATE_GOLD_RATE, removePlasmateFromInventory, totalPlasmateInInventory, CONSUMABLES, AMMO_ICON, addConsumableToInventory, compactConsumableStacks, statRollStr } from '../items.js';
 import { prerenderTex } from '../utils/prerenderTex.js';
 import { PERK_MAP, RARITY_COLOR, RARITY_LABEL, perkBonus, rollQualityInfo } from '../perks.js';
+import { logEvent } from '../api.js';
 
 // Трюм (хоткей C). Доступен всегда — в космосе и на базе.
 // На базе добавляет колонку СКЛАД и кнопки переноса предметов.
@@ -807,6 +808,7 @@ export default class CargoScene extends Phaser.Scene {
       }
       gs.credits = (gs.credits || 0) + earned;
       gs.log?.(`Продано: ${count} модулей на ${earned.toLocaleString()} кр.`);
+      logEvent('earn', 'sell_bulk', { count, credits: earned });
       gs._saveState?.();
       this.scene.restart();
     });
@@ -868,6 +870,7 @@ export default class CargoScene extends Phaser.Scene {
       inv.splice(idx, 1);
       gs.credits = (gs.credits || 0) + total;
       gs.log?.(`Продано: ${name} ×${item.amount} +${total.toLocaleString()} кр.`);
+      logEvent('earn', 'sell_item', { item: name, qty: item.amount, credits: total });
       gs._saveState?.();
       this.scene.restart();
     });
@@ -995,6 +998,7 @@ export default class CargoScene extends Phaser.Scene {
       inv.splice(idx, 1);
       gs.credits = (gs.credits || 0) + net;
       gs.log?.(`🛒 ${name} → +${net.toLocaleString()} кр. (−10% комиссия)`);
+      logEvent('earn', 'sell_item_remote', { item: name, credits: net });
       gs._saveState?.();
       this._remoteSellUsed = true;
       this.scene.restart();

@@ -38,6 +38,31 @@ STAR_PACKS = {
     "stars_admiral":  {"stars": 6000, "usdt_micro": 39_990_000},
 }
 
+# Зеркало PREMIUM_PLANS/WEEKLY_BOOSTER из DonateScene.js — см. диалог "так мы можем
+# подключить оплату криптой" (премиум/бустер через ту же USDT-инфру, что звёзды, вместо
+# ожидания ответа от Xolla). days — сколько прибавить к premiumUntil/бустеру при оплате.
+PREMIUM_PLANS = {
+    "prem_1m":  {"days": 30,  "usdt_micro": 5_000_000},
+    "prem_3m":  {"days": 90,  "usdt_micro": 12_000_000},
+    "prem_12m": {"days": 365, "usdt_micro": 45_000_000},
+}
+BOOSTERS = {
+    "boost_xp_honor_7d": {"days": 7, "usdt_micro": 2_990_000},
+}
+
+
+def resolve_product(pack_id: str):
+    """Ищет pack_id по всем трём каталогам — возвращает (kind, product) или (None, None).
+    kind: 'stars' | 'premium' | 'booster' — main.py/create_deposit_order веткует по нему,
+    какие поля CryptoDepositOrder заполнять (см. диалог, модель уже трёхвариантная)."""
+    if pack_id in STAR_PACKS:
+        return 'stars', STAR_PACKS[pack_id]
+    if pack_id in PREMIUM_PLANS:
+        return 'premium', PREMIUM_PLANS[pack_id]
+    if pack_id in BOOSTERS:
+        return 'booster', BOOSTERS[pack_id]
+    return None, None
+
 CRYPTO_WALLET_SEED = os.getenv("CRYPTO_WALLET_SEED", "")
 CRYPTO_NETWORK = os.getenv("CRYPTO_NETWORK", "shasta")  # shasta (тест) | mainnet (реальные деньги)
 
