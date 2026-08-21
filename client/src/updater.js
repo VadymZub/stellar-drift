@@ -7,6 +7,12 @@ export async function checkForUpdates() {
   const tauri = window.__TAURI__;
   if (!tauri?.updater?.check) return;
 
+  // Подчищаем осиротевшие папки NSIS-обновлятора из %TEMP% (см. диалог "для приложения
+  // накапливаются старые файлы" — по 260МБ штука, накопилось за много циклов
+  // обновлений). См. cleanup_old_updater_temp_dirs в src-tauri/src/lib.rs — сама папка
+  // экстракции не наша, чинить нечего на JS-стороне, только подчищать раз в запуск.
+  tauri.core?.invoke?.('cleanup_old_updater_temp_dirs')?.catch(() => {});
+
   let update;
   try {
     update = await tauri.updater.check();
